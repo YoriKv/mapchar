@@ -48,7 +48,15 @@ HEADERS = [
     "Status",
     "Notes",
 ]
-STATUS_FILTERS = ["all", "untouched", "edited", "review", "too long", "invalid"]
+STATUS_FILTERS = [
+    "all",
+    "untouched",
+    "edited",
+    "review",
+    "too long",
+    "invalid",
+    "overflows box",
+]
 
 
 @dataclass
@@ -323,7 +331,7 @@ class StringsView(QWidget):
 
     @staticmethod
     def _status_colour(status: str) -> QColor | None:
-        if status in ("too long", "invalid"):
+        if status in ("too long", "invalid", "overflows box"):
             return theme.ERROR_INK
         if status == "review":
             return theme.WARNING_INK

@@ -40,10 +40,13 @@ from mapchar.core.block import (
 from mapchar.core.context import KEY_COMPLETE, KEY_CONSUMED, PipelineContext
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
+from mapchar.core.font import Font, TextBox
 from mapchar.core.mapping import resolve_mapping
 from mapchar.core.table import EntryKind as TableEntryKind
 from mapchar.core.table import Table, TableSet
 from mapchar.engines.decode import DecodeRules, EndedBy, decode
+from mapchar.engines.layout import layout as layout_glyphs
+from mapchar.engines.layout import wrap as wrap_text
 from mapchar.engines.pointers import discover
 from mapchar.engines.relsearch import Hit, entries_from_hit
 from mapchar.pipeline.exchange.atlas import read_atlas, write_atlas
@@ -94,6 +97,7 @@ from mapchar.ui.dialogs import (
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.hex_panel import HexPanel
+from mapchar.ui.preview_window import PreviewWindow
 from mapchar.ui.raw_widget import BYTES_PER_ROW, RawWidget, RowModel
 from mapchar.ui.scan_window import ScanWindow
 from mapchar.ui.search_window import SearchWindow
@@ -275,6 +279,7 @@ class MainWindow(QMainWindow):
         self.search_window = SearchWindow(self)
         self.scan_window = ScanWindow(self)
         self.decompress_window = DecompressWindow(self)
+        self.preview_window = PreviewWindow(self)
         self.table_editor = TableEditor(self)
         self.find_replace = FindReplaceDialog(self)
 
@@ -312,6 +317,9 @@ class MainWindow(QMainWindow):
         self.decompress_window.jump_next.connect(self._jump_next_structure)
         self.decompress_window.scan_next.connect(self._scan_next_structure)
         self.decompress_window.to_block.connect(self._structure_to_block)
+        self.preview_window.font_changed.connect(self._on_font_changed)
+        self.preview_window.box_changed.connect(self._on_box_changed)
+        self.preview_window.wrap_requested.connect(self._wrap_selected)
         self.table_editor.changed.connect(self._on_table_edited)
         self.table_editor.save_requested.connect(self._save_table_entry)
         self.hex_panel.go_to_requested.connect(self._go_to)
@@ -337,6 +345,7 @@ class MainWindow(QMainWindow):
         file_menu = bar.addMenu("&File")
         act(file_menu, "Open ROM…", self._open_rom_dialog, "Ctrl+Shift+O")
         act(file_menu, "Open Table…", self._open_table_dialog, "Ctrl+T")
+        act(file_menu, "Open Font…", self._open_font_dialog)
         file_menu.addSeparator()
         act(file_menu, "New Block…", self._new_block, "Ctrl+Shift+B")
         act(file_menu, "New Bookmark", self._new_bookmark, "Ctrl+B")
@@ -396,6 +405,7 @@ class MainWindow(QMainWindow):
         )
         view_menu.addSeparator()
         act(view_menu, "Table Editor…", self._show_table_editor, "Ctrl+Shift+T")
+        act(view_menu, "Preview…", self._show_preview, "Ctrl+P")
         view_menu.addSeparator()
         self.theme_light = act(
             view_menu, "Light theme", lambda: self._set_theme("light")
@@ -533,6 +543,137 @@ class MainWindow(QMainWindow):
         if self.table_pick.currentData() is None and tf.tables:
             self._choose_table(tf.tables[0].id)
         return entry
+
+    def _open_font_dialog(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Font", self._last_dir(), "Images (*.png *.bmp);;All files (*)"
+        )
+        if path:
+            self.open_font(path)
+
+    def open_font(self, path: str) -> Entry:
+        self._remember_dir(path)
+        entry = Entry(EntryKind.FONT, os.path.basename(path), path, font=Font(path))
+        self._push_add(entry)
+        return entry
+
+    def _fonts(self) -> list[Entry]:
+        return [e for e in self.workspace.entries if e.kind is EntryKind.FONT]
+
+    def _bound_font(self, block: Entry | None) -> Entry | None:
+        if block is None or block.box is None or block.box.font_index is None:
+            return None
+        fonts = self._fonts()
+        i = block.box.font_index
+        return fonts[i] if 0 <= i < len(fonts) else None
+
+    def _show_preview(self) -> None:
+        entry = self._entry
+        if entry is None or entry.kind is not EntryKind.BLOCK:
+            self._error("Select a block to preview.")
+            return
+        fonts = self._fonts()
+        if entry.box is None:
+            entry.box = TextBox(font_index=0 if fonts else None)
+        elif entry.box.font_index is None and fonts:
+            from dataclasses import replace
+
+            entry.box = replace(entry.box, font_index=0)
+        if not fonts:
+            self._error("Open a font (File ▸ Open Font…) first.")
+        self._sync_preview(force=True)
+        self.preview_window.show()
+        self.preview_window.raise_()
+
+    def _sync_preview(self, force: bool = False) -> None:
+        if not (force or self.preview_window.isVisible()):
+            return
+        entry = self._entry
+        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
+            return
+        font_entry = self._bound_font(entry)
+        self.preview_window.set_font(font_entry.font if font_entry else None)
+        tables = self._table_set()
+        labels = sorted(
+            {lb for t in (tables.tables.values() if tables else ()) for lb in t.labels}
+        )
+        self.preview_window.set_box(entry.box or TextBox(), labels)
+        selected = self.strings.selected_indices()
+        rec = self._string(entry, selected[0]) if selected else None
+        if rec is None and entry.doc.strings:
+            rec = entry.doc.strings[0]
+        if rec is not None:
+            source = rec.translation if rec.translation is not None else rec.original
+            self.preview_window.show_string(source, f"{entry.name} #{rec.index}")
+
+    def _on_font_changed(self, font: Font) -> None:
+        font_entry = self._bound_font(self._entry)
+        if font_entry is None:
+            return
+        font_entry.font = font
+        self.workspace.stamp(font_entry)
+        self.preview_window.set_font(font)
+        self._refresh_view()
+
+    def _on_box_changed(self, box: TextBox) -> None:
+        entry = self._entry
+        if entry is None or entry.kind is not EntryKind.BLOCK:
+            return
+        from dataclasses import replace
+
+        entry.box = replace(
+            box, font_index=entry.box.font_index if entry.box else box.font_index
+        )
+        self.workspace.stamp(entry)
+        self.preview_window._box = entry.box
+        self.preview_window._paint()
+        self._refresh_view()
+
+    def _overflow_status(self, rec, entry: Entry) -> bool:
+        font_entry = self._bound_font(entry)
+        if font_entry is None or font_entry.font is None or entry.box is None:
+            return False
+        source = rec.translation if rec.translation is not None else rec.original
+        return layout_glyphs(source, font_entry.font, entry.box).overflows
+
+    def _wrap_selected(self) -> None:
+        entry = self._entry
+        font_entry = self._bound_font(entry)
+        if (
+            entry is None
+            or font_entry is None
+            or font_entry.font is None
+            or entry.box is None
+        ):
+            self._error("Bind a font and a text box first.")
+            return
+        newline = next(
+            (lb for lb, e in entry.box.effects.items() if e.effect.value == "newline"),
+            None,
+        )
+        page = next(
+            (lb for lb, e in entry.box.effects.items() if e.effect.value == "page"),
+            None,
+        )
+        if newline is None:
+            self._error("Give one code the 'newline' effect in the Codes tab first.")
+            return
+        indices = self.strings.selected_indices() or [
+            r.index for r in entry.doc.strings[:1]
+        ]
+        self.undo_stack.beginMacro("Wrap")
+        for index in indices:
+            rec = self._string(entry, index)
+            if rec is None:
+                continue
+            text = (
+                rec.translation if rec.translation is not None else rec.original_text()
+            )
+            wrapped, _ = wrap_text(text, font_entry.font, entry.box, newline, page)
+            if wrapped != text:
+                self._on_translation_edited_for(entry, index, wrapped)
+        self.undo_stack.endMacro()
+        self._sync_preview()
 
     def _add_memory_table(self, table: Table, name: str) -> Entry:
         entry = Entry(EntryKind.TABLE, name, None, dialect="native", tables=[table])
@@ -1184,6 +1325,9 @@ class MainWindow(QMainWindow):
             if problems:
                 problem = problems[0].message
                 status = "too long" if problems[0].over else "invalid"
+        if status in ("untouched", "edited", "review") and self._entry is not None:
+            if self._overflow_status(rec, self._entry):
+                status = "overflows box"
         return RowData(
             rec.index,
             rec.start,
@@ -1223,6 +1367,7 @@ class MainWindow(QMainWindow):
                 doc.data, entry.config, tables, doc.strings, self.registry
             )
         self.strings.update_row(self._row_for(rec, entry.config, result, doc.strings))
+        self._sync_preview()
 
     # ------------------------------------------------------------------
     # String edits
@@ -1630,6 +1775,7 @@ class MainWindow(QMainWindow):
         rec = self._string(self._entry, index)
         if rec is None:
             return
+        self._sync_preview()
         if not (self._offset <= rec.start < self._offset + self.raw.visible_bytes()):
             self._go_to(max(0, rec.start - BYTES_PER_ROW))
         self.raw.set_selection(rec.start, rec.end)

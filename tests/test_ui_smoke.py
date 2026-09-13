@@ -349,3 +349,74 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     out = GbaLz77().decompress(data[16:], PipelineContext())
     assert out.startswith(b"HI HI HI\x00" + b" " * 9 + b"WORLD WORLD\x00")
     assert block.doc.strings[0].original_text() == "HI HI HI[end]"
+
+
+def test_preview_and_wrap(window, tmp_path):
+    from PySide6.QtGui import QColor, QImage
+
+    from mapchar.core.block import BlockConfig, EndToken, RangeSource
+    from mapchar.core.font import CodeEffect, Effect, TextBox
+    from mapchar.project.workspace import Entry, EntryKind
+
+    # A 16-column 8x8 glyph sheet: glyph i has i%8+1 inked columns.
+    sheet = QImage(128, 16, QImage.Format.Format_ARGB32)
+    sheet.fill(QColor(0, 0, 0))
+    for glyph in range(32):
+        col, row = glyph % 16, glyph // 16
+        for x in range(glyph % 8 + 1):
+            for y in range(8):
+                sheet.setPixelColor(col * 8 + x, row * 8 + y, QColor(255, 255, 255))
+    png = tmp_path / "font.png"
+    sheet.save(str(png))
+    rom = tmp_path / "f.bin"
+    rom.write_bytes(b"AB CD EF GH IJ\x00")
+    tbl = tmp_path / "t.tbl"
+    tbl.write_text(
+        "@mapchar table 1\n@table main\n@charset ascii\n/00=[end]\nFE=[line]\\n\n"
+    )
+    file_entry = window.open_rom(str(rom))
+    window.open_table(str(tbl))
+    font_entry = window.open_font(str(png))
+    block = Entry(
+        EntryKind.BLOCK,
+        "F",
+        str(rom),
+        parent=file_entry,
+        config=BlockConfig(RangeSource(0, 15), EndToken(), "main"),
+    )
+    window._push_add(block)
+    window._activate_entry(block)
+    window._show_preview()
+    assert block.box is not None and block.box.font_index == 0
+    from dataclasses import replace
+
+    font_entry.font = replace(font_entry.font, base=0, chars=" ABCDEFGHIJ")
+    window._on_font_changed(font_entry.font.with_widths(tuple(range(1, 33))))
+    window._on_box_changed(
+        TextBox(
+            width=24,
+            height=16,
+            line_height=8,
+            effects={"line": CodeEffect(Effect.NEWLINE)},
+        )
+    )
+    rows = window._row_data(block, block.doc, window._table_set())
+    assert rows[0].status == "overflows box"
+    window.strings.select_index(0)
+    window._wrap_selected()
+    text = block.doc.strings[0].translation
+    assert text is not None and "[line]" in text
+    assert window.preview_window.status.text().startswith("page 1/")
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    window._new_project()
+    assert window.open_project(str(proj))
+    fonts = [e for e in window.workspace.entries if e.kind is EntryKind.FONT]
+    assert (
+        fonts[0].font.widths[:3] == (1, 2, 3) and fonts[0].font.chars == " ABCDEFGHIJ"
+    )
+    blocks = [e for e in window.workspace.entries if e.kind is EntryKind.BLOCK]
+    assert (
+        blocks[0].box.width == 24
+        and blocks[0].box.effects["line"].effect is Effect.NEWLINE
+    )

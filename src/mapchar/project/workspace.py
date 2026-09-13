@@ -10,6 +10,7 @@ from itertools import count
 
 from mapchar.core.block import BlockConfig
 from mapchar.core.document import Document
+from mapchar.core.font import Font, TextBox
 from mapchar.core.table import Table
 
 
@@ -51,6 +52,10 @@ class Entry:
     """Its compressed length; 0 means "found on first read"."""
     spare_room: str = "fill"
     """What fills a slot a shorter re-compression leaves: ``fill`` or ``keep``."""
+    font: Font | None = None
+    """Font entries: the glyph sheet and its map."""
+    box: TextBox | None = None
+    """Blocks: the text box strings are previewed in, when bound to a font."""
     dialect: str | None = None
     """Tables: the dialect the file was read with."""
     tables: list[Table] = field(default_factory=list)

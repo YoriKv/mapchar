@@ -9,6 +9,7 @@ from typing import Any
 
 from mapchar.core.block import Status
 from mapchar.core.errors import MapcharError
+from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.project.formats.script import format_config, parse_config
 from mapchar.project.workspace import Entry, EntryKind, EntrySession
 
@@ -118,6 +119,31 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
                 strings.append(s)
             if strings:
                 d["strings"] = strings
+    if entry.kind is EntryKind.BLOCK and entry.box is not None:
+        b = entry.box
+        d["box"] = {
+            "font_index": b.font_index,
+            "width": b.width,
+            "height": b.height,
+            "line_height": b.line_height,
+            "letter_spacing": b.letter_spacing,
+            "lines_per_page": b.lines_per_page,
+            "origin": [b.origin_x, b.origin_y],
+            "effects": {k: [v.effect.value, v.value] for k, v in b.effects.items()},
+        }
+    if entry.kind is EntryKind.FONT and entry.font is not None:
+        f = entry.font
+        d["font"] = {
+            "cell": [f.cell_width, f.cell_height],
+            "columns": f.columns,
+            "base": f.base,
+            "chars": f.chars,
+            "glyphs": dict(f.glyphs),
+            "widths": list(f.widths),
+            "space": f.space,
+            "missing": f.missing,
+            "transparent": f.transparent,
+        }
     if entry.kind is EntryKind.BOOKMARK:
         d["offset"] = entry.bookmark_offset
     if entry.kind is EntryKind.TABLE and entry.dialect:
@@ -236,6 +262,42 @@ def _entry_from(
         entry.bookmark_offset = int(raw.get("offset", 0))
     if kind is EntryKind.TABLE:
         entry.dialect = raw.get("dialect")
+    if kind is EntryKind.BLOCK and isinstance(raw.get("box"), dict):
+        b = raw["box"]
+        origin = b.get("origin", [0, 0])
+        effects = {}
+        for label, pair in (b.get("effects") or {}).items():
+            try:
+                effects[str(label)] = CodeEffect(Effect(pair[0]), int(pair[1]))
+            except (ValueError, IndexError, TypeError):
+                continue
+        entry.box = TextBox(
+            int(b.get("width", 128)),
+            int(b.get("height", 32)),
+            int(b.get("line_height", 8)),
+            int(b.get("letter_spacing", 0)),
+            int(b.get("lines_per_page", 0)),
+            int(origin[0]),
+            int(origin[1]),
+            effects,
+            b.get("font_index"),
+        )
+    if kind is EntryKind.FONT:
+        f = raw.get("font") or {}
+        cell = f.get("cell", [8, 8])
+        entry.font = Font(
+            path,
+            int(cell[0]),
+            int(cell[1]),
+            int(f.get("columns", 16)),
+            int(f.get("base", 0)),
+            str(f.get("chars", "")),
+            {str(k): int(v) for k, v in (f.get("glyphs") or {}).items()},
+            tuple(int(w) for w in f.get("widths", [])),
+            f.get("space"),
+            f.get("missing"),
+            f.get("transparent", 0),
+        )
     saved: dict[int, StringState] = {}
     for s in raw.get("strings", []) or []:
         try:
