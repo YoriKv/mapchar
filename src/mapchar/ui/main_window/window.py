@@ -96,6 +96,7 @@ from mapchar.ui.dialogs import (
 )
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
+from mapchar.ui.fonts_panel import FontsPanel
 from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.preview_window import PreviewWindow
 from mapchar.ui.raw_widget import BYTES_PER_ROW, RawWidget, RowModel
@@ -169,6 +170,15 @@ class MainWindow(QMainWindow):
         tables_dock.setWidget(self.tables_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, tables_dock)
         self.tables_dock = tables_dock
+
+        self.fonts_panel = FontsPanel(self.workspace)
+        fonts_dock = QDockWidget("Fonts", self)
+        fonts_dock.setObjectName("fonts_dock")
+        fonts_dock.setWidget(self.fonts_panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, fonts_dock)
+        self.tabifyDockWidget(tables_dock, fonts_dock)
+        tables_dock.raise_()
+        self.fonts_dock = fonts_dock
 
         self.hex_panel = HexPanel()
         hex_dock = QDockWidget("Hex", self)
@@ -290,6 +300,7 @@ class MainWindow(QMainWindow):
         self.files_panel.remove_requested.connect(self._remove_entries)
         self.tables_panel.table_chosen.connect(self._choose_table)
         self.tables_panel.edit_requested.connect(self._edit_table_entry)
+        self.fonts_panel.edit_requested.connect(self._edit_font_entry)
         self.container_pick.currentIndexChanged.connect(self._on_chain_changed)
         self.reshape_pick.currentIndexChanged.connect(self._on_chain_changed)
         self.table_pick.currentIndexChanged.connect(self._on_table_pick)
@@ -425,6 +436,7 @@ class MainWindow(QMainWindow):
         panels_menu = bar.addMenu("&Panels")
         panels_menu.addAction(self.files_dock.toggleViewAction())
         panels_menu.addAction(self.tables_dock.toggleViewAction())
+        panels_menu.addAction(self.fonts_dock.toggleViewAction())
         panels_menu.addAction(self.hex_dock.toggleViewAction())
         panels_menu.addSeparator()
         act(panels_menu, "Reset Panel Layout", self._reset_layout)
@@ -451,6 +463,7 @@ class MainWindow(QMainWindow):
         self.restoreState(self._factory_state)
         self.files_dock.show()
         self.tables_dock.show()
+        self.fonts_dock.show()
         self.hex_dock.hide()
 
     def _set_theme(self, name: str) -> None:
@@ -560,6 +573,24 @@ class MainWindow(QMainWindow):
         entry = Entry(EntryKind.FONT, os.path.basename(path), path, font=Font(path))
         self._push_add(entry)
         return entry
+
+    def _edit_font_entry(self, entry: Entry) -> None:
+        """Open the Preview window on this font, binding the current block to it."""
+        fonts = self._fonts()
+        if entry not in fonts:
+            return
+        block = self._entry
+        if block is not None and block.kind is EntryKind.BLOCK:
+            from dataclasses import replace
+
+            box = block.box or TextBox()
+            block.box = replace(box, font_index=fonts.index(entry))
+            self._sync_preview(force=True)
+        else:
+            self.preview_window.set_font(entry.font)
+        self.preview_window.show()
+        self.preview_window.tabs.setCurrentIndex(1)
+        self.preview_window.raise_()
 
     def _fonts(self) -> list[Entry]:
         return [e for e in self.workspace.entries if e.kind is EntryKind.FONT]
@@ -951,6 +982,9 @@ class MainWindow(QMainWindow):
         self, entry: Entry, parent_doc: Document
     ) -> Document | None:
         plugin = self.registry.resolve_stage(Stage.COMPRESSION, entry.compression_id)
+        bind = getattr(plugin, "bind_tree", None)
+        if callable(bind):
+            bind(parent_doc.data)
         ctx = PipelineContext()
         end = (
             entry.slice_offset + entry.slice_length
@@ -990,6 +1024,9 @@ class MainWindow(QMainWindow):
         plugin = self.registry.plugin(Stage.COMPRESSION, cid)
         if plugin is None:
             return None
+        bind = getattr(plugin, "bind_tree", None)
+        if callable(bind):
+            bind(doc.data)
         ctx = PipelineContext()
         try:
             data = plugin.decompress(doc.data[offset:], ctx)

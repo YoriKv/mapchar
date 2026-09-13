@@ -19,6 +19,57 @@ WINDOW = 4096
 ROW = 16
 
 
+LINE_LEN = 6 + 2 + ROW * 3 - 1 + 2 + ROW + 1
+"""Characters per dump line, newline included."""
+
+
+class _HexView(QPlainTextEdit):
+    """The dump: typing a hex digit over a byte overtypes that nibble in place."""
+
+    def __init__(self, panel):
+        super().__init__()
+        self._panel = panel
+        self._pending: tuple[int, int] | None = None
+        """``(byte offset, high nibble)`` after the first of two digits."""
+
+    def _byte_at_cursor(self) -> tuple[int, int] | None:
+        """``(absolute byte offset, nibble index)`` under the caret, if on hex."""
+        pos = self.textCursor().position()
+        row, col = divmod(pos, LINE_LEN)
+        hex_start = 8
+        if col < hex_start or col >= hex_start + ROW * 3 - 1:
+            return None
+        rel = col - hex_start
+        if rel % 3 == 2:
+            return None
+        byte = self._panel._offset + row * ROW + rel // 3
+        if byte >= len(self._panel._data):
+            return None
+        return byte, rel % 3
+
+    def keyPressEvent(self, event) -> None:
+        text = event.text().upper()
+        if len(text) == 1 and text in "0123456789ABCDEF":
+            where = self._byte_at_cursor()
+            if where is not None:
+                offset, nibble = where
+                current = self._panel._data[offset]
+                digit = int(text, 16)
+                if nibble == 0:
+                    new = (digit << 4) | (current & 0x0F)
+                else:
+                    new = (current & 0xF0) | digit
+                cursor = self.textCursor()
+                at = cursor.position()
+                self._panel.overtype_requested.emit(offset, bytes([new]))
+                # Move to the next nibble (skipping the separating space).
+                step = 1 if nibble == 0 else 2
+                cursor.setPosition(min(at + step, len(self.toPlainText())))
+                self.setTextCursor(cursor)
+                return
+        super().keyPressEvent(event)
+
+
 class HexPanel(QWidget):
     go_to_requested = Signal(int)
     overtype_requested = Signal(int, bytes)
@@ -29,7 +80,7 @@ class HexPanel(QWidget):
         self._data: bytes = b""
         self._offset = 0
         self._selection: tuple[int, int] | None = None
-        self.view = QPlainTextEdit()
+        self.view = _HexView(self)
         self.view.setReadOnly(True)
         self.view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -86,6 +137,7 @@ class HexPanel(QWidget):
         self._render()
 
     def _render(self) -> None:
+        caret = self.view.textCursor().position()
         lines = []
         end = min(self._offset + WINDOW, len(self._data))
         for at in range(self._offset, end, ROW):
@@ -94,16 +146,19 @@ class HexPanel(QWidget):
             ascii_ = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in chunk)
             lines.append(f"{at:06X}  {hexes:<{ROW * 3 - 1}}  {ascii_}")
         self.view.setPlainText("\n".join(lines))
+        if self._selection is None or not self.follow.isChecked():
+            cursor = self.view.textCursor()
+            cursor.setPosition(min(caret, len(self.view.toPlainText())))
+            self.view.setTextCursor(cursor)
         if self._selection:
             s, e = self._selection
             if self._offset <= s < end:
                 row = (s - self._offset) // ROW
                 col = (s - self._offset) % ROW
-                line_len = 6 + 2 + ROW * 3 - 1 + 2 + ROW + 1
-                start = row * line_len + 8 + col * 3
+                start = row * LINE_LEN + 8 + col * 3
                 n = min(e, end) - s
                 rows_span = (col + n - 1) // ROW
-                length = n * 3 - 1 + rows_span * (line_len - ROW * 3)
+                length = n * 3 - 1 + rows_span * (LINE_LEN - ROW * 3)
                 cursor = self.view.textCursor()
                 cursor.setPosition(start)
                 cursor.setPosition(

@@ -221,7 +221,294 @@ class HuffmanTable:
         return bytes(out)
 
 
+class Lzss:
+    """A parameterised LZSS family.
+
+    A reference copies ``length + min_match`` bytes from ``offset``, packed
+    in one of these ``ref_format`` layouts (two bytes ``b0 b1``):
+
+    - ``gba``: ``b0 = length << 4 | offset >> 8``, ``b1 = offset & FF``;
+    - ``offset_length``: ``b0 = offset >> 4``, ``b1 = (offset & F) << 4 | length``;
+    - ``okumura``: ``b0 = offset & FF``, ``b1 = (offset >> 8) << 4 | length``.
+
+    ``window_bits`` (12) and ``length_bits`` (4) fix the field widths. Flags
+    come in groups of eight, read from the most significant bit
+    (``flags_msb_first``) or the least, and a set bit means a reference when
+    ``set_is_ref``. Offsets are ``distance`` (back from the write position,
+    plus one) or ``ring`` (an absolute position in a ring buffer of
+    ``2**window_bits`` bytes, initialised to ``ring_init`` and written from
+    ``ring_start``). A ``size_header`` of ``gba`` (``10 SS SS SS``),
+    ``u16le``, ``u32le`` or ``none`` says how the decompressed size is known.
+    """
+
+    def __init__(self, params: dict, id: str = "lzss", name: str = "LZSS"):
+        self.window_bits = int(params.get("window_bits", 12))
+        self.length_bits = int(params.get("length_bits", 4))
+        self.min_match = int(params.get("min_match", 3))
+        self.flags_msb_first = bool(params.get("flags_msb_first", True))
+        self.set_is_ref = bool(params.get("set_is_ref", True))
+        self.ref_format = str(params.get("ref_format", "gba"))
+        self.offset_kind = str(params.get("offset_kind", "distance"))
+        self.ring_init = int(params.get("ring_init", 0))
+        self.ring_start = int(params.get("ring_start", 0))
+        self.size_header = str(params.get("size_header", "none"))
+        self.info = PluginInfo(id, name, Stage.COMPRESSION, "Generic")
+        if self.window_bits + self.length_bits != 16:
+            raise ValueError("window_bits + length_bits must be 16")
+
+    @property
+    def max_match(self) -> int:
+        return (1 << self.length_bits) - 1 + self.min_match
+
+    @property
+    def ring_size(self) -> int:
+        return 1 << self.window_bits
+
+    def _read_size(self, data: bytes) -> tuple[int | None, int]:
+        if self.size_header == "gba":
+            return int.from_bytes(data[1:4], "little"), 4
+        if self.size_header == "u16le":
+            return int.from_bytes(data[0:2], "little"), 2
+        if self.size_header == "u32le":
+            return int.from_bytes(data[0:4], "little"), 4
+        return None, 0
+
+    def _write_size(self, n: int) -> bytes:
+        if self.size_header == "gba":
+            return b"\x10" + n.to_bytes(3, "little")
+        if self.size_header == "u16le":
+            return n.to_bytes(2, "little")
+        if self.size_header == "u32le":
+            return n.to_bytes(4, "little")
+        return b""
+
+    def _unpack_ref(self, b0: int, b1: int) -> tuple[int, int]:
+        lmask = (1 << self.length_bits) - 1
+        if self.ref_format == "gba":
+            word = (b0 << 8) | b1
+            length = word >> self.window_bits
+            offset = word & ((1 << self.window_bits) - 1)
+        elif self.ref_format == "okumura":
+            offset = b0 | ((b1 >> self.length_bits) << 8)
+            length = b1 & lmask
+        else:  # offset_length
+            word = (b0 << 8) | b1
+            offset = word >> self.length_bits
+            length = word & lmask
+        return offset, length + self.min_match
+
+    def _pack_ref(self, offset: int, length: int) -> bytes:
+        length -= self.min_match
+        if self.ref_format == "gba":
+            word = (length << self.window_bits) | offset
+        elif self.ref_format == "okumura":
+            return bytes([offset & 0xFF, ((offset >> 8) << self.length_bits) | length])
+        else:
+            word = (offset << self.length_bits) | length
+        return word.to_bytes(2, "big")
+
+    def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        size, pos = self._read_size(data)
+        out = bytearray()
+        ring = bytearray([self.ring_init]) * self.ring_size
+        ring_pos = self.ring_start
+        complete = size is None
+        while pos < len(data) and (size is None or len(out) < size):
+            flags = data[pos]
+            pos += 1
+            for i in range(8):
+                if size is not None and len(out) >= size:
+                    break
+                if pos >= len(data):
+                    break
+                bit = (
+                    (flags >> (7 - i)) & 1 if self.flags_msb_first else (flags >> i) & 1
+                )
+                is_ref = bool(bit) == self.set_is_ref
+                if not is_ref:
+                    b = data[pos]
+                    pos += 1
+                    out.append(b)
+                    ring[ring_pos] = b
+                    ring_pos = (ring_pos + 1) % self.ring_size
+                    continue
+                if pos + 2 > len(data):
+                    pos = len(data)
+                    break
+                offset, length = self._unpack_ref(data[pos], data[pos + 1])
+                pos += 2
+                for k in range(length):
+                    if self.offset_kind == "ring":
+                        b = ring[(offset + k) % self.ring_size]
+                    else:
+                        back = offset + 1
+                        if back > len(out):
+                            raise ValueError("back reference before the start")
+                        b = out[-back]
+                    out.append(b)
+                    ring[ring_pos] = b
+                    ring_pos = (ring_pos + 1) % self.ring_size
+        if size is not None:
+            complete = len(out) >= size
+            out = out[:size]
+        ctx.set(KEY_CONSUMED, pos)
+        ctx.set(KEY_COMPLETE, complete)
+        return bytes(out)
+
+    def _best_ring_match(self, data: bytes, pos: int, ring: bytearray, ring_pos: int):
+        """The longest match readable from the ring as the decoder will see it."""
+        n = len(data)
+        size = self.ring_size
+        best_len, best_off = 0, 0
+        for start in range(size):
+            length = 0
+            while length < self.max_match and pos + length < n:
+                idx = start + length
+                d = (idx - ring_pos) % size
+                # Bytes this reference has already produced overwrite the ring.
+                have = data[pos + d] if d < length else ring[idx % size]
+                if have != data[pos + length]:
+                    break
+                length += 1
+            if length > best_len:
+                best_len, best_off = length, start
+                if length == self.max_match:
+                    break
+        return best_len, best_off
+
+    def _best_distance_match(self, data: bytes, pos: int):
+        n = len(data)
+        best_len, best_off = 0, 0
+        for start in range(max(0, pos - self.ring_size), pos):
+            length = 0
+            while (
+                length < self.max_match
+                and pos + length < n
+                and data[start + length] == data[pos + length]
+            ):
+                length += 1
+            if length > best_len:
+                best_len, best_off = length, pos - start - 1
+                if length == self.max_match:
+                    break
+        return best_len, best_off
+
+    def compress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        out = bytearray(self._write_size(len(data)))
+        n = len(data)
+        pos = 0
+        ring = bytearray([self.ring_init]) * self.ring_size
+        ring_pos = self.ring_start
+        while pos < n:
+            flags = 0
+            group = bytearray()
+            for i in range(8):
+                if pos >= n:
+                    break
+                if self.offset_kind == "ring":
+                    best_len, best_off = self._best_ring_match(
+                        data, pos, ring, ring_pos
+                    )
+                else:
+                    best_len, best_off = self._best_distance_match(data, pos)
+                if best_len >= self.min_match:
+                    bit = 1 if self.set_is_ref else 0
+                    group += self._pack_ref(best_off, best_len)
+                    count = best_len
+                else:
+                    bit = 0 if self.set_is_ref else 1
+                    group.append(data[pos])
+                    count = 1
+                if bit:
+                    flags |= (0x80 >> i) if self.flags_msb_first else (1 << i)
+                for k in range(count):
+                    ring[ring_pos] = data[pos + k]
+                    ring_pos = (ring_pos + 1) % self.ring_size
+                pos += count
+            out.append(flags)
+            out += group
+        return bytes(out)
+
+
+class PackBits:
+    """Apple PackBits run-length coding, to the end of the input."""
+
+    info = PluginInfo("packbits", "PackBits RLE", Stage.COMPRESSION, "Generic")
+
+    def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        out = bytearray()
+        pos = 0
+        while pos < len(data):
+            n = data[pos]
+            pos += 1
+            if n == 128:
+                continue
+            if n < 128:
+                out += data[pos : pos + n + 1]
+                pos += n + 1
+            else:
+                if pos >= len(data):
+                    break
+                out += bytes([data[pos]]) * (257 - n)
+                pos += 1
+        ctx.set(KEY_CONSUMED, pos)
+        ctx.set(KEY_COMPLETE, True)
+        return bytes(out)
+
+    def compress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        out = bytearray()
+        pos = 0
+        n = len(data)
+        while pos < n:
+            run = 1
+            while pos + run < n and run < 128 and data[pos + run] == data[pos]:
+                run += 1
+            if run >= 2:
+                out += bytes([257 - run, data[pos]])
+                pos += run
+                continue
+            start = pos
+            while (
+                pos < n
+                and pos - start < 128
+                and not (
+                    pos + 1 < n
+                    and data[pos + 1] == data[pos]
+                    and pos + 2 < n
+                    and data[pos + 2] == data[pos]
+                )
+            ):
+                pos += 1
+            out += bytes([pos - start - 1]) + data[start:pos]
+        return bytes(out)
+
+
+PRESET_LZSS = {
+    "lzss_classic": (
+        "LZSS (ring buffer, Okumura)",
+        {
+            "window_bits": 12,
+            "length_bits": 4,
+            "min_match": 3,
+            "flags_msb_first": False,
+            "set_is_ref": False,
+            "ref_format": "okumura",
+            "offset_kind": "ring",
+            "ring_init": 0x20,
+            "ring_start": 0xFEE,
+        },
+    ),
+    "lzss_u16": (
+        "LZSS (u16 size, offset-length words)",
+        {"size_header": "u16le", "ref_format": "offset_length"},
+    ),
+}
+
+
 def register(registry) -> None:
     registry.register(GbaLz77())
     for width in (5, 6, 7):
         registry.register(BitPack(width))
+    registry.register(PackBits())
+    for pid, (name, params) in PRESET_LZSS.items():
+        registry.register(Lzss(params, pid, name))

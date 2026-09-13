@@ -191,6 +191,10 @@ def _load_preset(registry, stage, category, path, result) -> None:
         from mapchar.plugins.builtins.compression import HuffmanTable
 
         plugin = HuffmanTable(params, pid, name)
+    elif stage is Stage.COMPRESSION and engine == "lzss":
+        from mapchar.plugins.builtins.compression import Lzss
+
+        plugin = Lzss(params, pid, name)
     elif stage is Stage.COMPRESSION and engine == "bitpack":
         from mapchar.plugins.builtins.compression import BitPack
 
@@ -282,7 +286,7 @@ EXAMPLE_README = """mapchar plugins
 Put plugins in the typed folders beside this file:
   containers/   .py
   reshape/      .py
-  compression/  .py, .toml presets (engine = "huffman" or "bitpack")
+  compression/  .py, .toml presets (engine = "huffman", "lzss" or "bitpack")
   charsets/     .py, .tbl (a table file registers as a charset named after it)
   mappings/     .py, .toml presets (engine = "banked")
 

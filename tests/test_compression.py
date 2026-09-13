@@ -48,3 +48,40 @@ def test_registered():
     reg = default_registry()
     assert reg.plugin(Stage.COMPRESSION, "gba_lz77") is not None
     assert reg.plugin(Stage.COMPRESSION, "bitpack6") is not None
+
+
+def test_lzss_variants_roundtrip():
+    from mapchar.plugins.builtins.compression import PRESET_LZSS, Lzss, PackBits
+
+    text = b"ABCABCABCABC HELLO HELLO HELLO WORLD" * 5 + bytes(range(64))
+    for pid, (name, params) in PRESET_LZSS.items():
+        lz = Lzss(params, pid, name)
+        ctx = PipelineContext()
+        packed = lz.compress(text, ctx)
+        assert len(packed) < len(text), pid
+        out = lz.decompress(packed, ctx)
+        assert out == text, pid
+    gba = Lzss({"size_header": "gba"})
+    assert (
+        gba.decompress(GbaLz77().compress(text, PipelineContext()), PipelineContext())
+        == text
+    )
+    assert (
+        GbaLz77().decompress(gba.compress(text, PipelineContext()), PipelineContext())
+        == text
+    )
+    rle = PackBits()
+    data = b"AAAAAAAABCDEFFFFFFFFFFFFG" + b"\x00" * 300
+    packed = rle.compress(data, PipelineContext())
+    assert len(packed) < len(data) and rle.decompress(packed, PipelineContext()) == data
+
+
+def test_huffman_binds_tree_from_rom():
+    def node(left, right):
+        return left.to_bytes(2, "little") + right.to_bytes(2, "little")
+
+    tree = node(0x8000 | 0x41, 1) + node(0x8000 | 0x42, 0x8000 | 0x43)
+    rom = b"\xff" * 32 + tree
+    huff = HuffmanTable({"tree_offset": 32, "end_symbol": 0x43})
+    huff.bind_tree(rom)
+    assert huff.decompress(bytes([0b01001100]), PipelineContext()) == b"ABAC"

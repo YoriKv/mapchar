@@ -447,3 +447,60 @@ def test_table_reload_and_container_info(window, tmp_path, monkeypatch):
     )
     window._container_info(entry)
     assert shown and "Flat file" in shown[0]
+
+
+def test_hex_panel_overtypes_in_place(window, tmp_path, qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QTextCursor
+
+    rom = tmp_path / "h.bin"
+    rom.write_bytes(bytes(range(32)))
+    file_entry = window.open_rom(str(rom))
+    window.show()
+    window.hex_dock.show()
+    window.hex_panel.follow.setChecked(False)
+    window._sync_hex_panel()
+    view = window.hex_panel.view
+    cursor = view.textCursor()
+    cursor.setPosition(8 + 3 * 2)  # first digit of byte 2
+    view.setTextCursor(cursor)
+    qtbot.keyClick(view, Qt.Key.Key_F)
+    assert file_entry.doc.data[2] == 0xF2
+    qtbot.keyClick(view, Qt.Key.Key_A)
+    assert file_entry.doc.data[2] == 0xFA and file_entry.dirty
+    assert view.textCursor().position() == 8 + 3 * 3
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert file_entry.doc.data[2] == 2
+    assert isinstance(cursor, QTextCursor)
+
+
+def test_fonts_panel_lists_and_binds(window, tmp_path):
+    from mapchar.core.block import BlockConfig, EndToken, RangeSource
+    from mapchar.project.workspace import Entry, EntryKind
+
+    rom = tmp_path / "g.bin"
+    rom.write_bytes(b"AB\x00")
+    tbl = tmp_path / "t.tbl"
+    tbl.write_text(TABLE)
+    file_entry = window.open_rom(str(rom))
+    window.open_table(str(tbl))
+    png = tmp_path / "f.png"
+    from PySide6.QtGui import QImage
+
+    QImage(128, 8, QImage.Format.Format_ARGB32).save(str(png))
+    font_entry = window.open_font(str(png))
+    assert window.fonts_panel.tree.topLevelItemCount() == 1
+    block = Entry(
+        EntryKind.BLOCK,
+        "B",
+        str(rom),
+        parent=file_entry,
+        config=BlockConfig(RangeSource(0, 3), EndToken(), "main"),
+    )
+    window._push_add(block)
+    window._activate_entry(block)
+    window._edit_font_entry(font_entry)
+    assert block.box is not None and block.box.font_index == 0
+    window.fonts_panel.rebuild()
+    assert window.fonts_panel.tree.topLevelItem(0).childCount() == 1
