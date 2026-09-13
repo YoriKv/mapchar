@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QPoint, QSettings, Qt
+from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, Qt
 from PySide6.QtGui import QAction, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
@@ -330,6 +330,10 @@ class MainWindow(QMainWindow):
         self.find_replace.replace_one.connect(self._fr_replace_one)
         self.find_replace.replace_all.connect(self._fr_replace_all)
         self.workspace.on_current_changed.append(lambda e: self._update_title())
+        self.table_watcher = QFileSystemWatcher(self)
+        self.table_watcher.fileChanged.connect(self._on_table_file_changed)
+        self.workspace.on_added.append(self._watch_table)
+        self.workspace.on_reset.append(self._rewatch_tables)
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
@@ -743,6 +747,7 @@ class MainWindow(QMainWindow):
             menu.addAction("Open Table…", self._open_table_dialog)
         else:
             if entry.kind is EntryKind.FILE:
+                menu.addAction("Container Info…", lambda: self._container_info(entry))
                 menu.addAction(
                     "New Block…",
                     lambda: (self._activate_entry(entry), self._new_block()),
@@ -783,6 +788,88 @@ class MainWindow(QMainWindow):
                 ),
             )
         menu.exec(pos)
+
+    def _container_info(self, entry: Entry) -> None:
+        """What the container decoded from the file, from a read of its own."""
+        from mapchar.plugins.base import ReadSource
+
+        plugin = self.registry.plugin(Stage.CONTAINER, entry.container_id)
+        if plugin is None:
+            self._error(f"Container {entry.container_id!r} is not available.")
+            return
+        try:
+            data = FileRef(entry.paths).read()
+        except OSError as exc:
+            self._error(str(exc))
+            return
+        ctx = PipelineContext()
+        lines = [f"Container: {plugin.info.name} ({plugin.info.id})"]
+        try:
+            plugin.read(ReadSource(data, entry.paths), ctx)
+        except Exception as exc:  # noqa: BLE001 - report, never crash
+            lines.append(f"read failed: {exc}")
+        describe = getattr(plugin, "describe", None)
+        if callable(describe):
+            try:
+                for key, value in describe(ReadSource(data, entry.paths), ctx).items():
+                    lines.append(f"{key}: {value}")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"describe failed: {exc}")
+        for key, value in ctx.values.items():
+            lines.append(f"{key}: {value}")
+        for notice in ctx.notices:
+            lines.append(f"notice: {notice}")
+        TextDialog(f"Container Info — {entry.name}", "\n".join(lines), self).exec()
+
+    def _watch_table(self, entry: Entry) -> None:
+        if entry.kind is EntryKind.TABLE and entry.path and os.path.exists(entry.path):
+            self.table_watcher.addPath(entry.path)
+
+    def _rewatch_tables(self) -> None:
+        paths = self.table_watcher.files()
+        if paths:
+            self.table_watcher.removePaths(paths)
+        for e in self.workspace.entries:
+            self._watch_table(e)
+
+    def _on_table_file_changed(self, path: str) -> None:
+        entry = self.workspace.find_table(path)
+        if entry is None:
+            return
+        if os.path.exists(path):
+            self.table_watcher.addPath(path)
+        if entry.dirty:
+            answer = QMessageBox.question(
+                self,
+                "Table changed on disk",
+                f"{entry.name} changed on disk but has edits here. "
+                "Reload and lose them?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self.reload_table(entry)
+
+    def reload_table(self, entry: Entry) -> None:
+        if not entry.path:
+            return
+        try:
+            with open(entry.path, encoding="utf-8", errors="replace") as f:
+                tf = load_table_text(f.read(), entry.path, entry.dialect)
+            for t in tf.tables:
+                apply_charset(t, self.registry)
+        except (OSError, MapcharError) as exc:
+            self._error(f"Cannot reload {entry.name}: {exc}")
+            return
+        entry.tables = tf.tables
+        entry.dialect = tf.dialect
+        self.workspace.mark_saved(entry)
+        for e in self.workspace.entries:
+            if e.doc is not None:
+                e.doc.extraction_key = None
+        self._refresh_table_picks()
+        self.tables_panel.rebuild()
+        self._refresh_view()
+        self.statusBar().showMessage(f"Reloaded {entry.name}", 4000)
 
     def _rename(self, entry: Entry) -> None:
         name, ok = QInputDialog.getText(self, "Rename", "Name:", text=entry.name)

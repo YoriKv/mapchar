@@ -420,3 +420,30 @@ def test_preview_and_wrap(window, tmp_path):
         blocks[0].box.width == 24
         and blocks[0].box.effects["line"].effect is Effect.NEWLINE
     )
+
+
+def test_table_reload_and_container_info(window, tmp_path, monkeypatch):
+    rom = tmp_path / "r.bin"
+    rom.write_bytes(b"AB\x00")
+    tbl = tmp_path / "t.tbl"
+    tbl.write_text(TABLE)
+    entry = window.open_rom(str(rom))
+    table_entry = window.open_table(str(tbl))
+    assert str(tbl) in window.table_watcher.files()
+    tbl.write_text(TABLE + "43=C\n")
+    window.reload_table(table_entry)
+    assert "01000011" in table_entry.tables[0].entries
+    shown = []
+    from mapchar.ui.dialogs import TextDialog
+
+    original = TextDialog.__init__
+    monkeypatch.setattr(
+        TextDialog,
+        "__init__",
+        lambda self, title, text, parent=None: (
+            shown.append(text),
+            original(self, title, text, parent),
+        )[1],
+    )
+    window._container_info(entry)
+    assert shown and "Flat file" in shown[0]
