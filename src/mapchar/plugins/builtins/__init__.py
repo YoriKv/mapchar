@@ -6,7 +6,13 @@ from mapchar.plugins.registry import Registry
 
 
 def register_builtins(registry: Registry) -> None:
-    from mapchar.plugins.builtins import charsets, containers, mappings, reshapes
+    from mapchar.plugins.builtins import (
+        charsets,
+        compression,
+        containers,
+        mappings,
+        reshapes,
+    )
 
-    for module in (containers, reshapes, charsets, mappings):
+    for module in (containers, reshapes, compression, charsets, mappings):
         module.register(registry)
