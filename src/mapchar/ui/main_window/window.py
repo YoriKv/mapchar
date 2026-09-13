@@ -37,6 +37,7 @@ from mapchar.core.block import (
     Status,
     WriteMode,
 )
+from mapchar.core.context import KEY_COMPLETE, KEY_CONSUMED, PipelineContext
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.core.mapping import resolve_mapping
@@ -82,6 +83,7 @@ from mapchar.project.projectfile import (
     save_project,
 )
 from mapchar.project.workspace import Entry, EntryKind, Workspace
+from mapchar.ui.decompress_window import DecompressWindow
 from mapchar.ui.dialogs import (
     BlockDialog,
     DiscoveryDialog,
@@ -113,9 +115,19 @@ DISPLAY_MODE_KEY = "view/display_mode"
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, registry: Registry | None = None, parent: QWidget | None = None):
+    def __init__(
+        self,
+        registry: Registry | None = None,
+        parent: QWidget | None = None,
+        reload_plugins=None,
+        plugin_dir: str | None = None,
+        plugin_issues=(),
+    ):
         super().__init__(parent)
         self.registry = registry or default_registry()
+        self._reload_plugins = reload_plugins
+        self.plugin_dir = plugin_dir
+        self._plugin_issues = list(plugin_issues)
         self.workspace = Workspace()
         self.undo_stack = QUndoStack(self)
         self.settings = QSettings("mapchar", "mapchar")
@@ -178,10 +190,14 @@ class MainWindow(QMainWindow):
             self.reshape_pick.addItem(plugin.info.name, plugin.info.id)
         self.table_pick = QComboBox()
         self.table_pick.addItem("(no table)", None)
+        self.compression_pick = QComboBox()
+        self._fill_compression_pick()
         codecs.addWidget(QLabel(" Container "))
         codecs.addWidget(self.container_pick)
         codecs.addWidget(QLabel("  Reshape "))
         codecs.addWidget(self.reshape_pick)
+        codecs.addWidget(QLabel("  Compression "))
+        codecs.addWidget(self.compression_pick)
         codecs.addWidget(QLabel("  Start table "))
         codecs.addWidget(self.table_pick)
         self.addToolBar(codecs)
@@ -258,6 +274,7 @@ class MainWindow(QMainWindow):
 
         self.search_window = SearchWindow(self)
         self.scan_window = ScanWindow(self)
+        self.decompress_window = DecompressWindow(self)
         self.table_editor = TableEditor(self)
         self.find_replace = FindReplaceDialog(self)
 
@@ -291,6 +308,10 @@ class MainWindow(QMainWindow):
         self.search_window.build_table.connect(self._build_table_from_hit)
         self.scan_window.go_to.connect(self._select_bytes)
         self.scan_window.new_block.connect(self._block_from_region)
+        self.compression_pick.currentIndexChanged.connect(self._refresh_view)
+        self.decompress_window.jump_next.connect(self._jump_next_structure)
+        self.decompress_window.scan_next.connect(self._scan_next_structure)
+        self.decompress_window.to_block.connect(self._structure_to_block)
         self.table_editor.changed.connect(self._on_table_edited)
         self.table_editor.save_requested.connect(self._save_table_entry)
         self.hex_panel.go_to_requested.connect(self._go_to)
@@ -344,6 +365,9 @@ class MainWindow(QMainWindow):
         act(export_menu, "Cartographer command file…", self._export_cartographer)
         act(file_menu, "Save Project", self._save_project, "Ctrl+S")
         act(file_menu, "Save Project As…", self._save_project_as, "Ctrl+Shift+S")
+        file_menu.addSeparator()
+        act(file_menu, "Open plugins folder…", self._open_plugins_folder)
+        act(file_menu, "Refresh plugins", self._refresh_plugins, "F5")
         file_menu.addSeparator()
         act(file_menu, "Quit", self.close, "Ctrl+Q")
 
@@ -679,9 +703,12 @@ class MainWindow(QMainWindow):
                 parent_doc = self._load_document(entry.parent)
                 if parent_doc is None:
                     return None
-                entry.doc = Document(
-                    parent_doc.data, parent_doc.ctx, parent_doc.writable
-                )
+                if entry.compression_id:
+                    entry.doc = self._load_compressed_block(entry, parent_doc)
+                else:
+                    entry.doc = Document(
+                        parent_doc.data, parent_doc.ctx, parent_doc.writable
+                    )
         except OSError as exc:
             entry.missing = True
             self._error(f"{entry.name}: {exc}")
@@ -691,6 +718,197 @@ class MainWindow(QMainWindow):
             return None
         self.files_panel.refresh_labels()
         return entry.doc
+
+    def _load_compressed_block(
+        self, entry: Entry, parent_doc: Document
+    ) -> Document | None:
+        plugin = self.registry.resolve_stage(Stage.COMPRESSION, entry.compression_id)
+        ctx = PipelineContext()
+        end = (
+            entry.slice_offset + entry.slice_length
+            if entry.slice_length
+            else len(parent_doc.data)
+        )
+        try:
+            data = plugin.decompress(parent_doc.data[entry.slice_offset : end], ctx)
+        except Exception as exc:  # noqa: BLE001 - a scheme may reject the bytes
+            self._error(f"{entry.name}: cannot decompress: {exc}")
+            return None
+        consumed = ctx.get(KEY_CONSUMED)
+        if not entry.slice_length and consumed:
+            entry.slice_length = int(consumed)
+        from mapchar.plugins.base import writes_back
+
+        can_write = writes_back(plugin, Stage.COMPRESSION)
+        doc = Document(data, ctx, parent_doc.writable and can_write)
+        doc.missing_plugins = list(parent_doc.missing_plugins)
+        if not can_write:
+            doc.missing_plugins.append(f"{entry.compression_id} (no compress)")
+        return doc
+
+    def _fill_compression_pick(self) -> None:
+        self.compression_pick.blockSignals(True)
+        self.compression_pick.clear()
+        self.compression_pick.addItem("None", None)
+        for plugin in self.registry.plugins(Stage.COMPRESSION):
+            self.compression_pick.addItem(plugin.info.name, plugin.info.id)
+        self.compression_pick.blockSignals(False)
+
+    def _decompress_at(self, doc: Document, offset: int):
+        """Run the picked scheme from ``offset``: ``(data, consumed, complete)``."""
+        cid = self.compression_pick.currentData()
+        if not cid:
+            return None
+        plugin = self.registry.plugin(Stage.COMPRESSION, cid)
+        if plugin is None:
+            return None
+        ctx = PipelineContext()
+        try:
+            data = plugin.decompress(doc.data[offset:], ctx)
+        except Exception:  # noqa: BLE001 - not a structure here
+            return None
+        if not data:
+            return None
+        return data, int(ctx.get(KEY_CONSUMED) or 0), bool(ctx.get(KEY_COMPLETE))
+
+    def _refresh_decompress_preview(self, doc: Document, tables) -> None:
+        entry = self._entry
+        if entry is None or (entry.kind is EntryKind.BLOCK and entry.compression_id):
+            self.decompress_window.hide()
+            return
+        result = self._decompress_at(doc, self._offset)
+        if result is None:
+            self.decompress_window.hide()
+            return
+        data, consumed, complete = result
+        tokens = []
+        if tables is not None:
+            bits = Bits(data[:4096])
+            pos = 0
+            while pos < bits.length:
+                r = decode(bits, tables, pos, DecodeRules(end_terminated=True))
+                tokens.extend(r.tokens)
+                if r.end_bit <= pos or r.ended_by in (EndedBy.DATA, EndedBy.LIMIT):
+                    break
+                pos = r.end_bit
+        model = RowModel(0, data[:4096], tokens, set(), len(data))
+        status = (
+            f"{consumed:,} compressed bytes at {self._offset:X} → {len(data):,} bytes"
+        )
+        if not complete:
+            status += "  ·  no end marker before the window's edge"
+        self.decompress_window.show_result(model, status, complete)
+        if not self.decompress_window.isVisible():
+            self.decompress_window.show()
+
+    def _jump_next_structure(self) -> None:
+        if self._doc is None:
+            return
+        result = self._decompress_at(self._doc, self._offset)
+        if result is not None and result[1] > 0:
+            self._go_to(self._offset + result[1])
+
+    def _scan_next_structure(self) -> None:
+        doc = self._doc
+        if doc is None or not self.compression_pick.currentData():
+            return
+        start = self._offset + 1
+        for at in range(start, doc.size):
+            if at % 256 == 0:
+                self.statusBar().showMessage(f"Scanning… {at:X}")
+                QApplication.processEvents()
+            result = self._decompress_at(doc, at)
+            if result is not None and result[2] and len(result[0]) >= 16:
+                self.statusBar().showMessage(f"Structure at {at:X}", 5000)
+                self._go_to(at)
+                return
+        self.statusBar().showMessage("No further structure found", 5000)
+
+    def _structure_to_block(self) -> None:
+        file_entry = self._current_file()
+        doc = self._doc
+        if file_entry is None or doc is None:
+            return
+        result = self._decompress_at(doc, self._offset)
+        if result is None:
+            return
+        data, consumed, _ = result
+        table_ids = list(self.workspace.tables())
+        if not table_ids:
+            self._error("Load a table first.")
+            return
+        cfg = BlockConfig(
+            RangeSource(0, len(data)),
+            EndToken(),
+            self.table_pick.currentData() or table_ids[0],
+        )
+        dialog = BlockDialog(
+            table_ids,
+            cfg,
+            f"Compressed {self._offset:X}",
+            self,
+            self.registry.ids(Stage.MAPPING),
+        )
+        if dialog.exec() != BlockDialog.DialogCode.Accepted:
+            return
+        entry = Entry(
+            EntryKind.BLOCK,
+            dialog.name.text().strip() or f"Compressed {self._offset:X}",
+            file_entry.path,
+            parent=file_entry,
+            config=dialog.config(),
+            compression_id=self.compression_pick.currentData(),
+            slice_offset=self._offset,
+            slice_length=consumed,
+        )
+        self._push_add(entry)
+        self._activate_entry(entry)
+
+    def _open_plugins_folder(self) -> None:
+        if not self.plugin_dir:
+            self._error("No plugin folder is configured.")
+            return
+        self._reveal(os.path.join(self.plugin_dir, "README.txt"))
+
+    def _refresh_plugins(self) -> None:
+        if self._reload_plugins is None:
+            self.statusBar().showMessage(
+                "Plugins cannot be reloaded in this session", 4000
+            )
+            return
+        project_dir = os.path.dirname(self.project_path) if self.project_path else None
+        registry, issues = self._reload_plugins(project_dir)
+        self.registry = registry
+        self._plugin_issues = list(issues)
+        for pick, stage, none_label in (
+            (self.container_pick, Stage.CONTAINER, None),
+            (self.reshape_pick, Stage.RESHAPE, "None"),
+        ):
+            pick.blockSignals(True)
+            pick.clear()
+            if none_label:
+                pick.addItem(none_label, None)
+            for plugin in self.registry.plugins(stage):
+                pick.addItem(plugin.info.name, plugin.info.id)
+            pick.blockSignals(False)
+        self._fill_compression_pick()
+        for e in self.workspace.entries:
+            e.doc = None
+            if e.kind is EntryKind.TABLE:
+                for t in e.tables:
+                    if hasattr(t, "_charset_applied"):
+                        del t._charset_applied
+                    apply_charset(t, self.registry)
+        if self._entry is not None:
+            self._doc = self._load_document(self._entry)
+            self._restore_session()
+        self._refresh_view()
+        if self._plugin_issues:
+            TextDialog(
+                "Plugin issues", "\n".join(str(i) for i in self._plugin_issues), self
+            ).exec()
+        else:
+            self.statusBar().showMessage("Plugins refreshed", 3000)
 
     def _restore_session(self) -> None:
         entry = self._entry
@@ -840,6 +1058,7 @@ class MainWindow(QMainWindow):
             RowModel(self._offset, data, tokens, string_starts, total, pointer_bytes)
         )
         self._refresh_text_mode(doc, tables)
+        self._refresh_decompress_preview(doc, tables)
         if is_block:
             self._fill_strings(doc)
             cfg = entry.config
@@ -1195,14 +1414,26 @@ class MainWindow(QMainWindow):
                     continue
                 ts = TableSet.build(tables[block.config.table_id], tables)
                 self._extract_current(block, doc, ts)
-                res = layout_block(
-                    new_data, block.config, ts, doc.strings, self.registry
-                )
+                base = doc.data if block.compression_id else new_data
+                res = layout_block(base, block.config, ts, doc.strings, self.registry)
                 if not res.ok:
                     for p in res.problems:
                         problems.append(f"{block.name} #{p.index}: {p.message}")
                     continue
-                new_data = apply_splices(new_data, res.splices)
+                if block.compression_id:
+                    new_payload = apply_splices(doc.data, res.splices)
+                    packed, problem = self._recompress(block, new_payload)
+                    if problem:
+                        problems.append(f"{block.name}: {problem}")
+                        continue
+                    from mapchar.pipeline.insert import Splice
+
+                    new_data = apply_splices(
+                        new_data, [Splice(block.slice_offset, packed)]
+                    )
+                    doc.pending_payload = new_payload  # type: ignore[attr-defined]
+                else:
+                    new_data = apply_splices(new_data, res.splices)
                 written_blocks.append(block)
             if problems:
                 TextDialog("Cannot write", "\n".join(problems), self).exec()
@@ -1235,7 +1466,11 @@ class MainWindow(QMainWindow):
             for block in written_blocks:
                 doc = block.doc
                 if doc is not None:
-                    doc.data = new_data
+                    pending = getattr(doc, "pending_payload", None)
+                    if block.compression_id and pending is not None:
+                        doc.data = pending
+                    else:
+                        doc.data = new_data
                     doc.extraction_key = None
                     for rec in doc.strings:
                         if rec.translation is not None:
@@ -1243,7 +1478,7 @@ class MainWindow(QMainWindow):
                             rec.status = Status.UNTOUCHED
                 self.workspace.mark_saved(block)
             for child in self.workspace.children(file_entry):
-                if child.doc is not None:
+                if child.doc is not None and not child.compression_id:
                     child.doc.data = new_data
                     child.doc.extraction_key = None
             self.statusBar().showMessage(
@@ -1252,6 +1487,31 @@ class MainWindow(QMainWindow):
         self.files_panel.refresh_labels()
         self._refresh_view()
         return ok
+
+    def _recompress(self, block: Entry, payload: bytes) -> tuple[bytes, str | None]:
+        """Compress a block's payload into its slot, padding per its spare-room rule."""
+        plugin = self.registry.plugin(Stage.COMPRESSION, block.compression_id or "")
+        if plugin is None or not callable(getattr(plugin, "compress", None)):
+            return b"", f"{block.compression_id} cannot compress"
+        try:
+            packed = plugin.compress(payload, PipelineContext())
+        except Exception as exc:  # noqa: BLE001
+            return b"", f"cannot compress: {exc}"
+        slot = block.slice_length
+        if slot and len(packed) > slot:
+            return (
+                b"",
+                f"compressed data is {len(packed) - slot} byte(s) larger than its slot",
+            )
+        if slot and len(packed) < slot:
+            parent_doc = block.parent.doc if block.parent is not None else None
+            if block.spare_room == "keep" and parent_doc is not None:
+                old = parent_doc.data[block.slice_offset : block.slice_offset + slot]
+                packed = packed + old[len(packed) :]
+            else:
+                fill = block.config.fill if block.config else 0xFF
+                packed = packed + bytes([fill]) * (slot - len(packed))
+        return packed, None
 
     def apply_bytes(self, entry: Entry, offset: int, data: bytes) -> None:
         doc = self._load_document(entry)

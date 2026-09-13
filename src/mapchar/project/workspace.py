@@ -45,6 +45,12 @@ class Entry:
     parent: Entry | None = None
     """Blocks and bookmarks: the file they belong to."""
     bookmark_offset: int = 0
+    slice_offset: int = 0
+    """Blocks with their own compression: where the compressed data starts."""
+    slice_length: int = 0
+    """Its compressed length; 0 means "found on first read"."""
+    spare_room: str = "fill"
+    """What fills a slot a shorter re-compression leaves: ``fill`` or ``keep``."""
     dialect: str | None = None
     """Tables: the dialect the file was read with."""
     tables: list[Table] = field(default_factory=list)

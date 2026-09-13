@@ -93,6 +93,10 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
     if entry.kind is EntryKind.BLOCK:
         if entry.compression_id:
             d["compression_id"] = entry.compression_id
+            d["slice_offset"] = entry.slice_offset
+            d["slice_length"] = entry.slice_length
+            if entry.spare_room != "fill":
+                d["spare_room"] = entry.spare_room
         if entry.config is not None:
             d["config"] = format_config(entry.config)
         if entry.doc is not None:
@@ -224,6 +228,10 @@ def _entry_from(
     )
     if kind is EntryKind.BLOCK and raw.get("config"):
         entry.config = parse_config(raw["config"])
+    if kind is EntryKind.BLOCK:
+        entry.slice_offset = int(raw.get("slice_offset", 0))
+        entry.slice_length = int(raw.get("slice_length", 0))
+        entry.spare_room = str(raw.get("spare_room", "fill"))
     if kind is EntryKind.BOOKMARK:
         entry.bookmark_offset = int(raw.get("offset", 0))
     if kind is EntryKind.TABLE:

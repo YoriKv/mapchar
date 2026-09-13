@@ -307,3 +307,44 @@ def test_table_editor_shift_and_fill(window, tmp_path, monkeypatch):
     answers = iter([("-1", True)])
     editor._shift()
     assert table.entries["01000000"].text == "A" and "01011010" not in table.entries
+
+
+def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
+    from mapchar.core.block import BlockConfig, EndToken, RangeSource
+    from mapchar.core.context import PipelineContext
+    from mapchar.plugins.builtins.compression import GbaLz77
+    from mapchar.project.workspace import Entry, EntryKind
+
+    payload = b"HELLO HELLO HELLO\x00WORLD WORLD\x00" * 3
+    packed = GbaLz77().compress(payload, PipelineContext())
+    rom = tmp_path / "z.bin"
+    rom.write_bytes(b"\xff" * 16 + packed + b"\xff" * 32)
+    tbl = tmp_path / "t.tbl"
+    tbl.write_text("@mapchar table 1\n@table main\n@charset ascii\n/00=[end]\n")
+    file_entry = window.open_rom(str(rom))
+    window.open_table(str(tbl))
+    window.compression_pick.setCurrentIndex(
+        window.compression_pick.findData("gba_lz77")
+    )
+    window._go_to(16)
+    assert "compressed bytes at 10 → 90 bytes" in window.decompress_window.status.text()
+    block = Entry(
+        EntryKind.BLOCK,
+        "Z",
+        str(rom),
+        parent=file_entry,
+        config=BlockConfig(RangeSource(0, len(payload)), EndToken(), "main", fill=0x20),
+        compression_id="gba_lz77",
+        slice_offset=16,
+        slice_length=len(packed),
+    )
+    window._push_add(block)
+    window._activate_entry(block)
+    assert block.doc.data == payload and len(block.doc.strings) == 6
+    window._on_translation_edited(0, "HI HI HI[end]")
+    assert window._write_blocks([block])
+    data = rom.read_bytes()
+    assert data[:16] == b"\xff" * 16 and data[16 + len(packed) :] == b"\xff" * 32
+    out = GbaLz77().decompress(data[16:], PipelineContext())
+    assert out.startswith(b"HI HI HI\x00" + b" " * 9 + b"WORLD WORLD\x00")
+    assert block.doc.strings[0].original_text() == "HI HI HI[end]"
