@@ -159,3 +159,61 @@ def test_edit_and_write(window, tmp_path):
     assert file_entry.dirty and file_entry.doc.data[1] == 0x42
     window.undo_stack.undo()
     assert file_entry.doc.data[1] == 0x00
+
+
+def test_import_export_and_find_replace(window, tmp_path):
+    from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
+    from mapchar.project.workspace import Entry, EntryKind
+
+    rom = tmp_path / "i.bin"
+    rom.write_bytes(bytes.fromhex("41 42 00 42 41 00"))
+    tbl = tmp_path / "t.tbl"
+    tbl.write_text(TABLE)
+    file_entry = window.open_rom(str(rom))
+    window.open_table(str(tbl))
+    block = Entry(
+        EntryKind.BLOCK,
+        "D",
+        str(rom),
+        parent=file_entry,
+        config=BlockConfig(RangeSource(0, 6), EndToken(), "main"),
+    )
+    window._push_add(block)
+    window._activate_entry(block)
+    window._on_translation_edited(0, "B[end]")
+    tsv = tmp_path / "d.tsv"
+    window.export_file(str(tsv), "tsv")
+    assert "D/0\t$0\tAB[end]\tB[end]\tedited" in tsv.read_text()
+    po = tmp_path / "d.po"
+    window.export_file(str(po), "po")
+    window._on_translation_edited(0, "")
+    assert block.doc.strings[0].translation is None
+    window.import_file(str(po), "po")
+    assert block.doc.strings[0].translation == "B[end]"
+    window.undo_stack.undo()
+    assert block.doc.strings[0].translation is None
+    # Script import through the native writer.
+    from mapchar.project.formats.script import DumpMode, write_script
+
+    block.doc.strings[1].translation = "A[end]"
+    script = tmp_path / "s.txt"
+    script.write_text(
+        write_script([("D", block.config, block.doc.strings)], DumpMode.TRANSLATIONS)
+    )
+    block.doc.strings[1].translation = None
+    window.import_file(str(script), "script")
+    assert block.doc.strings[1].translation == "A[end]"
+    assert block.doc.strings[1].status is Status.EDITED
+    # Replace all over translations.
+    window._fr_replace_all("A", "B", True)
+    assert block.doc.strings[1].translation == "B[end]"
+    assert block.doc.strings[0].translation == "BB[end]"
+    # Hex panel overtype path.
+    window.show()
+    window.hex_dock.show()
+    window._sync_hex_panel()
+    assert "000000  41 42 00" in window.hex_panel.view.toPlainText()
+    window.hex_panel.at.setText("2")
+    window.hex_panel.bytes.setText("42 00")
+    window.hex_panel._on_apply()
+    assert file_entry.doc.data[:4] == bytes.fromhex("41 42 42 00")

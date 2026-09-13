@@ -42,6 +42,7 @@ from mapchar.core.errors import MapcharError
 from mapchar.core.table import Table, TableSet
 from mapchar.engines.decode import DecodeRules, EndedBy, decode
 from mapchar.engines.relsearch import Hit, entries_from_hit
+from mapchar.pipeline.exchange.script_import import apply_script
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import apply_splices, layout_block
 from mapchar.pipeline.pipeline import (
@@ -54,9 +55,17 @@ from mapchar.pipeline.pipeline import (
 from mapchar.plugins.base import Stage
 from mapchar.plugins.charsets import apply_charset
 from mapchar.plugins.registry import Registry, default_registry
-from mapchar.project.formats.script import write_script
+from mapchar.project.formats.script import parse_script, write_script
 from mapchar.project.formats.table_legacy import load_table_text
 from mapchar.project.formats.table_native import write_native
+from mapchar.project.formats.translator import (
+    apply_records,
+    read_delimited,
+    read_po,
+    records_for,
+    write_delimited,
+    write_po,
+)
 from mapchar.project.projectfile import (
     LoadedProject,
     ProjectError,
@@ -67,6 +76,8 @@ from mapchar.project.projectfile import (
 from mapchar.project.workspace import Entry, EntryKind, Workspace
 from mapchar.ui.dialogs import BlockDialog, DumpDialog, TextDialog, parse_hex
 from mapchar.ui.files_panel import FilesPanel
+from mapchar.ui.find_replace import FindReplaceDialog
+from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.raw_widget import BYTES_PER_ROW, RawWidget, RowModel
 from mapchar.ui.search_window import SearchWindow
 from mapchar.ui.strings_view import RowData, StringsView
@@ -127,6 +138,14 @@ class MainWindow(QMainWindow):
         tables_dock.setWidget(self.tables_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, tables_dock)
         self.tables_dock = tables_dock
+
+        self.hex_panel = HexPanel()
+        hex_dock = QDockWidget("Hex", self)
+        hex_dock.setObjectName("hex_dock")
+        hex_dock.setWidget(self.hex_panel)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, hex_dock)
+        hex_dock.hide()
+        self.hex_dock = hex_dock
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -224,6 +243,7 @@ class MainWindow(QMainWindow):
 
         self.search_window = SearchWindow(self)
         self.table_editor = TableEditor(self)
+        self.find_replace = FindReplaceDialog(self)
 
         # Signals.
         self.files_panel.entry_activated.connect(self._activate_entry)
@@ -255,6 +275,13 @@ class MainWindow(QMainWindow):
         self.search_window.build_table.connect(self._build_table_from_hit)
         self.table_editor.changed.connect(self._on_table_edited)
         self.table_editor.save_requested.connect(self._save_table_entry)
+        self.hex_panel.go_to_requested.connect(self._go_to)
+        self.hex_panel.overtype_requested.connect(self.overtype_bytes)
+        self.hex_panel.find_requested.connect(self._find_text_or_bytes)
+        self.hex_dock.visibilityChanged.connect(lambda v: v and self._sync_hex_panel())
+        self.find_replace.find_next.connect(self._fr_find_next)
+        self.find_replace.replace_one.connect(self._fr_replace_one)
+        self.find_replace.replace_all.connect(self._fr_replace_all)
         self.workspace.on_current_changed.append(lambda e: self._update_title())
 
     def _build_menus(self) -> None:
@@ -282,6 +309,15 @@ class MainWindow(QMainWindow):
         act(file_menu, "New Project", self._new_project, "Ctrl+N")
         act(file_menu, "Open Project…", self._open_project_dialog, "Ctrl+O")
         self.recent_menu = file_menu.addMenu("Open Recent")
+        file_menu.addSeparator()
+        import_menu = file_menu.addMenu("Import")
+        act(import_menu, "Script…", lambda: self._import("script"))
+        act(import_menu, "TSV / CSV…", lambda: self._import("delimited"))
+        act(import_menu, "PO…", lambda: self._import("po"))
+        export_menu = file_menu.addMenu("Export")
+        act(export_menu, "TSV…", lambda: self._export("tsv"))
+        act(export_menu, "CSV…", lambda: self._export("csv"))
+        act(export_menu, "PO…", lambda: self._export("po"))
         act(file_menu, "Save Project", self._save_project, "Ctrl+S")
         act(file_menu, "Save Project As…", self._save_project_as, "Ctrl+Shift+S")
         file_menu.addSeparator()
@@ -296,6 +332,7 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(redo)
         edit_menu.addSeparator()
         act(edit_menu, "Go to Address…", self._go_to_dialog, "Ctrl+G")
+        act(edit_menu, "Find and Replace…", self._show_find_replace, "Ctrl+H")
         edit_menu.addSeparator()
         act(edit_menu, "Revert Selected Strings", self._revert_selected)
         act(edit_menu, "Toggle Review on Selected", self._toggle_review_selected)
@@ -323,6 +360,7 @@ class MainWindow(QMainWindow):
         panels_menu = bar.addMenu("&Panels")
         panels_menu.addAction(self.files_dock.toggleViewAction())
         panels_menu.addAction(self.tables_dock.toggleViewAction())
+        panels_menu.addAction(self.hex_dock.toggleViewAction())
         panels_menu.addSeparator()
         act(panels_menu, "Reset Panel Layout", self._reset_layout)
 
@@ -348,6 +386,7 @@ class MainWindow(QMainWindow):
         self.restoreState(self._factory_state)
         self.files_dock.show()
         self.tables_dock.show()
+        self.hex_dock.hide()
 
     def _set_theme(self, name: str) -> None:
         from mapchar.ui.theme import apply_theme
@@ -774,6 +813,7 @@ class MainWindow(QMainWindow):
             )
         self._update_nav_status()
         self.search_window.set_data(doc.data)
+        self._sync_hex_panel()
         self._update_title()
 
     def _refresh_text_mode(self, doc: Document, tables: TableSet | None) -> None:
@@ -1277,6 +1317,7 @@ class MainWindow(QMainWindow):
     def _on_selection(self, start: int, end: int) -> None:
         self._selection = (start, end) if end > start else None
         self._update_nav_status()
+        self._sync_hex_panel()
         if self._selection and self.display.currentWidget() is self.text:
             self.text.select_bytes(*self._selection)
         if self._selection and self._doc is not None:
@@ -1851,6 +1892,249 @@ class MainWindow(QMainWindow):
         for path in self._recent():
             self.recent_menu.addAction(path, lambda p=path: self.open_project(p))
         self.recent_menu.setEnabled(bool(self._recent()))
+
+    # ------------------------------------------------------------------
+    # Hex panel, find and replace, import and export
+    # ------------------------------------------------------------------
+
+    def _sync_hex_panel(self) -> None:
+        if not self.hex_dock.isVisible():
+            return
+        doc = self._doc
+        if doc is None:
+            self.hex_panel.set_data(b"", 0, None)
+        else:
+            self.hex_panel.set_data(doc.data, self._offset, self._selection)
+        self.hex_panel.refresh()
+
+    def _find_text_or_bytes(self, text: str) -> None:
+        if not text.strip() or self._doc is None:
+            return
+        needle = self._needle_from(text.strip())
+        if needle is None:
+            return
+        self._find_last = (needle, (self._selection[0] + 1) if self._selection else 0)
+        self._find_bytes(again=True)
+
+    def _show_find_replace(self) -> None:
+        self.find_replace.show()
+        self.find_replace.raise_()
+        self.find_replace.find.setFocus()
+
+    def _fr_targets(self):
+        entry = self._entry
+        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
+            return None, []
+        return entry, entry.doc.strings
+
+    @staticmethod
+    def _fr_match(hay: str, needle: str, case: bool) -> int:
+        return hay.find(needle) if case else hay.lower().find(needle.lower())
+
+    def _fr_find_next(self, needle: str, case: bool) -> None:
+        entry, strings = self._fr_targets()
+        if not strings or not needle:
+            return
+        selected = self.strings.selected_indices()
+        start = (selected[0] + 1) if selected else 0
+        order = [r for r in strings if r.index >= start] + [
+            r for r in strings if r.index < start
+        ]
+        for rec in order:
+            text = (
+                rec.translation if rec.translation is not None else rec.original_text()
+            )
+            if self._fr_match(text, needle, case) >= 0:
+                self.strings.select_index(rec.index)
+                self._on_string_row(rec.index)
+                return
+        self.statusBar().showMessage("Not found", 3000)
+
+    def _fr_replace_in(
+        self, rec, needle: str, replacement: str, case: bool
+    ) -> str | None:
+        text = rec.translation if rec.translation is not None else rec.original_text()
+        if case:
+            if needle not in text:
+                return None
+            return text.replace(needle, replacement)
+        import re
+
+        pattern = re.compile(re.escape(needle), re.IGNORECASE)
+        if not pattern.search(text):
+            return None
+        return pattern.sub(lambda m: replacement, text)
+
+    def _fr_replace_one(self, needle: str, replacement: str, case: bool) -> None:
+        entry, strings = self._fr_targets()
+        selected = self.strings.selected_indices()
+        if not selected or not needle:
+            self._fr_find_next(needle, case)
+            return
+        rec = self._string(entry, selected[0])
+        new = self._fr_replace_in(rec, needle, replacement, case) if rec else None
+        if new is not None:
+            self._on_translation_edited(rec.index, new)
+        self._fr_find_next(needle, case)
+
+    def _fr_replace_all(self, needle: str, replacement: str, case: bool) -> None:
+        entry, strings = self._fr_targets()
+        if not strings or not needle:
+            return
+        self.undo_stack.beginMacro("Replace all")
+        n = 0
+        for rec in strings:
+            new = self._fr_replace_in(rec, needle, replacement, case)
+            if new is not None:
+                self._on_translation_edited(rec.index, new)
+                n += 1
+        self.undo_stack.endMacro()
+        self.statusBar().showMessage(f"Replaced in {n} string(s)", 4000)
+
+    def _block_strings_by_name(self, file_entry: Entry | None) -> dict[str, list]:
+        out: dict[str, list] = {}
+        for e in self.workspace.entries:
+            if e.kind is not EntryKind.BLOCK or (
+                file_entry and e.parent is not file_entry
+            ):
+                continue
+            doc = self._load_document(e)
+            if doc is None or e.config is None:
+                continue
+            tables = self.workspace.tables()
+            ts = None
+            if e.config.table_id in tables:
+                ts = TableSet.build(tables[e.config.table_id], tables)
+            self._extract_current(e, doc, ts)
+            out[e.name] = doc.strings
+        return out
+
+    def _import(self, kind: str) -> None:
+        filters = {
+            "script": "Scripts (*.txt);;All files (*)",
+            "delimited": "Tables (*.tsv *.csv);;All files (*)",
+            "po": "PO files (*.po);;All files (*)",
+        }[kind]
+        path, _ = QFileDialog.getOpenFileName(self, "Import", self._last_dir(), filters)
+        if not path:
+            return
+        self.import_file(path, kind)
+
+    def import_file(self, path: str, kind: str, force: bool = False) -> None:
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError as exc:
+            self._error(f"Cannot read {path}: {exc}")
+            return
+        file_entry = self._current_file()
+        blocks = self._block_strings_by_name(file_entry)
+        before = {
+            name: [(r.translation, r.status, r.notes) for r in strs]
+            for name, strs in blocks.items()
+        }
+        try:
+            if kind == "script":
+                report = apply_script(parse_script(text, path), blocks)
+                notices = list(report.notices)
+                for name, cfg in report.new_blocks:
+                    if file_entry is not None:
+                        entry = Entry(
+                            EntryKind.BLOCK,
+                            name,
+                            file_entry.path,
+                            parent=file_entry,
+                            config=cfg,
+                        )
+                        self._push_add(entry)
+                        notices.append(f"created block {name}")
+                applied = report.applied
+            else:
+                records = read_po(text) if kind == "po" else read_delimited(text)
+                report = apply_records(records, blocks, force=force)
+                notices, applied = report.skipped, report.applied
+        except (MapcharError, ValueError) as exc:
+            self._error(f"Cannot import {path}: {exc}")
+            return
+        # Record the changes as one undo step.
+        self.undo_stack.beginMacro(f"Import {os.path.basename(path)}")
+        for name, strs in blocks.items():
+            entry = next(
+                (
+                    e
+                    for e in self.workspace.entries
+                    if e.kind is EntryKind.BLOCK and e.name == name
+                ),
+                None,
+            )
+            if entry is None:
+                continue
+            for rec, (tr, st, notes) in zip(strs, before[name], strict=False):
+                new = (rec.translation, rec.status, rec.notes)
+                rec.translation, rec.status, rec.notes = tr, st, notes
+                if new[0] != tr:
+                    self.undo_stack.push(
+                        StringFieldCommand(
+                            self, entry, rec.index, "translation", tr, new[0]
+                        )
+                    )
+                if new[1] != st:
+                    self.undo_stack.push(
+                        StringFieldCommand(
+                            self, entry, rec.index, "status", st.value, new[1].value
+                        )
+                    )
+                if new[2] != notes:
+                    self.undo_stack.push(
+                        StringFieldCommand(
+                            self, entry, rec.index, "notes", notes, new[2]
+                        )
+                    )
+        self.undo_stack.endMacro()
+        self._remember_dir(path)
+        self._refresh_view()
+        message = f"Imported {applied} string(s) from {os.path.basename(path)}"
+        if notices:
+            TextDialog(
+                "Import notices", message + "\n\n" + "\n".join(notices), self
+            ).exec()
+        else:
+            self.statusBar().showMessage(message, 5000)
+
+    def _export(self, kind: str) -> None:
+        entry = self._entry
+        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
+            self._error("Select a block to export.")
+            return
+        ext = {"tsv": "tsv", "csv": "csv", "po": "po"}[kind]
+        suggested = os.path.join(self._last_dir(), f"{entry.name}.{ext}")
+        path, _ = QFileDialog.getSaveFileName(self, "Export", suggested, f"*.{ext}")
+        if not path:
+            return
+        self.export_file(path, kind)
+
+    def export_file(self, path: str, kind: str) -> None:
+        entry = self._entry
+        records = records_for(entry.name, entry.doc.strings)
+        if kind == "po":
+            rom = (
+                os.path.basename(entry.parent.path)
+                if entry.parent and entry.parent.path
+                else "rom"
+            )
+            text = write_po(records, rom)
+        else:
+            text = write_delimited(records, "\t" if kind == "tsv" else ",")
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        except OSError as exc:
+            self._error(f"Cannot write {path}: {exc}")
+            return
+        self._remember_dir(path)
+        self.statusBar().showMessage(
+            f"Exported {len(records)} string(s) to {path}", 5000
+        )
 
     # ------------------------------------------------------------------
     # Help
