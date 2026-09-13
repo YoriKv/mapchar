@@ -281,7 +281,7 @@ def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
         sys.modules.pop(module_name, None)
 
 
-EXAMPLE_README = """mapchar plugins
+EXAMPLE_README = """mapChar plugins
 
 Put plugins in the typed folders beside this file:
   containers/   .py

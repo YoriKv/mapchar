@@ -409,3 +409,35 @@ def write_command_file(
 
 def _cart_num(value: int) -> str:
     return f"${value:X}" if value >= 0 else f"$-{-value:X}"
+
+
+def shift_config(config: BlockConfig, delta: int) -> BlockConfig:
+    """The same block with every file address moved by ``delta`` bytes.
+
+    Cartographer and Atlas address the file; blocks address the container's
+    payload, so an import subtracts the header and an export adds it back.
+    """
+    from dataclasses import replace
+
+    from mapchar.core.block import FixedSource, PointerListSource
+
+    if not delta:
+        return config
+    src = config.source
+    if isinstance(src, RangeSource | PointerTableSource):
+        src = replace(src, start=src.start + delta, stop=src.stop + delta)
+    elif isinstance(src, FixedSource):
+        src = replace(src, start=src.start + delta)
+    elif isinstance(src, PointerListSource):
+        src = replace(src, addresses=tuple(a + delta for a in src.addresses))
+    if (
+        isinstance(src, PointerTableSource | PointerListSource)
+        and src.mapping_id == "linear"
+    ):
+        src = replace(src, offset=src.offset + delta)
+    return replace(
+        config,
+        source=src,
+        bound=(config.bound + delta) if config.bound is not None else None,
+        skips=tuple((a + delta, b + delta) for a, b in config.skips),
+    )

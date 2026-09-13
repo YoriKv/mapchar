@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar import __version__
+from mapchar import APP_NAME, __version__
 from mapchar.core.bits import Bits
 from mapchar.core.block import (
     BlockConfig,
@@ -37,7 +37,12 @@ from mapchar.core.block import (
     Status,
     WriteMode,
 )
-from mapchar.core.context import KEY_COMPLETE, KEY_CONSUMED, PipelineContext
+from mapchar.core.context import (
+    KEY_COMPLETE,
+    KEY_CONSUMED,
+    KEY_HEADER_SIZE,
+    PipelineContext,
+)
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.core.font import Font, TextBox
@@ -52,6 +57,7 @@ from mapchar.engines.relsearch import Hit, entries_from_hit
 from mapchar.pipeline.exchange.atlas import read_atlas, write_atlas
 from mapchar.pipeline.exchange.cartographer import (
     parse_command_file,
+    shift_config,
     write_command_file,
 )
 from mapchar.pipeline.exchange.script_import import apply_script
@@ -154,7 +160,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_widgets(self) -> None:
-        self.setWindowTitle("mapchar")
+        self.setWindowTitle(APP_NAME)
         self.resize(1100, 720)
 
         self.files_panel = FilesPanel(self.workspace)
@@ -1829,7 +1835,7 @@ class MainWindow(QMainWindow):
         name = os.path.basename(self.project_path) if self.project_path else "Untitled"
         mark = "*" if self._project_dirty() else ""
         entry = f" — {self._entry.name}" if self._entry else ""
-        self.setWindowTitle(f"{name}{mark}{entry} — mapchar")
+        self.setWindowTitle(f"{name}{mark}{entry} — {APP_NAME}")
 
     # ------------------------------------------------------------------
     # Navigation
@@ -2094,6 +2100,10 @@ class MainWindow(QMainWindow):
         base = os.path.dirname(os.path.abspath(path))
         notices = [n.message for n in cf.notices]
         created: list[Entry] = []
+        # Cartographer addresses are file offsets; blocks address the payload
+        # the container yields, which drops the file's header.
+        doc = self._load_document(file_entry)
+        header = int(doc.ctx.get(KEY_HEADER_SIZE, 0) or 0) if doc is not None else 0
         self.undo_stack.beginMacro(f"Import {os.path.basename(path)}")
         try:
             for sub in cf.sub_tables:
@@ -2114,7 +2124,9 @@ class MainWindow(QMainWindow):
                     block.name,
                     file_entry.path,
                     parent=file_entry,
-                    config=replace(block.config, table_id=table_id),
+                    config=shift_config(
+                        replace(block.config, table_id=table_id), -header
+                    ),
                 )
                 self._push_add(entry)
                 created.append(entry)
@@ -2548,7 +2560,7 @@ class MainWindow(QMainWindow):
 
     def _open_project_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", self._last_dir(), "mapchar projects (*.mapchar)"
+            self, "Open Project", self._last_dir(), f"{APP_NAME} projects (*.mapchar)"
         )
         if path:
             self.open_project(path)
@@ -2602,7 +2614,7 @@ class MainWindow(QMainWindow):
             self,
             "Save Project",
             self.project_path or os.path.join(self._last_dir(), "project.mapchar"),
-            "mapchar projects (*.mapchar)",
+            f"{APP_NAME} projects (*.mapchar)",
         )
         if not path:
             return False
@@ -2844,8 +2856,13 @@ class MainWindow(QMainWindow):
             if table_entry and table_entry.path
             else "main.tbl"
         )
+        parent_doc = self._load_document(entry.parent) if entry.parent else None
+        header = int(parent_doc.ctx.get(KEY_HEADER_SIZE, 0) or 0) if parent_doc else 0
         text, notes = write_command_file(
-            entry.name, entry.config, table_file, table_id=entry.config.table_id or None
+            entry.name,
+            shift_config(entry.config, header),
+            table_file,
+            table_id=entry.config.table_id or None,
         )
         if not text:
             self._error("\n".join(notes))
@@ -3030,9 +3047,9 @@ class MainWindow(QMainWindow):
     def _about(self) -> None:
         QMessageBox.about(
             self,
-            "mapchar",
-            f"mapchar {__version__}\nA text viewer and editor for retro-game ROMs.",
+            APP_NAME,
+            f"{APP_NAME} {__version__}\nA text viewer and editor for retro-game ROMs.",
         )
 
     def _error(self, message: str) -> None:
-        QMessageBox.warning(self, "mapchar", message)
+        QMessageBox.warning(self, APP_NAME, message)

@@ -8,8 +8,10 @@ import sys
 
 def main(argv: list[str] | None = None) -> int:
     from PySide6.QtCore import QSettings, QStandardPaths
+    from PySide6.QtGui import QIcon, QPixmap
     from PySide6.QtWidgets import QApplication, QMessageBox
 
+    from mapchar import resources
     from mapchar.plugins.discovery import (
         TrustStore,
         discover,
@@ -25,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName("mapchar")
     settings = QSettings("mapchar", "mapchar")
     apply_theme(app, str(settings.value("theme", "light")))
+    # The live window and taskbar icon on every platform; the packaged Windows
+    # and macOS apps also embed packaging/mapchar.ico / .icns at build time.
+    icon = QPixmap()
+    icon.loadFromData(resources.read_bytes("icons", "app.png"))
+    app.setWindowIcon(QIcon(icon))
 
     app_data = QStandardPaths.writableLocation(
         QStandardPaths.StandardLocation.AppDataLocation

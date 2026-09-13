@@ -504,3 +504,21 @@ def test_fonts_panel_lists_and_binds(window, tmp_path):
     assert block.box is not None and block.box.font_index == 0
     window.fonts_panel.rebuild()
     assert window.fonts_panel.tree.topLevelItem(0).childCount() == 1
+
+
+def test_cartographer_import_strips_the_header(window, tmp_path):
+    from mapchar.core.block import RangeSource
+    from mapchar.plugins.builtins.containers import NES_MAGIC
+
+    header = NES_MAGIC + bytes([1, 0, 0, 0]) + b"\x00" * 8
+    rom = tmp_path / "h.nes"
+    rom.write_bytes(header + bytes.fromhex("41 42 00 42 00") + b"\xff" * 8)
+    (tmp_path / "main.tbl").write_text("@main\n41=A\n42=B\n/00=[end]\n")
+    (tmp_path / "cmd.txt").write_text(
+        "#BLOCK NAME: Intro\n#TYPE: NORMAL\n#METHOD: RAW\n#SCRIPT START: $10\n"
+        "#SCRIPT STOP: $15\n#TABLE: main.tbl\n#COMMENTS: No\n#END BLOCK\n"
+    )
+    window.open_rom(str(rom))
+    block = window.import_cartographer(str(tmp_path / "cmd.txt"))[0]
+    assert block.config.source == RangeSource(0, 5)
+    assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
