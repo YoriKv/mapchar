@@ -318,7 +318,8 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     payload = b"HELLO HELLO HELLO\x00WORLD WORLD\x00" * 3
     packed = GbaLz77().compress(payload, PipelineContext())
     rom = tmp_path / "z.bin"
-    rom.write_bytes(b"\xff" * 16 + packed + b"\xff" * 32)
+    slot = len(packed) + 8  # the compressed slot has spare room at its end
+    rom.write_bytes(b"\xff" * 16 + packed + b"\xff" * 8 + b"\xff" * 24)
     tbl = tmp_path / "t.tbl"
     tbl.write_text("@mapchar table 1\n@table main\n@charset ascii\n/00=[end]\n")
     file_entry = window.open_rom(str(rom))
@@ -336,7 +337,7 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
         config=BlockConfig(RangeSource(0, len(payload)), EndToken(), "main", fill=0x20),
         compression_id="gba_lz77",
         slice_offset=16,
-        slice_length=len(packed),
+        slice_length=slot,
     )
     window._push_add(block)
     window._activate_entry(block)
@@ -344,7 +345,7 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     window._on_translation_edited(0, "HI HI HI[end]")
     assert window._write_blocks([block])
     data = rom.read_bytes()
-    assert data[:16] == b"\xff" * 16 and data[16 + len(packed) :] == b"\xff" * 32
+    assert data[:16] == b"\xff" * 16 and data[16 + slot :] == b"\xff" * 24
     out = GbaLz77().decompress(data[16:], PipelineContext())
     assert out.startswith(b"HI HI HI\x00" + b" " * 9 + b"WORLD WORLD\x00")
     assert block.doc.strings[0].original_text() == "HI HI HI[end]"
