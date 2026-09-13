@@ -1,9 +1,6 @@
 /CLAUDE.md
 /docs/
 /tmp/
-# Worked .mapchar projects over real carts, plus the scratch that produced them.
-# Local by nature: every one addresses a ROM in a sibling checkout by relative
-# path, so the settings are only meaningful on a machine laid out the same way.
 /sample-projects/
 
 # --- Python ---
@@ -41,6 +38,10 @@ coverage.xml
 htmlcov/
 
 # --- Packaging / release build outputs ---
+# `packaging/build.py` — run locally or by the release workflow — leaves the
+# frozen app in dist/ and PyInstaller's scratch in build/, both already covered
+# by the Python section above; the generated spec file lands at the repo root.
+# The installer formats below are ignored pre-emptively; nothing emits them yet.
 *.spec
 *.dmg
 *.app/

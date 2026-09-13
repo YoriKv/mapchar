@@ -1,0 +1,119 @@
+name: Release
+
+# Push a version tag (e.g. `v0.1.0`) to build the app for Windows, Linux, and
+# macOS with PyInstaller and publish a GitHub Release with the artifacts:
+#   - mapchar-win.zip        (portable Windows app folder, zipped)
+#   - mapchar-linux.tar.gz   (portable Linux app folder, tarred)
+#   - mapchar-mac-arm64.zip  (macOS .app bundle, Apple Silicon)
+#   - mapchar-mac-intel.zip  (macOS .app bundle, Intel)
+# The release body is the matching `## v<version>` section of CHANGELOG.md
+# (auto-generated commit notes are appended; if the section is missing, the
+# release falls back to the auto notes alone).
+#
+# The build itself is NOT described here: `packaging/build.py` holds the whole
+# recipe — PyInstaller flags, per-platform icon, the macOS plist stamp, and the
+# archive format — and each runner just calls it. A developer running that same
+# script locally therefore builds exactly what a release ships. Keep build
+# changes in that script, not in this file.
+#
+# Structure mirrors the CI workflow: a per-OS `build` matrix always uploads its
+# artifact to the run; a single `release` job (tag push only) downloads them all
+# and publishes ONE release, so the OS builds never race to create it. A manual
+# run (workflow_dispatch) runs only the build matrix — handy for testing the
+# build without publishing anything.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two native macOS builds. uv's Python is single-arch, so PyInstaller
+        # can't emit a universal2 app — instead each architecture builds on its
+        # own runner. macos-latest is Apple Silicon; macos-15-intel is GitHub's
+        # last x86_64 image (hosted until Aug 2027). build.py tells the two
+        # apart by the machine it is running on and names its archive to match.
+        os: [windows-latest, ubuntu-latest, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # PySide6 links a handful of system libraries the Linux runner does not
+      # ship by default; PyInstaller must find them at build time to bundle them.
+      - name: Install Qt runtime libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      # Split by OS only to spell the interpreter the way each runner image
+      # guarantees it (`python` on Windows, `python3` elsewhere); only the
+      # matching step runs. build.py needs nothing but the stdlib and uv.
+      - name: Build app (Windows)
+        if: runner.os == 'Windows'
+        run: python packaging\build.py --archive
+
+      - name: Build app (Unix)
+        if: runner.os != 'Windows'
+        run: python3 packaging/build.py --archive
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: |
+            dist/mapchar-*.zip
+            dist/mapchar-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    # Tag push only: gather all OS builds and publish a single release.
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Pull this version's section out of CHANGELOG.md for the release body.
+      # Matches the heading's second field against the tag (`## v0.1.0 - …`), so
+      # a trailing date / "unreleased" note is ignored. No matching section ⇒
+      # empty file ⇒ auto-generated notes only.
+      - name: Extract changelog section
+        run: |
+          awk -v tag="${GITHUB_REF_NAME}" '
+            /^## / { on = ($2 == tag) ; next }
+            on' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::CHANGELOG.md has no \"## ${GITHUB_REF_NAME}\" section — release body will be auto-generated notes only."
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: artifacts/**/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
