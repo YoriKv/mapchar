@@ -1,0 +1,7 @@
+@main
+01=foo
+02=bar
+03=cat
+/FF=[end]\n
+FE=[line]\n
+!AB=<[Item Name:]>,<@ItemNames>:1

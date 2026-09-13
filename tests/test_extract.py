@@ -56,14 +56,14 @@ def test_fixed_length_range():
     cfg = BlockConfig(
         RangeSource(0, 8), FixedLength(4, stop_at_end=True), "main", show_end=True
     )
-    assert texts(extract(data, cfg, TS)) == ["AB[end][end]", "AABC[end]"]
+    assert texts(extract(data, cfg, TS)) == ["AB[end][end]\n", "AABC[end]\n"]
 
 
 def test_fixed_source_with_lines():
     data = bytes.fromhex("41 42 43 41 42 43")
     cfg = BlockConfig(FixedSource(0, 2, 3), FixedLength(3), "main", line_length=2)
     ex = extract(data, cfg, TS)
-    assert texts(ex) == ["AB[line]C", "AB[line]C"]
+    assert texts(ex) == ["AB[line]\nC", "AB[line]\nC"]
     ex = extract(data, BlockConfig(FixedSource(0, 3, 3), FixedLength(3), "main"), TS)
     assert len(ex.strings) == 2 and ex.notices
 

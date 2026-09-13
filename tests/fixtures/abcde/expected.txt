@@ -1,0 +1,24 @@
+//GAME NAME:		Synthetic
+
+//BLOCK #000 NAME:		Normal
+//Block Range: $0 - $F
+foobarcat[end]
+barfoo[line]
+cat[end]
+[Item Name:][Potion]bar[Item Name:][Sword][end]
+//BLOCK #001 NAME:		Fixed
+//Block Range: $F - $17
+foobarcatfoobar[end]
+//BLOCK #002 NAME:		Lines
+//Block Range: $F - $17
+foobarcat[line]
+foobarcat[line]
+foobar
+//BLOCK #003 NAME:		Switch
+//Block Range: $17 - $1A
+[Item Name:][HolyHandGrenadeOfAntioch][end]
+//BLOCK #004 NAME:		Realigned
+//Block Range: $1A - $22
+foo[end]
+<$00><$00>bar[end]
+<$00><$00>

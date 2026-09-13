@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -57,9 +58,13 @@ from mapchar.ui.raw_widget import BYTES_PER_ROW, RawWidget, RowModel
 from mapchar.ui.search_window import SearchWindow
 from mapchar.ui.table_editor import TableEditor
 from mapchar.ui.tables_panel import TablesPanel
+from mapchar.ui.text_widget import TextWidget, text_model
 from mapchar.ui.undo_commands import EntryCommand, OffsetCommand
 
 MAX_RECENT = 10
+TEXT_WINDOW_BYTES = 4096
+"""How many bytes the text mode decodes from the offset."""
+DISPLAY_MODE_KEY = "view/display_mode"
 
 
 class MainWindow(QMainWindow):
@@ -143,12 +148,16 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.raw = RawWidget()
+        self.text = TextWidget()
+        self.display = QStackedWidget()
+        self.display.addWidget(self.raw)
+        self.display.addWidget(self.text)
         self.strings = QTableWidget(0, 4)
         self.strings.setHorizontalHeaderLabels(["#", "Address", "Bytes", "Original"])
         self.strings.horizontalHeader().setStretchLastSection(True)
         self.strings.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.strings.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.tabs.addTab(self.raw, "Raw")
+        self.tabs.addTab(self.display, "Raw")
         self.tabs.addTab(self.strings, "Strings")
         layout.addWidget(self.tabs, 1)
 
@@ -158,6 +167,13 @@ class MainWindow(QMainWindow):
         self.offset_box = QLineEdit()
         self.offset_box.setMaximumWidth(120)
         self.offset_box.setPlaceholderText("offset (hex)")
+        self.mode_button = QPushButton("Aligned")
+        self.mode_button.setCheckable(True)
+        self.mode_button.setToolTip(
+            "Switch between the aligned hex/text view and a text box (Ctrl+Shift+A)"
+        )
+        self.mode_button.setMaximumWidth(80)
+        nl.addWidget(self.mode_button)
         nl.addWidget(QLabel("Offset"))
         nl.addWidget(self.offset_box)
         for text, delta, tip in (
@@ -207,6 +223,11 @@ class MainWindow(QMainWindow):
         self.block_edit.clicked.connect(self._edit_block)
         self.block_dump.clicked.connect(self._dump)
         self.raw.offset_requested.connect(self._go_to)
+        self.text.selection_changed.connect(self._on_text_selection)
+        self.mode_button.toggled.connect(self._on_mode_toggled)
+        self.mode_button.setChecked(
+            str(self.settings.value(DISPLAY_MODE_KEY, "aligned")) == "text"
+        )
         self.raw.selection_changed.connect(self._on_selection)
         self.raw.context_menu_requested.connect(self._raw_menu)
         self.offset_box.returnPressed.connect(self._on_offset_typed)
@@ -257,6 +278,9 @@ class MainWindow(QMainWindow):
         view_menu = bar.addMenu("&View")
         act(view_menu, "Raw", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1")
         act(view_menu, "Strings", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2")
+        act(
+            view_menu, "Aligned / Text display", self.mode_button.toggle, "Ctrl+Shift+A"
+        )
         view_menu.addSeparator()
         act(view_menu, "Table Editor…", self._show_table_editor, "Ctrl+Shift+T")
         view_menu.addSeparator()
@@ -711,6 +735,7 @@ class MainWindow(QMainWindow):
                     break
                 pos = r.end_bit
         self.raw.set_model(RowModel(self._offset, data, tokens, string_starts, total))
+        self._refresh_text_mode(doc, tables)
         if is_block:
             self._extract_current(entry, doc, tables)
             self._fill_strings(doc)
@@ -724,6 +749,34 @@ class MainWindow(QMainWindow):
         self._update_nav_status()
         self.search_window.set_data(doc.data)
         self._update_title()
+
+    def _refresh_text_mode(self, doc: Document, tables: TableSet | None) -> None:
+        if self.display.currentWidget() is not self.text:
+            return
+        data = doc.data[self._offset : self._offset + TEXT_WINDOW_BYTES]
+        tokens = []
+        if tables is not None and data:
+            bits = Bits(data)
+            pos = 0
+            while pos < bits.length:
+                r = decode(bits, tables, pos, DecodeRules(end_terminated=True))
+                tokens.extend(r.tokens)
+                if r.end_bit <= pos or r.ended_by in (EndedBy.DATA, EndedBy.LIMIT):
+                    break
+                pos = r.end_bit
+        self.text.set_model(text_model(tokens, self._offset, len(data)))
+        if self._selection:
+            self.text.select_bytes(*self._selection)
+
+    def _on_mode_toggled(self, text_mode: bool) -> None:
+        self.display.setCurrentWidget(self.text if text_mode else self.raw)
+        self.mode_button.setText("Text" if text_mode else "Aligned")
+        self.settings.setValue(DISPLAY_MODE_KEY, "text" if text_mode else "aligned")
+        self._refresh_view()
+
+    def _on_text_selection(self, start: int, end: int) -> None:
+        self.raw.set_selection(start, end)
+        self._on_selection(start, end)
 
     def _extract_current(
         self, entry: Entry, doc: Document, tables: TableSet | None
@@ -861,6 +914,8 @@ class MainWindow(QMainWindow):
     def _on_selection(self, start: int, end: int) -> None:
         self._selection = (start, end) if end > start else None
         self._update_nav_status()
+        if self._selection and self.display.currentWidget() is self.text:
+            self.text.select_bytes(*self._selection)
         if self._selection and self._doc is not None:
             s, e = self._selection
             for row, rec in enumerate(self._doc.strings):

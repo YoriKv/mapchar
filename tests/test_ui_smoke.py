@@ -94,3 +94,25 @@ def test_navigation_and_selection(window, tmp_path):
     window._select_bytes(0x210, 4)
     assert window.raw.selection() == (0x210, 0x214)
     assert "selected" in window.nav_status.text()
+
+
+def test_text_display_mode(window, tmp_path):
+    rom = tmp_path / "t.bin"
+    rom.write_bytes(bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4)
+    tbl = tmp_path / "t.tbl"
+    tbl.write_text(TABLE)
+    window.open_rom(str(rom))
+    window.open_table(str(tbl))
+    window.mode_button.setChecked(True)
+    assert window.display.currentWidget() is window.text
+    assert window.text.edit.toPlainText() == "AB[end]BA[end][$FF][$FF][$FF][$FF]"
+    window.raw.set_selection(3, 5)
+    window._on_selection(3, 5)
+    cursor = window.text.edit.textCursor()
+    assert (cursor.selectionStart(), cursor.selectionEnd()) == (7, 9)
+    cursor.setPosition(0)
+    cursor.setPosition(7, cursor.MoveMode.KeepAnchor)
+    window.text.edit.setTextCursor(cursor)
+    assert window.raw.selection() == (0, 3)
+    window.mode_button.setChecked(False)
+    assert window.display.currentWidget() is window.raw

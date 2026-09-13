@@ -23,8 +23,12 @@ from mapchar.engines.decode import DecodeResult, DecodeRules, EndedBy, decode
 
 
 def artificial(label: str, bit: int) -> Token:
-    """A zero-width code token that stands for a boundary, not for bytes."""
-    return Token("", bit, bit, Entry("", EntryKind.CODE, label))
+    """A zero-width code token that stands for a boundary, not for bytes.
+
+    It carries a line break like Cartographer's ``LINE CTRL\n``, so dumps of
+    fixed strings read line by line.
+    """
+    return Token("", bit, bit, Entry("", EntryKind.TEXT, f"[{label}]\\n"))
 
 
 def extract(data: bytes, config: BlockConfig, tables: TableSet) -> Extraction:
