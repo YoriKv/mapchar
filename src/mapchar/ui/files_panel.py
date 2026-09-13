@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QLineEdit,
@@ -13,15 +14,19 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.project.workspace import Entry, EntryKind, Workspace
+from mapchar.ui.glyphs import Glyph
+from mapchar.ui.icon_font import glyph_pixmap
+from mapchar.ui.theme import WARNING_INK
 
 GROUPS = {EntryKind.FILE: "ROMs", EntryKind.TABLE: "Tables", EntryKind.FONT: "Fonts"}
-ICONS = {
-    EntryKind.FILE: "▤",
-    EntryKind.BLOCK: "¶",
-    EntryKind.BOOKMARK: "◆",
-    EntryKind.TABLE: "≡",
-    EntryKind.FONT: "A",
+# The row markers: a glyph in a palette role. ROMs and fonts sit under their
+# own group headings and carry no mark; a bookmark wears the accent.
+MARKERS: dict[EntryKind, tuple[Glyph, QPalette.ColorRole]] = {
+    EntryKind.BLOCK: (Glyph.GRID_ROWS, QPalette.ColorRole.Text),
+    EntryKind.BOOKMARK: (Glyph.FLAG, QPalette.ColorRole.Highlight),
+    EntryKind.TABLE: (Glyph.GRID, QPalette.ColorRole.Text),
 }
+ICON_SIZE = QSize(13, 16)
 
 
 class FilesPanel(QWidget):
@@ -41,6 +46,8 @@ class FilesPanel(QWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.setIconSize(ICON_SIZE)
+        self._icons: dict[tuple[Glyph, str], QIcon] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.filter)
@@ -86,19 +93,47 @@ class FilesPanel(QWidget):
         item = QTreeWidgetItem([self._label(entry)])
         item.setData(0, Qt.ItemDataRole.UserRole, id(entry))
         item.setToolTip(0, self._tooltip(entry))
+        item.setIcon(0, self._marker(entry))
         self._items[id(entry)] = item
         return item
+
+    def _marker(self, entry: Entry) -> QIcon:
+        """The row's icon: its kind's mark, or a warning when its file is gone."""
+        if entry.missing:
+            return self._icon(Glyph.QUESTION, WARNING_INK, "warning")
+        spec = MARKERS.get(entry.kind)
+        if spec is None:
+            return QIcon()
+        glyph, role = spec
+        color = self.palette().color(QPalette.ColorGroup.Active, role)
+        return self._icon(glyph, color, role.name)
+
+    def _icon(self, glyph: Glyph, color: QColor, key: str) -> QIcon:
+        """Baked once per glyph and color; dropped on a palette change."""
+        icon = self._icons.get((glyph, key))
+        if icon is None:
+            icon = QIcon(
+                glyph_pixmap(glyph, color, ICON_SIZE, self.devicePixelRatioF())
+            )
+            self._icons[(glyph, key)] = icon
+        return icon
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() is QEvent.Type.PaletteChange:
+            self._icons.clear()
+            self.refresh_labels()
 
     @staticmethod
     def _label(entry: Entry) -> str:
         mark = " ●" if entry.dirty else ""
-        missing = " ?" if entry.missing else ""
+        missing = ""
         extra = ""
         if entry.kind is EntryKind.BLOCK and entry.doc is not None:
             extra = f"  ({len(entry.doc.strings)})"
         if entry.kind is EntryKind.FILE and entry.extra_paths:
             extra = f"  [{1 + len(entry.extra_paths)} files]"
-        return f"{ICONS[entry.kind]} {entry.name}{extra}{mark}{missing}"
+        return f"{entry.name}{extra}{mark}{missing}"
 
     @staticmethod
     def _tooltip(entry: Entry) -> str:
@@ -117,6 +152,7 @@ class FilesPanel(QWidget):
         if item is not None:
             item.setText(0, self._label(entry))
             item.setToolTip(0, self._tooltip(entry))
+            item.setIcon(0, self._marker(entry))
 
     def refresh_labels(self) -> None:
         for entry in self.workspace.entries:

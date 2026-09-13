@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen
+from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.engines.layout import Layout, layout
 from mapchar.ui import theme
+from mapchar.ui.glyphs import Glyph
+from mapchar.ui.icon_font import glyph_icon
 
 
 class GlyphSheet:
@@ -148,8 +150,12 @@ class PreviewWindow(QWidget):
         pv.addWidget(self.canvas, 1)
         row = QHBoxLayout()
         self.status = QLabel("")
-        self.prev = QPushButton("◀ Page")
-        self.next = QPushButton("Page ▶")
+        self.prev = QPushButton("Page")
+        self.next = QPushButton("Page")
+        self.prev.setToolTip("Previous page")
+        self.next.setToolTip("Next page")
+        self.next.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self._bake_icons()
         self.zoom = QSpinBox()
         self.zoom.setRange(1, 8)
         self.zoom.setValue(3)
@@ -280,6 +286,19 @@ class PreviewWindow(QWidget):
         self.resize(640, 480)
 
     # --- state -----------------------------------------------------------
+
+    def _bake_icons(self) -> None:
+        """The page arrows in the theme's button-text color; pixmaps, so they
+        are re-baked on a palette change."""
+        color = self.palette().color(QPalette.ColorRole.ButtonText)
+        ratio = self.devicePixelRatioF()
+        self.prev.setIcon(glyph_icon(Glyph.ARROW_LEFT, color, ratio=ratio))
+        self.next.setIcon(glyph_icon(Glyph.ARROW_RIGHT, color, ratio=ratio))
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() is QEvent.Type.PaletteChange:
+            self._bake_icons()
 
     def set_font(self, font: Font | None) -> None:
         self._font = font

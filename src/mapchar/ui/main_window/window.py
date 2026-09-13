@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, Qt
-from PySide6.QtGui import QAction, QKeySequence, QUndoStack
+from PySide6.QtGui import QAction, QKeySequence, QPalette, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -103,7 +103,9 @@ from mapchar.ui.dialogs import (
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.fonts_panel import FontsPanel
+from mapchar.ui.glyphs import Glyph
 from mapchar.ui.hex_panel import HexPanel
+from mapchar.ui.icon_font import glyph_icon
 from mapchar.ui.preview_window import PreviewWindow
 from mapchar.ui.raw_widget import BYTES_PER_ROW, RawWidget, RowModel
 from mapchar.ui.scan_window import ScanWindow
@@ -261,22 +263,29 @@ class MainWindow(QMainWindow):
         nl.addWidget(self.mode_button)
         nl.addWidget(QLabel("Offset"))
         nl.addWidget(self.offset_box)
-        for text, delta, tip in (
-            ("⇤", "home", "Start of file (Home)"),
-            ("−P", -1, "Page up (PgUp)"),
-            ("−R", -BYTES_PER_ROW, "Row up (Up)"),
-            ("−B", -1, "Byte back (-)"),
-            ("+B", 1, "Byte forward (+)"),
-            ("+R", BYTES_PER_ROW, "Row down (Down)"),
-            ("+P", 1, "Page down (PgDn)"),
-            ("⇥", "end", "End of file (End)"),
+        # The row steps wear the bundled icon font; the byte and page steps
+        # stay words, since the font has no mark that says "byte" or "page".
+        self._step_icons: list[tuple[QPushButton, Glyph]] = []
+        for text, glyph, delta, tip in (
+            ("Home", None, "home", "Start of file (Home)"),
+            ("Pg Up", None, "page-up", "Page up (PgUp)"),
+            ("", Glyph.ARROW_UP, -BYTES_PER_ROW, "Row up (Up)"),
+            ("−B", None, -1, "Byte back (-)"),
+            ("+B", None, 1, "Byte forward (+)"),
+            ("", Glyph.ARROW_DOWN, BYTES_PER_ROW, "Row down (Down)"),
+            ("Pg Dn", None, "page-down", "Page down (PgDn)"),
+            ("End", None, "end", "End of file (End)"),
         ):
             b = QPushButton(text)
             b.setToolTip(tip)
-            b.setMaximumWidth(40)
-            if text in ("−P", "+P"):
+            b.setFixedWidth(48)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            if glyph is not None:
+                self._step_icons.append((b, glyph))
+            if delta in ("page-up", "page-down"):
+                d = -1 if delta == "page-up" else 1
                 b.clicked.connect(
-                    lambda _=False, d=delta: self._move(d * self.raw.visible_bytes())
+                    lambda _=False, d=d: self._move(d * self.raw.visible_bytes())
                 )
             elif isinstance(delta, int):
                 b.clicked.connect(lambda _=False, d=delta: self._move(d))
@@ -285,6 +294,7 @@ class MainWindow(QMainWindow):
             else:
                 b.clicked.connect(self._go_end)
             nl.addWidget(b)
+        self._bake_icons()
         nl.addStretch(1)
         self.nav_status = QLabel("")
         nl.addWidget(self.nav_status)
@@ -477,6 +487,15 @@ class MainWindow(QMainWindow):
 
         apply_theme(QApplication.instance(), name)
         self.settings.setValue("theme", name)
+        self._bake_icons()
+
+    def _bake_icons(self) -> None:
+        """Stamp the navigation bar's step arrows in the theme's button-text
+        color. Pixmaps, so re-run on a theme switch."""
+        color = self.palette().color(QPalette.ColorRole.ButtonText)
+        ratio = self.devicePixelRatioF()
+        for button, glyph in self._step_icons:
+            button.setIcon(glyph_icon(glyph, color, ratio=ratio))
 
     def closeEvent(self, event) -> None:
         if not self._confirm_discard("quit"):

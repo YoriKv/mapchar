@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from mapchar.project.workspace import Entry, EntryKind, Workspace
+from mapchar.ui.glyphs import Glyph
+from mapchar.ui.icon_font import glyph_icon
 
 
 class TablesPanel(QWidget):
@@ -43,12 +46,27 @@ class TablesPanel(QWidget):
             top.setData(0, Qt.ItemDataRole.UserRole, ("entry", id(entry)))
             self.tree.addTopLevelItem(top)
             for table in entry.tables:
-                mark = " ◀" if table.id == self._start_id else ""
-                item = QTreeWidgetItem([f"@{table.id}{mark}", str(len(table.entries))])
+                item = QTreeWidgetItem([f"@{table.id}", str(len(table.entries))])
                 item.setData(0, Qt.ItemDataRole.UserRole, ("table", table.id))
+                if table.id == self._start_id:
+                    item.setIcon(0, self._start_icon())
+                    item.setToolTip(0, "The start table")
                 top.addChild(item)
             top.setExpanded(True)
         self.tree.resizeColumnToContents(0)
+
+    def _start_icon(self):
+        """The start table's mark, in the accent; baked, so a palette change
+        rebuilds the tree."""
+        color = self.palette().color(
+            QPalette.ColorGroup.Active, QPalette.ColorRole.Highlight
+        )
+        return glyph_icon(Glyph.TARGET, color, ratio=self.devicePixelRatioF())
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() is QEvent.Type.PaletteChange:
+            self.rebuild()
 
     def _on_double(self, item: QTreeWidgetItem, column: int) -> None:
         kind, value = item.data(0, Qt.ItemDataRole.UserRole)
