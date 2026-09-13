@@ -267,10 +267,6 @@ def _finish_block(
             line_label if get("LINE END") == "Yes" else ("" if fixed_line else "line")
         ),
     )
-    if fixed_line and get("LINE END") != "Yes":
-        notices.append(
-            Notice(f"{name}: LINE END is No; lines are joined with [line]", Level.INFO)
-        )
     if method != "RAW" and stop is None:
         notices.append(
             Notice(f"{name}: no SCRIPT STOP; strings run to end of file", Level.INFO)

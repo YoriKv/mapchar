@@ -25,9 +25,16 @@ GAMES = {
 def main() -> int:
     from PySide6.QtWidgets import QApplication
 
+    from mapchar.ui import dialogs
     from mapchar.ui.main_window import MainWindow
 
     app = QApplication(sys.argv)  # noqa: F841 - Qt needs one alive
+    # Headless: notices go to the terminal instead of a modal dialog.
+    dialogs.TextDialog.exec = lambda self: print(  # type: ignore[method-assign]
+        self.findChild(
+            __import__("PySide6.QtWidgets").QtWidgets.QPlainTextEdit
+        ).toPlainText()
+    )
     made = 0
     for game, rom_name in GAMES.items():
         folder = os.path.join(ROOT, "sample-projects", game)
