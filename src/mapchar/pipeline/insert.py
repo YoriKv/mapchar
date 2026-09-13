@@ -95,7 +95,7 @@ def encode_string(
 
 
 def _strip_artificial(text: str, config: BlockConfig) -> list[str]:
-    """Split fixed-line text on the artificial line code; drop the end code.
+    """Drop the artificial line and end codes from fixed-string text.
 
     Only a final ``[end]`` is artificial; one earlier in the text is the
     table's own end token and stays.
@@ -114,8 +114,7 @@ def _strip_artificial(text: str, config: BlockConfig) -> list[str]:
         if isinstance(item, TextRun):
             pieces[-1].append(escape_text(item.text))
             continue
-        if config.line_length and item.label == config.line_label and not item.words:
-            pieces.append([])
+        if config.line_label and item.label == config.line_label and not item.words:
             continue
         words = " ".join(item.words)
         pieces[-1].append(f"[{item.label}{' ' + words if words else ''}]")
@@ -123,28 +122,16 @@ def _strip_artificial(text: str, config: BlockConfig) -> list[str]:
 
 
 def _encode_fixed(text: str, config: BlockConfig, tables: TableSet) -> bytes:
+    """A fixed-length string; fixed-line codes are dump formatting and go."""
     st = config.string_type
     length = st.length if isinstance(st, FixedLength) else config.source.length  # type: ignore[union-attr]
     stop_at_end = isinstance(st, FixedLength) and st.stop_at_end
-    pieces = _strip_artificial(text, config)
-    if config.line_length:
-        out = b""
-        for i, piece in enumerate(pieces):
-            r = encode(piece, tables, end_terminated=stop_at_end)
-            if len(r.bits) % 8:
-                raise EncodeError("a line is not a whole number of bytes")
-            room = min(config.line_length, length - i * config.line_length)
-            if len(r.data) > room:
-                raise EncodeError(
-                    f"line {i + 1} is {len(r.data) - room} byte(s) too long"
-                )
-            out += r.data + bytes([config.fill]) * (room - len(r.data))
-        if len(out) > length:
-            raise EncodeError(f"{len(pieces)} lines do not fit in {length} bytes")
-        return out
-    r = encode(pieces[0], tables, end_terminated=stop_at_end)
+    body = "".join(_strip_artificial(text, config))
+    r = encode(body, tables, end_terminated=stop_at_end)
     if len(r.bits) % 8:
         raise EncodeError("the encoding is not a whole number of bytes")
+    if len(r.data) > length:
+        raise EncodeError(f"{len(r.data) - length} byte(s) too long for {length}")
     return r.data
 
 

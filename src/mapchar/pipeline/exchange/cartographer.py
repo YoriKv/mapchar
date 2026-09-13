@@ -263,7 +263,9 @@ def _finish_block(
         bound=stop,
         show_end=fixed and get("STRING END") == "Yes",
         end_label=end_label,
-        line_label=line_label if fixed_line and get("LINE END") == "Yes" else "line",
+        line_label=(
+            line_label if get("LINE END") == "Yes" else ("" if fixed_line else "line")
+        ),
     )
     if fixed_line and get("LINE END") != "Yes":
         notices.append(
@@ -337,8 +339,11 @@ def write_command_file(
             lines.append(f"#END CTRL: [{config.end_label}]")
         if config.line_length:
             lines.append(f"#LINE LENGTH: {config.line_length}")
-            lines.append("#LINE END: Yes")
-            lines.append(f"#LINE CTRL: [{config.line_label}]")
+            if config.line_label:
+                lines.append("#LINE END: Yes")
+                lines.append(f"#LINE CTRL: [{config.line_label}]")
+            else:
+                lines.append("#LINE END: No")
     else:
         lines.append("#TYPE: NORMAL")
     if isinstance(src, RangeSource | FixedSource):

@@ -82,6 +82,12 @@ def test_fixed_pointer_block_and_sub_table():
     )
     assert b.config.string_type == FixedLength(8, True)
     assert b.config.line_length == 4 and b.config.line_label == "LINE"
+    assert (
+        parse_command_file(text.replace("#LINE END: Yes", "#LINE END: No"))
+        .blocks[0]
+        .config.line_label
+        == ""
+    )
     assert b.config.show_end and b.config.end_label == "end"
     assert b.config.strings_per_pointer == 2 and b.config.realign == (4, 0)
     assert b.config.skips == ((0x200, 0x210),) and b.table_id == "upper"

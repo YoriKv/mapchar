@@ -69,10 +69,11 @@ def test_fixed_strings_and_lines():
     cfg = BlockConfig(
         FixedSource(0, 2, 3), FixedLength(3), "main", line_length=2, fill=0xEE
     )
+    # Line codes are dump formatting; the string is one fixed-length run.
     res, out = run(data, cfg, {0: "B[line]\nC"})
-    assert res.ok and out == bytes.fromhex("42 EE 43 41 42 43")
-    res, out = run(data, cfg, {0: "BBB[line]C"})
-    assert not res.ok and "line 1" in res.problems[0].message
+    assert res.ok and out == bytes.fromhex("42 43 EE 41 42 43")
+    res, out = run(data, cfg, {0: "BBBB[line]C"})
+    assert not res.ok and "too long" in res.problems[0].message
     cfg = BlockConfig(
         RangeSource(0, 6), FixedLength(3, True), "main", show_end=True, fill=0xEE
     )

@@ -29,7 +29,8 @@ def artificial(label: str, bit: int) -> Token:
     It carries a line break like Cartographer's ``LINE CTRL\n``, so dumps of
     fixed strings read line by line.
     """
-    return Token("", bit, bit, Entry("", EntryKind.TEXT, f"[{label}]\\n"))
+    text = f"[{label}]\\n" if label else "\\n"
+    return Token("", bit, bit, Entry("", EntryKind.TEXT, text))
 
 
 def extract(
