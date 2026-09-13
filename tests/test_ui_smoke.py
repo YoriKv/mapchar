@@ -1197,3 +1197,88 @@ def test_the_bar_pickers_are_narrow_and_open_to_their_longest_item(window):
     pick.showPopup()
     assert pick.view().width() >= longest
     pick.hidePopup()
+
+
+def test_a_reopened_block_with_translations_is_unsaved_and_writes(window, tmp_path):
+    """Translations a project carries are not on disk: the block they belong
+    to has to read unsaved again, or Write All would report nothing to write."""
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    add_block(window, file_entry, "b", RangeSource(0, 6), fill=0xEE)
+    window._on_translation_edited(0, "A[end]")
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))  # Continue Without, by the fixture
+    window._new_project()
+    assert window.open_project(str(proj))
+    back = window.workspace.of_kind(EntryKind.BLOCK)[0]
+    assert back.dirty and window._dirty_blocks() == [back]
+    assert window._write_all()
+    assert (
+        Path(file_entry.path).read_bytes()
+        == bytes.fromhex("41 00 EE 42 41 00") + b"\xff" * 4
+    )
+    assert not back.dirty
+
+
+def test_blocks_and_bookmarks_never_share_a_name(window, tmp_path):
+    data = bytes.fromhex("41 42 00 42 41 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    first = add_block(window, file_entry, "b", RangeSource(0, 3))
+    second = add_block(window, file_entry, "b", RangeSource(3, 6))
+    assert (first.name, second.name) == ("b", "b (2)")
+    window._commit_rename(second, "b")
+    assert second.name == "b (2)"  # nothing to rename to
+    window._commit_rename(second, "c")
+    assert second.name == "c"
+    window._commit_rename(first, "c")
+    assert first.name == "c (2)"
+    bookmark = Entry(EntryKind.BOOKMARK, "c", file_entry.path, parent=file_entry)
+    window._push_add(bookmark)
+    assert bookmark.name == "c (3)"
+
+
+def test_a_command_file_s_repeated_block_names_are_numbered(window, tmp_path):
+    rom = tmp_path / "c.bin"
+    rom.write_bytes(bytes.fromhex("41 42 00 42 00") + b"\xff" * 8)
+    (tmp_path / "main.tbl").write_text("@main\n41=A\n42=B\n/00=[end]\n")
+    block = (
+        "#BLOCK NAME: Script\n#TYPE: NORMAL\n#METHOD: RAW\n#SCRIPT START: 0\n"
+        "#SCRIPT STOP: $5\n#TABLE: main.tbl\n#COMMENTS: No\n#END BLOCK\n"
+    )
+    (tmp_path / "cmd.txt").write_text(block * 2)
+    window.open_rom(str(rom))
+    created = window.import_cartographer(str(tmp_path / "cmd.txt"))
+    assert [e.name for e in created] == ["Script", "Script (2)"]
+
+
+def test_fill_pick_leaves_blocked_signals_blocked(qtbot):
+    from PySide6.QtWidgets import QComboBox
+
+    from mapchar.ui.widgets import fill_pick
+
+    combo = QComboBox()
+    qtbot.addWidget(combo)
+    combo.blockSignals(True)
+    fill_pick(combo, [("a", 1)])
+    assert combo.signalsBlocked()
+    combo.blockSignals(False)
+    fill_pick(combo, [("a", 1)])
+    assert not combo.signalsBlocked()
+
+
+def test_switching_entries_keeps_the_block_s_document(window, tmp_path):
+    """Restoring a session picks the entry's table with signals blocked; the
+    pick must not fire and drop the block's document on every switch."""
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    other = tmp_path / "other.tbl"
+    other.write_text(TABLE.replace("@table main", "@table other"))
+    window.open_table(str(other))
+    file_entry.session.table_id = "other"
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    doc = block.doc
+    window._activate_entry(file_entry)
+    assert window.table_pick.currentData() == "other"
+    window._activate_entry(block)
+    assert window.table_pick.currentData() == "main"
+    assert block.doc is doc

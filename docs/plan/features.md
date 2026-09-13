@@ -127,6 +127,10 @@ the preview system in [preview.md](preview.md).
   child keeps its parent visible.
 - **Double-click** — bookmark jumps; table opens the Table Editor; file or
   block renames inline.
+- **Names** — no two blocks or bookmarks share one: a new row, a rename, an
+  import or a loaded project that would repeat a name gets it numbered
+  (`Script (2)`), since dumps, translator files and Atlas scripts name a
+  string by its block.
 - **Reorder** by drag or Alt+Up/Down. **Sort by** Name, Type or (blocks)
   Offset.
 - **Context menu**, by kind: New Block… / from Selection, New Bookmark,
@@ -335,7 +339,8 @@ The editing surface, opened on a block.
 
 - **Columns** — `#`, address, pointers, **Original** (read-only, the decode
   of the bytes on disk), **Translation** (editable), bytes used / bytes
-  available, status, notes. The header's context menu hides and shows
+  available (a string read across a skip range counts both of its pieces),
+  status, notes. The header's context menu hides and shows
   columns, and dragging a header section reorders them; Translation stays.
 - **Status**, per string: **untouched**, **edited**, **too long** (the
   encoding does not fit; see [Writing](#writing-back-to-disk)), **invalid**
@@ -385,6 +390,9 @@ The editing surface, opened on a block.
   user's job.
 - **Encoding is verified** — every encoded string is decoded again and must
   give back the same tokens; a mismatch is **invalid** and blocks the write.
+- **Bit-level tables** — an encoding that stops short of a byte is padded with
+  zero bits to the byte, as the games and Atlas pad it: the next string, or
+  the pointer to it, begins on a byte.
 - **File ▸ Write (Ctrl+W)** writes the current block; **Write All
   (Ctrl+Shift+W)** writes every block with edits; the Files panel writes one
   entry. An entry that cannot be written says why: a bookmark has no bytes of
@@ -498,7 +506,9 @@ in the game. It is described in [preview.md](preview.md).
   still named after the file takes the new name.
 - **Saving the project resolves unsaved edits first** — a project holds
   references, not bytes, so it asks to **Write All**, continue without writing,
-  or cancel.
+  or cancel. Reopening it marks every block whose translations were never
+  written unsaved again, so **Write All**, the file's Write and the `●` mark
+  still cover them.
 - **Unsaved marker** — the title bar shows the project unsaved when its
   serialized form differs from disk — a table edit included, since that is
   project state. A session that has never been saved as a project has nothing

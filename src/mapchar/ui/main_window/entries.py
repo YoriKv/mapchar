@@ -10,7 +10,13 @@ from PySide6.QtWidgets import QInputDialog, QMenu, QMessageBox
 
 from mapchar.core.table import Table
 from mapchar.project.tables import capture_overlay
-from mapchar.project.workspace import Entry, EntryKind, normalize_path
+from mapchar.project.workspace import (
+    NAMED_UNIQUELY,
+    Entry,
+    EntryKind,
+    free_name,
+    normalize_path,
+)
 from mapchar.ui.files_panel import SORT_KEYS, sorted_entries
 from mapchar.ui.undo_commands import EntryCommand, EntryOrderCommand, RenameEntryCommand
 
@@ -33,6 +39,8 @@ class EntriesMixin:
         return entry
 
     def _push_add(self, entry: Entry) -> None:
+        if entry.kind in NAMED_UNIQUELY:
+            entry.name = self._free_name(entry.name)
         self._push_command(EntryCommand(self, entry, add=True))
 
     def _blocks_on_tables(self, entries: list[Entry]) -> list[Entry]:
@@ -185,15 +193,11 @@ class EntriesMixin:
             None,
         )
 
-    def _free_name(self, name: str) -> str:
-        """``name``, numbered up until no row is called that."""
-        taken = {e.name for e in self.workspace.entries}
-        if name not in taken:
-            return name
-        n = 2
-        while f"{name} ({n})" in taken:
-            n += 1
-        return f"{name} ({n})"
+    def _free_name(self, name: str, entry: Entry | None = None) -> str:
+        """``name``, numbered up until no row but ``entry`` itself is called that."""
+        return free_name(
+            name, (e.name for e in self.workspace.entries if e is not entry)
+        )
 
     def _on_entry_double(self, entry: Entry) -> None:
         if entry.kind is EntryKind.BOOKMARK:
@@ -330,6 +334,8 @@ class EntriesMixin:
     def _commit_rename(self, entry: Entry, name: str) -> None:
         """A rename from either surface — the Rename… dialog or the Files
         panel's inline editor — as one undo step."""
+        if entry.kind in NAMED_UNIQUELY:
+            name = self._free_name(name, entry)
         if name == entry.name:
             return
         self._push_command(RenameEntryCommand(self, entry, entry.name, name))

@@ -120,6 +120,27 @@ class Entry:
         return self.kind in (EntryKind.BLOCK, EntryKind.BOOKMARK)
 
 
+def free_name(name: str, taken) -> str:
+    """``name``, numbered up (``name (2)``) until it is not in ``taken``.
+
+    Blocks and bookmarks are named uniquely: a dump, a translator file and an
+    Atlas script all name a string by its block, so two blocks called the same
+    could not be told apart on the way back in.
+    """
+    taken = set(taken)
+    if name not in taken:
+        return name
+    n = 2
+    while f"{name} ({n})" in taken:
+        n += 1
+    return f"{name} ({n})"
+
+
+NAMED_UNIQUELY = (EntryKind.BLOCK, EntryKind.BOOKMARK)
+"""The kinds :func:`free_name` applies to; a file or table row keeps the name
+of its file."""
+
+
 def normalize_path(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
 

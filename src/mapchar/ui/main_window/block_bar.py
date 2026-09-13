@@ -151,7 +151,7 @@ class BlockBarMixin:
             entry.spare_room,
         )
         after = (
-            dialog.name.text().strip() or entry.name,
+            self._free_name(dialog.name.text().strip() or entry.name, entry),
             dialog.config(),
             dialog.compression_id(),
             dialog.spare_room_rule(),

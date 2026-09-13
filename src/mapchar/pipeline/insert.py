@@ -50,6 +50,13 @@ class Encoded:
     data: bytes
     """The string's bytes, Pascal prefix included, before padding."""
     problem: Problem | None = None
+    new_start: int | None = None
+    """Where the layout put these bytes; ``None`` until one has.
+
+    Set by :func:`layout_block` as it packs, and read back by the pointer
+    rewrite: a pointer to a string that moved is the offset the layout chose,
+    which nothing else knows.
+    """
 
 
 @dataclass
@@ -69,9 +76,16 @@ class LayoutResult:
 def encode_string(
     rec: StringRecord, config: BlockConfig, tables: TableSet, data: bytes
 ) -> Encoded:
-    """One string's bytes: the original bytes when untouched, else its encoding."""
+    """One string's bytes: the original bytes when untouched, else its encoding.
+
+    An encoding that ends part-way through a byte is padded with zero bits to
+    the byte, as Atlas pads and as the ROMs the bit-level tables describe are
+    padded: the next string, or the pointer to it, begins on a byte.
+    """
     if rec.translation is None:
-        return Encoded(rec.index, data[rec.start : rec.end])
+        return Encoded(
+            rec.index, b"".join(data[a:b] for a, b in rec.pieces(config.skips))
+        )
     st = config.string_type
     fixed = config.fixed_length is not None
     text = rec.translation
@@ -87,8 +101,6 @@ def encode_string(
             )
             if not result.ends_with_end and isinstance(st, EndToken):
                 raise EncodeError("the translation must end with an end token")
-            if len(result.bits) % 8:
-                raise EncodeError("the encoding is not a whole number of bytes")
             body = result.data
     except EncodeError as exc:
         return Encoded(rec.index, b"", Problem(rec.index, str(exc)))
@@ -102,8 +114,6 @@ def _encode_fixed(text: str, config: BlockConfig, tables: TableSet) -> bytes:
     stop_at_end = isinstance(st, FixedLength) and st.stop_at_end
     body = "".join(strip_artificial(text, config))
     r = encode(body, tables, end_terminated=stop_at_end)
-    if len(r.bits) % 8:
-        raise EncodeError("the encoding is not a whole number of bytes")
     if len(r.data) > length:
         raise EncodeError(f"{len(r.data) - length} byte(s) too long for {length}")
     return r.data
@@ -249,9 +259,7 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
 
 def _crosses_skip(rec: StringRecord, config: BlockConfig) -> bool:
     """A string read across a skip range has no single byte extent."""
-    if rec.end_bit < rec.start_bit:
-        return True
-    return any(rec.start <= a < rec.end for a, _ in config.skips)
+    return len(rec.pieces(config.skips)) > 1
 
 
 def apply_splices(data: bytes, splices: list[Splice]) -> bytes:

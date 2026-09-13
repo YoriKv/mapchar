@@ -179,7 +179,8 @@ class StringsViewMixin:
         return rows
 
     def _row_for(self, rec, cfg, result, strings=()) -> RowData:
-        used, room, problem = rec.length, self._room(rec, cfg, strings), ""
+        used = rec.byte_length(cfg.skips) if cfg is not None else rec.length
+        room, problem = self._room(rec, cfg, strings), ""
         status = rec.status.value
         if result is not None:
             enc = result.encoded.get(rec.index)
@@ -215,7 +216,7 @@ class StringsViewMixin:
             return cfg.source.length
         if cfg.effective_write_mode is WriteMode.PACKED:
             return max(block_bound(cfg, list(strings)) - rec.start, 0)
-        return rec.length
+        return rec.byte_length(cfg.skips)
 
     def _refresh_string_row(self, entry, index: int) -> None:
         doc = entry.doc

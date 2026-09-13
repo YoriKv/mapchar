@@ -484,3 +484,33 @@ def test_a_renamed_plugin_id_is_forwarded_as_the_project_loads(tmp_path, monkeyp
     f, b = load_project(str(proj)).entries
     assert (f.container_id, f.compression_id) == ("raw", "rle1")
     assert b.config.source.mapping_id == "lorom"  # the one stored inside the config
+
+
+def test_repeated_block_names_are_numbered_on_load(tmp_path):
+    """A dump, a translator file and an Atlas script name a string by its
+    block, so two rows called the same could not be told apart on the way in."""
+    rom = tmp_path / "rom.bin"
+    rom.write_bytes(bytes.fromhex("41 00 42 00"))
+    ws = Workspace()
+    f = ws.open_file(str(rom))
+    for _ in range(2):
+        ws.add(
+            Entry(
+                EntryKind.BLOCK,
+                "Script",
+                str(rom),
+                parent=f,
+                config=BlockConfig(RangeSource(0, 4), EndToken(), "main"),
+            )
+        )
+    ws.add(Entry(EntryKind.BOOKMARK, "Script", str(rom), parent=f))
+    proj = tmp_path / "p.mapchar"
+    save_project(str(proj), ws.entries, None)
+    loaded = load_project(str(proj))
+    assert [e.name for e in loaded.entries] == [
+        "rom.bin",
+        "Script",
+        "Script (2)",
+        "Script (3)",
+    ]
+    assert any("renamed Script (2)" in w for w in loaded.warnings)

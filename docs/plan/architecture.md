@@ -423,7 +423,8 @@ celPix's system, with these stages:
 callback lists (`on_added`, `on_removed`, `on_reset`, `on_current_changed`,
 `on_dirty_changed`), deduplication by normalised path, cascade close from a
 file to its blocks and bookmarks, revision-token dirty tracking per entry,
-and `invalidate_extractions` when a table changes. It answers every question
+`free_name` (blocks and bookmarks never share a name), and
+`invalidate_extractions` when a table changes. It answers every question
 about what is open — `find_file` / `find_table` by path, `entry_by_id` for a
 tree row, `entry_for_table`, `dirty_entries`, `files` / `fonts` /
 `table_entries` / `tables` — so no widget walks `entries` itself.

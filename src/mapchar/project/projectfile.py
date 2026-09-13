@@ -13,7 +13,14 @@ from mapchar.core.errors import MapcharError
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.plugins.aliases import current_config_ids, current_id
 from mapchar.project.formats.script import format_config, parse_config
-from mapchar.project.workspace import Entry, EntryKind, EntrySession, StringState
+from mapchar.project.workspace import (
+    NAMED_UNIQUELY,
+    Entry,
+    EntryKind,
+    EntrySession,
+    StringState,
+    free_name,
+)
 
 PROJECT_VERSION = 1
 
@@ -351,6 +358,19 @@ def load_project(path: str) -> LoadedProject:
         if e.is_child and e.parent is None:
             warnings.append(f"{e.name}: parent entry missing")
     kept = [e for e in kept if not (e.is_child and e.parent is None)]
+    # A file written by hand, or by a build that let names repeat: the rows
+    # are numbered here so that everything that names a string by its block
+    # (a dump, a translator file, an Atlas script) can find the block again.
+    taken: set[str] = set()
+    for e in kept:
+        if e.kind in NAMED_UNIQUELY:
+            unique = free_name(e.name, taken)
+            if unique != e.name:
+                warnings.append(
+                    f"{e.name}: renamed {unique}; two rows cannot share a name"
+                )
+                e.name = unique
+        taken.add(e.name)
     return LoadedProject(
         kept,
         current if current in kept else None,

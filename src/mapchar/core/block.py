@@ -199,6 +199,26 @@ class StringRecord:
     def length(self) -> int:
         return self.end - self.start
 
+    def pieces(self, skips=()) -> list[tuple[int, int]]:
+        """The byte ranges the string occupies, in reading order.
+
+        One range, or two for a string read across a skip range: the bytes up
+        to where the skip begins, then those from where it lands to the end.
+        A backwards skip lands the end before the start, so ``length`` alone
+        would count that string as nothing.
+        """
+        start, end = self.start, self.end
+        for a, b in skips:
+            # Reading reached the skip when the string ends past it -- or, for
+            # a skip that lands behind its start, no later than it began.
+            if start <= a and (end <= start if b < a else a < end):
+                return [(start, a), (b, end)]
+        return [(start, end)]
+
+    def byte_length(self, skips=()) -> int:
+        """How many bytes the string occupies, whatever its pieces."""
+        return sum(b - a for a, b in self.pieces(skips))
+
     def original_text(self) -> str:
         from mapchar.core.tokens import render
 

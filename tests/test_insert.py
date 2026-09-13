@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from helpers import ABC_TABLE, relayout, table_set
+from helpers import ABC_TABLE, relayout, table_set, texts
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
     FixedSource,
     Pascal,
+    PointerListSource,
     RangeSource,
     WriteMode,
 )
+from mapchar.pipeline.extract import extract
+from mapchar.pipeline.insert import encode_string
 
 TS = table_set(ABC_TABLE, "main")
 
@@ -90,3 +93,48 @@ def test_untouched_strings_write_original_bytes():
     cfg = BlockConfig(RangeSource(0, 5), EndToken(), "main")
     res, out = relayout(data, cfg, TS, {})
     assert res.ok and out == data
+
+
+def test_a_bit_level_encoding_is_padded_to_the_byte(registry):
+    """A five-bit table, as Dragon Warrior II's script uses: an edit whose bits
+    stop short of the byte is padded with zero bits, as the ROM and Atlas pad
+    it, since the pointer to the next string names a byte."""
+    ts = table_set("@table main\n%00001=A\n%00010=B\n/%00000=[end]\n", "main")
+    # Pointers to $4 and $6; A[end] and B[end], each ten bits padded to two bytes.
+    data = bytes.fromhex("04 00 06 00 08 00 10 00")
+    cfg = BlockConfig(
+        PointerListSource((0, 2), 2, "little", "linear"), EndToken(), "main"
+    )
+    assert texts(extract(data, cfg, ts, registry)) == ["A[end]", "B[end]"]
+    # AB[end] is fifteen bits: one bit of padding, two bytes, the same slot.
+    res, out = relayout(data, cfg, ts, {0: "AB[end]"}, registry)
+    assert res.ok, res.problems
+    assert out == bytes.fromhex("04 00 06 00 08 80 10 00")
+    assert texts(extract(out, cfg, ts, registry)) == ["AB[end]", "B[end]"]
+    # ABB[end] is twenty bits, three bytes: it pushes B[end] over the bound.
+    res, out = relayout(data, cfg, ts, {0: "ABB[end]"}, registry)
+    assert not res.ok and res.problems[0].over == 1
+
+
+def test_a_string_read_across_a_backwards_skip_keeps_both_pieces(registry):
+    """The bytes of a string that jumped behind its start are the two runs it
+    was read from -- ``length`` alone would count it as nothing."""
+    ts = table_set(ABC_TABLE + "4341=X\n", "main")
+    data = bytes.fromhex("04 00 08 00 41 00 42 00 43")
+    cfg = BlockConfig(
+        PointerListSource((0, 2), 2, "little", "linear"),
+        EndToken(),
+        "main",
+        strings_per_pointer=2,
+        skips=((9, 4),),
+    )
+    ex = extract(data, cfg, ts, registry)
+    plain, wrapped = ex.strings
+    assert plain.pieces(cfg.skips) == [(4, 8)]
+    assert wrapped.pieces(cfg.skips) == [(8, 9), (4, 8)]
+    assert wrapped.byte_length(cfg.skips) == 5
+    assert encode_string(wrapped, cfg, ts, data).data == data[8:9] + data[4:8]
+    res, out = relayout(data, cfg, ts, {}, registry)
+    assert res.ok and out == data
+    res, _ = relayout(data, cfg, ts, {1: "X[end]A[end]"}, registry)
+    assert not res.ok and "skip range" in res.problems[0].message

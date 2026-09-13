@@ -172,6 +172,14 @@ class ProjectMixin:
                 e.missing = True
                 loaded.warnings.append(f"{e.name}: {exc}")
         self.workspace.replace(loaded.entries, loaded.current)
+        for e in loaded.entries:
+            # A block whose translations are not on disk yet is an unsaved
+            # entry the same as one edited this session: Write All, the file's
+            # Write and the Files panel's mark all have to see it.
+            if e.kind is EntryKind.BLOCK and any(
+                st.translation is not None for st in (e.pending_strings or {}).values()
+            ):
+                self.workspace.stamp(e)
         self.undo_stack.clear()
         self._forget_all_visits()  # nothing the trail named survives the swap
         self.project_path = path

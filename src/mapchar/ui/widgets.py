@@ -196,7 +196,9 @@ def fill_pick(
     first item does.
     """
     current = combo.currentData()
-    combo.blockSignals(True)
+    # Put back the state found, not "unblocked": a caller refilling inside its
+    # own block (restoring a session) must not have the rest of its work fire.
+    was_blocked = combo.blockSignals(True)
     combo.clear()
     if none_label is not None:
         combo.addItem(none_label, None)
@@ -204,7 +206,7 @@ def fill_pick(
         combo.addItem(label, data)
     if keep_current:
         combo.setCurrentIndex(max(combo.findData(current), 0))
-    combo.blockSignals(False)
+    combo.blockSignals(was_blocked)
 
 
 def select_data(combo: QComboBox, value: object) -> bool:
