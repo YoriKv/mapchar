@@ -54,6 +54,17 @@ def test_end_token_and_codes():
         roundtrip(body, "A[color]")
 
 
+def test_strings_per_pointer_allow_interior_end_tokens():
+    body = "@table main\n41=A\n/C1=A[line]\\n\n/FF=[end]\n"
+    assert roundtrip(body, "AA[line]\nA[end]", ends=2) == bytes.fromhex("41 C1 41 FF")
+    with pytest.raises(EncodeError):
+        roundtrip(body, "AA[line]\nA[end]")  # one run: the line end is interior
+    with pytest.raises(EncodeError):
+        roundtrip(body, "AA[end]", ends=2)  # two runs read, one written
+    with pytest.raises(EncodeError):
+        roundtrip(body, "A[end]A[end]A[end]", ends=2)
+
+
 def test_switch_count_and_return():
     body = (
         "@table main\n01=foo\n02=bar\n!AB=[item] @items:1\n"

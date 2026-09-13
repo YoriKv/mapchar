@@ -1589,6 +1589,7 @@ class MainWindow(QMainWindow):
                 text,
                 tables,
                 end_terminated=isinstance(entry.config.string_type, EndToken),
+                ends=entry.config.strings_per_pointer,
             )
             n = -(-len(r.bits) // 8)
             self.statusBar().showMessage(f"{n} byte(s)")

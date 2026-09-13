@@ -83,7 +83,9 @@ def encode_string(
             payload = encode(text, tables, end_terminated=False)
             body = _pascal(payload.data, st, payload, text, tables)
         else:
-            result = encode(text, tables, end_terminated=True)
+            result = encode(
+                text, tables, end_terminated=True, ends=config.strings_per_pointer
+            )
             if not result.ends_with_end and isinstance(st, EndToken):
                 raise EncodeError("the translation must end with an end token")
             if len(result.bits) % 8:
