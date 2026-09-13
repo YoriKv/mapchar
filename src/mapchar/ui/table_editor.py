@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.errors import TableError
 from mapchar.core.table import Entry as TableEntry
-from mapchar.core.table import Table
+from mapchar.core.table import EntryKind, Table
 from mapchar.project.formats.table_native import format_entry, format_key, parse_entry
 from mapchar.project.workspace import Entry
 
@@ -52,10 +52,14 @@ class TableEditor(QWidget):
         )
         self.add = QPushButton("Add")
         self.remove = QPushButton("Remove")
+        self.shift = QPushButton("Shift keys…")
+        self.fill = QPushButton("Fill…")
         self.save = QPushButton("Save")
         row.addWidget(self.new_line, 1)
         row.addWidget(self.add)
         row.addWidget(self.remove)
+        row.addWidget(self.shift)
+        row.addWidget(self.fill)
         row.addWidget(self.save)
         layout.addLayout(row)
         self.status = QLabel("")
@@ -64,6 +68,8 @@ class TableEditor(QWidget):
         self.add.clicked.connect(self._add)
         self.new_line.returnPressed.connect(self._add)
         self.remove.clicked.connect(self._remove)
+        self.shift.clicked.connect(self._shift)
+        self.fill.clicked.connect(self._fill_dialog)
         self.save.clicked.connect(lambda: self.save_requested.emit(self._entry))
         self.grid.itemChanged.connect(self._edited)
         self._filling = False
@@ -159,6 +165,100 @@ class TableEditor(QWidget):
             self._fill()
         else:
             self._fill()
+
+    def _shift(self) -> None:
+        """Move the selected entries' keys by a constant (a hex delta)."""
+        from PySide6.QtWidgets import QInputDialog
+
+        table = self._table
+        rows = sorted({i.row() for i in self.grid.selectedItems()})
+        if table is None or not rows:
+            self.status.setText("Select the entries to shift.")
+            return
+        text, ok = QInputDialog.getText(
+            self, "Shift keys", "Add to each key (hex, may be negative):"
+        )
+        if not ok or not text.strip():
+            return
+        try:
+            delta = int(text.strip().replace("$", ""), 16)
+        except ValueError:
+            self.status.setText("Not a hex number.")
+            return
+        entries = [
+            table.entries[self.grid.item(r, 0).data(Qt.ItemDataRole.UserRole)]
+            for r in rows
+        ]
+        moved = []
+        for e in entries:
+            value = int(e.bits, 2) + delta
+            if value < 0 or value >= 1 << len(e.bits):
+                self.status.setText(f"{format_key(e.bits)} would leave its width.")
+                return
+            moved.append((e, format(value, f"0{len(e.bits)}b")))
+        for e, _ in moved:
+            table.remove(e.bits)
+        try:
+            for e, bits in moved:
+                table.add(
+                    TableEntry(bits, e.kind, e.text, e.weight, e.operands, e.params)
+                )
+        except TableError as exc:
+            self.status.setText(exc.message)
+        self.changed.emit(self._entry)
+        self._fill()
+
+    def _fill_dialog(self) -> None:
+        """Lay a string of characters over consecutive keys from a start key."""
+        from PySide6.QtWidgets import QInputDialog
+
+        table = self._table
+        if table is None:
+            return
+        templates = ["A-Z", "a-z", "0-9", "A-Z a-z 0-9", "custom…"]
+        choice, ok = QInputDialog.getItem(
+            self, "Fill", "Characters:", templates, 0, False
+        )
+        if not ok:
+            return
+        if choice == "custom…":
+            chars, ok = QInputDialog.getText(self, "Fill", "Characters in key order:")
+            if not ok or not chars:
+                return
+        else:
+            chars = "".join(
+                {
+                    "A-Z": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                    "a-z": "abcdefghijklmnopqrstuvwxyz",
+                    "0-9": "0123456789",
+                }[part]
+                for part in choice.split()
+            )
+        start_text, ok = QInputDialog.getText(
+            self, "Fill", "First key (hex):", text="00"
+        )
+        if not ok:
+            return
+        try:
+            width = max(len(start_text.strip().replace("$", "")), 2)
+            start = int(start_text.strip().replace("$", ""), 16)
+        except ValueError:
+            self.status.setText("Not a hex key.")
+            return
+        bits_width = width * 4
+        added = 0
+        for i, ch in enumerate(chars):
+            value = start + i
+            if value >= 1 << bits_width:
+                break
+            bits = format(value, f"0{bits_width}b")
+            from mapchar.core.tokens import escape_text
+
+            table.add(TableEntry(bits, EntryKind.TEXT, escape_text(ch)), replace=True)
+            added += 1
+        self.status.setText(f"Filled {added} entries from {start:0{width}X}.")
+        self.changed.emit(self._entry)
+        self._fill()
 
     def _remove(self) -> None:
         table = self._table

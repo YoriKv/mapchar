@@ -283,3 +283,27 @@ def test_cartographer_and_atlas_import(window, tmp_path):
     assert block.doc.strings[0].translation == "BA[end]"
     assert block.doc.strings[1].translation == "A[end]"
     assert window._string_at(3) is block.doc.strings[1]
+
+
+def test_table_editor_shift_and_fill(window, tmp_path, monkeypatch):
+    from mapchar.core.table import Table
+    from mapchar.project.workspace import Entry, EntryKind
+
+    table = Table("t")
+    entry = Entry(EntryKind.TABLE, "t.tbl", None, dialect="native", tables=[table])
+    window._push_add(entry)
+    editor = window.table_editor
+    editor.set_entry(entry)
+    answers = iter([("A-Z", True), ("41", True)])
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QInputDialog.getItem", lambda *a, **k: next(answers)
+    )
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QInputDialog.getText", lambda *a, **k: next(answers)
+    )
+    editor._fill_dialog()
+    assert table.entries["01000001"].text == "A" and len(table.entries) == 26
+    editor.grid.selectAll()
+    answers = iter([("-1", True)])
+    editor._shift()
+    assert table.entries["01000000"].text == "A" and "01011010" not in table.entries
