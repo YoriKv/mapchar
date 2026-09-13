@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+from helpers import table_set
+from mapchar.core.bits import Bits
+from mapchar.core.tokens import render
+from mapchar.engines.decode import DecodeRules, EndedBy, decode
+
+MAIN = """\
+@table main
+01=foo
+02=bar
+03=cat
+{ab}
+@table ItemNames
+01=[Potion]
+02=[HolyHandGrenadeOfAntioch]
+03=[Sword]
+@table FontNames
+!01=[fn] @ItemNames:1+
+02=[Green]
+03<2>=[Batman]
+"""
+
+DATA = bytes.fromhex("AB 01 02 AB 03")
+
+
+def run(ab_entry: str, data: bytes = DATA, **rules) -> tuple[str, EndedBy]:
+    ts = table_set(MAIN.replace("{ab}", ab_entry), "main")
+    result = decode(Bits(data), ts, 0, DecodeRules(**rules))
+    return render(result.tokens), result.ended_by
+
+
+def test_plain_text():
+    assert run("AB=[line]") == ("[line]foobar[line]cat", EndedBy.DATA)
+
+
+def test_raw_count_switch():
+    assert run("!AB=[Item_Name:] @raw:1")[0] == "[Item_Name:][$01]bar[Item_Name:][$03]"
+
+
+def test_table_count_switch():
+    assert run("!AB=[i] @ItemNames:1")[0] == "[i][Potion]bar[i][Sword]"
+
+
+def test_two_params_run_in_order():
+    text, _ = run("!AB=[if] @ItemNames:1 @FontNames:1")
+    assert text == "[if][Potion][Green][if][Sword]"
+
+
+def test_three_raw_bytes():
+    assert run("!AB=[w] @raw:3")[0] == "[w][$01][$02][$AB]cat"
+
+
+def test_fallback_bits_consumed_silently():
+    text, _ = run("!AB=[page] @ItemNames:$AB")
+    assert text == "[page][Potion][HolyHandGrenadeOfAntioch]cat"
+
+
+def test_shared_counter_counts_towards_parent():
+    # FontNames:2 — the [fn] switch weighs 1 and its shared child's match
+    # weighs 1 more, so the child's match also finishes the FontNames frame.
+    text, _ = run("!AB=[f] @FontNames:2")
+    assert text == "[f][fn][HolyHandGrenadeOfAntioch][f][Batman]"
+
+
+def test_weight_two_finishes_a_count_of_two():
+    text, _ = run("!AB=[f] @FontNames:2", bytes.fromhex("AB 03 01"))
+    assert text == "[f][Batman]foo"
+
+
+def test_star_runs_to_end_of_data():
+    text, ended = run("!AB=[x] @ItemNames:*")
+    assert text == "[x][Potion][HolyHandGrenadeOfAntioch][$AB][Sword]"
+    assert ended is EndedBy.DATA
+
+
+def test_return_at_top_level_ends_string():
+    text, ended = run("!AB=return")
+    assert (text, ended) == ("", EndedBy.RETURN)
+
+
+def test_return_pops_child_frame():
+    ts = table_set(
+        "@table main\n!AB=[n] @names:*\n01=one\n@table names\n02=two\n!FF=return\n",
+        "main",
+    )
+    r = decode(Bits(bytes.fromhex("AB 02 FF 01")), ts, 0)
+    assert render(r.tokens) == "[n]twoone"
+
+
+def test_end_token_and_realign():
+    ts = table_set("@table main\n41=A\n/00=[end]\n", "main")
+    data = bytes.fromhex("41 41 00 41 41 41 00")
+    r = decode(Bits(data), ts, 0, DecodeRules(realign=(4 * 8, 0)))
+    assert render(r.tokens) == "AA[end]" and r.end_bit == 4 * 8
+    r = decode(Bits(data), ts, 0, DecodeRules(end_terminated=False))
+    assert render(r.tokens) == "AA[end]AAA[end]"
+
+
+def test_limit_and_partial_bits():
+    ts = table_set("@table main\n%11=a\n", "main")
+    r = decode(Bits(bytes.fromhex("C0 3F")), ts, 0, DecodeRules(limit_bit=8))
+    assert render(r.tokens) == "a[%000000]" and r.ended_by is EndedBy.LIMIT
+    r = decode(Bits(bytes.fromhex("F0")), ts, 0, DecodeRules(limit_bit=5))
+    assert render(r.tokens) == "aa[%0]"
+
+
+def test_operands():
+    ts = table_set("@table main\n$F0=[color],u8\n$F1=[win],u16,2\n41=A\n", "main")
+    data = bytes.fromhex("F0 03 41 F1 34 12 AA BB 41 F0")
+    r = decode(Bits(data), ts, 0)
+    assert render(r.tokens) == "[color $03]A[win $1234 $AA $BB]A[color]"
+    assert (
+        r.tokens[0].bit_end == 16 and r.tokens[0].encoded_bits() == "1111000000000011"
+    )
+    assert r.notices and "cut short" in r.notices[0].message
+
+
+def test_skips():
+    ts = table_set("@table main\n41=A\n42=B\n", "main")
+    data = bytes.fromhex("41 FF FF 42")
+    r = decode(Bits(data), ts, 0, DecodeRules(skips=((8, 24),)))
+    assert render(r.tokens) == "AB"
+
+
+def test_unmatched_bytes_do_not_disturb_a_count():
+    ts = table_set("@table main\n!AB=[n] @names:2\n@table names\n01=x\n", "main")
+    r = decode(Bits(bytes.fromhex("AB 01 FF 01 01")), ts, 0)
+    assert render(r.tokens) == "[n]x[$FF]x[$01]"

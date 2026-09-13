@@ -1,0 +1,1 @@
+"""mapchar.core."""
