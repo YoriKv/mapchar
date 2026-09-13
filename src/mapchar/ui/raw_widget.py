@@ -233,9 +233,15 @@ class RawWidget(QAbstractScrollArea):
                 continue
             # A kanji is wider than the three cells one byte gets: measure the
             # token and let it run into the cells to its right, never past the
-            # row. Every token still starts over its first byte, so the text
-            # column stays aligned with the hex column.
-            width = min(advance, (BYTES_PER_ROW - col) * 3 * cw)
+            # row. A code's label is clipped to its own tinted cells instead,
+            # so it never covers the letter after it. Every token still starts
+            # over its first byte, so the text column stays aligned with the
+            # hex column.
+            width = (
+                span.width()
+                if token.is_code
+                else min(advance, (BYTES_PER_ROW - col) * 3 * cw)
+            )
             painter.save()
             painter.setClipRect(QRect(span.left(), span.top(), width, rh))
             painter.drawText(span.left(), row * rh + ascent, text)

@@ -1173,3 +1173,27 @@ def test_a_plugin_refresh_keeps_a_clean_block_s_translations(window, tmp_path):
     proj = tmp_path / "p.mapchar"
     assert window._write_project(str(proj))
     assert "ZZ[end]" in Path(proj).read_text()
+
+
+def test_a_files_row_name_takes_the_panel_width(window, tmp_path):
+    """The status mark is a second column; the name still fills what it leaves."""
+    open_rom_and_table(window, tmp_path, b"AB\x00" * 10, rom_name="a" * 60 + ".sfc")
+    tree = window.files_panel.tree
+    tree.resize(500, 300)
+    window.files_panel.rebuild()
+    assert tree.columnWidth(0) > 400
+
+
+def test_the_bar_pickers_are_narrow_and_open_to_their_longest_item(window):
+    from mapchar.ui.widgets import PICKER_WIDTH
+
+    pick = window.address_pick
+    assert pick.sizeHint().width() == PICKER_WIDTH
+    longest = max(
+        pick.fontMetrics().horizontalAdvance(pick.itemText(i))
+        for i in range(pick.count())
+    )
+    assert longest > PICKER_WIDTH
+    pick.showPopup()
+    assert pick.view().width() >= longest
+    pick.hidePopup()

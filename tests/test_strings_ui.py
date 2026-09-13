@@ -455,3 +455,34 @@ def test_the_text_column_stays_byte_aligned_under_a_two_cell_glyph(qtbot):
     for col in range(4):
         assert widget._byte_at(QPoint(hex_x + col * 3 * cw + cw, 1)) == col
         assert widget._byte_at(QPoint(text_x + col * 3 * cw + cw, 1)) == col
+
+
+def test_every_hex_pair_is_drawn_in_its_own_cell(qtbot):
+    """The font's true advance is fractional, so a row drawn as one string
+    drifts off the cells its tints fill; each pair is placed in its cell."""
+    from PySide6.QtGui import QPainter
+
+    from mapchar.ui import BYTES_PER_ROW
+    from mapchar.ui.raw_widget import RawWidget, RowModel
+
+    widget = RawWidget()
+    qtbot.addWidget(widget)
+    data = bytes(range(BYTES_PER_ROW))
+    widget.set_model(RowModel(0, data, [], set(), len(data)))
+    widget.resize(1400, 200)
+    placed = []
+    original = QPainter.drawText
+
+    def spy(painter, *args):
+        placed.append(args)
+        return original(painter, *args)
+
+    QPainter.drawText = spy
+    try:
+        widget.viewport().grab()
+    finally:
+        QPainter.drawText = original
+    hex_x, _, _ = widget._columns()
+    cells = {args[2]: args[0] for args in placed if len(args) == 3}
+    for rel in range(BYTES_PER_ROW):
+        assert cells[f"{rel:02X}"] == widget._cell(hex_x, rel)

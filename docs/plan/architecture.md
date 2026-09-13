@@ -571,7 +571,9 @@ and its cell editor), the panels (`files_panel.py`, `tables_panel.py`,
 
 What more than one of them needs lives in small modules: `ui/widgets.py`
 (`ResultsTable`, the `CancellableRun` run/stop/progress mixin for a tool window
-and `ModalProgress` for a menu row, `fill_pick` and `select_data` for combos),
+and `ModalProgress` for a menu row, `fill_pick` and `select_data` for combos,
+and `CompactComboBox`, the fixed-width picker of the bars whose open list
+widens to its longest item),
 `ui/panel.py` (`WorkspaceTreePanel`, which owns a
 dock's workspace subscription and its row-to-entry lookup), `ui/window_layout.py`
 (`WindowLayout` and `remember_layout`), `ui/help_dialogs.py` (the live shortcut

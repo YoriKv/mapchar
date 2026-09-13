@@ -181,8 +181,11 @@ the preview system in [preview.md](preview.md).
 The exploration surface, the equivalent of celPix's tile canvas.
 
 - **Columns** — address, hex bytes, and the decode of those same bytes through
-  the start table. Rows are aligned: a token spanning several bytes is drawn
-  across its bytes, so hex and text line up.
+  the start table. Rows are aligned: every byte owns a fixed cell in both
+  columns, its hex pair and tint drawn in that cell, and a token spanning
+  several bytes is drawn across its cells, so hex and text line up. A code's
+  label is clipped to its cells; a glyph wider than its cells (a kanji) runs
+  into the cells to its right.
 - **Decoding** — starts at the view offset and runs the full decode engine
   (switches, counts, end tokens), so the raw view shows exactly what a block
   starting there would extract. Decoding restarts in the start table after
