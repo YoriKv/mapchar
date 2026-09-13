@@ -196,6 +196,7 @@ class StringsView(QWidget):
         )
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.setWordWrap(False)
+        self.table.verticalHeader().hide()
         self.delegate = TranslationDelegate(self)
         self.table.setItemDelegateForColumn(COL_TRANSLATION, self.delegate)
         self.codes = QWidget()

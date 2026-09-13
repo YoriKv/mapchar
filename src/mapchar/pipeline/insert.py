@@ -160,7 +160,11 @@ def _pascal(payload: bytes, st: Pascal, result, text: str, tables: TableSet) -> 
 
 
 def layout_block(
-    data: bytes, config: BlockConfig, tables: TableSet, strings: list[StringRecord]
+    data: bytes,
+    config: BlockConfig,
+    tables: TableSet,
+    strings: list[StringRecord],
+    registry=None,
 ) -> LayoutResult:
     result = LayoutResult()
     if not strings:
@@ -250,7 +254,44 @@ def layout_block(
     if result.ok:
         out += fill * (bound - first - len(out))
         result.splices.append(Splice(first, bytes(out)))
+        result.splices.extend(_pointer_splices(config, strings, result, registry))
     return result
+
+
+def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Splice]:
+    """Rewrite every pointer of a packed block to its string's new position."""
+    from mapchar.core.mapping import pointer_bytes, resolve_mapping
+
+    if not config.has_pointers:
+        return []
+    if registry is None:
+        from mapchar.plugins.registry import default_registry
+
+        registry = default_registry()
+    source = config.source
+    mapping = resolve_mapping(registry, source.mapping_id)
+    if mapping is None:
+        result.problems.append(Problem(-1, f"unknown mapping {source.mapping_id!r}"))
+        return []
+    splices = []
+    for rec in strings:
+        enc = result.encoded.get(rec.index)
+        new_start = getattr(enc, "new_start", None)
+        if new_start is None:
+            continue
+        for ref in rec.pointers:
+            value = mapping.to_value(new_start - ref.offset, source.bank, ref.address)
+            if value < 0 or value >= 1 << (ref.size * 8):
+                result.problems.append(
+                    Problem(
+                        rec.index, f"pointer at ${ref.address:X} cannot hold ${value:X}"
+                    )
+                )
+                continue
+            splices.append(
+                Splice(ref.address, pointer_bytes(value, ref.size, ref.endian))
+            )
+    return splices
 
 
 def apply_splices(data: bytes, splices: list[Splice]) -> bytes:
