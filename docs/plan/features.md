@@ -74,8 +74,8 @@ the preview system in [preview.md](preview.md).
 - **Panels** menu — toggles each dock. **Reset Panel Layout** puts the docks
   back where a fresh install has them, leaving the window's own size alone.
 - **Tool windows** — separate top-level windows that remember their
-  placement: Search, Scan, Table Editor, Preview, Decompressed view, Find and
-  Replace.
+  placement and close on Esc: Search, Scan, Table Editor, Preview, Decompressed
+  View, Find and Replace.
 - **Long operations** — the text scan, the relative search, the structure scan
   and pointer discovery all run with a Stop button and a progress reading, and
   hand back whatever they found when stopped.
@@ -83,7 +83,11 @@ the preview system in [preview.md](preview.md).
   project. They are written a moment after they change rather than at quit, so
   a drag survives a crash.
 - **Messages** — errors appear as modal warnings; progress and results go to
-  the status bar.
+  the status bar, whose right end shows the file's size, the selection and any
+  view-only notice.
+- **Resizing** — no panel, window or dialog can be shrunk until its controls
+  stop working, and none needs more than a small screen; text cut short shows
+  in full on hover (see [../ui.md](../ui.md)).
 - **Quitting** asks about an unsaved project first, then about unsaved file
   edits.
 
@@ -126,7 +130,7 @@ the preview system in [preview.md](preview.md).
 - **Filter box** (Ctrl+F) matches every typed word in any order. A matching
   child keeps its parent visible.
 - **Double-click** — bookmark jumps; table opens the Table Editor; file or
-  block renames inline.
+  block renames inline. **F2** renames any row inline.
 - **Names** — no two blocks or bookmarks share one: a new row, a rename, an
   import or a loaded project that would repeat a name gets it numbered
   (`Script (2)`), since dumps, translator files and Atlas scripts name a
@@ -163,7 +167,7 @@ the preview system in [preview.md](preview.md).
     text, beside what that line means (kind, operands, switches);
   - **Add** — a typed entry line; the raw view's **Add to Table…** prefills it
     from the selected bytes;
-  - **Shift keys** — moves a range of keys up or down by a constant;
+  - **Shift Keys** — moves a range of keys up or down by a constant;
   - **Fill…** — templates: `A–Z`, `a–z`, `0–9`, the three together, `あ-ん`,
     `ア-ン`, or a typed string, laid over consecutive keys from a start key;
     keys that already have entries are left alone unless the prompt is
@@ -216,7 +220,7 @@ The exploration surface, the equivalent of celPix's tile canvas.
   other between the two modes.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
   bank fields), an address box, Home, page and row steps, **−B / +B** byte
-  steps, and End. The format is remembered per machine and drives the address
+  steps, and End. A view narrower than its rows scrolls sideways. The format is remembered per machine and drives the address
   box, **Go to Address** and the Hex panel's address column alike. **Back /
   Forward** (Alt+Left / Alt+Right, or the browser buttons on a mouse) walk a
   trail of the entries visited.
@@ -239,7 +243,7 @@ compression, and report offsets in the file's coordinates.
 - **Find** (Ctrl+F in a view) — hex bytes, or `"quoted text"` run through the
   encode engine, so multi-character entries, `[codes]` and table switches are
   all searchable; next and previous, wrapping.
-- **Relative search** (Search window):
+- **Relative search** (Search Window):
   - type a word; the tool finds byte runs with the same relative pattern,
     for 8- and 16-bit codes, in either endianness;
   - **Case gap** — an optional constant between the upper- and lower-case
@@ -260,7 +264,7 @@ compression, and report offsets in the file's coordinates.
     grows with the share of unmatched data;
   - results are ranked regions with their score, the most common terminator
     byte in each, and the byte the region most often starts strings with;
-  - selecting a region jumps the raw view there; **New block from region**
+  - selecting a region jumps the raw view there; **New Block from Region**
     creates a block over it with the guessed end token;
   - the scan runs with a Stop button and a percentage readout.
 - **Pointer discovery** — see [Pointers](#pointers).
@@ -327,7 +331,7 @@ the block's **Edit…** open the block dialog.
     the stride between them;
   - the search runs with a Stop button and a progress bar, and a stopped
     search still offers what it had ranked;
-  - **Use as pointer table** converts the block's source to a pointer table
+  - **Use as Pointer Table** converts the block's source to a pointer table
     from the chosen result; **Attach** adds the found addresses to the
     strings without changing the source.
 - **Overlays** — the raw view marks bytes that are pointers of the current
@@ -353,13 +357,14 @@ The editing surface, opened on a block.
   - **Shift+Return** writes the block's newline code — the code carrying the
     *newline* effect, else `[line]` — never a line break, which the script
     grammar drops;
-  - **Insert code** buttons for the codes this block's strings use most;
+  - **Insert code** buttons for the codes this block's strings use most,
+    wrapping onto more rows when the view is narrow;
   - the byte readout updates as you type, from a live encode, against the
     room the string has; the Preview follows the draft and lists what the
     font cannot spell;
   - **Revert** copies Original back; **Copy Original to Empty Translations**
     fills the ones with none;
-  - the Preview window's **Wrap translation** (font and box bound) inserts line
+  - the Preview window's **Wrap Translation** (font and box bound) inserts line
     codes to fit the box; see [preview.md](preview.md#wrapping).
 - **Filter** — words in any order over original, translation and notes; a
   status box narrows to one status.
@@ -433,7 +438,7 @@ The editing surface, opened on a block.
 
 - **Preview** — the raw view always shows the bytes of the chain as far as
   the block's compression. Choosing a scheme in **Compression** decompresses
-  from the current offset into the floating **Decompressed view**, decoded
+  from the current offset into the floating **Decompressed View**, decoded
   through the start table; it hides when nothing decodes.
 - **Jump to Next** skips past a complete structure; **Scan** searches forward
   for the next complete structure with a Stop button; **To Block** creates a
@@ -477,7 +482,7 @@ in the game. It is described in [preview.md](preview.md).
 
 ## Hex panel
 
-- **Panels ▸ Hex Panel** — a dump (address · hex · ASCII) of the decoded
+- **Panels ▸ Hex** — a dump (address · hex · ASCII) of the decoded
   buffer from the current offset, following the raw view's selection.
 - **Overtype** — typing a hex digit over a byte in the dump changes that
   nibble in place, one undo step per digit, the caret moving on to the next
@@ -519,21 +524,21 @@ in the game. It is described in [preview.md](preview.md).
 - **Kinds** — **presets** (TOML naming a built-in engine plus parameters) and
   **code plugins** (Python files) for containers, compressions, charsets
   and mappings.
-- **Where they live** — **File ▸ Open plugins folder…** opens
+- **Where they live** — **File ▸ Open Plugins Folder…** opens
   `<AppData>/mapchar/plugins` with typed subfolders (`containers`,
   `compression`, `charsets`, `mappings`), seeded with `README.md` and an
   `_`-prefixed working example per folder, which a copy without the underscore
   activates; a `plugins/` folder beside a `.mapchar` file loads and unloads with
   that project; `MAPCHAR_PLUGIN_PATH` adds folders. A `.tbl` file in `charsets`
   registers as a charset named after the file, with no code at all.
-- **Refresh plugins (F5)** reloads everything and re-reads the current entry.
+- **Refresh Plugins (F5)** reloads everything and re-reads the current entry.
   Entries with unsaved edits keep what they hold rather than being re-read.
 - **Trust** — code plugins ask for trust once per file content, with a
   SHA-256 prefix; the default is No, and a plugin that came with a project says
   so. A file approved this session can be edited and refreshed without asking
   again. Presets never ask.
 - **Load failures** are reported in a dialog — at startup, after a refresh, as
-  a project's folder is scanned, and again from **Open plugins folder…** — and
+  a project's folder is scanned, and again from **Open Plugins Folder…** — and
   never crash the app. A plugin whose trust prompt was declined is not a
   failure: it is said once in the status bar, not in a dialog every launch. An
   entry whose plugin is missing opens view-only through a pass-through.
@@ -555,14 +560,19 @@ in the game. It is described in [preview.md](preview.md).
 
 ## Keyboard reference
 
-**Help ▸ Shortcuts… (F1)** shows the live list, built from the menu bar plus
-the keys and mouse gestures no menu row can carry.
+**Help ▸ Shortcuts… (F1)** shows the live list in two balanced columns, one
+section per menu, built from the menu bar plus the keys and mouse gestures no
+menu row can carry (the raw and Strings views, the Files and Hex panels, the
+tool windows). **Help ▸ About** gives the version, author, homepage and
+licenses.
 
 | Area | Keys |
 |---|---|
-| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh plugins · Ctrl+Q Quit |
+| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh Plugins · Ctrl+Q Quit |
 | Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Return commit cell |
-| View | Ctrl+1 Raw · Ctrl+2 Strings · Ctrl+Shift+A Aligned / Text display · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
+| View | Ctrl+1 Raw · Ctrl+2 Strings · Ctrl+Shift+A Aligned / Text Display · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
-| Search | Ctrl+Shift+F Search window · Ctrl+Shift+R scan · Ctrl+F find bytes · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
-| Files panel | Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter |
+| Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F find bytes · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
+| Files panel | Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |
+| Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
+| Tool windows | Esc close · Enter run the query |

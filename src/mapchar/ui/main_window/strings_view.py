@@ -280,13 +280,13 @@ class StringsViewMixin:
 
     def _strings_menu(self, indices: list[int], pos: QPoint) -> None:
         menu = QMenu(self)
-        menu.addAction("Revert to original", self._revert_selected)
-        menu.addAction("Toggle review", self._toggle_review_selected)
+        menu.addAction("Re&vert to Original", self._revert_selected)
+        menu.addAction("Toggle Revie&w", self._toggle_review_selected)
         if indices:
             rec = self._string(self._entry, indices[0])
             if rec is not None:
                 menu.addAction(
-                    "Copy original",
+                    "Copy &Original",
                     lambda: QApplication.clipboard().setText(rec.original_text()),
                 )
         menu.exec(pos)

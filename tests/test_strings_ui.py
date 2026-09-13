@@ -135,7 +135,7 @@ def test_code_buttons_rank_by_use_in_the_block(qtbot):
     )
     buttons = [
         view.codes_layout.itemAt(i).widget().text()
-        for i in range(view.codes_layout.count() - 1)
+        for i in range(view.codes_layout.count())
     ]
     assert buttons == ["[zzz]", "[mmm]", "[aaa]"]
 

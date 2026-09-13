@@ -1,19 +1,34 @@
-"""Widgets and widget helpers more than one window needs."""
+"""Widgets and widget helpers more than one window needs.
+
+Most of them answer one of two questions every surface has to: what a control
+does when its room runs out (:class:`FlowLayout`, :class:`ElidedLabel`,
+:func:`fit_chars`), and how text it had to cut short can still be read — a
+tooltip carrying the whole of it (:class:`ElidedLabel`,
+:class:`CompactComboBox`, :func:`show_elided_tooltips`). ``docs/ui.md`` holds
+the rules they implement.
+"""
 
 from __future__ import annotations
 
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, TypeVar
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
     QLabel,
+    QLayout,
+    QLineEdit,
     QProgressDialog,
     QPushButton,
+    QStyle,
+    QStyleOptionComboBox,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolTip,
     QWidget,
 )
 
@@ -28,6 +43,16 @@ PICKER_WIDTH = 160
 reads as a row whatever names the registry and the project give their items."""
 
 
+def _joined_tip(full: str, own: str) -> str:
+    """What a tooltip over cut-short text says: the whole text, then whatever
+    the control already explained, unless that already begins with it."""
+    if not own or own == full:
+        return full
+    if own.startswith(full):
+        return own
+    return f"{full}\n\n{own}"
+
+
 class CompactComboBox(QComboBox):
     """A combo box whose closed button is a stated width in pixels.
 
@@ -35,7 +60,8 @@ class CompactComboBox(QComboBox):
     table and preset names turn into dead space in a bar — and a bar whose
     width changes as the items do. Only the size *hints* are set, so a layout
     may still stretch one; the open list is widened back to its longest item,
-    so every entry stays readable while choosing.
+    so every entry stays readable while choosing. A current item too long for
+    the closed button is elided there, and its hover tooltip spells it out.
     """
 
     def __init__(self, width: int = PICKER_WIDTH, parent: QWidget | None = None):
@@ -58,6 +84,264 @@ class CompactComboBox(QComboBox):
         view.setMinimumWidth(max(self.width(), width))
         super().showPopup()
 
+    def current_text_elided(self) -> bool:
+        """Whether the closed button has too little room for the current item."""
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        field = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox,
+            option,
+            QStyle.SubControl.SC_ComboBoxEditField,
+            self,
+        )
+        room = field.width()
+        if not self.itemIcon(self.currentIndex()).isNull():
+            room -= self.iconSize().width() + 4
+        return self.fontMetrics().horizontalAdvance(self.currentText()) > room
+
+    def event(self, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.ToolTip and self.current_text_elided():
+            QToolTip.showText(
+                event.globalPos(), _joined_tip(self.currentText(), self.toolTip()), self
+            )
+            return True
+        return super().event(event)
+
+
+class ElidedLabel(QLabel):
+    """A one-line label that cuts its text short with an ellipsis rather than
+    widening the layout it sits in.
+
+    A plain ``QLabel`` asks for the width of everything it says, so one long
+    status line — a notice, a path, a list of glyphs the font lacks — is enough
+    to set the minimum width of the whole window around it. This one asks for
+    nothing, draws what fits, and shows the whole text in its tooltip whenever
+    some of it was cut. :meth:`text` and :meth:`toolTip` still answer with what
+    was set, so code and tests read the label exactly as before.
+    """
+
+    def __init__(
+        self,
+        text: str = "",
+        parent: QWidget | None = None,
+        mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+    ):
+        super().__init__(text, parent)
+        self._mode = mode
+        self.setTextFormat(Qt.TextFormat.PlainText)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        hint = super().minimumSizeHint()
+        hint.setWidth(0)
+        return hint
+
+    def is_elided(self) -> bool:
+        return (
+            self.fontMetrics().horizontalAdvance(self.text())
+            > self.contentsRect().width()
+        )
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
+        from PySide6.QtGui import QPainter
+
+        painter = QPainter(self)
+        rect = self.contentsRect()
+        shown = self.fontMetrics().elidedText(self.text(), self._mode, rect.width())
+        self.style().drawItemText(
+            painter,
+            rect,
+            int(self.alignment()),
+            self.palette(),
+            self.isEnabled(),
+            shown,
+            self.foregroundRole(),
+        )
+        painter.end()
+
+    def event(self, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.ToolTip and self.text() and self.is_elided():
+            QToolTip.showText(
+                event.globalPos(), _joined_tip(self.text(), self.toolTip()), self
+            )
+            return True
+        return super().event(event)
+
+
+class _ElidedItemTips(QObject):
+    """The viewport filter behind :func:`show_elided_tooltips`."""
+
+    def __init__(self, view: QAbstractItemView):
+        super().__init__(view)
+        self._view = view
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() != QEvent.Type.ToolTip:
+            return False
+        view = self._view
+        index = view.indexAt(event.pos())
+        if not index.isValid():
+            return False
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if not isinstance(text, str) or not text:
+            return False
+        rect = view.visualRect(index)
+        option = QStyleOptionViewItem()
+        option.font = view.font()
+        small = view.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize)
+        option.decorationSize = (
+            view.iconSize() if view.iconSize().isValid() else QSize(small, small)
+        )
+        option.rect = rect
+        needed = view.itemDelegateForIndex(index).sizeHint(option, index).width()
+        if needed <= rect.width():
+            return False
+        own = index.data(Qt.ItemDataRole.ToolTipRole)
+        QToolTip.showText(
+            event.globalPos(),
+            _joined_tip(text, own if isinstance(own, str) else ""),
+            view.viewport(),
+            rect,
+        )
+        return True
+
+
+def show_elided_tooltips(view: QAbstractItemView) -> QAbstractItemView:
+    """Make every cell of ``view`` that is too narrow for its text show the whole
+    of it on hover, ahead of any tooltip the cell carries of its own.
+
+    A cell with room for its text keeps the view's usual tooltip behaviour, so
+    this can go on any list, tree or table without changing what the ones that
+    fit say. Returns ``view``, to wrap a constructor call.
+    """
+    view.viewport().installEventFilter(_ElidedItemTips(view))
+    return view
+
+
+def fit_chars(widget: QWidget, chars: int) -> QWidget:
+    """Give a field a minimum width of ``chars`` average characters plus its
+    frame, so no layout can squeeze it to where what it holds cannot be read."""
+    metrics = widget.fontMetrics()
+    frame = 2 * widget.style().pixelMetric(QStyle.PixelMetric.PM_DefaultFrameWidth)
+    widget.setMinimumWidth(metrics.horizontalAdvance("0" * chars) + frame + 12)
+    return widget
+
+
+def hint_field(field: QLineEdit, placeholder: str, tip: str | None = None) -> QLineEdit:
+    """Set a field's placeholder, and a tooltip saying the same thing.
+
+    A placeholder is the first text a narrow field cuts short, and it vanishes
+    the moment anything is typed; the tooltip is where it can still be read.
+    """
+    field.setPlaceholderText(placeholder)
+    field.setToolTip(tip or placeholder)
+    return field
+
+
+class FlowLayout(QLayout):
+    """A layout that lines its items up left to right and wraps them onto as
+    many rows as the width needs.
+
+    For a row of controls whose count is not fixed — the code buttons of a
+    block — or that is long enough to otherwise set a window's minimum width.
+    The minimum it asks for is its widest single item, and the height follows
+    the width through ``heightForWidth``.
+    """
+
+    def __init__(self, parent: QWidget | None = None, spacing: int = -1):
+        super().__init__(parent)
+        self._items = []
+        if parent is None:
+            self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(spacing)
+
+    def addItem(self, item) -> None:  # noqa: N802 - Qt override
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):  # noqa: N802 - Qt override
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int):  # noqa: N802 - Qt override
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self) -> Qt.Orientation:  # noqa: N802 - Qt override
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt override
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt override
+        return self._arrange(QRect(0, 0, width, 0), apply=False)
+
+    def setGeometry(self, rect: QRect) -> None:  # noqa: N802 - Qt override
+        super().setGeometry(rect)
+        self._arrange(rect, apply=True)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:  # noqa: N802 - Qt override
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        return size + QSize(
+            margins.left() + margins.right(), margins.top() + margins.bottom()
+        )
+
+    def _gap(self, orientation: Qt.Orientation) -> int:
+        if self.spacing() >= 0:
+            return self.spacing()
+        parent = self.parentWidget()
+        if parent is None:
+            return 6
+        metric = (
+            QStyle.PixelMetric.PM_LayoutHorizontalSpacing
+            if orientation == Qt.Orientation.Horizontal
+            else QStyle.PixelMetric.PM_LayoutVerticalSpacing
+        )
+        gap = parent.style().pixelMetric(metric, None, parent)
+        return gap if gap >= 0 else 6
+
+    def _arrange(self, rect: QRect, apply: bool) -> int:
+        margins = self.contentsMargins()
+        area = rect.adjusted(
+            margins.left(), margins.top(), -margins.right(), -margins.bottom()
+        )
+        x, y, line = area.x(), area.y(), 0
+        across = self._gap(Qt.Orientation.Horizontal)
+        down = self._gap(Qt.Orientation.Vertical)
+        for item in self._items:
+            if item.isEmpty():
+                continue
+            hint = item.sizeHint()
+            if x + hint.width() > area.right() + 1 and line > 0:
+                x, y, line = area.x(), y + line + down, 0
+            if apply:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x += hint.width() + across
+            line = max(line, hint.height())
+        return y + line - rect.y() + margins.bottom()
+
+
+class EscapeCloses:
+    """Mixed into a tool window so Esc closes it, the way it closes a dialog.
+
+    Only a press nothing inside the window used reaches here: an open cell
+    editor, a completer or a combo's popup spends its own Esc first.
+    """
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.key() == Qt.Key.Key_Escape and event.modifiers() in (
+            Qt.KeyboardModifier.NoModifier,
+            Qt.KeyboardModifier.KeypadModifier,
+        ):
+            self.close()
+            return
+        super().keyPressEvent(event)
+
 
 class ResultsTable(QTableWidget):
     """A read-only grid of results: whole rows select, and a row is an item.
@@ -71,6 +355,8 @@ class ResultsTable(QTableWidget):
         self.setHorizontalHeaderLabels(list(headers))
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.horizontalHeader().setStretchLastSection(True)
+        show_elided_tooltips(self)
 
     def fill(self, rows: Iterable[Sequence[str]]) -> None:
         """Replace every row; columns are sized to what they now hold."""
@@ -222,8 +508,14 @@ __all__ = [
     "PICKER_WIDTH",
     "CancellableRun",
     "CompactComboBox",
+    "ElidedLabel",
+    "EscapeCloses",
+    "FlowLayout",
     "ModalProgress",
     "ResultsTable",
     "fill_pick",
+    "fit_chars",
+    "hint_field",
     "select_data",
+    "show_elided_tooltips",
 ]

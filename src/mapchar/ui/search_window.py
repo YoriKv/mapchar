@@ -16,11 +16,18 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.engines.relsearch import Hit, relative_search
-from mapchar.ui.widgets import CancellableRun, ResultsTable
+from mapchar.ui.widgets import (
+    CancellableRun,
+    ElidedLabel,
+    EscapeCloses,
+    ResultsTable,
+    fit_chars,
+    hint_field,
+)
 from mapchar.ui.window_layout import remember_layout
 
 
-class SearchWindow(CancellableRun, QWidget):
+class SearchWindow(EscapeCloses, CancellableRun, QWidget):
     go_to = Signal(int, int)
     """Offset and length to select in the raw view."""
     build_table = Signal(object)
@@ -36,10 +43,13 @@ class SearchWindow(CancellableRun, QWidget):
         self._hits: list[Hit] = []
         layout = QVBoxLayout(self)
         row = QHBoxLayout()
-        self.query = QLineEdit()
-        self.query.setPlaceholderText(
-            "Relative search: letters, digits, kana, ? wildcard"
+        self.query = hint_field(
+            QLineEdit(),
+            "letters, digits, kana, ? wildcard",
+            "A relative search: the letters, digits or kana of a word the game\n"
+            "shows, with ? for any character; Enter searches",
         )
+        fit_chars(self.query, 16)
         self.width = QComboBox()
         self.width.addItem("8-bit", (1,))
         self.width.addItem("16-bit", (2,))
@@ -62,12 +72,12 @@ class SearchWindow(CancellableRun, QWidget):
         row.addWidget(self.run)
         row.addWidget(self.stop)
         layout.addLayout(row)
-        self.status = QLabel("")
+        self.status = ElidedLabel("")
         layout.addWidget(self.status)
         self.results = ResultsTable(["Offset", "Width", "Bytes", "Bases"])
         layout.addWidget(self.results, 1)
         bottom = QHBoxLayout()
-        self.build = QPushButton("Build table from hit")
+        self.build = QPushButton("Build Table from Hit")
         self.build.setEnabled(False)
         bottom.addStretch(1)
         bottom.addWidget(self.build)

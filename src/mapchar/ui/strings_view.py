@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.text import fold
 from mapchar.ui import theme
+from mapchar.ui.widgets import FlowLayout, show_elided_tooltips
 
 (
     COL_INDEX,
@@ -245,7 +246,6 @@ class StringsView(QWidget):
         top.addWidget(self.status_filter)
         self.table = QTableWidget(0, len(HEADERS))
         self.table.setHorizontalHeaderLabels(HEADERS)
-        self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
@@ -255,16 +255,23 @@ class StringsView(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.setWordWrap(False)
         self.table.verticalHeader().hide()
+        # Original and Translation are cut short to one line; hovering a cell
+        # reads the whole string.
+        show_elided_tooltips(self.table)
         header = self.table.horizontalHeader()
+        # Whichever column ends the row takes the width left over, so the table
+        # never stops short of its right edge.
+        header.setStretchLastSection(True)
         header.setSectionsMovable(True)
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._on_header_menu)
         self.delegate = TranslationDelegate(self)
         self.table.setItemDelegateForColumn(COL_TRANSLATION, self.delegate)
+        # The code buttons wrap onto more rows rather than setting the window's
+        # minimum width: a block can use two dozen codes.
         self.codes = QWidget()
-        self.codes_layout = QHBoxLayout(self.codes)
+        self.codes_layout = FlowLayout(self.codes)
         self.codes_layout.setContentsMargins(0, 0, 0, 0)
-        self.codes_layout.addStretch(1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)
@@ -281,7 +288,7 @@ class StringsView(QWidget):
     def set_codes(self, codes: list[CodeInfo]) -> None:
         """The table set's codes, and buttons for the ones this block uses most."""
         self.delegate.codes = list(codes)
-        while self.codes_layout.count() > 1:
+        while self.codes_layout.count():
             item = self.codes_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
@@ -295,7 +302,7 @@ class StringsView(QWidget):
             button.clicked.connect(
                 lambda _=False, text=code.insertion: self._insert_code(text)
             )
-            self.codes_layout.insertWidget(self.codes_layout.count() - 1, button)
+            self.codes_layout.addWidget(button)
 
     def set_newline_code(self, code: str) -> None:
         """What Shift+Return writes in the Translation cell."""

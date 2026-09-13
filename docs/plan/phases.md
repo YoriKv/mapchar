@@ -67,7 +67,7 @@ Edit strings beside the original and write them back in place.
 
 ## 5. Compression and plugins
 
-- The compression stage, the Decompressed view, Jump to Next, scan and To
+- The compression stage, the Decompressed View, Jump to Next, scan and To
   Block; decompressed blocks with spare-room fill on write.
 - Built-in schemes: LZSS variants, bit-packed alphabets, the command LZ, RLE
   and the generic decompressors, plus Huffman over an in-ROM tree as a preset.

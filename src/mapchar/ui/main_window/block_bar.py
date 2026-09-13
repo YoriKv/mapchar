@@ -58,7 +58,11 @@ class BlockBarMixin:
         return None
 
     def _block_dialog(
-        self, config: BlockConfig | None, name: str, entry: Entry | None = None
+        self,
+        config: BlockConfig | None,
+        name: str,
+        entry: Entry | None = None,
+        title: str = "New Block",
     ) -> BlockDialog:
         """The block dialog over every list it needs, prefilled for ``entry``.
 
@@ -75,6 +79,7 @@ class BlockBarMixin:
             compression_id=entry.compression_id if entry is not None else None,
             spare_room=entry.spare_room if entry is not None else "fill",
             suggested_mapping=self._suggested_mapping(),
+            title=title,
         )
 
     def _suggested_mapping(self) -> str | None:
@@ -135,13 +140,13 @@ class BlockBarMixin:
         if entry is None:
             return
         if entry.dirty and not self._ask(
-            "Edit block",
+            "Edit Block",
             f"{entry.name} has unsaved edits. Editing it re-reads the region; "
             "the translations are matched back onto it by index, but any that "
             "the new configuration has no string for are dropped. Continue?",
         ):
             return
-        dialog = self._block_dialog(entry.config, entry.name, entry)
+        dialog = self._block_dialog(entry.config, entry.name, entry, "Edit Block")
         if dialog.exec() != BlockDialog.DialogCode.Accepted:
             return
         before = (

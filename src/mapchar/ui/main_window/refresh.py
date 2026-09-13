@@ -3,6 +3,16 @@
 from __future__ import annotations
 
 from mapchar.core.bits import Bits
+from mapchar.core.block import (
+    EndToken,
+    FixedLength,
+    FixedSource,
+    NextPointer,
+    Pascal,
+    PointerListSource,
+    PointerTableSource,
+    RangeSource,
+)
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.engines.decode import DecodeRules, RunResult, decode_run
@@ -12,6 +22,19 @@ from mapchar.ui.raw_widget import RowModel
 from mapchar.ui.text_widget import text_model
 
 DISPLAY_MODE_KEY = "view/display_mode"
+
+_KIND_NAMES = {
+    RangeSource: "Range",
+    FixedSource: "Fixed strings",
+    PointerTableSource: "Pointer table",
+    PointerListSource: "Pointer list",
+    EndToken: "End token",
+    FixedLength: "Fixed length",
+    Pascal: "Pascal",
+    NextPointer: "Next pointer",
+}
+"""What the block bar calls a source or string type: the Block dialog's words
+for it, never the class name."""
 
 
 class RefreshMixin:
@@ -59,11 +82,13 @@ class RefreshMixin:
         if is_block:
             self._fill_strings(doc)
             cfg = entry.config
+            count = len(doc.strings)
             self.block_label.setText(
                 f"{entry.name}: "
-                f"{cfg.source.__class__.__name__.replace('Source', '')} · "
-                f"{cfg.string_type.__class__.__name__} · @{cfg.table_id or '-'} · "
-                f"{len(doc.strings)} strings"
+                f"{_KIND_NAMES.get(type(cfg.source), 'Source')} · "
+                f"{_KIND_NAMES.get(type(cfg.string_type), 'Strings')} · "
+                f"@{cfg.table_id or '-'} · "
+                f"{count} {'string' if count == 1 else 'strings'}"
             )
         self._update_nav_status()
         self.search_window.set_data(doc.data)

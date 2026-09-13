@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
 from mapchar.ui.raw_widget import RawWidget, RowModel
+from mapchar.ui.widgets import ElidedLabel, EscapeCloses
 from mapchar.ui.window_layout import remember_layout
 
 
-class DecompressWindow(QWidget):
+class DecompressWindow(EscapeCloses, QWidget):
     """The floating view of what the picked scheme yields at the current offset.
 
     Scan walks forward over the whole file one offset at a time, which is long
@@ -25,21 +26,24 @@ class DecompressWindow(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Tool)
-        self.setWindowTitle("Decompressed view")
+        self.setWindowTitle("Decompressed View")
         # Size and position remembered between runs, like every tool
         # window (:mod:`mapchar.ui.window_layout`).
         self._layout = remember_layout(self, "decompress_window")
         layout = QVBoxLayout(self)
-        self.status = QLabel("")
+        self.status = ElidedLabel("")
         layout.addWidget(self.status)
         self.raw = RawWidget()
         layout.addWidget(self.raw, 1)
         row = QHBoxLayout()
         self.next = QPushButton("Jump to Next")
+        self.next.setToolTip("Move the view to the next offset the scheme accepts")
         self.scan = QPushButton("Scan")
+        self.scan.setToolTip("Walk forward until a structure decompresses whole")
         self.stop = QPushButton("Stop")
         self.stop.setEnabled(False)
-        self.block = QPushButton("To Block")
+        self.block = QPushButton("To Block…")
+        self.block.setToolTip("Make a block over the structure shown")
         row.addWidget(self.next)
         row.addWidget(self.scan)
         row.addWidget(self.stop)

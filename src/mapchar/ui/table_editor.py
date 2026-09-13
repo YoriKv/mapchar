@@ -32,7 +32,16 @@ from mapchar.engines.relsearch import (
 )
 from mapchar.project.formats.table_native import format_entry, format_key, parse_entry
 from mapchar.project.workspace import Entry
-from mapchar.ui.widgets import CompactComboBox, fill_pick, select_data
+from mapchar.ui.widgets import (
+    CompactComboBox,
+    ElidedLabel,
+    EscapeCloses,
+    fill_pick,
+    fit_chars,
+    hint_field,
+    select_data,
+    show_elided_tooltips,
+)
 from mapchar.ui.window_layout import remember_layout
 
 ALPHABETS = {
@@ -45,7 +54,7 @@ ALPHABETS = {
 """The Fill dialog's canned runs, by the alphabet each names."""
 
 
-class TableEditor(QWidget):
+class TableEditor(EscapeCloses, QWidget):
     changed = Signal(object, object)
     """The table entry whose tables changed, and its tables as they were.
 
@@ -64,7 +73,7 @@ class TableEditor(QWidget):
         self._table: Table | None = None
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        self.title = QLabel("No table")
+        self.title = ElidedLabel("No table")
         self.table_pick = CompactComboBox()
         top.addWidget(self.title, 1)
         top.addWidget(QLabel("Table"))
@@ -73,17 +82,27 @@ class TableEditor(QWidget):
         self.grid = QTableWidget(0, 2)
         self.grid.setHorizontalHeaderLabels(["Entry line", "Meaning"])
         self.grid.horizontalHeader().setStretchLastSection(True)
+        show_elided_tooltips(self.grid)
         layout.addWidget(self.grid, 1)
         row = QHBoxLayout()
-        self.new_line = QLineEdit()
-        self.new_line.setPlaceholderText(
-            "41=A   /FF=[end]   $F0=[color],u8   !F1=[item] @items:1"
+        self.new_line = hint_field(
+            QLineEdit(),
+            "41=A   /FF=[end]   $F0=[color],u8   !F1=[item] @items:1",
+            "An entry line in the native grammar, such as\n"
+            "41=A   /FF=[end]   $F0=[color],u8   !F1=[item] @items:1\n"
+            "Enter or Add puts it in the table",
         )
+        fit_chars(self.new_line, 14)
         self.add = QPushButton("Add")
         self.remove = QPushButton("Remove")
-        self.shift = QPushButton("Shift keys…")
+        self.add.setToolTip("Add the typed line to the table (Enter)")
+        self.remove.setToolTip("Remove the selected entries")
+        self.shift = QPushButton("Shift Keys…")
+        self.shift.setToolTip("Move the selected entries' keys by a constant")
         self.fill = QPushButton("Fill…")
+        self.fill.setToolTip("Lay a run of characters over consecutive keys")
         self.save = QPushButton("Save")
+        self.save.setToolTip("Write the table file, in the native grammar")
         row.addWidget(self.new_line, 1)
         row.addWidget(self.add)
         row.addWidget(self.remove)
@@ -91,7 +110,7 @@ class TableEditor(QWidget):
         row.addWidget(self.fill)
         row.addWidget(self.save)
         layout.addLayout(row)
-        self.status = QLabel("")
+        self.status = ElidedLabel("")
         layout.addWidget(self.status)
         self.table_pick.currentIndexChanged.connect(self._fill)
         self.add.clicked.connect(self._add)
@@ -202,7 +221,7 @@ class TableEditor(QWidget):
             self.status.setText("Select the entries to shift.")
             return
         text, ok = QInputDialog.getText(
-            self, "Shift keys", "Add to each key (hex, may be negative):"
+            self, "Shift Keys", "Add to each key (hex, may be negative):"
         )
         if not ok or not text.strip():
             return
@@ -242,13 +261,13 @@ class TableEditor(QWidget):
         table = self._table
         if table is None:
             return
-        templates = [*ALPHABETS, "A-Z a-z 0-9", "custom…"]
+        templates = [*ALPHABETS, "A-Z a-z 0-9", "Custom…"]
         choice, ok = QInputDialog.getItem(
             self, "Fill", "Characters:", templates, 0, False
         )
         if not ok:
             return
-        if choice == "custom…":
+        if choice == "Custom…":
             chars, ok = QInputDialog.getText(self, "Fill", "Characters in key order:")
             if not ok or not chars:
                 return
@@ -306,7 +325,11 @@ class TableEditor(QWidget):
         if table is None or not rows:
             return
         if (
-            QMessageBox.question(self, "Remove", f"Remove {len(rows)} entr(ies)?")
+            QMessageBox.question(
+                self,
+                "Remove Entries",
+                f"Remove {len(rows)} {'entry' if len(rows) == 1 else 'entries'}?",
+            )
             != QMessageBox.StandardButton.Yes
         ):
             return

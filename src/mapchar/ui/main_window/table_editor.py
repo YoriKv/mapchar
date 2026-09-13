@@ -113,7 +113,7 @@ class TableEditorMixin:
             return
         path = entry.path
         if ask or not path or entry.dialect != "native":
-            path = self._pick_save("Save table as native", path or "", "Tables (*.tbl)")
+            path = self._pick_save("Save Table as Native", path or "", "Tables (*.tbl)")
             if not path:
                 return
         if not self._write_text(path, write_native(entry.tables)):

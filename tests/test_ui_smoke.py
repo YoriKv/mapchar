@@ -738,14 +738,14 @@ ALWAYS_ON = frozenset(
         "Script…",
         "TSV / CSV…",
         "PO…",
-        "Cartographer command file…",
-        "Atlas script…",
+        "Cartographer Command File…",
+        "Atlas Script…",
         "TSV…",
         "CSV…",
         "Save Project",
         "Save Project As…",
-        "Open plugins folder…",
-        "Refresh plugins",
+        "Open Plugins Folder…",
+        "Refresh Plugins",
         "Quit",
         "Undo",
         "Redo",
@@ -754,8 +754,8 @@ ALWAYS_ON = frozenset(
         "Paste Entry",
         "Duplicate Entry",
         "Table Editor…",
-        "Light theme",
-        "Dark theme",
+        "Light Theme",
+        "Dark Theme",
         "Back",
         "Forward",
         "Files",
@@ -774,12 +774,14 @@ def _menu_actions(window, menu=None):
 
     Open Recent is skipped: its rows are project names that come and go.
     """
+    from mapchar.ui.help_dialogs import submenus
+
     menu = window.menuBar() if menu is None else menu
     for action in menu.actions():
         if action.isSeparator():
             continue
         yield action.text().replace("&", "").strip(), action
-        submenu = action.menu()
+        submenu = submenus(window.menuBar()).get(action)
         if submenu is not None and submenu is not window.recent_menu:
             yield from _menu_actions(window, submenu)
 
@@ -940,19 +942,41 @@ def test_no_widget_wears_a_stylesheet():
 
 
 def test_the_shortcut_guide_is_built_from_the_window(window):
-    from mapchar.ui.help_dialogs import shortcut_sections, shortcut_text
+    from mapchar.ui.help_dialogs import (
+        ShortcutGuide,
+        balanced_columns,
+        shortcut_sections,
+    )
 
     sections = dict(shortcut_sections(window))
     assert "File" in sections and "Navigate" in sections
     assert ("Write", "Ctrl+W") in sections["File"]
     assert ("Go to Address…", "Ctrl+G") in sections["Navigate"]
     assert ("Back", "Alt+Left") in sections["Navigate"]
+    # Undo's label names the command it would undo; the guide pins the verb.
+    assert ("Undo", "Ctrl+Z") in sections["Edit"]
     # A submenu's rows are flattened into its parent's section.
     assert ("Script…", "") not in sections["File"]
     # And the keys no menu can carry are declared beside them.
-    assert "Raw view" in sections
-    assert ("Page up / down", "PgUp / PgDn") in sections["Raw view"]
-    assert "Ctrl+W" in shortcut_text(window)
+    assert ("Page up / down", "PgUp / PgDn") in sections["Raw View"]
+    columns = balanced_columns(shortcut_sections(window))
+    assert sum(len(c) for c in columns) == len(sections) and all(columns)
+    guide = ShortcutGuide(shortcut_sections(window), window)
+    assert guide.width() > 0
+    guide.close()
+
+
+def test_walking_the_menus_for_the_guide_leaves_every_submenu_alive(window):
+    """PySide's ``QAction.menu()`` hands its wrapper ownership of the menu, so a
+    walk through it deleted Open Recent the first time Help ▸ Shortcuts opened."""
+    import gc
+
+    from mapchar.ui.help_dialogs import shortcut_sections
+
+    shortcut_sections(window)
+    gc.collect()
+    window._rebuild_recent()  # raised RuntimeError on a deleted QMenu
+    assert window.recent_menu.title() == "Open &Recent"
 
 
 _KEY = re.compile(

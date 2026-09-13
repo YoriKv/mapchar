@@ -55,7 +55,7 @@ class DumpingMixin:
             ]
         name = blocks[0].name if len(blocks) == 1 else file_entry.name
         path = self._pick_save(
-            "Dump to script", f"{name}.txt", "Scripts (*.txt);;All files (*)"
+            "Dump to Script", f"{name}.txt", "Scripts (*.txt);;All files (*)"
         )
         if not path:
             return

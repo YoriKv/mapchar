@@ -14,7 +14,7 @@ import os
 from contextlib import contextmanager
 
 from PySide6.QtCore import QFileSystemWatcher, Qt
-from PySide6.QtGui import QAction, QKeySequence, QPalette, QUndoStack
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QPalette, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar import APP_NAME, __version__
+from mapchar import APP_NAME
 from mapchar.core.address import BANK_PRESETS, HEX_ID
 from mapchar.core.document import Document
 from mapchar.core.text import read_text_any
@@ -50,7 +50,7 @@ from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.fonts_panel import FontsPanel
 from mapchar.ui.glyphs import Glyph
-from mapchar.ui.help_dialogs import shortcut_text
+from mapchar.ui.help_dialogs import AboutDialog, ShortcutGuide, shortcut_sections
 from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.main_window.block_bar import BlockBarMixin
@@ -91,7 +91,7 @@ from mapchar.ui.strings_view import StringsView
 from mapchar.ui.table_editor import TableEditor
 from mapchar.ui.tables_panel import TablesPanel
 from mapchar.ui.text_widget import TextWidget
-from mapchar.ui.widgets import CompactComboBox
+from mapchar.ui.widgets import CompactComboBox, ElidedLabel, fit_chars
 from mapchar.ui.window_layout import WindowLayout
 
 
@@ -254,7 +254,7 @@ class MainWindow(
         block_bar = QWidget()
         bl = QHBoxLayout(block_bar)
         bl.setContentsMargins(0, 0, 0, 0)
-        self.block_label = QLabel("")
+        self.block_label = ElidedLabel("")
         self.block_edit = QPushButton("Edit…")
         self.block_dump = QPushButton("Dump…")
         bl.addWidget(self.block_label, 1)
@@ -278,8 +278,12 @@ class MainWindow(
         nl = QHBoxLayout(nav)
         nl.setContentsMargins(0, 0, 0, 0)
         self.offset_box = QLineEdit()
-        self.offset_box.setMaximumWidth(140)
+        # Room for the longest spelling a format writes ($C0:FFFF, 7FFFFF), and
+        # no more: the steps beside it want the width.
+        fit_chars(self.offset_box, 9)
+        self.offset_box.setMaximumWidth(self.offset_box.minimumWidth())
         self.offset_box.setPlaceholderText("address")
+        self.offset_box.setToolTip("The view's position; type an address and Enter")
         # How a position is spelled: a flat file offset, one of the console
         # mapping presets, or the three numbers beside the picker
         # (mapchar.core.address).
@@ -324,8 +328,8 @@ class MainWindow(
             ("Home", None, "home", "Start of file (Home)"),
             ("Pg Up", None, "page-up", "Page up (PgUp)"),
             ("", Glyph.ARROW_UP, -BYTES_PER_ROW, "Row up (Up)"),
-            ("−B", None, -1, "Byte back (-)"),
-            ("+B", None, 1, "Byte forward (+)"),
+            ("−B", None, -1, "Byte back (Left or −)"),
+            ("+B", None, 1, "Byte forward (Right or +)"),
             ("", Glyph.ARROW_DOWN, BYTES_PER_ROW, "Row down (Down)"),
             ("Pg Dn", None, "page-down", "Page down (PgDn)"),
             ("End", None, "end", "End of file (End)"),
@@ -352,8 +356,14 @@ class MainWindow(
         self.step_buttons = tuple(steps)
         self._bake_icons()
         nl.addStretch(1)
-        self.nav_status = QLabel("")
-        nl.addWidget(self.nav_status)
+        # The file's size, the selection and any view-only notice sit at the
+        # status bar's right end rather than in this row, whose steps want the
+        # width; elided there, so a long notice can never widen the window.
+        self.nav_status = ElidedLabel("")
+        self.nav_status.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.statusBar().addPermanentWidget(self.nav_status)
         self.nav_bar = nav
         layout.addWidget(nav)
         self.setCentralWidget(central)
@@ -435,6 +445,9 @@ class MainWindow(
         self.workspace.on_reset.append(self._rewatch_tables)
 
     def _build_menus(self) -> None:
+        """The menu bar. Every row carries a mnemonic, and its label follows the
+        capitalisation rule of ``docs/ui.md``; the shortcut guide reads it all
+        back from here (:mod:`mapchar.ui.help_dialogs`)."""
         bar = self.menuBar()
 
         def act(menu, text, slot, shortcut=None):
@@ -446,67 +459,75 @@ class MainWindow(
             return a
 
         file_menu = bar.addMenu("&File")
-        act(file_menu, "Open ROM…", self._open_rom_dialog, "Ctrl+Shift+O")
-        act(file_menu, "Open Table…", self._open_table_dialog, "Ctrl+T")
-        act(file_menu, "Open Font…", self._open_font_dialog)
-        file_menu.addSeparator()
-        # Named where :mod:`mapchar.ui.main_window.capability_sync` gates them:
-        # what each row applies to is declared in the capability table, not here.
-        self.new_block_action = act(
-            file_menu, "New Block…", self._new_block, "Ctrl+Shift+B"
-        )
-        self.new_bookmark_action = act(
-            file_menu, "New Bookmark", self._new_bookmark, "Ctrl+B"
-        )
-        self.container_action = act(
-            file_menu, "Edit File Container…", self._edit_container, "Ctrl+E"
-        )
-        self.dump_action = act(file_menu, "Dump…", self._dump, "Ctrl+D")
-        file_menu.addSeparator()
-        self.write_action = act(file_menu, "Write", self._write_current, "Ctrl+W")
-        act(file_menu, "Write All", self._write_all, "Ctrl+Shift+W")
-        file_menu.addSeparator()
-        act(file_menu, "New Project", self._new_project, "Ctrl+N")
-        act(file_menu, "Open Project…", self._open_project_dialog, "Ctrl+O")
-        self.recent_menu = file_menu.addMenu("Open Recent")
+        act(file_menu, "&New Project", self._new_project, "Ctrl+N")
+        act(file_menu, "&Open Project…", self._open_project_dialog, "Ctrl+O")
+        self.recent_menu = file_menu.addMenu("Open &Recent")
         # Filled each time the File menu opens, not once at build time: the list
         # changes as projects are opened and saved, and rows go stale on disk.
         file_menu.aboutToShow.connect(self._rebuild_recent)
         file_menu.aboutToShow.connect(self._sync_locate_action)
+        act(file_menu, "&Save Project", self._save_project, "Ctrl+S")
+        act(file_menu, "Save Project &As…", self._save_project_as, "Ctrl+Shift+S")
         self.locate_action = act(
-            file_menu, "Locate Missing Files…", lambda: self._relocate_missing()
+            file_menu, "Locat&e Missing Files…", lambda: self._relocate_missing()
         )
         self.locate_action.setEnabled(False)
         file_menu.addSeparator()
-        import_menu = file_menu.addMenu("Import")
+        act(file_menu, "Open RO&M…", self._open_rom_dialog, "Ctrl+Shift+O")
+        act(file_menu, "Open &Table…", self._open_table_dialog, "Ctrl+T")
+        act(file_menu, "Open &Font…", self._open_font_dialog)
+        file_menu.addSeparator()
+        # Named where :mod:`mapchar.ui.main_window.capability_sync` gates them:
+        # what each row applies to is declared in the capability table, not here.
+        self.new_block_action = act(
+            file_menu, "New &Block…", self._new_block, "Ctrl+Shift+B"
+        )
+        self.new_bookmark_action = act(
+            file_menu, "New Boo&kmark", self._new_bookmark, "Ctrl+B"
+        )
+        self.container_action = act(
+            file_menu, "Edit File &Container…", self._edit_container, "Ctrl+E"
+        )
+        self.dump_action = act(file_menu, "&Dump…", self._dump, "Ctrl+D")
+        file_menu.addSeparator()
+        self.write_action = act(file_menu, "&Write", self._write_current, "Ctrl+W")
+        act(file_menu, "Write A&ll", self._write_all, "Ctrl+Shift+W")
+        file_menu.addSeparator()
+        import_menu = file_menu.addMenu("&Import")
         self.import_action = import_menu.menuAction()
-        act(import_menu, "Script…", lambda: self._import("script"))
-        act(import_menu, "TSV / CSV…", lambda: self._import("delimited"))
-        act(import_menu, "PO…", lambda: self._import("po"))
+        act(import_menu, "&Script…", lambda: self._import("script"))
+        act(import_menu, "&TSV / CSV…", lambda: self._import("delimited"))
+        act(import_menu, "&PO…", lambda: self._import("po"))
         import_menu.addSeparator()
-        act(import_menu, "Cartographer command file…", self._import_cartographer_dialog)
-        act(import_menu, "Atlas script…", self._import_atlas_dialog)
-        export_menu = file_menu.addMenu("Export")
+        act(
+            import_menu,
+            "&Cartographer Command File…",
+            self._import_cartographer_dialog,
+        )
+        act(import_menu, "&Atlas Script…", self._import_atlas_dialog)
+        export_menu = file_menu.addMenu("E&xport")
         self.export_action = export_menu.menuAction()
-        act(export_menu, "TSV…", lambda: self._export("tsv"))
-        act(export_menu, "CSV…", lambda: self._export("csv"))
-        act(export_menu, "PO…", lambda: self._export("po"))
+        act(export_menu, "&TSV…", lambda: self._export("tsv"))
+        act(export_menu, "C&SV…", lambda: self._export("csv"))
+        act(export_menu, "&PO…", lambda: self._export("po"))
         export_menu.addSeparator()
-        act(export_menu, "Atlas script…", self._export_atlas)
-        act(export_menu, "Cartographer command file…", self._export_cartographer)
-        act(file_menu, "Save Project", self._save_project, "Ctrl+S")
-        act(file_menu, "Save Project As…", self._save_project_as, "Ctrl+Shift+S")
+        act(export_menu, "&Cartographer Command File…", self._export_cartographer)
+        act(export_menu, "&Atlas Script…", self._export_atlas)
         file_menu.addSeparator()
-        act(file_menu, "Open plugins folder…", self._open_plugins_folder)
-        act(file_menu, "Refresh plugins", self._refresh_plugins, "F5")
+        act(file_menu, "Open &Plugins Folder…", self._open_plugins_folder)
+        act(file_menu, "Refresh Pl&ugins", self._refresh_plugins, "F5")
         file_menu.addSeparator()
-        act(file_menu, "Quit", self.close, "Ctrl+Q")
+        act(file_menu, "&Quit", self.close, "Ctrl+Q")
 
         edit_menu = bar.addMenu("&Edit")
-        undo = self.undo_stack.createUndoAction(self, "Undo")
+        undo = self.undo_stack.createUndoAction(self, "&Undo")
         undo.setShortcut(QKeySequence.StandardKey.Undo)
-        redo = self.undo_stack.createRedoAction(self, "Redo")
+        redo = self.undo_stack.createRedoAction(self, "&Redo")
         redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
+        # Their labels carry the command they would undo; the guide shows the
+        # verb alone.
+        undo.setProperty("guideLabel", "Undo")
+        redo.setProperty("guideLabel", "Redo")
         edit_menu.addAction(undo)
         edit_menu.addAction(redo)
         edit_menu.addSeparator()
@@ -515,10 +536,10 @@ class MainWindow(
         # every text field in the app. The menu rows still work by click, since
         # each reads the panel's selection rather than the keyboard focus.
         for text, slot, key in (
-            ("Cut Entry", self._cut_selection, "Ctrl+X"),
-            ("Copy Entry", self._copy_selection, "Ctrl+C"),
-            ("Paste Entry", self._paste_selection, "Ctrl+V"),
-            ("Duplicate Entry", self._duplicate_selection, None),
+            ("Cu&t Entry", self._cut_selection, "Ctrl+X"),
+            ("&Copy Entry", self._copy_selection, "Ctrl+C"),
+            ("&Paste Entry", self._paste_selection, "Ctrl+V"),
+            ("D&uplicate Entry", self._duplicate_selection, None),
         ):
             a = QAction(text, self)
             if key:
@@ -529,61 +550,77 @@ class MainWindow(
             edit_menu.addAction(a)
         edit_menu.addSeparator()
         self.find_replace_action = act(
-            edit_menu, "Find and Replace…", self._show_find_replace, "Ctrl+H"
+            edit_menu, "&Find and Replace…", self._show_find_replace, "Ctrl+H"
         )
         edit_menu.addSeparator()
         self.string_actions = tuple(
             act(edit_menu, text, slot)
             for text, slot in (
-                ("Revert Selected Strings", self._revert_selected),
-                ("Toggle Review on Selected", self._toggle_review_selected),
-                ("Copy Original to Empty Translations", self._copy_originals),
+                ("Re&vert Selected Strings", self._revert_selected),
+                ("Toggle Revie&w on Selected", self._toggle_review_selected),
+                ("Copy &Original to Empty Translations", self._copy_originals),
             )
         )
 
         view_menu = bar.addMenu("&View")
         self.raw_tab_action = act(
-            view_menu, "Raw", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1"
+            view_menu, "&Raw", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1"
         )
         self.strings_tab_action = act(
-            view_menu, "Strings", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2"
+            view_menu, "&Strings", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2"
         )
         self.display_mode_action = act(
-            view_menu, "Aligned / Text display", self.mode_button.toggle, "Ctrl+Shift+A"
+            view_menu,
+            "&Aligned / Text Display",
+            self.mode_button.toggle,
+            "Ctrl+Shift+A",
         )
         view_menu.addSeparator()
-        act(view_menu, "Table Editor…", self._show_table_editor, "Ctrl+Shift+T")
-        self.preview_action = act(view_menu, "Preview…", self._show_preview, "Ctrl+P")
+        act(view_menu, "&Table Editor…", self._show_table_editor, "Ctrl+Shift+T")
+        self.preview_action = act(view_menu, "&Preview…", self._show_preview, "Ctrl+P")
         view_menu.addSeparator()
-        self.theme_light = act(
-            view_menu, "Light theme", lambda: self._set_theme("light")
-        )
-        self.theme_dark = act(view_menu, "Dark theme", lambda: self._set_theme("dark"))
+        # One of the two is always the theme in use, so they read as a choice.
+        themes = QActionGroup(self)
+        current = str(self.settings.value("theme", "light"))
+        for attr, text, name in (
+            ("theme_light", "&Light Theme", "light"),
+            ("theme_dark", "&Dark Theme", "dark"),
+        ):
+            action = act(view_menu, text, lambda _=False, n=name: self._set_theme(n))
+            action.setCheckable(True)
+            action.setChecked(name == current)
+            themes.addAction(action)
+            setattr(self, attr, action)
 
         navigate_menu = bar.addMenu("&Navigate")
         self._add_history_actions(navigate_menu)
         self.goto_action = act(
-            navigate_menu, "Go to Address…", self._go_to_dialog, "Ctrl+G"
+            navigate_menu, "&Go to Address…", self._go_to_dialog, "Ctrl+G"
         )
         navigate_menu.addSeparator()
         # Gated with the offset box and the steps: they move the same view, and a
         # row that jumps a document there is not open is a row that does nothing.
         self.ends_actions = (
-            act(navigate_menu, "Start of File", lambda: self._go_to(0), None),
-            act(navigate_menu, "End of File", self._go_end, None),
+            act(navigate_menu, "&Start of File", lambda: self._go_to(0), None),
+            act(navigate_menu, "&End of File", self._go_end, None),
         )
 
         search_menu = bar.addMenu("&Search")
         self.search_actions = (
-            act(search_menu, "Search window…", self._show_search, "Ctrl+Shift+F"),
+            act(search_menu, "&Search Window…", self._show_search, "Ctrl+Shift+F"),
             # Not Ctrl+Shift+S, which is Save Project As…: two window actions on
             # one sequence is ambiguous to Qt and neither of them then fires.
-            act(search_menu, "Scan for text…", self._show_scan, "Ctrl+Shift+R"),
-            act(search_menu, "Find bytes…", self._find_bytes, "Ctrl+F"),
-            act(search_menu, "Find next", lambda: self._find_bytes(again=True), "F3"),
+            act(search_menu, "S&can for Text…", self._show_scan, "Ctrl+Shift+R"),
+            act(search_menu, "&Find Bytes…", self._find_bytes, "Ctrl+F"),
             act(
                 search_menu,
-                "Find previous",
+                "Find &Next",
+                lambda: self._find_bytes(again=True),
+                "F3",
+            ),
+            act(
+                search_menu,
+                "Find &Previous",
                 lambda: self._find_bytes(again=True, backwards=True),
                 "Shift+F3",
             ),
@@ -592,20 +629,25 @@ class MainWindow(
         # Gated on its own, not with the row above: the others read bytes, and
         # this one needs a block's strings to look for pointers *to*.
         self.pointers_action = act(
-            search_menu, "Find Pointers…", self._find_pointers, "Ctrl+Shift+P"
+            search_menu, "Find P&ointers…", self._find_pointers, "Ctrl+Shift+P"
         )
 
         panels_menu = bar.addMenu("&Panels")
-        panels_menu.addAction(self.files_dock.toggleViewAction())
-        panels_menu.addAction(self.tables_dock.toggleViewAction())
-        panels_menu.addAction(self.fonts_dock.toggleViewAction())
-        panels_menu.addAction(self.hex_dock.toggleViewAction())
+        for dock, text in (
+            (self.files_dock, "&Files"),
+            (self.tables_dock, "&Tables"),
+            (self.fonts_dock, "F&onts"),
+            (self.hex_dock, "&Hex"),
+        ):
+            toggle = dock.toggleViewAction()
+            toggle.setText(text)
+            panels_menu.addAction(toggle)
         panels_menu.addSeparator()
-        act(panels_menu, "Reset Panel Layout", self._reset_layout)
+        act(panels_menu, "&Reset Panel Layout", self._reset_layout)
 
         help_menu = bar.addMenu("&Help")
-        act(help_menu, "Shortcuts…", self._show_shortcuts, "F1")
-        act(help_menu, "About", self._about)
+        act(help_menu, "&Shortcuts…", self._show_shortcuts, "F1")
+        act(help_menu, "&About", self._about)
         self._rebuild_recent()
 
     def _reset_layout(self) -> None:
@@ -623,6 +665,7 @@ class MainWindow(
 
         apply_theme(QApplication.instance(), name)
         self.settings.setValue("theme", name)
+        (self.theme_dark if name == "dark" else self.theme_light).setChecked(True)
         self._bake_icons()
 
     def _bake_icons(self) -> None:
@@ -790,7 +833,7 @@ class MainWindow(
             likely = "cp932"
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle(f"{APP_NAME} — not UTF-8")
+        box.setWindowTitle(f"{APP_NAME} — Not UTF-8")
         box.setText(f"{os.path.basename(path)} is not UTF-8 text.")
         box.setInformativeText(
             f"Byte {failure.start} ({failure.object[failure.start]:#04x}) "
@@ -853,14 +896,10 @@ class MainWindow(
         (:mod:`mapchar.ui.help_dialogs`), so a shortcut that moves is right here
         without a second edit.
         """
-        TextDialog("Shortcuts", shortcut_text(self), self).exec()
+        ShortcutGuide(shortcut_sections(self), self).exec()
 
     def _about(self) -> None:
-        QMessageBox.about(
-            self,
-            APP_NAME,
-            f"{APP_NAME} {__version__}\nA text viewer and editor for retro-game ROMs.",
-        )
+        AboutDialog(self).exec()
 
     def _error(self, message: str) -> None:
         QMessageBox.warning(self, APP_NAME, message)

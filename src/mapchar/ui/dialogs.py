@@ -1,7 +1,8 @@
-"""Dialogs: block configuration, the file container, dump, shortcuts."""
+"""Dialogs: block configuration, the file container, dump, reports, pointers."""
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -36,7 +38,13 @@ from mapchar.core.block import (
 )
 from mapchar.core.numbers import format_num, parse_num
 from mapchar.project.formats.script import DumpMode
-from mapchar.ui.widgets import ResultsTable
+from mapchar.ui.widgets import ResultsTable, hint_field, show_elided_tooltips
+
+
+def _form_group(title: str) -> tuple[QGroupBox, QFormLayout]:
+    """A titled box holding a form, for a dialog long enough to need sections."""
+    box = QGroupBox(title)
+    return box, QFormLayout(box)
 
 
 class HexEdit(QLineEdit):
@@ -72,12 +80,17 @@ class BlockDialog(QDialog):
         compression_id: str | None = None,
         spare_room: str = "fill",
         suggested_mapping: str | None = None,
+        title: str = "Block",
     ):
         super().__init__(parent)
-        self.setWindowTitle("Block")
-        form = QFormLayout(self)
+        self.setWindowTitle(title)
+        # Three groups in two columns — where the strings are, how they are cut,
+        # how they go back — rather than one form a screen tall: the dialog has
+        # to fit a laptop with its OK button on screen.
+        name_form = QFormLayout()
         self.name = QLineEdit(name)
-        form.addRow("Name", self.name)
+        name_form.addRow("Name", self.name)
+        source_box, form = _form_group("Source")
         self.source_kind = QComboBox()
         self.source_kind.addItems(
             ["Range", "Fixed strings", "Pointer table", "Pointer list"]
@@ -85,6 +98,7 @@ class BlockDialog(QDialog):
         form.addRow("Source", self.source_kind)
         self.start = HexEdit()
         self.stop = HexEdit()
+        self.stop.setToolTip("The first byte past the region, in hex")
         self.count = QSpinBox()
         self.count.setRange(1, 1_000_000)
         self.length = QSpinBox()
@@ -110,17 +124,21 @@ class BlockDialog(QDialog):
         if suggested_mapping and config is None:
             self.ptr_mapping.setCurrentText(suggested_mapping)
         self.ptr_offset = QLineEdit("0")
+        self.ptr_offset.setToolTip(
+            "Added to every pointer value: decimal or $hex, with a leading - to "
+            "subtract"
+        )
         self.ptr_bank = QSpinBox()
         self.ptr_bank.setRange(0, 4095)
-        self.ptr_addresses = QLineEdit()
-        self.ptr_addresses.setPlaceholderText("hex addresses, comma separated")
+        self.ptr_addresses = hint_field(QLineEdit(), "hex addresses, comma separated")
         form.addRow("Pointer size", self.ptr_size)
         form.addRow("Pointer stride", self.ptr_stride)
         form.addRow("Pointer endian", self.ptr_endian)
         form.addRow("Mapping", self.ptr_mapping)
-        form.addRow("Target offset (±dec or $hex)", self.ptr_offset)
+        form.addRow("Target offset", self.ptr_offset)
         form.addRow("Bank", self.ptr_bank)
         form.addRow("Pointer addresses", self.ptr_addresses)
+        strings_box, form = _form_group("Strings")
         self.string_type = QComboBox()
         self.string_type.addItems(
             ["End token", "Fixed length", "Pascal", "Next pointer"]
@@ -142,23 +160,37 @@ class BlockDialog(QDialog):
         self.spp = QSpinBox()
         self.spp.setRange(1, 64)
         form.addRow("End tokens per string", self.spp)
+        # A zero is a switch left off, and says so rather than showing a number
+        # the reader has to know the meaning of.
         self.realign_m = QSpinBox()
         self.realign_m.setRange(0, 65536)
+        self.realign_m.setSpecialValueText("off")
         self.realign_o = QSpinBox()
         self.realign_o.setRange(0, 65536)
         form.addRow("Realign multiple", self.realign_m)
         form.addRow("Realign offset", self.realign_o)
         self.line_length = QSpinBox()
         self.line_length.setRange(0, 1_000_000)
-        form.addRow("Fixed line length (0: off)", self.line_length)
+        self.line_length.setSpecialValueText("off")
+        form.addRow("Fixed line length", self.line_length)
         self.show_end = QCheckBox("Show [end] after fixed strings")
         form.addRow("", self.show_end)
-        self.skips = QLineEdit()
-        self.skips.setPlaceholderText("from>to, from>to  (hex)")
+        self.skips = hint_field(
+            QLineEdit(),
+            "from>to, from>to  (hex)",
+            "Byte ranges inside the region that are not text, in hex",
+        )
         form.addRow("Skip ranges", self.skips)
+        writing_box, form = _form_group("Writing")
         self.bound = HexEdit()
         self.bound.setText("")
-        form.addRow("Write bound (blank: stop)", self.bound)
+        hint_field(
+            self.bound,
+            "the region's stop",
+            "The last address a write may reach, in hex; blank stops at the "
+            "region's end",
+        )
+        form.addRow("Write bound", self.bound)
         self.write_mode = QComboBox()
         self.write_mode.addItem("Automatic", None)
         self.write_mode.addItem("Packed", WriteMode.PACKED)
@@ -185,7 +217,20 @@ class BlockDialog(QDialog):
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        left = QVBoxLayout()
+        left.addWidget(source_box)
+        left.addStretch(1)
+        right = QVBoxLayout()
+        right.addWidget(strings_box)
+        right.addWidget(writing_box)
+        right.addStretch(1)
+        columns = QHBoxLayout()
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
+        layout = QVBoxLayout(self)
+        layout.addLayout(name_form)
+        layout.addLayout(columns, 1)
+        layout.addWidget(buttons)
         self.source_kind.currentIndexChanged.connect(self._sync)
         self.string_type.currentIndexChanged.connect(self._sync)
         if config is not None:
@@ -303,7 +348,7 @@ class BlockDialog(QDialog):
         if self.ptr_offset.isEnabled() and self._target_offset() is None:
             QMessageBox.warning(
                 self,
-                "Block",
+                self.windowTitle(),
                 f"{self.ptr_offset.text().strip()!r} is not a number. Write a "
                 "decimal or a $hex value, with a leading - to subtract.",
             )
@@ -410,6 +455,10 @@ class ContainerDialog(QDialog):
         self._readonly = readonly_ids
         layout = QVBoxLayout(self)
         self.files = QListWidget()
+        # A path is cut in its middle, so both the drive and the file name stay
+        # in sight, and hovering it reads the rest.
+        self.files.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        show_elided_tooltips(self.files)
         for path in paths:
             self.files.addItem(path)
         self.files.setCurrentRow(0)
@@ -467,7 +516,7 @@ class ContainerDialog(QDialog):
         self.files.setCurrentRow(to)
 
     def _append(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Append file")
+        path, _ = QFileDialog.getOpenFileName(self, "Append File")
         if path:
             self.files.addItem(path)
             self.files.setCurrentRow(self.files.count() - 1)
@@ -508,7 +557,7 @@ class DumpDialog(QDialog):
 
 
 class TextDialog(QDialog):
-    """A read-only text box, for shortcuts and notices."""
+    """A read-only text box, for reports and notices."""
 
     def __init__(self, title: str, text: str, parent: QWidget | None = None):
         super().__init__(parent)
@@ -549,7 +598,13 @@ class PointerSearchDialog(QDialog):
         self.offset_from = QLineEdit("0")
         self.offset_to = QLineEdit("0")
         self.offset_step = QLineEdit("1")
-        form.addRow("Offset from (±dec or $hex)", self.offset_from)
+        for field, what in (
+            (self.offset_from, "The first offset a pointer may be based on"),
+            (self.offset_to, "The last offset a pointer may be based on"),
+            (self.offset_step, "How far apart the offsets tried are"),
+        ):
+            field.setToolTip(f"{what}: decimal or $hex, with a leading - to subtract")
+        form.addRow("Offset from", self.offset_from)
         form.addRow("Offset to", self.offset_to)
         form.addRow("Offset step", self.offset_step)
         buttons = QDialogButtonBox(
@@ -638,7 +693,7 @@ class DiscoveryDialog(QDialog):
         layout.addWidget(self.table, 1)
         buttons = QDialogButtonBox()
         buttons.addButton(
-            "Use as pointer table", QDialogButtonBox.ButtonRole.AcceptRole
+            "Use as Pointer Table", QDialogButtonBox.ButtonRole.AcceptRole
         )
         self.attach_button = buttons.addButton(
             "Attach", QDialogButtonBox.ButtonRole.AcceptRole

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapchar.ui.widgets import fit_chars, hint_field
 from mapchar.ui.window_layout import remember_layout
 
 
@@ -35,8 +36,8 @@ class FindReplaceDialog(QDialog):
         self._layout = remember_layout(self, "find_replace")
         self.setModal(False)
         form = QFormLayout(self)
-        self.find = QLineEdit()
-        self.find.setPlaceholderText("Text, or a [code] matched whole")
+        self.find = hint_field(QLineEdit(), "text, or a [code] matched whole")
+        fit_chars(self.find, 28)
         self.replace = QLineEdit()
         self.case = QCheckBox("Match case")
         self.scope = QComboBox()
@@ -47,12 +48,17 @@ class FindReplaceDialog(QDialog):
         form.addRow("Scope", self.scope)
         form.addRow("", self.case)
         row = QHBoxLayout()
-        b_next = QPushButton("Find next")
+        b_next = QPushButton("Find Next")
+        b_next.setDefault(True)
         b_one = QPushButton("Replace")
-        b_all = QPushButton("Replace all")
+        b_all = QPushButton("Replace All")
+        b_close = QPushButton("Close")
+        b_close.clicked.connect(self.close)
         row.addWidget(b_next)
         row.addWidget(b_one)
         row.addWidget(b_all)
+        row.addStretch(1)
+        row.addWidget(b_close)
         form.addRow(row)
         b_next.clicked.connect(
             lambda: self.find_next.emit(

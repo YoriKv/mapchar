@@ -27,16 +27,16 @@ class RelativeSearchMixin:
         if not found:
             return None
         names = [self._RUN_NAMES[r] for r in found]
-        options = ([" ".join(names)] if len(found) > 1 else []) + names + ["custom…"]
+        options = ([" ".join(names)] if len(found) > 1 else []) + names + ["Custom…"]
         choice, ok = QInputDialog.getItem(
-            self, "Build table", "Alphabets to lay out:", options, 0, False
+            self, "Build Table", "Alphabets to lay out:", options, 0, False
         )
         if not ok:
             return None
-        if choice == "custom…":
+        if choice == "Custom…":
             chars, ok = QInputDialog.getText(
                 self,
-                "Build table",
+                "Build Table",
                 f"Characters in code order from {names[0]}'s base:",
             )
             if not ok or not chars:
@@ -57,7 +57,7 @@ class RelativeSearchMixin:
             target is not None
             and QMessageBox.question(
                 self,
-                "Build table",
+                "Build Table",
                 f"Add {len(entries)} entries to @{table_id}? (No creates a new table)",
             )
             == QMessageBox.StandardButton.Yes

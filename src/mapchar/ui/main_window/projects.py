@@ -73,7 +73,7 @@ class ProjectMixin:
         names = ", ".join(e.name for e in dirty)
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Unsaved edits")
+        box.setWindowTitle("Unsaved Edits")
         box.setText(f"{consequence} ({names}). Write them to disk first?")
         write = box.addButton(write_label, QMessageBox.ButtonRole.AcceptRole)
         skip = box.addButton(skip_label, QMessageBox.ButtonRole.DestructiveRole)
@@ -110,7 +110,7 @@ class ProjectMixin:
         if self._project_dirty():
             answer = QMessageBox.question(
                 self,
-                "Unsaved project",
+                "Unsaved Project",
                 f"Save the project before you {what}?",
                 QMessageBox.StandardButton.Save
                 | QMessageBox.StandardButton.Discard
@@ -187,7 +187,7 @@ class ProjectMixin:
         self._add_recent(path)
         self._refresh_table_picks()
         if loaded.warnings:
-            TextDialog("Project notices", "\n".join(loaded.warnings), self).exec()
+            TextDialog("Project Notices", "\n".join(loaded.warnings), self).exec()
         self._activate_entry(
             loaded.current
             or (self.workspace.files()[0] if self.workspace.files() else None)
@@ -245,7 +245,7 @@ class ProjectMixin:
             if (
                 QMessageBox.question(
                     self,
-                    "Missing files",
+                    "Missing Files",
                     f"This project references {len(paths)} file(s) that could not "
                     "be found. Locate them now?\n\n" + "\n".join(shown),
                 )

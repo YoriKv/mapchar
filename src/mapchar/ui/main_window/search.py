@@ -47,7 +47,7 @@ class SearchMixin:
         else:
             text, ok = QInputDialog.getText(
                 self,
-                "Find bytes",
+                "Find Bytes",
                 'Hex bytes, or "quoted text" through the start table:',
             )
             if not ok or not text.strip():

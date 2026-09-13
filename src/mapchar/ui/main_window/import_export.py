@@ -34,7 +34,7 @@ class ImportExportMixin:
     """
 
     def _import_cartographer_dialog(self) -> None:
-        path = self._pick_open("Import Cartographer command file", "*.txt;;*")
+        path = self._pick_open("Import Cartographer Command File", "*.txt;;*")
         if path:
             self.import_cartographer(path)
 
@@ -91,14 +91,14 @@ class ImportExportMixin:
         if created:
             self._activate_entry(created[0])
         self._report(
-            "Cartographer import",
+            "Cartographer Import",
             f"Imported {len(created)} block(s) from {os.path.basename(path)}",
             notices,
         )
         return created
 
     def _import_atlas_dialog(self) -> None:
-        path = self._pick_open("Import Atlas script", "*.txt;;*")
+        path = self._pick_open("Import Atlas Script", "*.txt;;*")
         if path:
             self.import_atlas(path)
 
@@ -137,7 +137,7 @@ class ImportExportMixin:
         self._remember_dir(path)
         self._refresh_view()
         self._report(
-            "Atlas import",
+            "Atlas Import",
             f"Imported {applied} string(s) from {os.path.basename(path)}",
             notices,
         )
@@ -152,7 +152,7 @@ class ImportExportMixin:
         if entry is None:
             return
         tables = self._table_set()
-        path = self._pick_save("Export Atlas script", f"{entry.name}.txt", "*.txt")
+        path = self._pick_save("Export Atlas Script", f"{entry.name}.txt", "*.txt")
         if not path:
             return
         table_files = {}
@@ -172,7 +172,7 @@ class ImportExportMixin:
                 return
         self._remember_dir(path)
         self._report(
-            "Atlas export",
+            "Atlas Export",
             f"Exported {path} and {len(export.tables)} table file(s)",
             export.notices,
         )
@@ -183,7 +183,9 @@ class ImportExportMixin:
         )
         if entry is None:
             return
-        path = self._pick_save("Export command file", f"{entry.name}.txt", "*.txt")
+        path = self._pick_save(
+            "Export Cartographer Command File", f"{entry.name}.txt", "*.txt"
+        )
         if not path:
             return
         table_entry = self.workspace.entry_for_table(entry.config.table_id)
@@ -206,7 +208,7 @@ class ImportExportMixin:
         if not self._write_text(path, text):
             return
         self._remember_dir(path)
-        self._report("Cartographer export", f"Exported {path}", notes)
+        self._report("Cartographer Export", f"Exported {path}", notes)
 
     def _block_strings_by_name(self, file_entry: Entry | None) -> dict[str, list]:
         out: dict[str, list] = {}
@@ -300,7 +302,7 @@ class ImportExportMixin:
         self._remember_dir(path)
         self._refresh_view()
         self._report(
-            "Import notices",
+            "Import Notices",
             f"Imported {applied} string(s) from {os.path.basename(path)}",
             notices,
         )

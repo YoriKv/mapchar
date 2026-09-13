@@ -456,7 +456,9 @@ def test_a_multi_selection_leaves_only_remove_and_the_moves_live(window, tmp_pat
     for entry in (first, second):
         item_for(window, entry).setSelected(True)
     menu = window._build_files_menu(first)
-    live = {a.text() for a in menu.actions() if a.text() and a.isEnabled()}
+    live = {
+        a.text().replace("&", "") for a in menu.actions() if a.text() and a.isEnabled()
+    }
     assert live == {"Remove", "Move Up", "Move Down"}
 
 

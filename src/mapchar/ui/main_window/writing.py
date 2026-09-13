@@ -162,7 +162,7 @@ class WritingMixin:
                         block.doc.pending_payload = payload
                     written_blocks.append(block)
             if problems:
-                TextDialog("Cannot write", "\n".join(problems), self).exec()
+                TextDialog("Cannot Write", "\n".join(problems), self).exec()
                 ok = False
                 continue
             if not parent_doc.writable:

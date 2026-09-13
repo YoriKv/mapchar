@@ -15,11 +15,11 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.table import TableSet
 from mapchar.engines.scan import Region, scan
-from mapchar.ui.widgets import CancellableRun, ResultsTable
+from mapchar.ui.widgets import CancellableRun, ElidedLabel, EscapeCloses, ResultsTable
 from mapchar.ui.window_layout import remember_layout
 
 
-class ScanWindow(CancellableRun, QWidget):
+class ScanWindow(EscapeCloses, CancellableRun, QWidget):
     go_to = Signal(int, int)
     new_block = Signal(object)
     """A Region to make a block from."""
@@ -38,13 +38,18 @@ class ScanWindow(CancellableRun, QWidget):
         self.window_size = QSpinBox()
         self.window_size.setRange(8, 4096)
         self.window_size.setValue(64)
+        self.window_size.setToolTip("Bytes scored at a time")
         self.step = QSpinBox()
         self.step.setRange(1, 4096)
         self.step.setValue(32)
+        self.step.setToolTip("Bytes the window moves between scores")
         self.threshold = QDoubleSpinBox()
         self.threshold.setRange(0.1, 1.0)
         self.threshold.setSingleStep(0.05)
         self.threshold.setValue(0.6)
+        self.threshold.setToolTip(
+            "How much of a window must read as text under the start table"
+        )
         self.run = QPushButton("Scan")
         self.stop = QPushButton("Stop")
         row.addWidget(QLabel("Window"))
@@ -57,12 +62,12 @@ class ScanWindow(CancellableRun, QWidget):
         row.addWidget(self.run)
         row.addWidget(self.stop)
         layout.addLayout(row)
-        self.status = QLabel("")
+        self.status = ElidedLabel("")
         layout.addWidget(self.status)
         self.results = ResultsTable(["Start", "End", "Score", "Terminator", "Initial"])
         layout.addWidget(self.results, 1)
         bottom = QHBoxLayout()
-        self.block = QPushButton("New block from region")
+        self.block = QPushButton("New Block from Region")
         self.block.setEnabled(False)
         bottom.addStretch(1)
         bottom.addWidget(self.block)

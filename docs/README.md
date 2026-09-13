@@ -32,6 +32,9 @@ Every doc in this folder gets a line here: its link and what it covers.
 - [development.md](development.md): the Python/uv environment, the two
   virtualenvs, PyCharm files, the source layout and the checks a change must
   pass.
+- [ui.md](ui.md): the UI conventions — label capitalisation, what a surface
+  does when its room runs out, tooltips over cut-short text, shared keys — and
+  the screenshot tool for reviewing the UI.
 - [release.md](release.md): building the app with `packaging/build.py`,
   cutting a release with `release.sh`, and the GitHub release workflow.
 - [plan/README.md](plan/README.md): the target design of mapchar itself and

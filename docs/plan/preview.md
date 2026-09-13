@@ -91,7 +91,7 @@ mean different things in each.
 
 ## Wrapping
 
-**Wrap translation**, in the Preview window, rewrites the selected strings'
+**Wrap Translation**, in the Preview window, rewrites the selected strings'
 line breaks to fit the box:
 
 - existing *newline* codes are removed, except those immediately after a

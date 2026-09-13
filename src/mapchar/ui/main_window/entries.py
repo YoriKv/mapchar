@@ -18,6 +18,7 @@ from mapchar.project.workspace import (
     normalize_path,
 )
 from mapchar.ui.files_panel import SORT_KEYS, sorted_entries
+from mapchar.ui.help_dialogs import submenus
 from mapchar.ui.undo_commands import EntryCommand, EntryOrderCommand, RenameEntryCommand
 
 
@@ -77,7 +78,8 @@ class EntriesMixin:
                 "translations are kept, but they cannot be re-read or written "
                 "until the table is loaded again."
             )
-        if QMessageBox.question(self, "Remove", msg) != QMessageBox.StandardButton.Yes:
+        answer = QMessageBox.question(self, "Remove Entries", msg)
+        if answer != QMessageBox.StandardButton.Yes:
             return
         for block in orphaned:
             self._stash_strings(block)
@@ -219,82 +221,84 @@ class EntriesMixin:
         """
         menu = QMenu(self)
         if entry is None:
-            menu.addAction("Open ROM…", self._open_rom_dialog)
-            menu.addAction("Open Table…", self._open_table_dialog)
-            paste = menu.addAction("Paste", lambda: self._paste_entries(None))
+            menu.addAction("Open RO&M…", self._open_rom_dialog)
+            menu.addAction("Open &Table…", self._open_table_dialog)
+            paste = menu.addAction("&Paste", lambda: self._paste_entries(None))
             paste.setEnabled(self._clipboard_entries_available())
             return menu
         selected = self.files_panel.selected_entries()
         acting = selected if len(selected) > 1 and entry in selected else [entry]
         if entry.kind is EntryKind.FILE:
             menu.addAction(
-                "New Block…",
+                "New &Block…",
                 lambda: (self._activate_entry(entry), self._new_block()),
             )
             menu.addAction(
-                "New Block from Selection…",
+                "New Block from &Selection…",
                 lambda: (self._activate_entry(entry), self._new_block(*self._sel())),
             ).setEnabled(entry is self._current_file() and self._selection is not None)
             menu.addAction(
-                "New Bookmark",
+                "New Boo&kmark",
                 lambda: (self._activate_entry(entry), self._new_bookmark()),
             )
             menu.addSeparator()
-            menu.addAction("Edit File Container…", lambda: self._edit_container(entry))
-            menu.addAction("Container Info…", lambda: self._container_info(entry))
+            menu.addAction("Edit File Cont&ainer…", lambda: self._edit_container(entry))
+            menu.addAction("Container In&fo…", lambda: self._container_info(entry))
             menu.addAction(
-                "Dump all blocks…",
+                "&Dump All Blocks…",
                 lambda: (self._activate_entry(entry), self._dump(all_blocks=True)),
             )
         if entry.kind is EntryKind.BLOCK:
             menu.addAction(
-                "Edit…", lambda: (self._activate_entry(entry), self._edit_block())
+                "&Edit…", lambda: (self._activate_entry(entry), self._edit_block())
             )
-            menu.addAction("Dump…", lambda: (self._activate_entry(entry), self._dump()))
-            menu.addAction("Jump to Source", lambda: self._jump_to_source(entry))
-        if entry.kind is EntryKind.BOOKMARK:
-            menu.addAction("Jump to Bookmark", lambda: self._jump_to_bookmark(entry))
-        if entry.kind is EntryKind.TABLE:
-            menu.addAction("Edit…", lambda: self._edit_table_entry(entry))
             menu.addAction(
-                "Save As Native…", lambda: self._save_table_entry(entry, ask=True)
+                "&Dump…", lambda: (self._activate_entry(entry), self._dump())
+            )
+            menu.addAction("&Jump to Source", lambda: self._jump_to_source(entry))
+        if entry.kind is EntryKind.BOOKMARK:
+            menu.addAction("&Jump to Bookmark", lambda: self._jump_to_bookmark(entry))
+        if entry.kind is EntryKind.TABLE:
+            menu.addAction("&Edit…", lambda: self._edit_table_entry(entry))
+            menu.addAction(
+                "Save &As Native…", lambda: self._save_table_entry(entry, ask=True)
             )
         menu.addSeparator()
-        menu.addAction("Write", lambda: self._write_entry(entry))
+        menu.addAction("&Write", lambda: self._write_entry(entry))
         if entry.kind is EntryKind.BLOCK:
-            export = menu.addMenu("Export")
-            for label, kind in (("TSV…", "tsv"), ("CSV…", "csv"), ("PO…", "po")):
+            export = menu.addMenu("E&xport")
+            for label, kind in (("&TSV…", "tsv"), ("C&SV…", "csv"), ("&PO…", "po")):
                 export.addAction(
                     label,
                     lambda kind=kind: (self._activate_entry(entry), self._export(kind)),
                 )
             export.addSeparator()
             export.addAction(
-                "Atlas script…",
-                lambda: (self._activate_entry(entry), self._export_atlas()),
-            )
-            export.addAction(
-                "Cartographer command file…",
+                "&Cartographer Command File…",
                 lambda: (self._activate_entry(entry), self._export_cartographer()),
             )
+            export.addAction(
+                "&Atlas Script…",
+                lambda: (self._activate_entry(entry), self._export_atlas()),
+            )
         menu.addSeparator()
-        menu.addAction("Rename…", lambda: self._rename(entry))
-        menu.addAction("Cut", lambda: self._cut_entries(acting))
-        menu.addAction("Copy", lambda: self._copy_entries(acting))
-        paste = menu.addAction("Paste", lambda: self._paste_entries(entry))
+        menu.addAction("&Rename…", lambda: self._rename(entry))
+        menu.addAction("Cu&t", lambda: self._cut_entries(acting))
+        menu.addAction("&Copy", lambda: self._copy_entries(acting))
+        paste = menu.addAction("&Paste", lambda: self._paste_entries(entry))
         paste.setEnabled(self._clipboard_entries_available())
-        menu.addAction("Duplicate", lambda: self._duplicate_entries(acting))
+        menu.addAction("Dupl&icate", lambda: self._duplicate_entries(acting))
         menu.addSeparator()
-        up = menu.addAction("Move Up", lambda: self._move_entries(acting, -1))
-        down = menu.addAction("Move Down", lambda: self._move_entries(acting, 1))
-        sort = menu.addMenu("Sort by")
+        up = menu.addAction("Move &Up", lambda: self._move_entries(acting, -1))
+        down = menu.addAction("Move Dow&n", lambda: self._move_entries(acting, 1))
+        sort = menu.addMenu("S&ort By")
         for key in SORT_KEYS:
-            sort.addAction(key, lambda key=key: self._sort_entries(entry, key))
+            sort.addAction(f"&{key}", lambda key=key: self._sort_entries(entry, key))
         sort.actions()[SORT_KEYS.index("Offset")].setEnabled(entry.is_child)
         if entry.path:
-            menu.addAction("Show in File Manager", lambda: self._reveal(entry.path))
+            menu.addAction("Show in File &Manager", lambda: self._reveal(entry.path))
         menu.addSeparator()
-        remove = menu.addAction("Remove", lambda: self._remove_entries(acting))
+        remove = menu.addAction("Remo&ve", lambda: self._remove_entries(acting))
         if len(acting) > 1:
             self._only_these_live(menu, [remove, up, down])
         return menu
@@ -311,8 +315,9 @@ class EntriesMixin:
         above: the question is not any one row's, it is "does this name a single
         entry?", and the answer is yes for all but the three handed in.
         """
+        below = submenus(menu)
         for action in menu.actions():
-            submenu = action.menu()
+            submenu = below.get(action)
             if submenu is not None:
                 EntriesMixin._only_these_live(submenu, live)
             if not any(action is spared for spared in live):

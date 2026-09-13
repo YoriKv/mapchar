@@ -28,6 +28,7 @@ from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.panel import WorkspaceTreePanel
 from mapchar.ui.theme import NOTICE_WASH, WARNING_INK
+from mapchar.ui.widgets import show_elided_tooltips
 
 GROUPS = {EntryKind.FILE: "ROMs", EntryKind.TABLE: "Tables", EntryKind.FONT: "Fonts"}
 # The row markers: a glyph in a palette role. ROMs and fonts sit under their
@@ -86,6 +87,7 @@ class EntryTree(QTreeWidget):
     copy_pressed = Signal()
     paste_pressed = Signal()
     duplicate_pressed = Signal()
+    rename_pressed = Signal()
     move_pressed = Signal(int)
     """Alt+Up / Alt+Down: step the selection one place, ``-1`` or ``+1``."""
     reorder_dropped = Signal(object, object)
@@ -113,6 +115,10 @@ class EntryTree(QTreeWidget):
         # Compared as a sequence: Qt has no standard key for Duplicate.
         if QKeySequence(event.keyCombination()) == DUPLICATE_KEY:
             self.duplicate_pressed.emit()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_F2 and not event.modifiers():
+            self.rename_pressed.emit()
             event.accept()
             return
         if event.modifiers() == Qt.KeyboardModifier.AltModifier and event.key() in (
@@ -225,6 +231,8 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.setIconSize(ICON_SIZE)
+        # A narrow dock cuts the names short; hovering one reads it in full.
+        show_elided_tooltips(self.tree)
         self._icons: dict[tuple[Glyph, str], QIcon] = {}
         self._items: dict[int, QTreeWidgetItem] = {}
         self._groups: dict[EntryKind, QTreeWidgetItem] = {}
@@ -245,6 +253,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.tree.paste_pressed.connect(
             lambda: self.paste_requested.emit(self.entry_of(self.tree.currentItem()))
         )
+        self.tree.rename_pressed.connect(self._on_rename_pressed)
         self.tree.move_pressed.connect(self._on_move)
         self.tree.reorder_dropped.connect(self._on_dropped)
         self.tree.itemDelegate().closeEditor.connect(self._on_editor_closed)
@@ -512,6 +521,12 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.tree.blockSignals(False)
 
     # -- renaming -------------------------------------------------------
+
+    def _on_rename_pressed(self) -> None:
+        """F2: rename the current row in place, whatever its kind."""
+        entry = self.entry_of(self.tree.currentItem())
+        if entry is not None:
+            self.begin_rename(entry)
 
     def begin_rename(self, entry: Entry) -> None:
         """Open the inline editor on ``entry``'s row.

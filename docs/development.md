@@ -46,7 +46,7 @@ mapchar/
 │   └── resources/       package data
 ├── tests/               pytest, flat, one module per area
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
-├── tools/               regen_fixtures.py, make_sample_projects.py and samples/
+├── tools/               regen_fixtures.py, make_sample_projects.py, ui_screenshots.py, samples/
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
 ├── release.sh           cuts a release (see release.md)

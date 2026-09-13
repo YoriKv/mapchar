@@ -28,7 +28,7 @@ class PluginsMixin:
 
     def _alert_plugin_issues(self) -> None:
         """Say what in the plugins folder did not load — at startup, after a
-        refresh, when a project's own folder is scanned, and from Open plugins
+        refresh, when a project's own folder is scanned, and from Open Plugins
         folder.
 
         Two surfaces, because there are two kinds of "did not load". A plugin
@@ -50,14 +50,14 @@ class PluginsMixin:
             if declined:
                 self.statusBar().showMessage(
                     f"{len(declined)} code plugin(s) not run — the trust prompt "
-                    "was declined. File ▸ Refresh plugins asks again.",
+                    "was declined. File ▸ Refresh Plugins asks again.",
                     8000,
                 )
             return
         TextDialog(
-            "Plugin issues",
+            "Plugin Issues",
             f"{len(failed)} plugin(s) failed to load. The rest of the app works "
-            "normally; see the list below, or File ▸ Open plugins folder.\n\n"
+            "normally; see the list below, or File ▸ Open Plugins Folder.\n\n"
             + "\n".join(f"• {i}" for i in [*failed, *declined]),
             self,
         ).exec()

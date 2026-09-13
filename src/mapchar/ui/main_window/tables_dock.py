@@ -38,7 +38,7 @@ class TablesDockMixin:
         if entry.dirty:
             answer = QMessageBox.question(
                 self,
-                "Table changed on disk",
+                "Table Changed on Disk",
                 f"{entry.name} changed on disk and has edits here. Re-read it? "
                 "Your edits stay on top of it, and win where they overlap.",
             )

@@ -179,7 +179,7 @@ class OpeningMixin:
         """Which reading to open a dropped file as, or ``None`` if cancelled."""
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle(f"{APP_NAME} — open as")
+        box.setWindowTitle(f"{APP_NAME} — Open As")
         box.setText(f"Open {os.path.basename(path)} as:")
         role = QMessageBox.ButtonRole.ActionRole
         buttons = {

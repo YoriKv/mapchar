@@ -31,6 +31,12 @@ from mapchar.engines.relsearch import HIRAGANA, KATAKANA, RUNS
 from mapchar.ui import theme
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
+from mapchar.ui.widgets import (
+    ElidedLabel,
+    EscapeCloses,
+    hint_field,
+    show_elided_tooltips,
+)
 from mapchar.ui.window_layout import remember_layout
 
 
@@ -261,7 +267,7 @@ class GlyphSheetView(QWidget):
         painter.end()
 
 
-class PreviewWindow(ThemedIcons, QWidget):
+class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
     font_changed = Signal(object)
     """A new Font value for the bound font entry."""
     box_changed = Signal(object)
@@ -293,9 +299,17 @@ class PreviewWindow(ThemedIcons, QWidget):
         pv = QVBoxLayout(preview)
         self.canvas = QLabel()
         self.canvas.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        pv.addWidget(self.canvas, 1)
+        # Scrolled, so a big box at a high zoom is panned rather than setting the
+        # window's minimum size.
+        canvas_scroll = QScrollArea()
+        canvas_scroll.setWidget(self.canvas)
+        canvas_scroll.setWidgetResizable(True)
+        pv.addWidget(canvas_scroll, 1)
+        # The status has a line of its own: it is the part of the tab that says
+        # whether the string fits, and beside the buttons it had no room.
+        self.status = ElidedLabel("")
+        pv.addWidget(self.status)
         row = QHBoxLayout()
-        self.status = QLabel("")
         self.prev = QPushButton("Page")
         self.next = QPushButton("Page")
         self.prev.setToolTip("Previous page")
@@ -308,18 +322,23 @@ class PreviewWindow(ThemedIcons, QWidget):
         self.grid = QPushButton("Grid")
         self.grid.setCheckable(True)
         self.grid.setToolTip("Rule the box in pixels")
-        self.wrap = QPushButton("Wrap translation")
-        self.copy = QPushButton("Copy image")
-        row.addWidget(self.status, 1)
+        self.zoom.setToolTip("Pixels on screen per pixel of the box")
+        self.wrap = QPushButton("Wrap Translation")
+        self.wrap.setToolTip(
+            "Break the selected strings' translations into lines that fit the box"
+        )
+        self.copy = QPushButton("Copy Image")
+        self.copy.setToolTip("Put the page as drawn on the clipboard")
         row.addWidget(self.prev)
         row.addWidget(self.next)
         row.addWidget(QLabel("Zoom"))
         row.addWidget(self.zoom)
         row.addWidget(self.grid)
+        row.addStretch(1)
         row.addWidget(self.wrap)
         row.addWidget(self.copy)
         pv.addLayout(row)
-        self.readout = QLabel("")
+        self.readout = ElidedLabel("")
         self.readout.setToolTip("What the draft encodes to, against the room it has")
         pv.addWidget(self.readout)
         self.tabs.addTab(preview, "Preview")
@@ -332,6 +351,11 @@ class PreviewWindow(ThemedIcons, QWidget):
         font_layout.addWidget(split, 1)
         fields = QWidget()
         ff = QFormLayout(fields)
+        # The fields scroll, so the splitter can give the sheet the height.
+        fields_scroll = QScrollArea()
+        fields_scroll.setWidget(fields)
+        fields_scroll.setWidgetResizable(True)
+        fields_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.font_path = QLineEdit()
         self.font_browse = QPushButton("Browse…")
         pr = QHBoxLayout()
@@ -346,8 +370,9 @@ class PreviewWindow(ThemedIcons, QWidget):
         self.columns.setRange(1, 256)
         self.base = QSpinBox()
         self.base.setRange(0, 65535)
-        self.chars = QLineEdit()
-        self.chars.setPlaceholderText("characters in glyph order from the base glyph")
+        self.chars = hint_field(
+            QLineEdit(), "characters in glyph order from the base glyph"
+        )
         self.space = QSpinBox()
         self.space.setRange(0, 64)
         self.missing = QSpinBox()
@@ -357,8 +382,12 @@ class PreviewWindow(ThemedIcons, QWidget):
         self.transparent.setToolTip(
             "Which palette index is transparent; -1 takes the top-left pixel's colour"
         )
-        self.measure = QPushButton("Measure widths from sheet")
-        self.fixed = QPushButton("Fixed width")
+        self.measure = QPushButton("Measure Widths")
+        self.measure.setToolTip(
+            "Give each glyph the width of its inked columns on the sheet, plus Gap"
+        )
+        self.fixed = QPushButton("Fixed Width")
+        self.fixed.setToolTip("Give every glyph the cell's full width")
         self.gap = QSpinBox()
         self.gap.setRange(0, 16)
         self.gap.setValue(1)
@@ -376,57 +405,77 @@ class PreviewWindow(ThemedIcons, QWidget):
         wr.addWidget(QLabel("Gap"))
         wr.addWidget(self.gap)
         wr.addWidget(self.fixed)
+        wr.addStretch(1)
         ff.addRow("Widths", wr)
         self.glyph_map = QTableWidget(0, 2)
         self.glyph_map.setHorizontalHeaderLabels(["Text or [code]", "Glyph"])
-        self.glyph_add = QPushButton("Add mapping")
+        self.glyph_map.horizontalHeader().setStretchLastSection(True)
+        show_elided_tooltips(self.glyph_map)
+        self.glyph_add = QPushButton("Add Mapping")
+        self.glyph_add.setToolTip("A row that draws a text or [code] as one glyph")
+        add_row = QHBoxLayout()
+        add_row.addWidget(self.glyph_add)
+        add_row.addStretch(1)
         ff.addRow("Overrides", self.glyph_map)
-        ff.addRow("", self.glyph_add)
-        split.addWidget(fields)
+        ff.addRow("", add_row)
+        split.addWidget(fields_scroll)
 
         # The sheet, and the alphabet tools that work on its selection.
         sheet_side = QWidget()
         sv = QVBoxLayout(sheet_side)
         sv.setContentsMargins(0, 0, 0, 0)
+        # Two rows — how the sheet is shown and picked, then what is done to the
+        # alphabet — so neither sets the window's minimum width on its own.
         tools = QHBoxLayout()
+        alphabet = QHBoxLayout()
         self.sheet_zoom = QSpinBox()
         self.sheet_zoom.setRange(1, 8)
         self.sheet_zoom.setValue(3)
         self.sheet_mode = QComboBox()
         self.sheet_mode.addItem("Select tile", False)
         self.sheet_mode.addItem("Select row", True)
-        self.fill_table = QPushButton("Fill from table")
+        self.sheet_mode.setToolTip("Whether a click picks one glyph or its whole row")
+        self.fill_table = QPushButton("Fill from Table")
         self.fill_table.setToolTip(
             "Lay the start table's text over the glyphs from the selected one, "
             "in key order"
         )
-        self.fill_with = QPushButton("Fill with…")
-        self.shift_up = QPushButton("Shift up")
-        self.shift_down = QPushButton("Shift down")
+        self.fill_with = QPushButton("Fill With…")
+        self.fill_with.setToolTip(
+            "Lay a template or typed run of characters over the glyphs from the "
+            "selected one"
+        )
+        self.shift_up = QPushButton("Shift Up")
+        self.shift_down = QPushButton("Shift Down")
         for button in (self.shift_up, self.shift_down):
             button.setToolTip("Move the whole alphabet one row of glyphs")
-        self.copy_alphabet = QPushButton("Copy")
-        self.paste_alphabet = QPushButton("Paste")
+        self.copy_alphabet = QPushButton("Copy Alphabet")
+        self.paste_alphabet = QPushButton("Paste Alphabet")
         for button in (self.copy_alphabet, self.paste_alphabet):
             button.setToolTip("The alphabet as 20=A lines, one glyph per line")
         tools.addWidget(QLabel("Sheet"))
         tools.addWidget(self.sheet_mode)
         tools.addWidget(QLabel("Zoom"))
         tools.addWidget(self.sheet_zoom)
+        tools.addStretch(1)
         tools.addWidget(self.fill_table)
         tools.addWidget(self.fill_with)
-        tools.addWidget(self.shift_up)
-        tools.addWidget(self.shift_down)
-        tools.addWidget(self.copy_alphabet)
-        tools.addWidget(self.paste_alphabet)
-        tools.addStretch(1)
+        for button in (
+            self.shift_up,
+            self.shift_down,
+            self.copy_alphabet,
+            self.paste_alphabet,
+        ):
+            alphabet.addWidget(button)
+        alphabet.addStretch(1)
         sv.addLayout(tools)
+        sv.addLayout(alphabet)
         self.sheet_view = GlyphSheetView()
         scroll = QScrollArea()
         scroll.setWidget(self.sheet_view)
         scroll.setWidgetResizable(False)
         sv.addWidget(scroll, 1)
-        self.sheet_pick = QLabel("")
+        self.sheet_pick = ElidedLabel("")
         sv.addWidget(self.sheet_pick)
         split.addWidget(sheet_side)
         split.setStretchFactor(1, 1)
@@ -467,6 +516,8 @@ class PreviewWindow(ThemedIcons, QWidget):
         cv = QVBoxLayout(codes_tab)
         self.codes = QTableWidget(0, 3)
         self.codes.setHorizontalHeaderLabels(["Code", "Effect", "Value"])
+        self.codes.horizontalHeader().setStretchLastSection(True)
+        show_elided_tooltips(self.codes)
         cv.addWidget(self.codes)
         self.tabs.addTab(codes_tab, "Codes")
 
@@ -650,7 +701,7 @@ class PreviewWindow(ThemedIcons, QWidget):
 
     def _browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Glyph sheet", "", "Images (*.png *.bmp)"
+            self, "Glyph Sheet", "", "Images (*.png *.bmp)"
         )
         if path:
             self.font_path.setText(path)
@@ -748,13 +799,13 @@ class PreviewWindow(ThemedIcons, QWidget):
             "あ-ん": RUNS[HIRAGANA],
             "ア-ン": RUNS[KATAKANA],
         }
-        options = [*templates, "custom…"]
+        options = [*templates, "Custom…"]
         choice, ok = QInputDialog.getItem(
             self, "Fill", "Characters from the selected glyph:", options, 0, False
         )
         if not ok:
             return
-        if choice == "custom…":
+        if choice == "Custom…":
             chars, ok = QInputDialog.getText(self, "Fill", "Characters in glyph order:")
             if not ok:
                 return

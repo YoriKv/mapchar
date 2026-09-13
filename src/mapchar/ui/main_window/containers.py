@@ -67,7 +67,7 @@ class ContainerMixin:
             )
             return
         if entry.dirty and not self._ask(
-            "Edit container",
+            "Edit Container",
             f"{entry.name} has unsaved edits. Applying this re-reads the file "
             "and discards them. Continue?",
         ):

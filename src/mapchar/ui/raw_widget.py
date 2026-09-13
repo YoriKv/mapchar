@@ -128,6 +128,11 @@ class RawWidget(QAbstractScrollArea):
         self._token_of: list[Token | None] = []
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        # The rows are a fixed width; a view narrower than them scrolls sideways
+        # rather than cutting the text column off.
+        self.horizontalScrollBar().valueChanged.connect(
+            lambda _: self.viewport().update()
+        )
         self._syncing = False
 
     # --- geometry ------------------------------------------------------
@@ -163,6 +168,22 @@ class RawWidget(QAbstractScrollArea):
         hex_w += (BYTES_PER_ROW - 1) // HEX_GROUP * self._group_gap
         text_x = hex_x + hex_w + 2 * cw
         return hex_x, text_x, BYTES_PER_ROW * self._text_width
+
+    def content_width(self) -> int:
+        """How wide the rows are drawn: address, hex, text and a margin."""
+        _, text_x, text_w = self._columns()
+        return text_x + text_w + self.char_width
+
+    def _sync_horizontal(self) -> None:
+        bar = self.horizontalScrollBar()
+        room = self.viewport().width()
+        bar.setRange(0, max(0, self.content_width() - room))
+        bar.setPageStep(room)
+        bar.setSingleStep(self.char_width * 2)
+
+    def _content_pos(self, pos: QPoint) -> QPoint:
+        """A viewport point in row coordinates, past any sideways scroll."""
+        return QPoint(pos.x() + self.horizontalScrollBar().value(), pos.y())
 
     def _hex_cell(self, rel: int, span: int = 1) -> QRect:
         """The hex cells of ``span`` bytes from ``rel``, gaps between included.
@@ -242,6 +263,7 @@ class RawWidget(QAbstractScrollArea):
             sb.setPageStep(self.visible_rows)
             sb.setValue(model.offset // BYTES_PER_ROW)
             self._syncing = False
+        self._sync_horizontal()
         self.viewport().update()
 
     def set_selection(self, start: int, end: int) -> None:
@@ -259,6 +281,8 @@ class RawWidget(QAbstractScrollArea):
         super().resizeEvent(event)
         if self._model is not None:
             self.set_model(self._model)
+        else:
+            self._sync_horizontal()
 
     # --- painting ------------------------------------------------------
 
@@ -279,7 +303,9 @@ class RawWidget(QAbstractScrollArea):
         dim.setAlpha(140)
         faint = QColor(ink)
         faint.setAlpha(40)
-        width = self.viewport().width()
+        scrolled = self.horizontalScrollBar().value()
+        painter.translate(-scrolled, 0)
+        width = max(self.viewport().width() + scrolled, self.content_width())
 
         # Every other row banded, so a row can be followed from hex to text.
         for row in range(1, rows, 2):
@@ -492,7 +518,7 @@ class RawWidget(QAbstractScrollArea):
 
     def _show_tooltip(self, event) -> None:
         """The token under the pointer, whole: its text, its bytes, its table."""
-        token = self._token_at(event.pos())
+        token = self._token_at(self._content_pos(event.pos()))
         model = self._model
         if token is None:
             QToolTip.hideText()
@@ -508,12 +534,12 @@ class RawWidget(QAbstractScrollArea):
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.RightButton:
-            b = self._byte_at(event.position().toPoint())
+            b = self._byte_at(self._content_pos(event.position().toPoint()))
             if b is not None and not (self._sel and self._sel[0] <= b < self._sel[1]):
                 self._select(b, b + 1)
             self.context_menu_requested.emit(event.globalPosition().toPoint())
             return
-        b = self._byte_at(event.position().toPoint())
+        b = self._byte_at(self._content_pos(event.position().toPoint()))
         if b is None:
             self._anchor = None
             self._select(-1, -1)
@@ -524,7 +550,7 @@ class RawWidget(QAbstractScrollArea):
     def mouseMoveEvent(self, event) -> None:
         if self._anchor is None or not (event.buttons() & Qt.MouseButton.LeftButton):
             return
-        b = self._byte_at(event.position().toPoint())
+        b = self._byte_at(self._content_pos(event.position().toPoint()))
         if b is None:
             return
         lo, hi = min(self._anchor, b), max(self._anchor, b)
@@ -539,6 +565,11 @@ class RawWidget(QAbstractScrollArea):
             self.selection_changed.emit(start, end)
 
     def wheelEvent(self, event) -> None:
-        steps = -event.angleDelta().y() // 120
+        delta = event.angleDelta()
+        if delta.x() and not delta.y():
+            bar = self.horizontalScrollBar()
+            bar.setValue(bar.value() - delta.x() // 120 * bar.singleStep())
+            return
+        steps = -delta.y() // 120
         sb = self.verticalScrollBar()
         sb.setValue(sb.value() + steps * 3)

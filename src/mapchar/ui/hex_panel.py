@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QFontDatabase, QTextCursor
+from PySide6.QtGui import QFontDatabase, QPalette, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.bits import parse_hex
 from mapchar.ui import BYTES_PER_ROW, TEXT_WINDOW_BYTES, settings
+from mapchar.ui.glyphs import Glyph
+from mapchar.ui.icon_font import ThemedIcons, themed_icon
+from mapchar.ui.widgets import fit_chars, hint_field
 
 FOLLOW_SELECTION_KEY = "hex/follow_selection"
 """QSettings key for the Follow selection switch.
@@ -79,7 +82,7 @@ class _HexView(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
-class HexPanel(QWidget):
+class HexPanel(ThemedIcons, QWidget):
     go_to_requested = Signal(int)
     overtype_requested = Signal(int, bytes)
     find_requested = Signal(str, bool)
@@ -103,17 +106,28 @@ class HexPanel(QWidget):
         self.view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         top = QHBoxLayout()
-        self.goto = QLineEdit()
-        self.goto.setPlaceholderText("go to (address)")
+        # Every field keeps room to show what it holds however narrow the dock
+        # gets; the dock's own minimum width follows from them.
+        self.goto = hint_field(
+            QLineEdit(), "address", "An address to scroll the dump to, then Enter"
+        )
+        fit_chars(self.goto, 8)
         self.goto.setMaximumWidth(110)
-        self.find = QLineEdit()
-        self.find.setPlaceholderText('find: hex bytes or "text"')
-        self.find_previous = QPushButton("◀")
+        self.find = hint_field(
+            QLineEdit(),
+            'hex bytes or "text"',
+            'Hex bytes, or "quoted text" through the start table; Enter finds '
+            "the next match, Shift+Enter the previous",
+        )
+        fit_chars(self.find, 12)
+        # The same arrow marks the navigation bar and the Preview's pages wear.
+        self.find_previous = QPushButton()
         self.find_previous.setToolTip("Find the previous match (Shift+Enter)")
-        self.find_previous.setMaximumWidth(28)
-        self.find_next = QPushButton("▶")
+        self.find_next = QPushButton()
         self.find_next.setToolTip("Find the next match (Enter)")
-        self.find_next.setMaximumWidth(28)
+        for button in (self.find_previous, self.find_next):
+            button.setFixedWidth(32)
+        self._bake_icons()
         self.follow = QCheckBox("Follow selection")
         self.follow.setToolTip(
             "Scroll the dump to whatever is selected in the raw view.\n"
@@ -122,18 +136,22 @@ class HexPanel(QWidget):
         self.follow.setChecked(_stored_follow())
         top.addWidget(QLabel("Go to"))
         top.addWidget(self.goto)
+        top.addWidget(QLabel("Find"))
         top.addWidget(self.find, 1)
         top.addWidget(self.find_previous)
         top.addWidget(self.find_next)
         top.addWidget(self.follow)
         bottom = QHBoxLayout()
         self.at_label = QLabel("At")
-        self.at = QLineEdit()
+        self.at = hint_field(QLineEdit(), "offset", "The offset to overtype at, in hex")
+        fit_chars(self.at, 8)
         self.at.setMaximumWidth(110)
-        self.bytes = QLineEdit()
-        self.bytes.setPlaceholderText(
-            "hex bytes to write at that offset, Enter to apply"
+        self.bytes = hint_field(
+            QLineEdit(),
+            "hex bytes",
+            "Hex bytes to write at that offset; Enter or Overtype applies them",
         )
+        fit_chars(self.bytes, 12)
         self.apply = QPushButton("Overtype")
         bottom.addWidget(self.at_label)
         bottom.addWidget(self.at)
@@ -166,6 +184,12 @@ class HexPanel(QWidget):
             self._do_find(backwards=True)
             return True
         return super().eventFilter(watched, event)
+
+    def _bake_icons(self) -> None:
+        """The find arrows in the theme's button-text color."""
+        role = QPalette.ColorRole.ButtonText
+        self.find_previous.setIcon(themed_icon(self, Glyph.ARROW_LEFT, role))
+        self.find_next.setIcon(themed_icon(self, Glyph.ARROW_RIGHT, role))
 
     # -- geometry of one rendered line ---------------------------------------
     @property
