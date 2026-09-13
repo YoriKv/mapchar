@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mapchar.core.block import source_start
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.pipeline.pipeline import FileRef, PathwayConfig, SlotFill, load
@@ -172,7 +173,8 @@ class SessionMixin:
                 and entry.config is not None
                 and not entry.session.offset
             ):
-                self._offset = getattr(entry.config.source, "start", 0)
+                start = source_start(entry.config.source)
+                self._offset = 0 if start is None else start
             self.tabs.setCurrentIndex(1 if entry.session.view == "strings" else 0)
         finally:
             for w in widgets:

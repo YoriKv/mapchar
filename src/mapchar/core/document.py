@@ -31,6 +31,13 @@ class Document:
     """What the strings were extracted from, to skip a repeat."""
     too_long: int = 0
     """How many strings the last layout found would not fit; a Files-panel mark."""
+    pending_payload: bytes | None = None
+    """A compressed block's own payload, between its write and its reload.
+
+    One write re-compresses a shared slot once, so what the blocks over it should
+    now hold is the payload that went in rather than the file's new bytes. Set by
+    the write and consumed by the refresh that follows it.
+    """
 
     @property
     def size(self) -> int:

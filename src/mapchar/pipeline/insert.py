@@ -203,8 +203,7 @@ def layout_block(
             )
             pos += len(chunk)
             continue
-        rec_new_start = pos
-        enc.new_start = rec_new_start  # type: ignore[attr-defined]
+        enc.new_start = pos
         out += chunk
         pos += len(chunk)
     result.used = pos - first
@@ -230,7 +229,7 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
     splices = []
     for rec in strings:
         enc = result.encoded.get(rec.index)
-        new_start = getattr(enc, "new_start", None)
+        new_start = enc.new_start
         if new_start is None:
             continue
         for ref in rec.pointers:

@@ -50,6 +50,13 @@ class TableFile:
     encoding: str = "utf-8"
     """The encoding the file was decoded as; a legacy table is often
     ``cp932`` (:func:`mapchar.core.text.read_text_any` decides)."""
+    end_marker: str | None = None
+    """The text an Atlas table spelled its end token with, when it named one.
+
+    Atlas writes the end token as an ordinary entry with a chosen text, and a
+    script dumped for that table has to spell it the same way; no other dialect
+    sets this.
+    """
 
 
 def is_native(text: str) -> bool:

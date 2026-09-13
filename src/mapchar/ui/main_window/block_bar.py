@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from mapchar.core.block import BlockConfig, EndToken, PointerListSource, RangeSource
+from mapchar.core.block import (
+    BlockConfig,
+    EndToken,
+    RangeSource,
+    source_start,
+)
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
 from mapchar.core.table import TokenKind
 from mapchar.plugins.base import Stage
@@ -215,12 +220,9 @@ class BlockBarMixin:
         """
         if entry.compression_id:
             return entry.slice_offset
-        source = entry.config.source if entry.config is not None else None
-        if isinstance(source, PointerListSource):
-            if source.addresses:
-                return min(source.addresses)
-        elif source is not None:
-            return getattr(source, "start", 0)
+        start = source_start(entry.config.source if entry.config is not None else None)
+        if start is not None:
+            return start
         strings = entry.doc.strings if entry.doc is not None else []
         return strings[0].start if strings else 0
 

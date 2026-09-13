@@ -271,3 +271,26 @@ def test_undo_and_redo_of_a_table_edit_take_the_overlay_with_them(window, tmp_pa
     assert table_entry.table_overlay == {}
     window.undo_stack.redo()
     assert table_entry.table_overlay == {"main": {"01000011": "43=C"}}
+
+
+def test_binding_a_font_from_the_files_panel_is_an_undo_step(window, tmp_path):
+    """A click on a font row binds the current block to it through a box edit,
+    so it undoes and the block reads clean again."""
+    from mapchar.core.font import Font
+    from mapchar.project.workspace import Entry, EntryKind
+
+    file_entry = open_rom_and_table(window, tmp_path, b"AB\x00")
+    block = add_block(window, file_entry, "b", RangeSource(0, 3))
+    window._activate_entry(block)
+    font_entry = Entry(
+        EntryKind.FONT, "f", path=str(tmp_path / "f.png"), font=Font(path="")
+    )
+    window.workspace.add(font_entry)
+    assert block.box is None and not block.dirty
+
+    window._edit_font_entry(font_entry)
+    assert block.box is not None and block.box.font_index == 0
+    assert block.dirty
+
+    window.undo_stack.undo()
+    assert block.box is None and not block.dirty

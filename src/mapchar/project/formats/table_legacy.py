@@ -394,7 +394,7 @@ def read_atlas(
         bits = _even_key(key, path, n)
         _add_or_note(table, Entry(bits, TokenKind.TEXT, legacy_text(value)), n, notices)
     result = TableFile([table], notices, "atlas")
-    result.end_marker = end_marker  # type: ignore[attr-defined]
+    result.end_marker = end_marker
     return result
 
 

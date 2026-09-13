@@ -63,8 +63,8 @@ Rules:
   (`path`, `extra_paths`, block `offset`/`length`); its chain
   (`container_id`, `compression_id`); its `BlockConfig`; its
   `EntrySession` (start table, view position); kind-specific state (table
-  edits, font map, box); and session-only state (the lazily loaded `doc`,
-  revision tokens).
+  edits, font map, box); the `notices` its file's last read produced; and
+  session-only state (the lazily loaded `doc`, revision tokens).
 - **`core.document.Document`** — the interpreted, mutable model the UI binds
   to: the decompressed `data` buffer, the `TableSet`, and for a block the
   `strings`. Created on first show; dropped and rebuilt when the file
@@ -121,6 +121,9 @@ in bytes, which is the unit their results are reported and selected in.
   on demand, never stored.
 - **`PointerRef`** — `address`, `size`, `endian`, `mapping_id`, `offset`, and
   the `value` read from disk.
+- **`source_start(source)`** — where a source begins, or `None` when it does
+  not say (an empty pointer list, no source): the one answer the Files panel's
+  sort, the block bar and a restored view position all read.
 - **`Extraction`** — the result of running a block: the string records plus
   notices (end of data reached, operand cut short, pointer out of range).
 
@@ -144,7 +147,7 @@ They are frozen values whose mutators return new instances.
 | Module | Holds |
 |---|---|
 | `context.py` | `PipelineContext`, the `SourceSpan` a joined read publishes, and the `KEY_*` hint names (source files and offset, header size, suggested mapping and table, consumed size, complete, partial decode) |
-| `notices.py` | Non-fatal `Notice`s — message, level, offset, detail, source — carried on the context and on extractions |
+| `notices.py` | Non-fatal `Notice`s — message, level, offset, detail, source — carried on the context and on extractions; `notice_lines()` renders one as its message with the detail indented under it |
 | `errors.py` | `Stage`, `PipelineError` (stage, action, plugin, pathway), `TableError`, `EncodeError` |
 | `bits.py` | `Bits` windows over a byte buffer, plus the bit/byte/hex conversions, key spelling, alignment and bit reversal every layer shares |
 | `numbers.py` | `parse_num` and `format_num`: the `$hex` spelling tables, scripts and command files share |
@@ -254,12 +257,16 @@ string-initial byte.
 
 ### 3.5 Pointer discovery
 
-`engines/pointers.py` takes string start offsets, a header size and the
+`engines/pointers.py` takes string start offsets, a bank number and the
 candidate space (mappings × sizes × endianness × an offset range) and
-produces, for each candidate, the addresses where the encoded values occur.
-Candidates are ranked by how many distinct strings they explain, then by how
-regular the stride between their addresses is; the top result carries the
-inferred `PointerTableSource`.
+produces, for each candidate, the addresses where the encoded values occur and
+the value found at each. Candidates are ranked by how many distinct strings
+they explain, then by how regular the stride between their addresses is. Each
+carries both answers a result can be taken as: `source()` is the inferred
+`PointerTableSource`, and `refs()` the `PointerRef`s per string that **Attach**
+puts on the strings instead. A `progress` hook is called per combination and
+stops the walk when it returns `False`, so a stopped search still ranks what it
+had.
 
 ### 3.6 Layout
 

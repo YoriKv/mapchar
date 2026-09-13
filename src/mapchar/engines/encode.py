@@ -47,6 +47,13 @@ class EncodeResult:
     bits: str
     ends_with_end: bool
     """The last token is an end token."""
+    new_start: int | None = None
+    """Where the layout put these bytes; ``None`` until one has.
+
+    Set by :func:`~mapchar.pipeline.insert.lay_out` as it packs, and read back
+    by the pointer rewrite: a pointer to a string that moved is the offset the
+    layout chose, which nothing else knows.
+    """
 
     @property
     def data(self) -> bytes:

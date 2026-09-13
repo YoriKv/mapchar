@@ -102,8 +102,7 @@ class PluginsMixin:
             # baseline the project's overlay is measured against, so a charset
             # applied to one and not the other would read as a user edit.
             for t in (*e.tables, *e.file_tables):
-                if hasattr(t, "_charset_applied"):
-                    del t._charset_applied
+                t.charset_applied = False
                 apply_charset(t, self.registry)
         if self._entry is not None:
             self._doc = self._load_document(self._entry)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from mapchar.core.capabilities import Capability, supports
 from mapchar.core.font import Font, TextBox
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.undo_commands import FontCommand
+from mapchar.ui.undo_commands import BoxCommand, FontCommand
 
 
 class FontsMixin:
@@ -27,7 +27,11 @@ class FontsMixin:
             from dataclasses import replace
 
             box = block.box or TextBox()
-            block.box = replace(box, font_index=fonts.index(entry))
+            bound = replace(box, font_index=fonts.index(entry))
+            if bound != block.box:
+                # Binding is a box edit like any other: one undo step, and the
+                # block reads unsaved until the project is written.
+                self._push_command(BoxCommand(self, block, block.box, bound))
             self._sync_preview(force=True)
         else:
             self.preview_window.set_font(entry.font)

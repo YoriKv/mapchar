@@ -262,6 +262,13 @@ class Table:
         A charset that folds several characters onto one code puts the ones
         that do not decode back here (Shift-JIS ``¥`` at ``5C``): typing them
         encodes, while the code still decodes as the entry's own text."""
+        self.charset_applied = False
+        """Whether the table's charset has already been folded in.
+
+        :func:`~mapchar.plugins.charsets.apply_charset` is reached from every
+        read and every reload, and folding a charset in twice would re-add the
+        entries a table removed. Cleared to re-apply after the plugins change.
+        """
         self._by_length: dict[int, dict[str, Entry]] = {}
         self._lengths: tuple[int, ...] = ()
 

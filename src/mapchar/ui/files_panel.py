@@ -19,6 +19,7 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
     Status,
+    source_start,
 )
 from mapchar.core.notices import notice_lines
 from mapchar.core.text import fold
@@ -58,10 +59,8 @@ def entry_offset(entry: Entry) -> int:
         return -1
     if entry.compression_id:
         return entry.slice_offset
-    source = entry.config.source if entry.config is not None else None
-    if isinstance(source, PointerListSource):
-        return min(source.addresses) if source.addresses else 0
-    return getattr(source, "start", 0)
+    start = source_start(entry.config.source if entry.config is not None else None)
+    return 0 if start is None else start
 
 
 def sorted_entries(entries: list[Entry], key: str) -> list[Entry]:

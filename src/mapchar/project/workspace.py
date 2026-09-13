@@ -384,7 +384,7 @@ def relocate_path(ws: Workspace, old_path: str, new_path: str) -> list[Entry]:
     old_name, new_name = os.path.basename(old_path), os.path.basename(new_path)
     touched: list[Entry] = []
     for entry in ws.entries:
-        changed = bool(entry.path) and normalize_path(entry.path) == key  # type: ignore[arg-type]
+        changed = entry.path is not None and normalize_path(entry.path) == key
         if changed:
             entry.path = new_path
             # A row named after its file follows the file; a name the user typed

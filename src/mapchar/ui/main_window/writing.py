@@ -159,7 +159,7 @@ class WritingMixin:
                 new_data = apply_splices(new_data, [Splice(slot[1], packed)])
                 for block in sharing:
                     if block.doc is not None:
-                        block.doc.pending_payload = payload  # type: ignore[attr-defined]
+                        block.doc.pending_payload = payload
                     written_blocks.append(block)
             if problems:
                 TextDialog("Cannot write", "\n".join(problems), self).exec()
@@ -188,7 +188,7 @@ class WritingMixin:
             for block in written_blocks:
                 doc = block.doc
                 if doc is not None:
-                    pending = getattr(doc, "pending_payload", None)
+                    pending = doc.pending_payload
                     if block.compression_id and pending is not None:
                         doc.data = pending
                     else:

@@ -22,11 +22,17 @@ class PreviewMixin:
             return
         fonts = self.workspace.fonts()
         if entry.box is None:
-            entry.box = TextBox(font_index=0 if fonts else None)
+            bound = TextBox(font_index=0 if fonts else None)
         elif entry.box.font_index is None and fonts:
             from dataclasses import replace
 
-            entry.box = replace(entry.box, font_index=0)
+            bound = replace(entry.box, font_index=0)
+        else:
+            bound = entry.box
+        if bound != entry.box:
+            # The first Preview of a block gives it a box; that is an edit the
+            # project saves, so it is an undo step too.
+            self._push_command(BoxCommand(self, entry, entry.box, bound))
         if not fonts:
             self._error("Open a font (File ▸ Open Font…) first.")
         self._sync_preview(force=True)

@@ -62,6 +62,21 @@ class PointerListSource:
 Source = RangeSource | FixedSource | PointerTableSource | PointerListSource
 
 
+def source_start(source: Source | None) -> int | None:
+    """Where a source begins in the file, or ``None`` when it does not say.
+
+    Every source but one carries its own ``start``; a pointer list begins at its
+    lowest pointer address instead, and an empty one — like no source at all —
+    says nothing, which leaves the caller free to fall back on where the strings
+    actually landed.
+    """
+    if source is None:
+        return None
+    if isinstance(source, PointerListSource):
+        return min(source.addresses) if source.addresses else None
+    return source.start
+
+
 @dataclass(frozen=True)
 class EndToken:
     """The string ends at the first end token."""

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.core.text import char_units
+from mapchar.core.tokens import Token
 from mapchar.engines.layout import Layout, layout, unspellable
 from mapchar.engines.relsearch import HIRAGANA, KATAKANA, RUNS
 from mapchar.ui import theme
@@ -277,6 +278,8 @@ class PreviewWindow(ThemedIcons, QWidget):
         self._box = TextBox()
         self._sheet: GlyphSheet | None = None
         self._result: Layout | None = None
+        self._source: list[Token] | str | None = None
+        """The tokens or script text being previewed; ``None`` until one is."""
         self._page = 0
         self._labels: list[str] = []
         self._table_chars = ""
@@ -585,14 +588,14 @@ class PreviewWindow(ThemedIcons, QWidget):
         finally:
             self._syncing = False
 
-    def show_string(self, source, title: str) -> None:
+    def show_string(self, source: list[Token] | str, title: str) -> None:
         self.setWindowTitle(f"Preview — {title}")
         self._source = source
         self._page = 0
         self._paint()
 
     def _paint(self) -> None:
-        source = getattr(self, "_source", None)
+        source = self._source
         if self._font is None or self._sheet is None or source is None:
             self.canvas.clear()
             self.status.setText("Bind a font to the block (Font tab).")

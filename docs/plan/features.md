@@ -118,7 +118,7 @@ the preview system in [preview.md](preview.md).
   - a joined-file count and a container tag on files;
   - **?** (file missing) or **!** (read notices), washing the row amber.
 - **Tooltips** give paths, container, offset and length, the start table, and
-  any notice text.
+  any notice text, each notice's fuller detail indented under it.
 - **Selecting** — click opens an entry; a table opens the Table Editor and a
   font the Preview window's Font tab, neither becoming the view; Shift/Ctrl
   extend the selection; with several rows selected only Remove and Move
@@ -165,7 +165,10 @@ the preview system in [preview.md](preview.md).
     keys that already have entries are left alone unless the prompt is
     answered with Overwrite (a whole standard encoding is a **charset** on the
     table, not a fill);
-  - every change is one undo step and re-decodes every view using the table.
+  - every change is one undo step and re-decodes every view using the table;
+  - the status line carries what reading the file had to report — a conversion
+    from a legacy dialect, an encoding that is not UTF-8 — with each notice's
+    fuller detail in its tooltip.
 - **Where the edits live** — in the project, as an overlay of the entries
   added, changed and removed over the file, so the table file on disk keeps
   saying what it said for every other tool that reads it. **Save As Native**
@@ -300,9 +303,10 @@ the block's **Edit…** open the block dialog.
   pointers that reach it; a target reached by several pointers is one string
   with several pointers, written back to all of them.
 - **Discovery** (**Search ▸ Find Pointers…**, Ctrl+Shift+P, on a block):
-  - for the selected string (or every string in the block), compute the
-    pointer value under each mapping and each of 16/24/32 bits, both
-    endiannesses, with an optional offset range;
+  - a first dialog asks what to cover: the selected string or every string in
+    the block, and an offset range (from, to, step) to try;
+  - for each of those strings, compute the pointer value under each mapping,
+    each of 16/24/32 bits, both endiannesses and each offset in the range;
   - search the file for those byte patterns;
   - results are grouped by the (mapping, size, endian, offset) combination
     that explains the most strings, with the address range they occupy and

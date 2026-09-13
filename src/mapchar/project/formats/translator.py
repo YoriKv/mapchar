@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from mapchar.core.block import Status, StringRecord
 from mapchar.core.numbers import format_num, parse_num
@@ -209,11 +209,7 @@ def read_po(text: str) -> list[Record]:
 @dataclass
 class ImportReport:
     applied: int = 0
-    skipped: list[str] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.skipped is None:
-            self.skipped = []
+    skipped: list[str] = field(default_factory=list)
 
 
 def apply_records(

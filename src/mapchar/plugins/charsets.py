@@ -19,7 +19,7 @@ def apply_charset(table: Table, registry: Registry) -> None:
     code whose own text is something else, which is how the yen sign reaches
     Shift-JIS ``5C`` while ``5C`` still decodes as a backslash.
     """
-    if table.charset == "none" or getattr(table, "_charset_applied", False):
+    if table.charset == "none" or table.charset_applied:
         return
     charset = registry.plugin(Stage.CHARSET, table.charset)
     if charset is None:
@@ -34,4 +34,4 @@ def apply_charset(table: Table, registry: Registry) -> None:
     for bits, entry in own.items():
         if entry.kind is TokenKind.TEXT and entry.text == "":
             table.remove(bits)
-    table._charset_applied = True  # type: ignore[attr-defined]
+    table.charset_applied = True

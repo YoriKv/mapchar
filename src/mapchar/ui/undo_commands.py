@@ -328,7 +328,19 @@ class EntryOrderCommand(_InPlaceCommand):
 
 
 def _changed(before, after) -> frozenset[str]:
-    """Which fields of two frozen values differ."""
+    """Which fields of two frozen values differ.
+
+    Either side may be ``None`` — a block gets its first box, or loses it —
+    and then every field counts as changed, so such a step never merges with
+    an edit of one field.
+    """
+    if before is None or after is None:
+        value = after if before is None else before
+        return (
+            frozenset(f.name for f in fields(value))
+            if value is not None
+            else frozenset()
+        )
     return frozenset(
         f.name
         for f in fields(before)
