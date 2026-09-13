@@ -250,8 +250,8 @@ def _finish_block(
         skips = (
             (parse_number(get("AUTO JUMP START")), parse_number(get("AUTO JUMP STOP"))),
         )
-    end_label = _label(get("END CTRL") or "(END)")
-    line_label = _label(get("LINE CTRL") or "(LINE)")
+    end_label = _label(get("END CTRL")) if get("END CTRL") else "end"
+    line_label = _label(get("LINE CTRL")) if get("LINE CTRL") else "line"
     config = BlockConfig(
         source=source,
         string_type=string_type,
@@ -294,3 +294,113 @@ def _label(marker: str) -> str:
         inner = inner[1:-1]
     inner = re.sub(r"\s+", "_", inner)
     return inner or "end"
+
+
+# --- export ------------------------------------------------------------------
+
+
+def write_command_file(
+    name: str,
+    config: BlockConfig,
+    table_file: str,
+    *,
+    sub_tables: tuple[str, ...] = (),
+    game_name: str | None = None,
+    table_id: str | None = None,
+) -> tuple[str, list[str]]:
+    """A Cartographer command file for a block, and what it could not express."""
+    from mapchar.core.block import FixedSource, Pascal, PointerListSource, WriteMode
+
+    lines: list[str] = []
+    notes: list[str] = []
+    for sub in sub_tables:
+        lines.append(f"#SUB TABLE: {sub}")
+    if game_name:
+        lines.append(f"#GAME NAME: {game_name}")
+    lines.append(f"#BLOCK NAME: {name}")
+    src = config.source
+    st = config.string_type
+    fixed_len = None
+    if isinstance(st, FixedLength):
+        fixed_len = st.length
+    elif isinstance(src, FixedSource):
+        fixed_len = src.length
+        notes.append("fixed-string source written as a RAW range of one string")
+    if isinstance(st, Pascal):
+        notes.append("Pascal strings have no Cartographer form; written as NORMAL")
+    if fixed_len is not None:
+        kind = "FIXED_STRING && FIXED_LINE" if config.line_length else "FIXED_STRING"
+        lines.append(f"#TYPE: {kind}")
+        lines.append(f"#STRING LENGTH: {fixed_len}")
+        lines.append(f"#STRING END: {'Yes' if config.show_end else 'No'}")
+        if config.show_end:
+            lines.append(f"#END CTRL: [{config.end_label}]")
+        if config.line_length:
+            lines.append(f"#LINE LENGTH: {config.line_length}")
+            lines.append("#LINE END: Yes")
+            lines.append(f"#LINE CTRL: [{config.line_label}]")
+    else:
+        lines.append("#TYPE: NORMAL")
+    if isinstance(src, RangeSource | FixedSource):
+        start = src.start
+        stop = (
+            src.stop
+            if isinstance(src, RangeSource)
+            else src.start + src.count * src.length
+        )
+        lines.append("#METHOD: RAW")
+        lines.append(f"#SCRIPT START: ${start:X}")
+        lines.append(f"#SCRIPT STOP: ${stop:X}")
+    elif isinstance(src, PointerListSource):
+        notes.append("pointer lists have no Cartographer form; block not exported")
+        return "", notes
+    else:
+        if src.mapping_id == "relative":
+            lines.append("#METHOD: POINTER_RELATIVE_PC")
+            lines.append(f"#BASE POINTER: {_cart_num(src.offset)}")
+        elif src.mapping_id == "linear" and src.offset:
+            lines.append("#METHOD: POINTER_RELATIVE")
+            lines.append(f"#BASE POINTER: {_cart_num(src.offset)}")
+        elif src.mapping_id == "linear":
+            lines.append("#METHOD: POINTER")
+        else:
+            notes.append(
+                f"mapping {src.mapping_id!r} has no Cartographer form; "
+                "written as POINTER"
+            )
+            lines.append("#METHOD: POINTER")
+        lines.append(f"#POINTER ENDIAN: {'BIG' if src.endian == 'big' else 'LITTLE'}")
+        lines.append(f"#POINTER TABLE START: ${src.start:X}")
+        lines.append(f"#POINTER TABLE STOP: ${src.stop:X}")
+        lines.append(f"#POINTER SIZE: {src.size}")
+        lines.append(f"#POINTER SPACE: {max(src.stride - src.size, 0)}")
+        lines.append("#ATLAS PTRS: Yes")
+        if config.bound is not None:
+            lines.append(f"#SCRIPT STOP: ${config.bound:X}")
+        if config.strings_per_pointer != 1:
+            lines.append(f"#STRINGS PER POINTER: {config.strings_per_pointer}")
+        if isinstance(st, NextPointer):
+            lines.append("#STRINGS END AT NEXT POINTER: Yes")
+    if config.realign[0]:
+        lines.append(f"#STRING END REALIGN MULTIPLE: {config.realign[0]}")
+        lines.append(f"#STRING END REALIGN OFFSET: {config.realign[1]}")
+    for i, (a, b) in enumerate(config.skips):
+        if i:
+            notes.append("only the first skip range has a Cartographer form")
+            break
+        lines.append(f"#AUTO JUMP START: ${a:X}")
+        lines.append(f"#AUTO JUMP STOP: ${b:X}")
+    lines.append(f"#TABLE: {table_file}")
+    if table_id:
+        lines.append(f"#TABLE ID: {table_id}")
+    lines.append("#COMMENTS: No")
+    lines.append("#END BLOCK")
+    if config.write_mode is WriteMode.SLOTTED and not isinstance(
+        src, RangeSource | FixedSource
+    ):
+        notes.append("slotted write mode is not expressible; Cartographer dumps only")
+    return "\n".join(lines) + "\n", notes
+
+
+def _cart_num(value: int) -> str:
+    return f"${value:X}" if value >= 0 else f"$-{-value:X}"

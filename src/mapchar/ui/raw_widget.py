@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
@@ -29,6 +29,8 @@ class RowModel:
     """Byte offsets (relative) where the current block starts a string."""
     total: int
     """Total bytes in the buffer, for the scrollbar."""
+    pointer_bytes: set[int] = field(default_factory=set)
+    """Relative byte offsets that hold the current block's pointers."""
 
 
 class RawWidget(QAbstractScrollArea):
@@ -140,6 +142,16 @@ class RawWidget(QAbstractScrollArea):
                 y = row * rh
                 painter.fillRect(QRect(hex_x + col * 3 * cw, y, 3 * cw, rh), color)
                 painter.fillRect(QRect(text_x + col * 3 * cw, y, 3 * cw, rh), color)
+
+        # Pointer bytes of the current block.
+        for rel in model.pointer_bytes:
+            if 0 <= rel < len(model.data):
+                row, col = divmod(rel, BYTES_PER_ROW)
+                if row < rows:
+                    painter.fillRect(
+                        QRect(hex_x + col * 3 * cw, row * rh, 3 * cw, rh),
+                        theme.TINT_POINTER,
+                    )
 
         # Selection.
         if self._sel is not None:

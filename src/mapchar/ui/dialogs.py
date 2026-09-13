@@ -20,7 +20,10 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     FixedSource,
+    NextPointer,
     Pascal,
+    PointerListSource,
+    PointerTableSource,
     RangeSource,
 )
 from mapchar.project.formats.script import DumpMode
@@ -52,6 +55,7 @@ class BlockDialog(QDialog):
         config: BlockConfig | None = None,
         name: str = "",
         parent: QWidget | None = None,
+        mapping_ids: list[str] = (),
     ):
         super().__init__(parent)
         self.setWindowTitle("Block")
@@ -59,7 +63,9 @@ class BlockDialog(QDialog):
         self.name = QLineEdit(name)
         form.addRow("Name", self.name)
         self.source_kind = QComboBox()
-        self.source_kind.addItems(["Range", "Fixed strings"])
+        self.source_kind.addItems(
+            ["Range", "Fixed strings", "Pointer table", "Pointer list"]
+        )
         form.addRow("Source", self.source_kind)
         self.start = HexEdit()
         self.stop = HexEdit()
@@ -71,8 +77,33 @@ class BlockDialog(QDialog):
         form.addRow("Stop (exclusive)", self.stop)
         form.addRow("Count", self.count)
         form.addRow("String length", self.length)
+        self.ptr_size = QSpinBox()
+        self.ptr_size.setRange(1, 4)
+        self.ptr_size.setValue(2)
+        self.ptr_stride = QSpinBox()
+        self.ptr_stride.setRange(1, 4096)
+        self.ptr_stride.setValue(2)
+        self.ptr_endian = QComboBox()
+        self.ptr_endian.addItems(["little", "big"])
+        self.ptr_mapping = QComboBox()
+        self.ptr_mapping.setEditable(True)
+        self.ptr_mapping.addItems(list(mapping_ids) or ["linear"])
+        self.ptr_offset = QLineEdit("0")
+        self.ptr_bank = QSpinBox()
+        self.ptr_bank.setRange(0, 4095)
+        self.ptr_addresses = QLineEdit()
+        self.ptr_addresses.setPlaceholderText("hex addresses, comma separated")
+        form.addRow("Pointer size", self.ptr_size)
+        form.addRow("Pointer stride", self.ptr_stride)
+        form.addRow("Pointer endian", self.ptr_endian)
+        form.addRow("Mapping", self.ptr_mapping)
+        form.addRow("Target offset (±dec or $hex)", self.ptr_offset)
+        form.addRow("Bank", self.ptr_bank)
+        form.addRow("Pointer addresses", self.ptr_addresses)
         self.string_type = QComboBox()
-        self.string_type.addItems(["End token", "Fixed length", "Pascal"])
+        self.string_type.addItems(
+            ["End token", "Fixed length", "Pascal", "Next pointer"]
+        )
         form.addRow("String type", self.string_type)
         self.fixed_length = QSpinBox()
         self.fixed_length.setRange(1, 1_000_000)
@@ -130,6 +161,21 @@ class BlockDialog(QDialog):
             self.start.set_value(s.start)
             self.count.setValue(s.count)
             self.length.setValue(s.length)
+        elif isinstance(s, PointerTableSource | PointerListSource):
+            self.source_kind.setCurrentIndex(
+                2 if isinstance(s, PointerTableSource) else 3
+            )
+            if isinstance(s, PointerTableSource):
+                self.start.set_value(s.start)
+                self.stop.set_value(s.stop)
+                self.ptr_stride.setValue(s.stride)
+            else:
+                self.ptr_addresses.setText(", ".join(f"{a:X}" for a in s.addresses))
+            self.ptr_size.setValue(s.size)
+            self.ptr_endian.setCurrentIndex(1 if s.endian == "big" else 0)
+            self.ptr_mapping.setCurrentText(s.mapping_id)
+            self.ptr_offset.setText(str(s.offset))
+            self.ptr_bank.setValue(s.bank)
         st = c.string_type
         if isinstance(st, FixedLength):
             self.string_type.setCurrentIndex(1)
@@ -139,6 +185,8 @@ class BlockDialog(QDialog):
             self.string_type.setCurrentIndex(2)
             self.pascal_width.setValue(st.width)
             self.pascal_tokens.setChecked(st.counts_tokens)
+        elif isinstance(st, NextPointer):
+            self.string_type.setCurrentIndex(3)
         i = self.table.findText(c.table_id)
         if i >= 0:
             self.table.setCurrentIndex(i)
@@ -152,12 +200,29 @@ class BlockDialog(QDialog):
             self.bound.set_value(c.bound)
 
     def _sync(self) -> None:
-        fixed_source = self.source_kind.currentIndex() == 1
-        self.stop.setEnabled(not fixed_source)
+        kind = self.source_kind.currentIndex()
+        fixed_source = kind == 1
+        pointers = kind in (2, 3)
+        self.start.setEnabled(kind != 3)
+        self.stop.setEnabled(kind in (0, 2))
         self.count.setEnabled(fixed_source)
         self.length.setEnabled(fixed_source)
+        for w in (
+            self.ptr_size,
+            self.ptr_endian,
+            self.ptr_mapping,
+            self.ptr_offset,
+            self.ptr_bank,
+        ):
+            w.setEnabled(pointers)
+        self.ptr_stride.setEnabled(kind == 2)
+        self.ptr_addresses.setEnabled(kind == 3)
         st = self.string_type.currentIndex()
         self.string_type.setEnabled(not fixed_source)
+        self.string_type.model().item(3).setEnabled(pointers)
+        if st == 3 and not pointers:
+            self.string_type.setCurrentIndex(0)
+            st = 0
         self.fixed_length.setEnabled(st == 1 and not fixed_source)
         self.stop_at_end.setEnabled(st == 1 or fixed_source)
         self.pascal_width.setEnabled(st == 2 and not fixed_source)
@@ -166,14 +231,44 @@ class BlockDialog(QDialog):
         self.line_length.setEnabled(st == 1 or fixed_source)
         self.show_end.setEnabled(st == 1 or fixed_source)
 
+    def _pointer_fields(self) -> dict:
+        offset_text = self.ptr_offset.text().strip() or "0"
+        if offset_text.lstrip("-").startswith("$"):
+            offset = int(offset_text.replace("$", ""), 16)
+        else:
+            offset = int(offset_text)
+        return {
+            "size": self.ptr_size.value(),
+            "endian": self.ptr_endian.currentText(),
+            "mapping_id": self.ptr_mapping.currentText().strip() or "linear",
+            "offset": offset,
+            "bank": self.ptr_bank.value(),
+        }
+
     def config(self) -> BlockConfig:
-        if self.source_kind.currentIndex() == 1:
+        kind = self.source_kind.currentIndex()
+        if kind == 1:
             source = FixedSource(
                 self.start.value(), self.count.value(), self.length.value()
             )
             string_type = FixedLength(self.length.value(), self.stop_at_end.isChecked())
         else:
-            source = RangeSource(self.start.value(), self.stop.value())
+            if kind == 0:
+                source = RangeSource(self.start.value(), self.stop.value())
+            elif kind == 2:
+                source = PointerTableSource(
+                    self.start.value(),
+                    self.stop.value(),
+                    stride=self.ptr_stride.value(),
+                    **self._pointer_fields(),
+                )
+            else:
+                addresses = tuple(
+                    parse_hex(a)
+                    for a in self.ptr_addresses.text().split(",")
+                    if a.strip()
+                )
+                source = PointerListSource(addresses, **self._pointer_fields())
             st = self.string_type.currentIndex()
             if st == 1:
                 string_type = FixedLength(
@@ -183,6 +278,8 @@ class BlockDialog(QDialog):
                 string_type = Pascal(
                     self.pascal_width.value(), self.pascal_tokens.isChecked()
                 )
+            elif st == 3:
+                string_type = NextPointer()
             else:
                 string_type = EndToken()
         skips = []
@@ -242,3 +339,49 @@ class TextDialog(QDialog):
         buttons.clicked.connect(self.accept)
         layout.addWidget(buttons)
         self.resize(560, 420)
+
+
+class DiscoveryDialog(QDialog):
+    """Pointer discovery results; the chosen candidate becomes the source."""
+
+    def __init__(self, candidates, parent: QWidget | None = None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+
+        self.setWindowTitle("Find Pointers")
+        self.candidates = candidates
+        layout = QVBoxLayout(self)
+        self.table = QTableWidget(len(candidates), 6)
+        self.table.setHorizontalHeaderLabels(
+            ["Mapping", "Size", "Endian", "Strings", "Stride", "First address"]
+        )
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        for row, c in enumerate(candidates):
+            cells = [
+                c.mapping_id,
+                str(c.size),
+                c.endian,
+                str(c.explained),
+                str(c.stride),
+                f"{c.addresses[0]:X}" if c.addresses else "",
+            ]
+            for col, text in enumerate(cells):
+                self.table.setItem(row, col, QTableWidgetItem(text))
+        self.table.resizeColumnsToContents()
+        if candidates:
+            self.table.selectRow(0)
+        layout.addWidget(self.table, 1)
+        buttons = QDialogButtonBox()
+        buttons.addButton(
+            "Use as pointer table", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.resize(560, 320)
+
+    def chosen(self):
+        rows = self.table.selectionModel().selectedRows()
+        return self.candidates[rows[0].row()] if rows else None

@@ -31,13 +31,23 @@ from mapchar.ui import theme
 (
     COL_INDEX,
     COL_ADDRESS,
+    COL_POINTERS,
     COL_ORIGINAL,
     COL_TRANSLATION,
     COL_BYTES,
     COL_STATUS,
     COL_NOTES,
-) = range(7)
-HEADERS = ["#", "Address", "Original", "Translation", "Bytes", "Status", "Notes"]
+) = range(8)
+HEADERS = [
+    "#",
+    "Address",
+    "Pointers",
+    "Original",
+    "Translation",
+    "Bytes",
+    "Status",
+    "Notes",
+]
 STATUS_FILTERS = ["all", "untouched", "edited", "review", "too long", "invalid"]
 
 
@@ -52,6 +62,7 @@ class RowData:
     status: str
     notes: str
     problem: str = ""
+    pointers: str = ""
 
 
 class CodeEditor(QPlainTextEdit):
@@ -254,6 +265,7 @@ class StringsView(QWidget):
         self._filling = False
         self.table.resizeColumnToContents(COL_INDEX)
         self.table.resizeColumnToContents(COL_ADDRESS)
+        self.table.resizeColumnToContents(COL_POINTERS)
         self.table.resizeColumnToContents(COL_BYTES)
         self.table.resizeColumnToContents(COL_STATUS)
         self.table.setColumnWidth(
@@ -284,6 +296,7 @@ class StringsView(QWidget):
 
         self.table.setItem(r, COL_INDEX, item(str(data.index)))
         self.table.setItem(r, COL_ADDRESS, item(f"{data.address:X}"))
+        self.table.setItem(r, COL_POINTERS, item(data.pointers))
         self.table.setItem(r, COL_ORIGINAL, item(data.original.replace("\n", "↵")))
         tr = item(
             "" if data.translation is None else data.translation.replace("\n", "↵"),

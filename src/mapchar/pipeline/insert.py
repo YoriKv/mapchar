@@ -16,6 +16,7 @@ from mapchar.core.block import (
     FixedLength,
     FixedSource,
     Pascal,
+    RangeSource,
     StringRecord,
     WriteMode,
 )
@@ -218,9 +219,7 @@ def layout_block(
 
     # Packed: end to end from the first string, up to the bound.
     first = strings[0].start
-    bound = config.bound
-    if bound is None:
-        bound = getattr(config.source, "stop", None) or strings[-1].end
+    bound = block_bound(config, strings)
     pos = first
     out = bytearray()
     m, o = config.realign
@@ -292,6 +291,19 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
                 Splice(ref.address, pointer_bytes(value, ref.size, ref.endian))
             )
     return splices
+
+
+def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:
+    """The exclusive end packed strings may not cross.
+
+    The configured bound; else a range source's stop; else the last
+    string's original end (a pointer table's stop bounds pointers, not text).
+    """
+    if config.bound is not None:
+        return config.bound
+    if isinstance(config.source, RangeSource):
+        return config.source.stop
+    return strings[-1].end if strings else 0
 
 
 def apply_splices(data: bytes, splices: list[Splice]) -> bytes:

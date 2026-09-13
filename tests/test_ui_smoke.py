@@ -217,3 +217,45 @@ def test_import_export_and_find_replace(window, tmp_path):
     window.hex_panel.bytes.setText("42 00")
     window.hex_panel._on_apply()
     assert file_entry.doc.data[:4] == bytes.fromhex("41 42 42 00")
+
+
+def test_pointer_block_in_window(window, tmp_path, monkeypatch):
+    from mapchar.core.block import (
+        BlockConfig,
+        EndToken,
+        PointerTableSource,
+        RangeSource,
+    )
+    from mapchar.project.workspace import Entry, EntryKind
+
+    table = (0x10).to_bytes(2, "little") + (0x13).to_bytes(2, "little")
+    rom = tmp_path / "p.bin"
+    rom.write_bytes(
+        table + b"\xff" * 12 + bytes.fromhex("41 42 00 42 00") + b"\xff" * 8
+    )
+    tbl = tmp_path / "t.tbl"
+    tbl.write_text(TABLE)
+    file_entry = window.open_rom(str(rom))
+    window.open_table(str(tbl))
+    block = Entry(
+        EntryKind.BLOCK,
+        "P",
+        str(rom),
+        parent=file_entry,
+        config=BlockConfig(RangeSource(0x10, 0x15), EndToken(), "main", bound=0x18),
+    )
+    window._push_add(block)
+    window._activate_entry(block)
+    assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+    monkeypatch.setattr("mapchar.ui.dialogs.DiscoveryDialog.exec", lambda self: 1)
+    window._find_pointers()
+    assert block.config.source == PointerTableSource(0, 4, 2, 2, "little", "linear", 0)
+    rows = window._row_data(block, block.doc, window._table_set())
+    assert rows[0].pointers == "0" and rows[1].pointers == "2"
+    window._go_to(0)
+    assert {0, 1, 2, 3} <= window.raw._model.pointer_bytes
+    window._on_translation_edited(0, "ABB[end]")
+    assert window._write_blocks([block])
+    data = rom.read_bytes()
+    assert data[0x10:0x18] == bytes.fromhex("41 42 42 00 42 00 FF FF")
+    assert data[:4] == bytes.fromhex("10 00 14 00")

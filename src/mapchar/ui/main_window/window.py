@@ -39,12 +39,16 @@ from mapchar.core.block import (
 )
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
+from mapchar.core.mapping import resolve_mapping
 from mapchar.core.table import Table, TableSet
 from mapchar.engines.decode import DecodeRules, EndedBy, decode
+from mapchar.engines.pointers import discover
 from mapchar.engines.relsearch import Hit, entries_from_hit
+from mapchar.pipeline.exchange.atlas import write_atlas
+from mapchar.pipeline.exchange.cartographer import write_command_file
 from mapchar.pipeline.exchange.script_import import apply_script
 from mapchar.pipeline.extract import extract
-from mapchar.pipeline.insert import apply_splices, layout_block
+from mapchar.pipeline.insert import apply_splices, block_bound, layout_block
 from mapchar.pipeline.pipeline import (
     FileRef,
     PathwayConfig,
@@ -74,7 +78,13 @@ from mapchar.project.projectfile import (
     save_project,
 )
 from mapchar.project.workspace import Entry, EntryKind, Workspace
-from mapchar.ui.dialogs import BlockDialog, DumpDialog, TextDialog, parse_hex
+from mapchar.ui.dialogs import (
+    BlockDialog,
+    DiscoveryDialog,
+    DumpDialog,
+    TextDialog,
+    parse_hex,
+)
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.hex_panel import HexPanel
@@ -318,6 +328,9 @@ class MainWindow(QMainWindow):
         act(export_menu, "TSV…", lambda: self._export("tsv"))
         act(export_menu, "CSV…", lambda: self._export("csv"))
         act(export_menu, "PO…", lambda: self._export("po"))
+        export_menu.addSeparator()
+        act(export_menu, "Atlas script…", self._export_atlas)
+        act(export_menu, "Cartographer command file…", self._export_cartographer)
         act(file_menu, "Save Project", self._save_project, "Ctrl+S")
         act(file_menu, "Save Project As…", self._save_project_as, "Ctrl+Shift+S")
         file_menu.addSeparator()
@@ -337,6 +350,8 @@ class MainWindow(QMainWindow):
         act(edit_menu, "Revert Selected Strings", self._revert_selected)
         act(edit_menu, "Toggle Review on Selected", self._toggle_review_selected)
         act(edit_menu, "Copy Original to Empty Translations", self._copy_originals)
+        edit_menu.addSeparator()
+        act(edit_menu, "Find Pointers…", self._find_pointers, "Ctrl+Shift+P")
 
         view_menu = bar.addMenu("&View")
         act(view_menu, "Raw", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1")
@@ -785,6 +800,8 @@ class MainWindow(QMainWindow):
         self._offset = max(0, min(self._offset, max(total - 1, 0)))
         self.offset_box.setText(f"{self._offset:X}")
         tables = self._table_set()
+        if is_block:
+            self._extract_current(entry, doc, tables)
         window = self.raw.visible_bytes() + BYTES_PER_ROW
         data = doc.data[self._offset : self._offset + window]
         tokens = []
@@ -799,10 +816,19 @@ class MainWindow(QMainWindow):
                 if r.end_bit <= pos or r.ended_by in (EndedBy.DATA, EndedBy.LIMIT):
                     break
                 pos = r.end_bit
-        self.raw.set_model(RowModel(self._offset, data, tokens, string_starts, total))
+        pointer_bytes: set[int] = set()
+        if is_block and entry.doc is not None:
+            for rec in entry.doc.strings:
+                for p in rec.pointers:
+                    for b in range(p.address, p.address + p.size):
+                        rel = b - self._offset
+                        if 0 <= rel < len(data):
+                            pointer_bytes.add(rel)
+        self.raw.set_model(
+            RowModel(self._offset, data, tokens, string_starts, total, pointer_bytes)
+        )
         self._refresh_text_mode(doc, tables)
         if is_block:
-            self._extract_current(entry, doc, tables)
             self._fill_strings(doc)
             cfg = entry.config
             self.block_label.setText(
@@ -861,7 +887,7 @@ class MainWindow(QMainWindow):
         if doc.extraction_key == key:
             return
         try:
-            ex = extract(doc.data, cfg, tables)
+            ex = extract(doc.data, cfg, tables, self.registry)
         except NotImplementedError as exc:
             self.statusBar().showMessage(str(exc), 5000)
             doc.strings = []
@@ -909,14 +935,14 @@ class MainWindow(QMainWindow):
         cfg = entry.config if entry is not None else None
         result = None
         if cfg is not None and tables is not None and doc.strings:
-            result = layout_block(doc.data, cfg, tables, doc.strings)
+            result = layout_block(doc.data, cfg, tables, doc.strings, self.registry)
         rows = []
         for rec in doc.strings:
-            rows.append(self._row_for(rec, cfg, result))
+            rows.append(self._row_for(rec, cfg, result, doc.strings))
         return rows
 
-    def _row_for(self, rec, cfg, result) -> RowData:
-        used, room, problem = rec.length, self._room(rec, cfg), ""
+    def _row_for(self, rec, cfg, result, strings=()) -> RowData:
+        used, room, problem = rec.length, self._room(rec, cfg, strings), ""
         status = rec.status.value
         if result is not None:
             enc = result.encoded.get(rec.index)
@@ -936,10 +962,11 @@ class MainWindow(QMainWindow):
             status,
             rec.notes,
             problem,
+            " ".join(f"{p.address:X}" for p in rec.pointers),
         )
 
     @staticmethod
-    def _room(rec, cfg) -> int:
+    def _room(rec, cfg, strings=()) -> int:
         if cfg is None:
             return rec.length
         if isinstance(cfg.string_type, FixedLength):
@@ -947,12 +974,7 @@ class MainWindow(QMainWindow):
         if isinstance(cfg.source, FixedSource):
             return cfg.source.length
         if cfg.effective_write_mode is WriteMode.PACKED:
-            bound = (
-                cfg.bound
-                if cfg.bound is not None
-                else getattr(cfg.source, "stop", rec.end)
-            )
-            return max(bound - rec.start, 0)
+            return max(block_bound(cfg, list(strings)) - rec.start, 0)
         return rec.length
 
     def _refresh_string_row(self, entry, index: int) -> None:
@@ -965,8 +987,10 @@ class MainWindow(QMainWindow):
         tables = self._table_set()
         result = None
         if tables is not None and entry.config is not None:
-            result = layout_block(doc.data, entry.config, tables, doc.strings)
-        self.strings.update_row(self._row_for(rec, entry.config, result))
+            result = layout_block(
+                doc.data, entry.config, tables, doc.strings, self.registry
+            )
+        self.strings.update_row(self._row_for(rec, entry.config, result, doc.strings))
 
     # ------------------------------------------------------------------
     # String edits
@@ -1158,7 +1182,9 @@ class MainWindow(QMainWindow):
                     continue
                 ts = TableSet.build(tables[block.config.table_id], tables)
                 self._extract_current(block, doc, ts)
-                res = layout_block(new_data, block.config, ts, doc.strings)
+                res = layout_block(
+                    new_data, block.config, ts, doc.strings, self.registry
+                )
                 if not res.ok:
                     for p in res.problems:
                         problems.append(f"{block.name} #{p.index}: {p.message}")
@@ -1392,7 +1418,9 @@ class MainWindow(QMainWindow):
             EndToken(),
             self.table_pick.currentData() or table_ids[0],
         )
-        dialog = BlockDialog(table_ids, cfg, f"Block {start:X}", self)
+        dialog = BlockDialog(
+            table_ids, cfg, f"Block {start:X}", self, self.registry.ids(Stage.MAPPING)
+        )
         if dialog.exec() != BlockDialog.DialogCode.Accepted:
             return
         entry = Entry(
@@ -1990,6 +2018,128 @@ class MainWindow(QMainWindow):
                 n += 1
         self.undo_stack.endMacro()
         self.statusBar().showMessage(f"Replaced in {n} string(s)", 4000)
+
+    def _find_pointers(self) -> None:
+        entry = self._entry
+        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
+            self._error("Select a block first.")
+            return
+        starts = [r.start for r in entry.doc.strings]
+        if not starts:
+            self._error("The block has no strings.")
+            return
+        mappings = {
+            mid: resolve_mapping(self.registry, mid)
+            for mid in self.registry.ids(Stage.MAPPING)
+        }
+        self.statusBar().showMessage("Looking for pointers…")
+        QApplication.processEvents()
+        candidates = discover(entry.doc.data, starts, mappings)
+        self.statusBar().clearMessage()
+        if not candidates:
+            self._error("No pointers to these strings were found.")
+            return
+        dialog = DiscoveryDialog(candidates, self)
+        if dialog.exec() != DiscoveryDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.chosen()
+        if chosen is None:
+            return
+        from dataclasses import replace
+
+        entry.config = replace(entry.config, source=chosen.source())
+        entry.doc = None
+        self._doc = self._load_document(entry)
+        self.files_panel.refresh_labels()
+        self._refresh_view()
+
+    def _export_atlas(self) -> None:
+        entry = self._entry
+        tables = self._table_set()
+        if (
+            entry is None
+            or entry.kind is not EntryKind.BLOCK
+            or entry.doc is None
+            or tables is None
+        ):
+            self._error("Select a block with a start table to export.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Atlas script",
+            os.path.join(self._last_dir(), f"{entry.name}.txt"),
+            "*.txt",
+        )
+        if not path:
+            return
+        table_files = {}
+        for e in self.workspace.entries:
+            if e.kind is EntryKind.TABLE and any(
+                t.id in tables.tables for t in e.tables
+            ):
+                table_files[e.name if e.name.endswith(".tbl") else e.name + ".tbl"] = [
+                    t for t in e.tables if t.id in tables.tables
+                ]
+        export = write_atlas(
+            entry.name, entry.config, entry.doc.strings, tables, table_files
+        )
+        folder = os.path.dirname(path)
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(export.script)
+            for name, text in export.tables.items():
+                with open(
+                    os.path.join(folder, name), "w", encoding="utf-8", newline="\n"
+                ) as f:
+                    f.write(text)
+        except OSError as exc:
+            self._error(f"Cannot write: {exc}")
+            return
+        self._remember_dir(path)
+        message = f"Exported {path} and {len(export.tables)} table file(s)"
+        if export.notices:
+            TextDialog(
+                "Atlas export", message + "\n\n" + "\n".join(export.notices), self
+            ).exec()
+        else:
+            self.statusBar().showMessage(message, 5000)
+
+    def _export_cartographer(self) -> None:
+        entry = self._entry
+        if entry is None or entry.kind is not EntryKind.BLOCK or entry.config is None:
+            self._error("Select a block to export.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export command file",
+            os.path.join(self._last_dir(), f"{entry.name}.txt"),
+            "*.txt",
+        )
+        if not path:
+            return
+        table_entry = self.tables_panel.entry_for_table(entry.config.table_id)
+        table_file = (
+            os.path.basename(table_entry.path)
+            if table_entry and table_entry.path
+            else "main.tbl"
+        )
+        text, notes = write_command_file(
+            entry.name, entry.config, table_file, table_id=entry.config.table_id or None
+        )
+        if not text:
+            self._error("\n".join(notes))
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        except OSError as exc:
+            self._error(f"Cannot write {path}: {exc}")
+            return
+        self._remember_dir(path)
+        if notes:
+            TextDialog("Cartographer export", "\n".join(notes), self).exec()
+        else:
+            self.statusBar().showMessage(f"Exported {path}", 5000)
 
     def _block_strings_by_name(self, file_entry: Entry | None) -> dict[str, list]:
         out: dict[str, list] = {}
