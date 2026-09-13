@@ -7,7 +7,7 @@ from copy import deepcopy
 from dataclasses import replace
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent, QTextCursor
 from PySide6.QtWidgets import QMessageBox
 
@@ -414,47 +414,38 @@ def test_a_table_keeps_its_identity_through_undo(window, tmp_path):
 # --- the raw view's text column --------------------------------------------
 
 
-def test_the_text_column_stays_byte_aligned_under_a_two_cell_glyph(qtbot):
-    """A kanji is wider than the three cells its byte gets, so it runs into the
-    cells to its right — but every token still starts over its own first byte,
-    which is what keeps the hex and text columns aligned."""
-    from PySide6.QtGui import QFontMetrics
-
-    from mapchar.core.table import Entry as TableEntry
-    from mapchar.core.table import TokenKind
-    from mapchar.core.tokens import Token
-    from mapchar.ui import BYTES_PER_ROW
-    from mapchar.ui.raw_widget import TEXT_FAMILIES, RawWidget, RowModel
+def _raw_widget(qtbot, tokens, data):
+    from mapchar.ui.raw_widget import RawWidget, RowModel
 
     widget = RawWidget()
     qtbot.addWidget(widget)
+    widget.set_model(RowModel(0, data, tokens, set(), len(data)))
+    widget.resize(1400, 200)
+    return widget
+
+
+def _text_entry(key: str, text: str, kind=None):
+    from mapchar.core.table import Entry as TableEntry
+    from mapchar.core.table import TokenKind
+
+    return TableEntry(key, kind or TokenKind.TEXT, text)
+
+
+def test_a_byte_is_the_same_byte_under_either_column(qtbot):
+    """Every hex cell, group gaps included, and every text cell names its own
+    byte, whatever the font's fractional width."""
+    from mapchar.ui import BYTES_PER_ROW
+    from mapchar.ui.raw_widget import TEXT_FAMILIES
+
+    widget = _raw_widget(qtbot, [], bytes(BYTES_PER_ROW * 2))
     # The fallback list is what keeps a Japanese decode from being boxes; the
     # face that answers depends on the machine, so only the list is asserted.
     assert "Noto Sans CJK JP" in TEXT_FAMILIES
     assert widget._font.families() == list(TEXT_FAMILIES)
-    metrics = QFontMetrics(widget._font)
-    cw = widget.char_width
-
-    # Two 16-bit text tokens, the first wide enough to overrun its two bytes
-    # whatever face drew it.
-    wide = TableEntry("1000001010100000", TokenKind.TEXT, "漢漢漢漢漢漢")
-    letter = TableEntry("1000001010100001", TokenKind.TEXT, "ア")
-    tokens = [
-        Token("1000001010100000", 0, 16, wide),
-        Token("1000001010100001", 16, 32, letter),
-    ]
-    data = b"\x82\xa0\x82\xa1" + b"\x00" * (BYTES_PER_ROW - 4)
-    widget.set_model(RowModel(0, data, tokens, set(), len(data)))
-    widget.resize(1400, 200)
-    widget.repaint()
-
-    assert metrics.horizontalAdvance(wide.text) > 2 * 3 * cw - cw // 2
-    hex_x, text_x, _ = widget._columns()
-    # The byte under a point of either column is the same byte: the overrun
-    # moved no token off its own first byte.
-    for col in range(4):
-        assert widget._byte_at(QPoint(hex_x + col * 3 * cw + cw, 1)) == col
-        assert widget._byte_at(QPoint(text_x + col * 3 * cw + cw, 1)) == col
+    for rel in range(BYTES_PER_ROW * 2):
+        for cell in (widget._hex_cell(rel), widget._text_cell(rel)):
+            assert widget._byte_at(cell.center()) == rel
+            assert widget._byte_at(cell.topLeft()) == rel
 
 
 def test_every_hex_pair_is_drawn_in_its_own_cell(qtbot):
@@ -463,13 +454,8 @@ def test_every_hex_pair_is_drawn_in_its_own_cell(qtbot):
     from PySide6.QtGui import QPainter
 
     from mapchar.ui import BYTES_PER_ROW
-    from mapchar.ui.raw_widget import RawWidget, RowModel
 
-    widget = RawWidget()
-    qtbot.addWidget(widget)
-    data = bytes(range(BYTES_PER_ROW))
-    widget.set_model(RowModel(0, data, [], set(), len(data)))
-    widget.resize(1400, 200)
+    widget = _raw_widget(qtbot, [], bytes(range(BYTES_PER_ROW)))
     placed = []
     original = QPainter.drawText
 
@@ -482,7 +468,75 @@ def test_every_hex_pair_is_drawn_in_its_own_cell(qtbot):
         widget.viewport().grab()
     finally:
         QPainter.drawText = original
-    hex_x, _, _ = widget._columns()
     cells = {args[2]: args[0] for args in placed if len(args) == 3}
     for rel in range(BYTES_PER_ROW):
-        assert cells[f"{rel:02X}"] == widget._cell(hex_x, rel)
+        assert cells[f"{rel:02X}"] == widget._hex_cell(rel)
+
+
+def test_bit_packed_tokens_each_get_a_place_of_their_own(qtbot):
+    """Four 6-bit codes fill three bytes: each is placed by its bits, three
+    quarters of a byte cell, and none shares another's place."""
+    from PySide6.QtCore import QRectF
+
+    from mapchar.core.tokens import Token
+
+    tokens = [
+        Token(f"{i:06b}", 6 * i, 6 * i + 6, _text_entry(f"{i:06b}", "かきくけ"[i]))
+        for i in range(4)
+    ]
+    widget = _raw_widget(qtbot, tokens, bytes(3))
+    places = [widget._text_segments(t, 3) for t in tokens]
+    assert all(len(p) == 1 for p in places)
+    rects = [p[0] for p in places]
+    for rect in rects:
+        assert rect.width() == widget._text_width * 6 / 8
+    for left, right in zip(rects, rects[1:], strict=False):
+        assert left.right() == right.left()
+    assert rects[0].left() == QRectF(widget._text_cell(0)).left()
+    assert rects[-1].right() == QRectF(widget._text_cell(2)).right()
+
+
+def test_a_token_over_a_row_end_is_placed_on_both_rows(qtbot):
+    from mapchar.core.tokens import Token
+    from mapchar.ui import BYTES_PER_ROW
+
+    last = BYTES_PER_ROW - 1
+    token = Token("0" * 16, last * 8, (last + 2) * 8, _text_entry("0" * 16, "漢"))
+    widget = _raw_widget(qtbot, [token], bytes(BYTES_PER_ROW * 2))
+    first, second = widget._text_segments(token, BYTES_PER_ROW * 2)
+    assert first == widget._text_cell(last)
+    assert second == widget._text_cell(BYTES_PER_ROW)
+
+
+def test_the_text_column_shows_names_as_labels_and_marks_inside_text():
+    from mapchar.core.table import TokenKind
+    from mapchar.core.tokens import Token
+    from mapchar.ui.raw_widget import display_text
+
+    def shown(text, kind=None):
+        return display_text(Token("0" * 8, 0, 8, _text_entry("0" * 8, text, kind)))
+
+    assert shown("[end]\\n", TokenKind.END) == ("end", True)
+    assert shown("[tile60]") == ("tile60", True)
+    assert shown("s[line]\\n") == ("s↵", False)
+    assert shown("[F6]の") == ("▪の", False)
+    assert shown("A") == ("A", False)
+    assert display_text(Token("11111111", 0, 16)) == ("·", False)
+
+
+def test_text_wider_than_its_cells_never_leaves_them(qtbot):
+    """A dictionary word on one byte is squeezed and cut to its own cell, and
+    says it was cut; a letter that fits is drawn whole."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+
+    widget = _raw_widget(qtbot, [], bytes(1))
+    cell = QRectF(widget._text_cell(0))
+    image = QImage(400, 100, QImage.Format.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        assert not widget._fit(painter, cell, "A", widget._metrics)
+        assert widget._fit(painter, cell, "ちからのたね", widget._metrics)
+        assert painter.clipBoundingRect() == QRectF()  # the clip was restored
+    finally:
+        painter.end()

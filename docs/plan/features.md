@@ -184,17 +184,27 @@ the preview system in [preview.md](preview.md).
 The exploration surface, the equivalent of celPix's tile canvas.
 
 - **Columns** — address, hex bytes, and the decode of those same bytes through
-  the start table. Rows are aligned: every byte owns a fixed cell in both
-  columns, its hex pair and tint drawn in that cell, and a token spanning
-  several bytes is drawn across its cells, so hex and text line up. A code's
-  label is clipped to its cells; a glyph wider than its cells (a kanji) runs
-  into the cells to its right.
+  the start table. Rows are aligned and banded: every byte owns a fixed cell in
+  both columns — three characters in the hex, with a small gap every four
+  bytes, and two and a half in the text — and each token sits in the text
+  column at its **bits**, so a 6-bit code takes three quarters of a cell and
+  tokens that start inside one byte never share a place. A token over a row end
+  is written on the row holding most of it.
+- **Text in its cells** — text never leaves its token's cells: wider text is
+  condensed, then cut short with a corner notch. A token whose whole text is
+  one bracketed name shows the name as a smaller label; a name inside text
+  shows as `↵` when it ends a line and `▪` otherwise, so `s[line]` reads `s↵`.
+  Unmatched data is a dot. Hovering a token shows its whole text, its bytes and
+  its table.
 - **Decoding** — starts at the view offset and runs the full decode engine
   (switches, counts, end tokens), so the raw view shows exactly what a block
   starting there would extract. Decoding restarts in the start table after
   each end token.
-- **Marks** — end tokens, codes, unmatched bytes and switch labels are tinted;
-  the string boundaries the current block would produce are ruled.
+- **Marks** — end tokens, codes and switches are chips behind their token in
+  both columns, one chip per token so where one ends reads; a token that shows
+  nothing (a table switch) is a tick. Unmatched bytes are chipped in the hex
+  column only. The current block's pointer bytes are chipped in the hex column,
+  and the string boundaries it would produce are ruled in both.
 - **Display modes** — **Aligned** (the columns above) or **Text**: the same
   window decoded into an ordinary read-only text box, with a **Wrap**
   switch remembered per machine. The toggle is a button on the navigation
