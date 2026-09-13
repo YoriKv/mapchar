@@ -40,12 +40,16 @@ from mapchar.core.block import (
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.core.mapping import resolve_mapping
+from mapchar.core.table import EntryKind as TableEntryKind
 from mapchar.core.table import Table, TableSet
 from mapchar.engines.decode import DecodeRules, EndedBy, decode
 from mapchar.engines.pointers import discover
 from mapchar.engines.relsearch import Hit, entries_from_hit
-from mapchar.pipeline.exchange.atlas import write_atlas
-from mapchar.pipeline.exchange.cartographer import write_command_file
+from mapchar.pipeline.exchange.atlas import read_atlas, write_atlas
+from mapchar.pipeline.exchange.cartographer import (
+    parse_command_file,
+    write_command_file,
+)
 from mapchar.pipeline.exchange.script_import import apply_script
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import apply_splices, block_bound, layout_block
@@ -89,6 +93,7 @@ from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.raw_widget import BYTES_PER_ROW, RawWidget, RowModel
+from mapchar.ui.scan_window import ScanWindow
 from mapchar.ui.search_window import SearchWindow
 from mapchar.ui.strings_view import RowData, StringsView
 from mapchar.ui.table_editor import TableEditor
@@ -252,6 +257,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self.search_window = SearchWindow(self)
+        self.scan_window = ScanWindow(self)
         self.table_editor = TableEditor(self)
         self.find_replace = FindReplaceDialog(self)
 
@@ -283,6 +289,8 @@ class MainWindow(QMainWindow):
         self.strings.context_menu_requested.connect(self._strings_menu)
         self.search_window.go_to.connect(self._select_bytes)
         self.search_window.build_table.connect(self._build_table_from_hit)
+        self.scan_window.go_to.connect(self._select_bytes)
+        self.scan_window.new_block.connect(self._block_from_region)
         self.table_editor.changed.connect(self._on_table_edited)
         self.table_editor.save_requested.connect(self._save_table_entry)
         self.hex_panel.go_to_requested.connect(self._go_to)
@@ -324,6 +332,9 @@ class MainWindow(QMainWindow):
         act(import_menu, "Script…", lambda: self._import("script"))
         act(import_menu, "TSV / CSV…", lambda: self._import("delimited"))
         act(import_menu, "PO…", lambda: self._import("po"))
+        import_menu.addSeparator()
+        act(import_menu, "Cartographer command file…", self._import_cartographer_dialog)
+        act(import_menu, "Atlas script…", self._import_atlas_dialog)
         export_menu = file_menu.addMenu("Export")
         act(export_menu, "TSV…", lambda: self._export("tsv"))
         act(export_menu, "CSV…", lambda: self._export("csv"))
@@ -369,6 +380,7 @@ class MainWindow(QMainWindow):
 
         search_menu = bar.addMenu("&Search")
         act(search_menu, "Search window…", self._show_search, "Ctrl+Shift+F")
+        act(search_menu, "Scan for text…", self._show_scan, "Ctrl+Shift+S")
         act(search_menu, "Find bytes…", self._find_bytes, "Ctrl+F")
         act(search_menu, "Find next", lambda: self._find_bytes(again=True), "F3")
 
@@ -839,6 +851,7 @@ class MainWindow(QMainWindow):
             )
         self._update_nav_status()
         self.search_window.set_data(doc.data)
+        self.scan_window.set_source(doc.data, tables)
         self._sync_hex_panel()
         self._update_title()
 
@@ -1490,6 +1503,18 @@ class MainWindow(QMainWindow):
         )
         menu.addAction("New Bookmark", self._new_bookmark)
         if sel:
+            ptr_rec = self._string_for_pointer_at(sel[0])
+            if ptr_rec is not None:
+                menu.addAction(
+                    "Jump to pointer target",
+                    lambda: self._select_bytes(ptr_rec.start, ptr_rec.length),
+                )
+            str_rec = self._string_at(sel[0])
+            if str_rec is not None and str_rec.pointers:
+                p = str_rec.pointers[0]
+                menu.addAction(
+                    "Jump to pointer", lambda: self._select_bytes(p.address, p.size)
+                )
             menu.addAction("Add to Table…", self._add_selection_to_table)
             menu.addAction("Search for Selection", self._search_selection)
             menu.addAction(
@@ -1500,6 +1525,149 @@ class MainWindow(QMainWindow):
             )
             menu.addAction("Copy Text", self._copy_selection_text)
         menu.exec(pos)
+
+    def _string_at(self, offset: int):
+        doc = self._doc
+        if doc is None:
+            return None
+        return next((r for r in doc.strings if r.start <= offset < r.end), None)
+
+    def _string_for_pointer_at(self, offset: int):
+        doc = self._doc
+        if doc is None:
+            return None
+        for rec in doc.strings:
+            for p in rec.pointers:
+                if p.address <= offset < p.address + p.size:
+                    return rec
+        return None
+
+    def _import_cartographer_dialog(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Cartographer command file", self._last_dir(), "*.txt;;*"
+        )
+        if path:
+            self.import_cartographer(path)
+
+    def import_cartographer(self, path: str) -> list[Entry]:
+        """Blocks from a command file, with its tables, under the current ROM."""
+        file_entry = self._current_file()
+        if file_entry is None:
+            self._error("Open the ROM the command file describes first.")
+            return []
+        try:
+            with open(path, encoding="utf-8") as f:
+                cf = parse_command_file(f.read())
+        except (OSError, MapcharError) as exc:
+            self._error(f"Cannot import {path}: {exc}")
+            return []
+        base = os.path.dirname(os.path.abspath(path))
+        notices = [n.message for n in cf.notices]
+        created: list[Entry] = []
+        self.undo_stack.beginMacro(f"Import {os.path.basename(path)}")
+        try:
+            for sub in cf.sub_tables:
+                self.open_table(os.path.normpath(os.path.join(base, sub)), "abcde")
+            for block in cf.blocks:
+                table_path = os.path.normpath(os.path.join(base, block.table_file))
+                table_entry = self.open_table(table_path, "abcde")
+                table_id = block.table_id
+                if table_id is None and table_entry is not None and table_entry.tables:
+                    table_id = table_entry.tables[0].id
+                if table_id is None:
+                    notices.append(f"{block.name}: no table; block skipped")
+                    continue
+                from dataclasses import replace
+
+                entry = Entry(
+                    EntryKind.BLOCK,
+                    block.name,
+                    file_entry.path,
+                    parent=file_entry,
+                    config=replace(block.config, table_id=table_id),
+                )
+                self._push_add(entry)
+                created.append(entry)
+        finally:
+            self.undo_stack.endMacro()
+        self._remember_dir(path)
+        if created:
+            self._activate_entry(created[0])
+        message = f"Imported {len(created)} block(s) from {os.path.basename(path)}"
+        if notices:
+            TextDialog(
+                "Cartographer import", message + "\n\n" + "\n".join(notices), self
+            ).exec()
+        else:
+            self.statusBar().showMessage(message, 5000)
+        return created
+
+    def _import_atlas_dialog(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Atlas script", self._last_dir(), "*.txt;;*"
+        )
+        if path:
+            self.import_atlas(path)
+
+    def import_atlas(self, path: str) -> int:
+        """Translations from an Atlas script into the current block's strings."""
+        entry = self._entry
+        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
+            self._error("Select the block the script belongs to first.")
+            return 0
+        try:
+            with open(path, encoding="utf-8") as f:
+                script = read_atlas(f.read())
+        except OSError as exc:
+            self._error(f"Cannot read {path}: {exc}")
+            return 0
+        notices = list(script.notices)
+        by_pointer = {p.address: r for r in entry.doc.strings for p in r.pointers}
+        by_start = {r.start: r for r in entry.doc.strings}
+        applied = 0
+        self.undo_stack.beginMacro(f"Import {os.path.basename(path)}")
+        try:
+            for i, item in enumerate(script.strings):
+                rec = None
+                for addr in item.pointers:
+                    rec = by_pointer.get(addr)
+                    if rec is not None:
+                        break
+                if rec is None and item.insert_at is not None:
+                    rec = by_start.get(item.insert_at)
+                if rec is None:
+                    notices.append(f"string {i}: no block string matches its address")
+                    continue
+                self._on_translation_edited_for(entry, rec.index, item.text)
+                applied += 1
+        finally:
+            self.undo_stack.endMacro()
+        self._remember_dir(path)
+        self._refresh_view()
+        message = f"Imported {applied} string(s) from {os.path.basename(path)}"
+        if notices:
+            TextDialog(
+                "Atlas import", message + "\n\n" + "\n".join(notices), self
+            ).exec()
+        else:
+            self.statusBar().showMessage(message, 5000)
+        return applied
+
+    def _on_translation_edited_for(self, entry, index: int, text: str) -> None:
+        rec = self._string(entry, index)
+        if rec is None:
+            return
+        after = text if text.strip() else None
+        if after is not None and after.replace("\n", "") == rec.original_text().replace(
+            "\n", ""
+        ):
+            after = None
+        if after != rec.translation:
+            self.undo_stack.push(
+                StringFieldCommand(
+                    self, entry, index, "translation", rec.translation, after
+                )
+            )
 
     def _add_selection_to_table(self) -> None:
         if not self._selection or self._doc is None:
@@ -1542,6 +1710,29 @@ class MainWindow(QMainWindow):
         self.search_window.show()
         self.search_window.raise_()
         self.search_window.activateWindow()
+
+    def _show_scan(self) -> None:
+        if self._doc is not None:
+            self.scan_window.set_source(self._doc.data, self._table_set())
+        self.scan_window.show()
+        self.scan_window.raise_()
+        self.scan_window.activateWindow()
+
+    def _block_from_region(self, region) -> None:
+        """A block over a scanned region, with its guessed terminator as end token."""
+        tables = self._table_set()
+        if tables is not None and region.terminator is not None:
+            bits = format(region.terminator, "08b")
+            start = tables.start
+            if bits not in start.entries:
+                from mapchar.core.table import Entry as TableEntry
+
+                start.add(TableEntry(bits, TableEntryKind.END, "[end]"))
+                table_entry = self.tables_panel.entry_for_table(start.id)
+                if table_entry is not None:
+                    self.workspace.stamp(table_entry)
+                self._refresh_view()
+        self._new_block(region.start, region.end)
 
     _find_last: tuple[bytes, int] | None = None
 

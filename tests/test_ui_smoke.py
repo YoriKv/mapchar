@@ -259,3 +259,27 @@ def test_pointer_block_in_window(window, tmp_path, monkeypatch):
     data = rom.read_bytes()
     assert data[0x10:0x18] == bytes.fromhex("41 42 42 00 42 00 FF FF")
     assert data[:4] == bytes.fromhex("10 00 14 00")
+
+
+def test_cartographer_and_atlas_import(window, tmp_path):
+    rom = tmp_path / "c.bin"
+    rom.write_bytes(bytes.fromhex("41 42 00 42 00") + b"\xff" * 8)
+    (tmp_path / "main.tbl").write_text("@main\n41=A\n42=B\n/00=[end]\n")
+    (tmp_path / "cmd.txt").write_text(
+        "#BLOCK NAME: Intro\n#TYPE: NORMAL\n#METHOD: RAW\n#SCRIPT START: 0\n"
+        "#SCRIPT STOP: $5\n#TABLE: main.tbl\n#COMMENTS: No\n#END BLOCK\n"
+    )
+    window.open_rom(str(rom))
+    created = window.import_cartographer(str(tmp_path / "cmd.txt"))
+    assert [e.name for e in created] == ["Intro"]
+    block = created[0]
+    assert block.config.table_id == "main"
+    assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+    (tmp_path / "atlas.txt").write_text(
+        '#VAR(T, TABLE)\n#ADDTBL("main.tbl", T)\n#ACTIVETBL(T)\n#JMP($0, $4)\nBA[end]\n'
+        "#JMP($3, $4)\nA[end]\n"
+    )
+    assert window.import_atlas(str(tmp_path / "atlas.txt")) == 2
+    assert block.doc.strings[0].translation == "BA[end]"
+    assert block.doc.strings[1].translation == "A[end]"
+    assert window._string_at(3) is block.doc.strings[1]
