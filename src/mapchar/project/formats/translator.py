@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 
 from mapchar.core.block import Status, StringRecord
+from mapchar.core.numbers import format_num, parse_num
+from mapchar.core.text import escape, split_lines, unescape
 
 FIELDS = ("id", "address", "original", "translation", "status", "notes")
 
@@ -46,11 +48,11 @@ def write_delimited(records: list[Record], delimiter: str = "\t") -> str:
         for r in records:
             cells = [
                 r.id,
-                f"${r.address:X}",
-                _tsv_escape(r.original),
-                _tsv_escape(r.translation),
+                format_num(r.address),
+                escape(r.original, "\t"),
+                escape(r.translation, "\t"),
                 r.status,
-                _tsv_escape(r.notes),
+                escape(r.notes, "\t"),
             ]
             out.write("\t".join(cells) + "\n")
         return out.getvalue()
@@ -58,34 +60,29 @@ def write_delimited(records: list[Record], delimiter: str = "\t") -> str:
     writer.writerow(FIELDS)
     for r in records:
         writer.writerow(
-            [r.id, f"${r.address:X}", r.original, r.translation, r.status, r.notes]
+            [
+                r.id,
+                format_num(r.address),
+                r.original,
+                r.translation,
+                r.status,
+                r.notes,
+            ]
         )
     return out.getvalue()
 
 
-def _tsv_escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
-
-
-def _tsv_unescape(text: str) -> str:
-    return re.sub(
-        r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), text
-    )
-
-
 def read_delimited(text: str) -> list[Record]:
-    text = text.lstrip("\ufeff")
-    first = text.split("\n", 1)[0]
+    lines = split_lines(text)
+    first = lines[0] if lines else ""
     delimiter = "\t" if "\t" in first else ("," if "," in first else ";")
     if delimiter == "\t":
-        rows = [
-            line.split("\t") for line in text.replace("\r\n", "\n").split("\n") if line
-        ]
-        unescape = _tsv_unescape
+        rows = [line.split("\t") for line in lines if line]
+        cell_of = unescape
     else:
-        rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
+        rows = list(csv.reader(io.StringIO("\n".join(lines)), delimiter=delimiter))
 
-        def unescape(s: str) -> str:
+        def cell_of(s: str) -> str:
             return s
 
     if not rows:
@@ -98,21 +95,21 @@ def read_delimited(text: str) -> list[Record]:
     for row in rows[1:]:
         if not any(row):
             continue
-        record = _record_from_row(row, index, unescape)
+        record = _record_from_row(row, index, cell_of)
         if record is not None:
             records.append(record)
     return records
 
 
-def _record_from_row(row: list[str], index: dict[str, int], unescape) -> Record | None:
+def _record_from_row(row: list[str], index: dict[str, int], cell_of) -> Record | None:
     def cell(name: str, default: str = "") -> str:
         i = index.get(name)
-        return unescape(row[i]) if i is not None and i < len(row) else default
+        return cell_of(row[i]) if i is not None and i < len(row) else default
 
     addr = cell("address", "0").strip()
     return Record(
         cell("id").strip(),
-        int(addr[1:], 16) if addr.startswith("$") else int(addr or "0"),
+        parse_num(addr or "0"),
         cell("original"),
         cell("translation"),
         cell("status", "untouched").strip() or "untouched",
@@ -124,14 +121,7 @@ def _record_from_row(row: list[str], index: dict[str, int], unescape) -> Record 
 
 
 def _po_quote(text: str) -> str:
-    body = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-    return f'"{body}"'
-
-
-def _po_unquote(text: str) -> str:
-    return re.sub(
-        r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), text
-    )
+    return '"' + escape(text, '"') + '"'
 
 
 def write_po(records: list[Record], rom: str = "rom") -> str:
@@ -145,7 +135,7 @@ def write_po(records: list[Record], rom: str = "rom") -> str:
         if r.notes:
             for note in r.notes.split("\n"):
                 lines.append(f"#. {note}")
-        lines.append(f"#: {rom}:${r.address:X}")
+        lines.append(f"#: {rom}:{format_num(r.address)}")
         if r.status == "review":
             lines.append("#, fuzzy")
         lines.append(f"msgctxt {_po_quote(r.id)}")
@@ -180,7 +170,7 @@ def read_po(text: str) -> list[Record]:
             )
         entry, notes, fuzzy, address, current = {}, [], False, 0, None
 
-    for raw in text.replace("\r\n", "\n").split("\n"):
+    for raw in split_lines(text):
         line = raw.strip()
         if not line:
             flush()
@@ -196,12 +186,12 @@ def read_po(text: str) -> list[Record]:
         elif line.startswith("#"):
             continue
         elif line.startswith('"') and current is not None:
-            entry[current] = entry.get(current, "") + _po_unquote(line[1:-1])
+            entry[current] = entry.get(current, "") + unescape(line[1:-1])
         else:
             m = re.match(r"^(msgctxt|msgid|msgstr)\s+\"(.*)\"$", line)
             if m:
                 current = m.group(1)
-                entry[current] = _po_unquote(m.group(2))
+                entry[current] = unescape(m.group(2))
     flush()
     return records
 
@@ -237,11 +227,7 @@ def apply_records(
         if rec is None:
             report.skipped.append(f"{r.id}: no such string")
             continue
-        if (
-            not force
-            and r.original
-            and r.original.replace("\n", "") != rec.original_text().replace("\n", "")
-        ):
+        if not force and r.original and not rec.matches_original(r.original):
             report.skipped.append(f"{r.id}: original changed")
             continue
         translation = r.translation or None

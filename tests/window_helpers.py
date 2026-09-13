@@ -1,0 +1,50 @@
+"""Helpers for the window tests: they drive a live ``MainWindow``, so they
+live apart from the headless :mod:`helpers`."""
+
+from __future__ import annotations
+
+from helpers import ASCII_TABLE as _ASCII_BODY
+from mapchar.core.block import BlockConfig, EndToken
+from mapchar.project.formats.table_native import HEADER
+from mapchar.project.workspace import Entry, EntryKind
+
+TABLE = f"{HEADER}\n@table main\n41=A\n42=B\n/00=[end]\n"
+"""A native table file: two letters and an end token."""
+
+ASCII_TABLE = f"{HEADER}\n{_ASCII_BODY}"
+"""The same as a file, over the ASCII charset."""
+
+_ENTRY_FIELDS = ("compression_id", "slice_offset", "slice_length")
+
+
+def open_rom_and_table(window, tmp_path, data, table=TABLE, rom_name="rom.bin"):
+    """Write ``data`` and ``table`` into ``tmp_path``, open both in ``window``
+    and return the file entry."""
+    rom = tmp_path / rom_name
+    rom.write_bytes(data)
+    tbl = tmp_path / "main.tbl"
+    tbl.write_text(table)
+    entry = window.open_rom(str(rom))
+    window.open_table(str(tbl))
+    return entry
+
+
+def add_block(window, file_entry, name, source, **config) -> Entry:
+    """A block over ``source`` under ``file_entry``, added and made current.
+
+    Keywords go to the block's :class:`BlockConfig`, which reads end-token
+    strings through the ``main`` table, except the compression and slice
+    fields, which belong to the entry.
+    """
+    fields = {k: config.pop(k) for k in _ENTRY_FIELDS if k in config}
+    block = Entry(
+        EntryKind.BLOCK,
+        name,
+        file_entry.path,
+        parent=file_entry,
+        config=BlockConfig(source, EndToken(), "main", **config),
+        **fields,
+    )
+    window._push_add(block)
+    window._activate_entry(block)
+    return block

@@ -32,6 +32,17 @@ class Layout:
         return self.overflow_width or self.overflow_lines
 
 
+def glyph_advance(font: Font, text: str) -> int:
+    """How far one drawable piece moves the pen, before letter spacing.
+
+    A space takes ``font.space`` when the font sets one, else its glyph's
+    width like anything else.
+    """
+    if text == " " and font.space is not None:
+        return font.space
+    return font.advance(font.glyph_for(text))
+
+
 def _pieces_from_tokens(tokens: list[Token]) -> list[tuple[str, bool, int]]:
     """``(text, is_code, token_index)`` per drawable unit."""
     pieces = []
@@ -105,12 +116,9 @@ def layout(source: list[Token] | str, font: Font, box: TextBox) -> Layout:
             advance = font.advance(glyph)
         else:
             glyph = font.glyph_for(text)
-            if text == " ":
-                advance = font.space if font.space is not None else font.advance(glyph)
-            else:
-                advance = font.advance(glyph)
-                if glyph is None:
-                    glyph = font.missing
+            advance = glyph_advance(font, text)
+            if text != " " and glyph is None:
+                glyph = font.missing
         over = (
             x + advance > box.origin_x + (box.width - box.origin_x) or line >= max_lines
         )
@@ -127,11 +135,7 @@ def measure(text: str, font: Font, box: TextBox) -> int:
     """Pixel width of a run of plain text."""
     width = 0
     for ch in text:
-        glyph = font.glyph_for(ch)
-        if ch == " " and font.space is not None:
-            width += font.space + box.letter_spacing
-        else:
-            width += font.advance(glyph) + box.letter_spacing
+        width += glyph_advance(font, ch) + box.letter_spacing
     return max(0, width - box.letter_spacing) if text else 0
 
 
@@ -202,11 +206,7 @@ def wrap(
         parts = item.text.split(" ")
         for i, word in enumerate(parts):
             if i:
-                space = (
-                    font.space
-                    if font.space is not None
-                    else font.advance(font.glyph_for(" "))
-                )
+                space = glyph_advance(font, " ")
                 w = measure(word, font, box)
                 if x and x + space + box.letter_spacing + w > limit:
                     emit_newline()

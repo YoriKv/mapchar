@@ -20,6 +20,9 @@ from mapchar.core.block import (
 )
 from mapchar.core.errors import MapcharError
 from mapchar.core.notices import Level, Notice
+from mapchar.core.numbers import format_num, parse_num
+from mapchar.core.table import sanitize_label
+from mapchar.core.text import split_lines
 
 
 class CommandFileError(MapcharError):
@@ -104,20 +107,7 @@ POINTER_SET = (
 ALL_POINTER = POINTER_SET + ("ATLAS PTRS", "BASE POINTER", "STRINGS PER POINTER")
 
 
-def parse_number(text: str) -> int:
-    text = text.strip()
-    if text.startswith("$-"):
-        return -int(text[2:], 16)
-    if text.startswith("-$"):
-        return -int(text[2:], 16)
-    if text.startswith("$"):
-        return int(text[1:], 16)
-    return int(text, 10)
-
-
 def parse_command_file(text: str) -> CommandFile:
-    if text.startswith("﻿"):
-        text = text[1:]
     blocks: list[CartographerBlock] = []
     sub_tables: list[str] = []
     notices: list[Notice] = []
@@ -125,7 +115,7 @@ def parse_command_file(text: str) -> CommandFile:
     in_block = False
     previous_game: str | None = None
 
-    for n, raw in enumerate(text.replace("\r\n", "\n").split("\n"), start=1):
+    for n, raw in enumerate(split_lines(text), start=1):
         line = re.sub(r"\s*//.*", "", raw)
         if not line.strip():
             continue
@@ -152,7 +142,7 @@ def parse_command_file(text: str) -> CommandFile:
         if pattern in _NUMBER:
             if not _NUMBER[pattern].match(value):
                 raise CommandFileError(f"#{name}: bad number {value!r}", n)
-            if pattern == "positive" and parse_number(value) == 0:
+            if pattern == "positive" and parse_num(value) == 0:
                 raise CommandFileError(f"#{name}: must be positive", n)
         elif pattern != "any" and not re.fullmatch(pattern, value):
             raise CommandFileError(f"#{name}: bad value {value!r}", n)
@@ -220,46 +210,44 @@ def _finish_block(
         if a in cmds and b not in cmds:
             raise CommandFileError(f"#{a} needs #{b}", line_of(a))
 
-    stop = parse_number(get("SCRIPT STOP")) if get("SCRIPT STOP") else None
+    stop = parse_num(get("SCRIPT STOP")) if get("SCRIPT STOP") else None
     if method == "RAW":
-        source = RangeSource(parse_number(get("SCRIPT START")), stop)
+        source = RangeSource(parse_num(get("SCRIPT START")), stop)
     else:
         mapping = "relative" if method == "POINTER_RELATIVE_PC" else "linear"
-        size = parse_number(get("POINTER SIZE"))
+        size = parse_num(get("POINTER SIZE"))
         source = PointerTableSource(
-            parse_number(get("POINTER TABLE START")),
-            parse_number(get("POINTER TABLE STOP")),
+            parse_num(get("POINTER TABLE START")),
+            parse_num(get("POINTER TABLE STOP")),
             size,
-            size + parse_number(get("POINTER SPACE")),
+            size + parse_num(get("POINTER SPACE")),
             "big" if get("POINTER ENDIAN") == "BIG" else "little",
             mapping,
-            parse_number(get("BASE POINTER")) if get("BASE POINTER") else 0,
+            parse_num(get("BASE POINTER")) if get("BASE POINTER") else 0,
         )
     if fixed:
-        string_type = FixedLength(parse_number(get("STRING LENGTH")), method != "RAW")
+        string_type = FixedLength(parse_num(get("STRING LENGTH")), method != "RAW")
     elif get("STRINGS END AT NEXT POINTER") == "Yes" and method != "RAW":
         string_type = NextPointer()
     else:
         string_type = EndToken()
     realign = (
-        parse_number(get("STRING END REALIGN MULTIPLE") or "0"),
-        parse_number(get("STRING END REALIGN OFFSET") or "0"),
+        parse_num(get("STRING END REALIGN MULTIPLE") or "0"),
+        parse_num(get("STRING END REALIGN OFFSET") or "0"),
     )
     skips = ()
     if get("AUTO JUMP START"):
-        skips = (
-            (parse_number(get("AUTO JUMP START")), parse_number(get("AUTO JUMP STOP"))),
-        )
+        skips = ((parse_num(get("AUTO JUMP START")), parse_num(get("AUTO JUMP STOP"))),)
     end_label = _label(get("END CTRL")) if get("END CTRL") else "end"
     line_label = _label(get("LINE CTRL")) if get("LINE CTRL") else "line"
     config = BlockConfig(
         source=source,
         string_type=string_type,
         table_id=get("TABLE ID") or "",
-        strings_per_pointer=parse_number(get("STRINGS PER POINTER") or "1") or 1,
+        strings_per_pointer=parse_num(get("STRINGS PER POINTER") or "1") or 1,
         realign=realign,
         skips=skips,
-        line_length=parse_number(get("LINE LENGTH")) if fixed_line else 0,
+        line_length=parse_num(get("LINE LENGTH")) if fixed_line else 0,
         bound=stop,
         show_end=fixed and get("STRING END") == "Yes",
         end_label=end_label,
@@ -290,8 +278,7 @@ def _label(marker: str) -> str:
     inner = marker.strip()
     if len(inner) >= 2 and inner[0] in "([<{" and inner[-1] in ")]>}":
         inner = inner[1:-1]
-    inner = re.sub(r"\s+", "_", inner)
-    return inner or "end"
+    return sanitize_label(inner) if inner.strip() else "end"
 
 
 # --- export ------------------------------------------------------------------
@@ -318,11 +305,8 @@ def write_command_file(
     lines.append(f"#BLOCK NAME: {name}")
     src = config.source
     st = config.string_type
-    fixed_len = None
-    if isinstance(st, FixedLength):
-        fixed_len = st.length
-    elif isinstance(src, FixedSource):
-        fixed_len = src.length
+    fixed_len = config.fixed_length
+    if isinstance(src, FixedSource) and not isinstance(st, FixedLength):
         notes.append("fixed-string source written as a RAW range of one string")
     if isinstance(st, Pascal):
         notes.append("Pascal strings have no Cartographer form; written as NORMAL")
@@ -358,10 +342,10 @@ def write_command_file(
     else:
         if src.mapping_id == "relative":
             lines.append("#METHOD: POINTER_RELATIVE_PC")
-            lines.append(f"#BASE POINTER: {_cart_num(src.offset)}")
+            lines.append(f"#BASE POINTER: {format_num(src.offset)}")
         elif src.mapping_id == "linear" and src.offset:
             lines.append("#METHOD: POINTER_RELATIVE")
-            lines.append(f"#BASE POINTER: {_cart_num(src.offset)}")
+            lines.append(f"#BASE POINTER: {format_num(src.offset)}")
         elif src.mapping_id == "linear":
             lines.append("#METHOD: POINTER")
         else:
@@ -401,10 +385,6 @@ def write_command_file(
     ):
         notes.append("slotted write mode is not expressible; Cartographer dumps only")
     return "\n".join(lines) + "\n", notes
-
-
-def _cart_num(value: int) -> str:
-    return f"${value:X}" if value >= 0 else f"$-{-value:X}"
 
 
 def shift_config(config: BlockConfig, delta: int) -> BlockConfig:

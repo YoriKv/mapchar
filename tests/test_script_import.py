@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from helpers import table_set
+from helpers import ABC_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
 from mapchar.pipeline.exchange.script_import import apply_script
 from mapchar.pipeline.extract import extract
 from mapchar.project.formats.script import DumpMode, parse_script, write_script
 
-TS = table_set("@table main\n41=A\n42=B\n/00=[end]\n", "main")
+TS = table_set(ABC_TABLE, "main")
 
 
 def test_apply_script_roundtrip():

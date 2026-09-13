@@ -15,7 +15,7 @@ and needs a live QApplication, so registration happens on the first icon.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, QPointF, QRect, QSize, Qt
+from PySide6.QtCore import QByteArray, QEvent, QPointF, QRect, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -23,6 +23,7 @@ from PySide6.QtGui import (
     QIcon,
     QImage,
     QPainter,
+    QPalette,
     QPixmap,
 )
 
@@ -157,12 +158,42 @@ def glyph_pixmap(glyph: Glyph, color: QColor, box: QSize, ratio: float) -> QPixm
     return tinted
 
 
-def glyph_icon(
-    glyph: Glyph, color: QColor, size: int = 16, ratio: float = 1.0
+def themed_icon(
+    widget,
+    glyph: Glyph,
+    role: QPalette.ColorRole | QColor,
+    *,
+    size: int | QSize = 16,
+    group: QPalette.ColorGroup | None = None,
 ) -> QIcon:
-    """``glyph`` as a square :class:`QIcon` in ``color``, for a button's face.
+    """``glyph`` baked for ``widget``: a palette role read off it, or a fixed
+    colour, at the widget's device scale.
 
     16 is the icon size the styles give a button that never asked for one. The
-    art is baked, so a caller re-bakes it when the theme or scale changes.
+    art is a pixmap, so a widget re-bakes what it holds when the palette
+    changes; :class:`ThemedIcons` is the hook for that.
     """
-    return QIcon(glyph_pixmap(glyph, color, QSize(size, size), ratio))
+    if isinstance(role, QColor):
+        color = role
+    elif group is None:
+        color = widget.palette().color(role)
+    else:
+        color = widget.palette().color(group, role)
+    box = size if isinstance(size, QSize) else QSize(size, size)
+    return QIcon(glyph_pixmap(glyph, color, box, widget.devicePixelRatioF()))
+
+
+class ThemedIcons:
+    """Re-bakes a widget's baked icon art when the theme changes.
+
+    Mix in ahead of the widget class and bake in ``_bake_icons``; it runs again
+    on every palette change.
+    """
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() is QEvent.Type.PaletteChange:
+            self._bake_icons()
+
+    def _bake_icons(self) -> None:
+        raise NotImplementedError

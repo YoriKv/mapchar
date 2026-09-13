@@ -9,22 +9,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from mapchar.core.bits import Bits, bits_to_bytes
+from mapchar.core.bits import Bits, align_up, bits_to_bytes
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
-    FixedSource,
     Pascal,
-    RangeSource,
     StringRecord,
     WriteMode,
+    block_bound,
 )
 from mapchar.core.errors import EncodeError
 from mapchar.core.table import TableSet
-from mapchar.core.tokens import CodeRef, TextRun, escape_text, parse_text
 from mapchar.engines.decode import DecodeRules, EndedBy, decode
 from mapchar.engines.encode import encode
+from mapchar.pipeline.extract import strip_artificial
 
 
 @dataclass(frozen=True)
@@ -74,7 +73,7 @@ def encode_string(
     if rec.translation is None:
         return Encoded(rec.index, data[rec.start : rec.end])
     st = config.string_type
-    fixed = isinstance(st, FixedLength) or isinstance(config.source, FixedSource)
+    fixed = config.fixed_length is not None
     text = rec.translation
     try:
         if fixed:
@@ -96,39 +95,12 @@ def encode_string(
     return Encoded(rec.index, body)
 
 
-def _strip_artificial(text: str, config: BlockConfig) -> list[str]:
-    """Drop the artificial line and end codes from fixed-string text.
-
-    Only a final ``[end]`` is artificial; one earlier in the text is the
-    table's own end token and stays.
-    """
-    items = parse_text(text)
-    if (
-        config.show_end
-        and items
-        and isinstance(items[-1], CodeRef)
-        and items[-1].label == config.end_label
-        and not items[-1].words
-    ):
-        items = items[:-1]
-    pieces: list[list[str]] = [[]]
-    for item in items:
-        if isinstance(item, TextRun):
-            pieces[-1].append(escape_text(item.text))
-            continue
-        if config.line_label and item.label == config.line_label and not item.words:
-            continue
-        words = " ".join(item.words)
-        pieces[-1].append(f"[{item.label}{' ' + words if words else ''}]")
-    return ["".join(p) for p in pieces]
-
-
 def _encode_fixed(text: str, config: BlockConfig, tables: TableSet) -> bytes:
     """A fixed-length string; fixed-line codes are dump formatting and go."""
     st = config.string_type
-    length = st.length if isinstance(st, FixedLength) else config.source.length  # type: ignore[union-attr]
+    length = config.fixed_length or 0
     stop_at_end = isinstance(st, FixedLength) and st.stop_at_end
-    body = "".join(_strip_artificial(text, config))
+    body = "".join(strip_artificial(text, config))
     r = encode(body, tables, end_terminated=stop_at_end)
     if len(r.bits) % 8:
         raise EncodeError("the encoding is not a whole number of bytes")
@@ -140,7 +112,7 @@ def _encode_fixed(text: str, config: BlockConfig, tables: TableSet) -> bytes:
 def _pascal(payload: bytes, st: Pascal, result, text: str, tables: TableSet) -> bytes:
     if st.counts_tokens:
         r = decode(Bits(payload), tables, 0, DecodeRules(end_terminated=False))
-        n = sum(t.weight if t.entry is not None else 1 for t in r.tokens)
+        n = sum(t.pascal_weight for t in r.tokens)
     else:
         n = len(payload)
     if n >= 1 << (st.width * 8):
@@ -166,12 +138,7 @@ def layout_block(
         if enc.problem is not None:
             result.problems.append(enc.problem)
     mode = config.effective_write_mode
-    st = config.string_type
-    fixed_len = None
-    if isinstance(st, FixedLength):
-        fixed_len = st.length
-    elif isinstance(config.source, FixedSource):
-        fixed_len = config.source.length
+    fixed_len = config.fixed_length
 
     if mode is WriteMode.SLOTTED:
         out = bytearray()
@@ -222,12 +189,9 @@ def layout_block(
         enc = result.encoded[rec.index]
         if enc.problem is not None:
             continue
-        if m > 0:
-            target = pos - o
-            if target > 0 and target % m:
-                aligned = (-(-target // m)) * m + o
-                out += fill * (aligned - pos)
-                pos = aligned
+        aligned = align_up(pos, m, o)
+        out += fill * (aligned - pos)
+        pos = aligned
         if fixed_len is not None:
             chunk = enc.data + fill * (fixed_len - len(enc.data))
         else:
@@ -254,16 +218,12 @@ def layout_block(
 
 def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Splice]:
     """Rewrite every pointer of a packed block to its string's new position."""
-    from mapchar.core.mapping import pointer_bytes, resolve_mapping
+    from mapchar.core.mapping import mapping_for, pointer_bytes
 
     if not config.has_pointers:
         return []
-    if registry is None:
-        from mapchar.plugins.registry import default_registry
-
-        registry = default_registry()
     source = config.source
-    mapping = resolve_mapping(registry, source.mapping_id)
+    mapping = mapping_for(source, registry)
     if mapping is None:
         result.problems.append(Problem(-1, f"unknown mapping {source.mapping_id!r}"))
         return []
@@ -295,19 +255,6 @@ def _crosses_skip(rec: StringRecord, config: BlockConfig) -> bool:
     return any(rec.start <= a < rec.end for a, _ in config.skips)
 
 
-def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:
-    """The exclusive end packed strings may not cross.
-
-    The configured bound; else a range source's stop; else the last
-    string's original end (a pointer table's stop bounds pointers, not text).
-    """
-    if config.bound is not None:
-        return config.bound
-    if isinstance(config.source, RangeSource):
-        return config.source.stop
-    return strings[-1].end if strings else 0
-
-
 def apply_splices(data: bytes, splices: list[Splice]) -> bytes:
     out = bytearray(data)
     for s in splices:
@@ -325,12 +272,12 @@ def check_roundtrip(
     problems = []
     by_index = {s.index: s for s in ex.strings}
     for rec in strings:
-        want = rec.translation if rec.translation is not None else rec.original_text()
+        want = rec.current_text()
         got = by_index.get(rec.index)
         if got is None:
             problems.append(f"string {rec.index} vanished")
             continue
-        if got.original_text().replace("\n", "") != want.replace("\n", ""):
+        if not got.matches_original(want):
             if got.ended_by_data if hasattr(got, "ended_by_data") else False:
                 continue
             problems.append(f"string {rec.index} reads back differently")
@@ -343,6 +290,7 @@ __all__ = [
     "Problem",
     "Splice",
     "apply_splices",
-    "layout_block",
     "bits_to_bytes",
+    "block_bound",
+    "layout_block",
 ]

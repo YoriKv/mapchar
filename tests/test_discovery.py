@@ -28,7 +28,7 @@ def test_roots_and_seed(tmp_path, monkeypatch):
     ]
 
 
-def test_discover_presets_code_and_issues(tmp_path):
+def test_discover_presets_code_and_issues(tmp_path, registry):
     user = tmp_path / "user"
     (user / "mappings").mkdir(parents=True)
     (user / "mappings" / "mine.toml").write_text(
@@ -56,7 +56,6 @@ def test_discover_presets_code_and_issues(tmp_path):
     (user / "charsets").mkdir()
     (user / "charsets" / "mytbl.tbl").write_text("41=X\n42=Y\n")
     (user / "loose.txt").write_text("x")
-    reg = default_registry()
     trust = TrustStore(str(tmp_path / "trust.json"))
     asked = []
 
@@ -64,15 +63,15 @@ def test_discover_presets_code_and_issues(tmp_path):
         asked.append(os.path.basename(path))
         return not path.endswith("broken.py")
 
-    result = discover(reg, plugin_roots(str(user), None), trust, confirm)
+    result = discover(registry, plugin_roots(str(user), None), trust, confirm)
     assert (
         "mine" in result.loaded
         and "swap2" in result.loaded
         and "mytbl" in result.loaded
     )
-    assert reg.plugin(Stage.MAPPING, "mine").to_value(0x100) == 0xA100
-    assert reg.plugin(Stage.COMPRESSION, "swap2").info.category == "Your plugins"
-    assert list(reg.plugin(Stage.CHARSET, "mytbl").entries()) == [
+    assert registry.plugin(Stage.MAPPING, "mine").to_value(0x100) == 0xA100
+    assert registry.plugin(Stage.COMPRESSION, "swap2").info.category == "Your plugins"
+    assert list(registry.plugin(Stage.CHARSET, "mytbl").entries()) == [
         ("01000001", "X"),
         ("01000010", "Y"),
     ]

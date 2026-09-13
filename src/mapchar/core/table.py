@@ -12,7 +12,9 @@ import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 
+from mapchar.core.bits import bits_to_hex, hex_to_bits
 from mapchar.core.errors import TableError
+from mapchar.core.numbers import parse_num
 
 RAW = "raw"
 """Pseudo table id: one unmatched byte per match, shown ``[$XX]``."""
@@ -116,11 +118,7 @@ class OperandSpec:
             if not word.startswith("%"):
                 raise ValueError(word)
             return int(word[1:], 2)
-        if word.startswith("$"):
-            return int(word[1:], 16)
-        if word.startswith("-$"):
-            return -int(word[2:], 16)
-        return int(word, 10)
+        return parse_num(word)
 
     @property
     def words(self) -> int:
@@ -141,17 +139,30 @@ class Stop:
     def any(self) -> bool:
         return self.count is None and self.fallback is None
 
-    def spec(self) -> str:
+    def spec(self, any_marker: str = "*") -> str:
+        """How a switch parameter writes this stop; ``any_marker`` for no stop."""
         if self.count is not None:
             return str(self.count)
         if self.fallback is not None:
             if len(self.fallback) % 8 == 0:
-                return "$" + "".join(
-                    f"{int(self.fallback[i : i + 8], 2):02X}"
-                    for i in range(0, len(self.fallback), 8)
-                )
+                return "$" + bits_to_hex(self.fallback)
             return "%" + self.fallback
-        return "*"
+        return any_marker
+
+
+def parse_stop(word: str) -> Stop:
+    """A switch parameter's stop as the table dialects write it.
+
+    ``*`` and ``0`` are no stop at all, digits a weighted count, ``$hex`` and
+    ``%bits`` fallback bits.
+    """
+    if word in ("*", "0"):
+        return Stop()
+    if word.isdigit():
+        return Stop(count=int(word))
+    if word.startswith("$"):
+        return Stop(fallback=hex_to_bits(word[1:]))
+    return Stop(fallback=word[1:])
 
 
 @dataclass(frozen=True)
@@ -210,6 +221,23 @@ class Entry:
 
 def normalize(text: str) -> str:
     return unicodedata.normalize("NFC", text)
+
+
+def sanitize_id(text: str) -> str:
+    """``text`` as a table id: everything ``ID_PATTERN`` rejects becomes ``_``."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", text)
+
+
+def sanitize_label(text: str) -> str:
+    """``text`` as a code label: an outer bracket pair off, no whitespace."""
+    text = text.strip()
+    if len(text) >= 2 and text[0] == "[" and text[-1] == "]":
+        text = text[1:-1]
+    fixed = re.sub(r"\s+", "_", text.strip())
+    fixed = re.sub(r"[\[\]]", "_", fixed)
+    if not fixed or fixed[0] in "$%":
+        fixed = "_" + fixed
+    return fixed if LABEL_PATTERN.fullmatch(fixed) else "_" + re.sub(r"\W", "_", fixed)
 
 
 class Table:

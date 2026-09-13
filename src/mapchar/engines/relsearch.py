@@ -12,6 +12,7 @@ from array import array
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from mapchar.core.bits import bytes_to_bits
 from mapchar.core.table import Entry, EntryKind
 from mapchar.core.tokens import escape_text
 
@@ -141,6 +142,31 @@ def relative_search(
     return hits
 
 
+def _code_bits(code: int, bit_width: int, endian: str) -> str:
+    if bit_width % 8 == 0:
+        order = "big" if endian == "big" else "little"
+        return bytes_to_bits(code.to_bytes(bit_width // 8, order))
+    return format(code, f"0{bit_width}b")
+
+
+def entries_from_base(
+    base: int, bit_width: int, endian: str, chars: str
+) -> list[Entry]:
+    """TEXT entries for ``chars`` over consecutive codes from ``base``.
+
+    The first code that does not fit ``bit_width`` bits ends the run.
+    """
+    entries: list[Entry] = []
+    for i, ch in enumerate(chars):
+        code = base + i
+        if code >= 1 << bit_width:
+            break
+        entries.append(
+            Entry(_code_bits(code, bit_width, endian), EntryKind.TEXT, escape_text(ch))
+        )
+    return entries
+
+
 def entries_from_hit(
     hit: Hit, runs: tuple[str, ...] = (UPPER, LOWER, DIGIT)
 ) -> list[Entry]:
@@ -150,11 +176,5 @@ def entries_from_hit(
         base = hit.bases.get(run)
         if base is None:
             continue
-        for i, ch in enumerate(RUNS[run]):
-            code = base + i
-            if code >= 1 << (hit.width * 8):
-                break
-            raw = code.to_bytes(hit.width, "big" if hit.endian == "big" else "little")
-            bits = format(int.from_bytes(raw, "big"), f"0{hit.width * 8}b")
-            entries.append(Entry(bits, EntryKind.TEXT, escape_text(ch)))
+        entries.extend(entries_from_base(base, hit.width * 8, hit.endian, RUNS[run]))
     return entries

@@ -108,33 +108,51 @@ class Workspace:
 
     # --- lookup --------------------------------------------------------
 
-    def find_file(self, path: str) -> Entry | None:
+    def _find(self, kind: EntryKind, path: str) -> Entry | None:
         key = normalize_path(path)
-        for e in self.entries:
-            if e.kind is EntryKind.FILE and e.path and normalize_path(e.path) == key:
+        for e in self.of_kind(kind):
+            if e.path and normalize_path(e.path) == key:
                 return e
         return None
 
+    def find_file(self, path: str) -> Entry | None:
+        return self._find(EntryKind.FILE, path)
+
     def find_table(self, path: str) -> Entry | None:
-        key = normalize_path(path)
-        for e in self.entries:
-            if e.kind is EntryKind.TABLE and e.path and normalize_path(e.path) == key:
+        return self._find(EntryKind.TABLE, path)
+
+    def entry_by_id(self, key: object) -> Entry | None:
+        """The entry whose ``id()`` is ``key``: how a tree item names one."""
+        return next((e for e in self.entries if id(e) == key), None)
+
+    def entry_for_table(self, table_id: str) -> Entry | None:
+        """The table entry one of whose tables is ``table_id``."""
+        for e in self.of_kind(EntryKind.TABLE):
+            if any(t.id == table_id for t in e.tables):
                 return e
         return None
 
     def children(self, parent: Entry) -> list[Entry]:
         return [e for e in self.entries if e.parent is parent]
 
+    def of_kind(self, kind: EntryKind) -> list[Entry]:
+        return [e for e in self.entries if e.kind is kind]
+
     def files(self) -> list[Entry]:
-        return [e for e in self.entries if e.kind is EntryKind.FILE]
+        return self.of_kind(EntryKind.FILE)
+
+    def fonts(self) -> list[Entry]:
+        return self.of_kind(EntryKind.FONT)
+
+    def table_entries(self) -> list[Entry]:
+        return self.of_kind(EntryKind.TABLE)
 
     def tables(self) -> dict[str, Table]:
         """Every loaded table by id, across table entries."""
         out: dict[str, Table] = {}
-        for e in self.entries:
-            if e.kind is EntryKind.TABLE:
-                for t in e.tables:
-                    out[t.id] = t
+        for e in self.of_kind(EntryKind.TABLE):
+            for t in e.tables:
+                out[t.id] = t
         return out
 
     # --- lifecycle -----------------------------------------------------
@@ -155,12 +173,16 @@ class Workspace:
         self._fire(self.on_added, entry)
         return entry
 
+    def new_file(self, path: str, name: str | None = None, **fields) -> Entry:
+        """A file entry for ``path``, not yet added; it is named after the file."""
+        return Entry(EntryKind.FILE, name or os.path.basename(path), path, **fields)
+
     def open_file(self, path: str, name: str | None = None, **fields) -> Entry:
+        """The entry already open on ``path``, else a new one, added."""
         existing = self.find_file(path)
         if existing is not None:
             return existing
-        entry = Entry(EntryKind.FILE, name or os.path.basename(path), path, **fields)
-        return self.add(entry)
+        return self.add(self.new_file(path, name, **fields))
 
     def close(self, entry: Entry) -> list[Entry]:
         """Remove an entry and its children; returns what was removed."""
@@ -197,19 +219,11 @@ class Workspace:
         self.current = entry
         self._fire(self.on_current_changed, entry)
 
-    def drop_document(self, entry: Entry) -> None:
-        entry.doc = None
-
-    def invalidate_path(self, path: str) -> None:
-        """Drop clean documents that read a just-written file."""
-        key = normalize_path(path)
+    def invalidate_extractions(self) -> None:
+        """Make every loaded document extract its strings again."""
         for e in self.entries:
-            if (
-                e.doc is not None
-                and not e.dirty
-                and any(normalize_path(p) == key for p in e.paths)
-            ):
-                e.doc = None
+            if e.doc is not None:
+                e.doc.extraction_key = None
 
     def _fire(self, callbacks, *args) -> None:
         for cb in list(callbacks):

@@ -14,7 +14,6 @@ from mapchar.core.bits import hex_to_bits
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Level, Notice
 from mapchar.core.table import (
-    LABEL_PATTERN,
     RETURN,
     Entry,
     EntryKind,
@@ -22,6 +21,9 @@ from mapchar.core.table import (
     Stop,
     SwitchParam,
     Table,
+    parse_stop,
+    sanitize_id,
+    sanitize_label,
 )
 from mapchar.project.formats.table_native import (
     TableFile,
@@ -89,8 +91,7 @@ def _id_from_path(path: str | None) -> str:
     name = path.replace("\\", "/").rsplit("/", 1)[-1]
     if "." in name:
         name = name.rsplit(".", 1)[0]
-    name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
-    return name or "table"
+    return sanitize_id(name) or "table"
 
 
 _CODE_IN_TEXT = re.compile(r"\[([^\[\]]+)\]")
@@ -116,18 +117,6 @@ def legacy_text(raw: str) -> str:
         pos = m.end()
     out.append(body[pos:].replace("[", "\\[").replace("]", "\\]"))
     return "".join(out)
-
-
-def sanitize_label(label: str) -> str:
-    """A native label from a legacy one: outer brackets off, no whitespace."""
-    label = label.strip()
-    if len(label) >= 2 and label[0] == "[" and label[-1] == "]":
-        label = label[1:-1]
-    fixed = re.sub(r"\s+", "_", label.strip())
-    fixed = re.sub(r"[\[\]]", "_", fixed)
-    if not fixed or fixed[0] in "$%":
-        fixed = "_" + fixed
-    return fixed if LABEL_PATTERN.fullmatch(fixed) else "_" + re.sub(r"\W", "_", fixed)
 
 
 # --- romjuice -------------------------------------------------------------
@@ -435,7 +424,7 @@ def read_abcde(
             continue
         m = re.match(r"^@([^<>]+)$", line)
         if m:
-            tid = re.sub(r"[^A-Za-z0-9_.-]", "_", m.group(1))
+            tid = sanitize_id(m.group(1))
             if tid != m.group(1):
                 note(n, f"table id {m.group(1)!r} renamed to {tid!r}")
             if current is not None and not current_named:
@@ -506,15 +495,8 @@ def _abcde_switch(
             break
         target = tid if tid is not None else ("bits" if binary else "raw")
         if tid is not None:
-            target = re.sub(r"[^A-Za-z0-9_.-]", "_", tid)
-        if match == "0":
-            stop = Stop()
-        elif match.isdigit():
-            stop = Stop(count=int(match))
-        elif match.startswith("$"):
-            stop = Stop(fallback=hex_to_bits(match[1:]))
-        else:
-            stop = Stop(fallback=match[1:])
+            target = sanitize_id(tid)
+        stop = parse_stop(match)
         if w is not None and int(w) != 1:
             note(n, f"weight <{w}> on fallback bits dropped")
         params.append(SwitchParam(target, stop, bool(plus)))

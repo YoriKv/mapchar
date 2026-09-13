@@ -3,34 +3,25 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QTreeWidgetItem, QWidget
 
 from mapchar.project.workspace import EntryKind, Workspace
+from mapchar.ui.panel import WorkspaceTreePanel
 
 
-class FontsPanel(QWidget):
+class FontsPanel(WorkspaceTreePanel):
     edit_requested = Signal(object)
     """Double-clicked a font entry: open the Preview window's Font tab."""
 
     def __init__(self, workspace: Workspace, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.workspace = workspace
-        self.tree = QTreeWidget()
+        super().__init__(workspace, parent, on_dirty=True)
         self.tree.setHeaderLabels(["Font", "Cell", "Glyphs"])
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.tree)
         self.tree.itemDoubleClicked.connect(self._on_double)
-        workspace.on_added.append(lambda e: self.rebuild())
-        workspace.on_removed.append(lambda e: self.rebuild())
-        workspace.on_reset.append(self.rebuild)
-        workspace.on_dirty_changed.append(lambda e: self.rebuild())
         self.rebuild()
 
     def rebuild(self) -> None:
         self.tree.clear()
-        fonts = [e for e in self.workspace.entries if e.kind is EntryKind.FONT]
-        for i, entry in enumerate(fonts):
+        for i, entry in enumerate(self.workspace.fonts()):
             f = entry.font
             cell = f"{f.cell_width}×{f.cell_height}" if f else ""
             glyphs = str(len(f.chars) + len(f.glyphs)) if f else ""
@@ -39,10 +30,8 @@ class FontsPanel(QWidget):
             item.setToolTip(0, entry.path or "")
             users = [
                 b.name
-                for b in self.workspace.entries
-                if b.kind is EntryKind.BLOCK
-                and b.box is not None
-                and b.box.font_index == i
+                for b in self.workspace.of_kind(EntryKind.BLOCK)
+                if b.box is not None and b.box.font_index == i
             ]
             for name in users:
                 item.addChild(QTreeWidgetItem([f"used by {name}", "", ""]))
@@ -51,8 +40,6 @@ class FontsPanel(QWidget):
         self.tree.resizeColumnToContents(0)
 
     def _on_double(self, item: QTreeWidgetItem, column: int) -> None:
-        key = item.data(0, Qt.ItemDataRole.UserRole)
-        for entry in self.workspace.entries:
-            if id(entry) == key:
-                self.edit_requested.emit(entry)
-                return
+        entry = self.entry_of(item)
+        if entry is not None:
+            self.edit_requested.emit(entry)

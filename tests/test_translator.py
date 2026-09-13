@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from helpers import table_set
+from helpers import ABC_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
 from mapchar.pipeline.extract import extract
 from mapchar.project.formats.translator import (
@@ -12,7 +12,7 @@ from mapchar.project.formats.translator import (
     write_po,
 )
 
-TS = table_set("@table main\n41=A\n42=B\n/00=[end]\nFE=[line]\\n\n", "main")
+TS = table_set(ABC_TABLE, "main")
 
 
 def strings():

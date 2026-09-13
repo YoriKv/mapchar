@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from helpers import tables_from
+from mapchar.core.bits import format_key
 from mapchar.core.errors import TableError
 from mapchar.core.table import EntryKind, Stop
 from mapchar.project.formats.table_native import (
@@ -133,3 +134,7 @@ def test_roundtrip_through_writer():
     assert "$F0=[color],u8" in out
     assert "43<2>=weighted" in out
     assert "%01=x" in out
+
+
+def test_format_key_spells_whole_nibbles_as_hex():
+    assert format_key("11111111") == "FF" and format_key("01") == "%01"

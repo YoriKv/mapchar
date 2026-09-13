@@ -3,7 +3,15 @@ from __future__ import annotations
 from mapchar.core.context import KEY_COMPLETE, KEY_CONSUMED, PipelineContext
 from mapchar.plugins.base import Stage
 from mapchar.plugins.builtins.compression import BitPack, GbaLz77, HuffmanTable
-from mapchar.plugins.registry import default_registry
+
+
+def node(left: int, right: int) -> bytes:
+    """One 4-byte Huffman node: left link, right link, leaves flagged 0x8000."""
+    return left.to_bytes(2, "little") + right.to_bytes(2, "little")
+
+
+TREE = node(0x8000 | 0x41, 1) + node(0x8000 | 0x42, 0x8000 | 0x43)
+"""root -> (A | node1), node1 -> (B | C)."""
 
 
 def test_lz77_roundtrip_and_consumed():
@@ -30,13 +38,7 @@ def test_bitpack():
 
 
 def test_huffman_table_roundtrip():
-    # Nodes of 4 bytes: left link, right link; leaves flagged with 0x8000.
-    # Tree: root -> (A | node1), node1 -> (B | C).
-    def node(left, right):
-        return left.to_bytes(2, "little") + right.to_bytes(2, "little")
-
-    tree = node(0x8000 | 0x41, 1) + node(0x8000 | 0x42, 0x8000 | 0x43)
-    huff = HuffmanTable({"tree": tree, "end_symbol": 0x43})
+    huff = HuffmanTable({"tree": TREE, "end_symbol": 0x43})
     ctx = PipelineContext()
     packed = huff.compress(b"ABAC", ctx)
     assert packed == bytes([0b01001100])  # 0 10 0 11, zero-padded
@@ -44,10 +46,9 @@ def test_huffman_table_roundtrip():
     assert out == b"ABAC" and ctx.get(KEY_COMPLETE) and ctx.get(KEY_CONSUMED) == 1
 
 
-def test_registered():
-    reg = default_registry()
-    assert reg.plugin(Stage.COMPRESSION, "gba_lz77") is not None
-    assert reg.plugin(Stage.COMPRESSION, "bitpack6") is not None
+def test_registered(registry):
+    assert registry.plugin(Stage.COMPRESSION, "gba_lz77") is not None
+    assert registry.plugin(Stage.COMPRESSION, "bitpack6") is not None
 
 
 def test_lzss_variants_roundtrip():
@@ -77,11 +78,7 @@ def test_lzss_variants_roundtrip():
 
 
 def test_huffman_binds_tree_from_rom():
-    def node(left, right):
-        return left.to_bytes(2, "little") + right.to_bytes(2, "little")
-
-    tree = node(0x8000 | 0x41, 1) + node(0x8000 | 0x42, 0x8000 | 0x43)
-    rom = b"\xff" * 32 + tree
+    rom = b"\xff" * 32 + TREE
     huff = HuffmanTable({"tree_offset": 32, "end_symbol": 0x43})
     huff.bind_tree(rom)
     assert huff.decompress(bytes([0b01001100]), PipelineContext()) == b"ABAC"

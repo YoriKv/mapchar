@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, Qt
+from PySide6.QtCore import QFileSystemWatcher, QPoint, Qt
 from PySide6.QtGui import QAction, QKeySequence, QPalette, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar import APP_NAME, __version__
-from mapchar.core.bits import Bits
+from mapchar.core.bits import Bits, parse_hex
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -49,7 +49,7 @@ from mapchar.core.font import Font, TextBox
 from mapchar.core.mapping import resolve_mapping
 from mapchar.core.table import EntryKind as TableEntryKind
 from mapchar.core.table import Table, TableSet
-from mapchar.engines.decode import DecodeRules, EndedBy, decode
+from mapchar.engines.decode import DecodeRules, RunResult, decode, decode_run
 from mapchar.engines.layout import layout as layout_glyphs
 from mapchar.engines.layout import wrap as wrap_text
 from mapchar.engines.pointers import discover
@@ -74,7 +74,6 @@ from mapchar.plugins.base import Stage
 from mapchar.plugins.charsets import apply_charset
 from mapchar.plugins.registry import Registry, default_registry
 from mapchar.project.formats.script import parse_script, write_script
-from mapchar.project.formats.table_legacy import load_table_text
 from mapchar.project.formats.table_native import write_native
 from mapchar.project.formats.translator import (
     apply_records,
@@ -91,23 +90,19 @@ from mapchar.project.projectfile import (
     project_dict,
     save_project,
 )
+from mapchar.project.tables import read_table_file
 from mapchar.project.workspace import Entry, EntryKind, Workspace
+from mapchar.ui import BYTES_PER_ROW, TEXT_WINDOW_BYTES, settings
 from mapchar.ui.decompress_window import DecompressWindow
-from mapchar.ui.dialogs import (
-    BlockDialog,
-    DiscoveryDialog,
-    DumpDialog,
-    TextDialog,
-    parse_hex,
-)
+from mapchar.ui.dialogs import BlockDialog, DiscoveryDialog, DumpDialog, TextDialog
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.fonts_panel import FontsPanel
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.hex_panel import HexPanel
-from mapchar.ui.icon_font import glyph_icon
+from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.preview_window import PreviewWindow
-from mapchar.ui.raw_widget import BYTES_PER_ROW, RawWidget, RowModel
+from mapchar.ui.raw_widget import RawWidget, RowModel
 from mapchar.ui.scan_window import ScanWindow
 from mapchar.ui.search_window import SearchWindow
 from mapchar.ui.strings_view import RowData, StringsView
@@ -120,14 +115,13 @@ from mapchar.ui.undo_commands import (
     OffsetCommand,
     StringFieldCommand,
 )
+from mapchar.ui.widgets import fill_pick, select_data
 
 MAX_RECENT = 10
-TEXT_WINDOW_BYTES = 4096
-"""How many bytes the text mode decodes from the offset."""
 DISPLAY_MODE_KEY = "view/display_mode"
 
 
-class MainWindow(QMainWindow):
+class MainWindow(ThemedIcons, QMainWindow):
     def __init__(
         self,
         registry: Registry | None = None,
@@ -143,7 +137,7 @@ class MainWindow(QMainWindow):
         self._plugin_issues = list(plugin_issues)
         self.workspace = Workspace()
         self.undo_stack = QUndoStack(self)
-        self.settings = QSettings("mapchar", "mapchar")
+        self.settings = settings()
         self.project_path: str | None = None
         self._saved_snapshot: str | None = None
         self._applying_undo = False
@@ -151,6 +145,7 @@ class MainWindow(QMainWindow):
         self._entry: Entry | None = None
         self._offset = 0
         self._selection: tuple[int, int] | None = None
+        self._step_icons: list[tuple[QPushButton, Glyph]] = []
         self._build_widgets()
         self._build_menus()
         self._restore_layout()
@@ -204,8 +199,7 @@ class MainWindow(QMainWindow):
         codecs.setObjectName("codecs_bar")
         codecs.setMovable(False)
         self.container_pick = QComboBox()
-        for plugin in self.registry.plugins(Stage.CONTAINER):
-            self.container_pick.addItem(plugin.info.name, plugin.info.id)
+        self._fill_container_pick()
         self.table_pick = QComboBox()
         self.table_pick.addItem("(no table)", None)
         self.compression_pick = QComboBox()
@@ -259,7 +253,6 @@ class MainWindow(QMainWindow):
         nl.addWidget(self.offset_box)
         # The row steps wear the bundled icon font; the byte and page steps
         # stay words, since the font has no mark that says "byte" or "page".
-        self._step_icons: list[tuple[QPushButton, Glyph]] = []
         for text, glyph, delta, tip in (
             ("Home", None, "home", "Start of file (Home)"),
             ("Pg Up", None, "page-up", "Page up (PgUp)"),
@@ -484,11 +477,9 @@ class MainWindow(QMainWindow):
 
     def _bake_icons(self) -> None:
         """Stamp the navigation bar's step arrows in the theme's button-text
-        color. Pixmaps, so re-run on a theme switch."""
-        color = self.palette().color(QPalette.ColorRole.ButtonText)
-        ratio = self.devicePixelRatioF()
+        color."""
         for button, glyph in self._step_icons:
-            button.setIcon(glyph_icon(glyph, color, ratio=ratio))
+            button.setIcon(themed_icon(self, glyph, QPalette.ColorRole.ButtonText))
 
     def closeEvent(self, event) -> None:
         if not self._confirm_discard("quit"):
@@ -503,7 +494,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _open_rom_dialog(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Open ROM", self._last_dir())
+        path = self._pick_open("Open ROM")
         if path:
             self.open_rom(path)
 
@@ -512,6 +503,38 @@ class MainWindow(QMainWindow):
 
     def _remember_dir(self, path: str) -> None:
         self.settings.setValue("last_dir", os.path.dirname(path))
+
+    def _pick_open(self, title: str, filters: str = "") -> str | None:
+        """Ask for a file to read, starting in the last folder used."""
+        path, _ = QFileDialog.getOpenFileName(self, title, self._last_dir(), filters)
+        return path or None
+
+    def _pick_save(self, title: str, suggested: str, filters: str = "") -> str | None:
+        """Ask where to write; ``suggested`` is a name in the last folder used,
+        or a path of its own."""
+        if not os.path.isabs(suggested):
+            suggested = os.path.join(self._last_dir(), suggested)
+        path, _ = QFileDialog.getSaveFileName(self, title, suggested, filters)
+        return path or None
+
+    def _read_text(self, path: str) -> str | None:
+        """The file as text, or ``None`` once the reason it is not is reported."""
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+        except OSError as exc:
+            self._error(f"Cannot read {path}: {exc}")
+            return None
+
+    def _write_text(self, path: str, text: str) -> bool:
+        """Write the file as UTF-8 with LF endings; report what stopped it."""
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        except OSError as exc:
+            self._error(f"Cannot write {path}: {exc}")
+            return False
+        return True
 
     def open_rom(self, path: str) -> Entry | None:
         self._remember_dir(path)
@@ -526,18 +549,15 @@ class MainWindow(QMainWindow):
             self._error(f"Cannot open {path}: {exc}")
             return None
         plugin = self.registry.detect_container(data, path)
-        container_id = plugin.info.id if plugin else "raw"
-        entry = Entry(
-            EntryKind.FILE, os.path.basename(path), path, container_id=container_id
+        entry = self.workspace.new_file(
+            path, container_id=plugin.info.id if plugin else "raw"
         )
         self._push_add(entry)
         self._activate_entry(entry)
         return entry
 
     def _open_table_dialog(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Table", self._last_dir(), "Tables (*.tbl *.txt);;All files (*)"
-        )
+        path = self._pick_open("Open Table", "Tables (*.tbl *.txt);;All files (*)")
         if path:
             self.open_table(path)
 
@@ -547,11 +567,7 @@ class MainWindow(QMainWindow):
         if existing is not None:
             return existing
         try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                text = f.read()
-            tf = load_table_text(text, path, dialect)
-            for t in tf.tables:
-                apply_charset(t, self.registry)
+            tf = read_table_file(path, dialect, self.registry)
         except (OSError, MapcharError) as exc:
             self._error(f"Cannot load table {path}: {exc}")
             return None
@@ -580,9 +596,7 @@ class MainWindow(QMainWindow):
         return entry
 
     def _open_font_dialog(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Font", self._last_dir(), "Images (*.png *.bmp);;All files (*)"
-        )
+        path = self._pick_open("Open Font", "Images (*.png *.bmp);;All files (*)")
         if path:
             self.open_font(path)
 
@@ -594,7 +608,7 @@ class MainWindow(QMainWindow):
 
     def _edit_font_entry(self, entry: Entry) -> None:
         """Open the Preview window on this font, binding the current block to it."""
-        fonts = self._fonts()
+        fonts = self.workspace.fonts()
         if entry not in fonts:
             return
         block = self._entry
@@ -610,22 +624,18 @@ class MainWindow(QMainWindow):
         self.preview_window.tabs.setCurrentIndex(1)
         self.preview_window.raise_()
 
-    def _fonts(self) -> list[Entry]:
-        return [e for e in self.workspace.entries if e.kind is EntryKind.FONT]
-
     def _bound_font(self, block: Entry | None) -> Entry | None:
         if block is None or block.box is None or block.box.font_index is None:
             return None
-        fonts = self._fonts()
+        fonts = self.workspace.fonts()
         i = block.box.font_index
         return fonts[i] if 0 <= i < len(fonts) else None
 
     def _show_preview(self) -> None:
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK:
-            self._error("Select a block to preview.")
+        entry = self._current_block(complain="Select a block to preview.")
+        if entry is None:
             return
-        fonts = self._fonts()
+        fonts = self.workspace.fonts()
         if entry.box is None:
             entry.box = TextBox(font_index=0 if fonts else None)
         elif entry.box.font_index is None and fonts:
@@ -641,8 +651,8 @@ class MainWindow(QMainWindow):
     def _sync_preview(self, force: bool = False) -> None:
         if not (force or self.preview_window.isVisible()):
             return
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
+        entry = self._current_block(need_doc=True)
+        if entry is None:
             return
         font_entry = self._bound_font(entry)
         self.preview_window.set_font(font_entry.font if font_entry else None)
@@ -669,8 +679,8 @@ class MainWindow(QMainWindow):
         self._refresh_view()
 
     def _on_box_changed(self, box: TextBox) -> None:
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK:
+        entry = self._current_block()
+        if entry is None:
             return
         from dataclasses import replace
 
@@ -719,12 +729,10 @@ class MainWindow(QMainWindow):
             rec = self._string(entry, index)
             if rec is None:
                 continue
-            text = (
-                rec.translation if rec.translation is not None else rec.original_text()
-            )
+            text = rec.current_text()
             wrapped, _ = wrap_text(text, font_entry.font, entry.box, newline, page)
             if wrapped != text:
-                self._on_translation_edited_for(entry, index, wrapped)
+                self._set_translation(entry, index, wrapped)
         self.undo_stack.endMacro()
         self._sync_preview()
 
@@ -898,26 +906,26 @@ class MainWindow(QMainWindow):
                 return
         self.reload_table(entry)
 
+    def _tables_changed(self) -> None:
+        """A table's entries changed: every document extracts again, and the
+        Tables dock and the views catch up."""
+        self.workspace.invalidate_extractions()
+        self.tables_panel.rebuild()
+        self._refresh_view()
+
     def reload_table(self, entry: Entry) -> None:
         if not entry.path:
             return
         try:
-            with open(entry.path, encoding="utf-8", errors="replace") as f:
-                tf = load_table_text(f.read(), entry.path, entry.dialect)
-            for t in tf.tables:
-                apply_charset(t, self.registry)
+            tf = read_table_file(entry.path, entry.dialect, self.registry)
         except (OSError, MapcharError) as exc:
             self._error(f"Cannot reload {entry.name}: {exc}")
             return
         entry.tables = tf.tables
         entry.dialect = tf.dialect
         self.workspace.mark_saved(entry)
-        for e in self.workspace.entries:
-            if e.doc is not None:
-                e.doc.extraction_key = None
         self._refresh_table_picks()
-        self.tables_panel.rebuild()
-        self._refresh_view()
+        self._tables_changed()
         self.statusBar().showMessage(f"Reloaded {entry.name}", 4000)
 
     def _rename(self, entry: Entry) -> None:
@@ -1025,13 +1033,14 @@ class MainWindow(QMainWindow):
             doc.missing_plugins.append(f"{entry.compression_id} (no compress)")
         return doc
 
+    def _fill_container_pick(self) -> None:
+        fill_pick(self.container_pick, self._plugin_items(Stage.CONTAINER), None, False)
+
     def _fill_compression_pick(self) -> None:
-        self.compression_pick.blockSignals(True)
-        self.compression_pick.clear()
-        self.compression_pick.addItem("None", None)
-        for plugin in self.registry.plugins(Stage.COMPRESSION):
-            self.compression_pick.addItem(plugin.info.name, plugin.info.id)
-        self.compression_pick.blockSignals(False)
+        fill_pick(self.compression_pick, self._plugin_items(Stage.COMPRESSION), "None")
+
+    def _plugin_items(self, stage: Stage) -> list[tuple[str, object]]:
+        return [(p.info.name, p.info.id) for p in self.registry.plugins(stage)]
 
     def _decompress_at(self, doc: Document, offset: int):
         """Run the picked scheme from ``offset``: ``(data, consumed, complete)``."""
@@ -1063,17 +1072,9 @@ class MainWindow(QMainWindow):
             self.decompress_window.hide()
             return
         data, consumed, complete = result
-        tokens = []
-        if tables is not None:
-            bits = Bits(data[:4096])
-            pos = 0
-            while pos < bits.length:
-                r = decode(bits, tables, pos, DecodeRules(end_terminated=True))
-                tokens.extend(r.tokens)
-                if r.end_bit <= pos or r.ended_by in (EndedBy.DATA, EndedBy.LIMIT):
-                    break
-                pos = r.end_bit
-        model = RowModel(0, data[:4096], tokens, set(), len(data))
+        window = data[:TEXT_WINDOW_BYTES]
+        tokens = self._decode_window(window, tables).tokens
+        model = RowModel(0, window, tokens, set(), len(data))
         status = (
             f"{consumed:,} compressed bytes at {self._offset:X} → {len(data):,} bytes"
         )
@@ -1162,19 +1163,15 @@ class MainWindow(QMainWindow):
         registry, issues = self._reload_plugins(project_dir)
         self.registry = registry
         self._plugin_issues = list(issues)
-        self.container_pick.blockSignals(True)
-        self.container_pick.clear()
-        for plugin in self.registry.plugins(Stage.CONTAINER):
-            self.container_pick.addItem(plugin.info.name, plugin.info.id)
-        self.container_pick.blockSignals(False)
+        self._fill_container_pick()
         self._fill_compression_pick()
         for e in self.workspace.entries:
             e.doc = None
-            if e.kind is EntryKind.TABLE:
-                for t in e.tables:
-                    if hasattr(t, "_charset_applied"):
-                        del t._charset_applied
-                    apply_charset(t, self.registry)
+        for e in self.workspace.table_entries():
+            for t in e.tables:
+                if hasattr(t, "_charset_applied"):
+                    del t._charset_applied
+                apply_charset(t, self.registry)
         if self._entry is not None:
             self._doc = self._load_document(self._entry)
             self._restore_session()
@@ -1197,17 +1194,18 @@ class MainWindow(QMainWindow):
                 self._offset = 0
                 return
             file_entry = entry.parent if entry.kind is EntryKind.BLOCK else entry
-            if file_entry is not None:
-                i = self.container_pick.findData(file_entry.container_id)
-                self.container_pick.setCurrentIndex(max(i, 0))
+            if file_entry is not None and not select_data(
+                self.container_pick, file_entry.container_id
+            ):
+                self.container_pick.setCurrentIndex(0)
             table_id = entry.session.table_id
             if entry.kind is EntryKind.BLOCK and entry.config is not None:
                 table_id = entry.config.table_id or table_id
             if table_id is None:
                 tables = self.workspace.tables()
                 table_id = next(iter(tables), None)
-            i = self.table_pick.findData(table_id)
-            self.table_pick.setCurrentIndex(max(i, 0))
+            if not select_data(self.table_pick, table_id):
+                self.table_pick.setCurrentIndex(0)
             self._offset = entry.session.offset
             if (
                 entry.kind is EntryKind.BLOCK
@@ -1221,21 +1219,15 @@ class MainWindow(QMainWindow):
                 w.blockSignals(False)
 
     def _refresh_table_picks(self) -> None:
-        current = self.table_pick.currentData()
-        self.table_pick.blockSignals(True)
-        self.table_pick.clear()
-        self.table_pick.addItem("(no table)", None)
-        for tid in self.workspace.tables():
-            self.table_pick.addItem(f"@{tid}", tid)
-        i = self.table_pick.findData(current)
-        self.table_pick.setCurrentIndex(max(i, 0))
-        self.table_pick.blockSignals(False)
+        fill_pick(
+            self.table_pick,
+            [(f"@{tid}", tid) for tid in self.workspace.tables()],
+            "(no table)",
+        )
         self.tables_panel.set_start_table(self.table_pick.currentData())
 
     def _choose_table(self, table_id: str) -> None:
-        i = self.table_pick.findData(table_id)
-        if i >= 0:
-            self.table_pick.setCurrentIndex(i)
+        select_data(self.table_pick, table_id)
 
     def _on_table_pick(self) -> None:
         if self._entry is not None:
@@ -1270,12 +1262,16 @@ class MainWindow(QMainWindow):
         self._refresh_view()
 
     def _table_set(self) -> TableSet | None:
-        tid = self.table_pick.currentData()
+        """The set the picked start table heads."""
+        return self._table_set_for(self.table_pick.currentData())
+
+    def _table_set_for(self, table_id: str | None) -> TableSet | None:
+        """The set ``table_id`` heads, or ``None`` when it is not loaded."""
         tables = self.workspace.tables()
-        if not tid or tid not in tables:
+        if not table_id or table_id not in tables:
             return None
         try:
-            return TableSet.build(tables[tid], tables)
+            return TableSet.build(tables[table_id], tables)
         except MapcharError as exc:
             self.statusBar().showMessage(str(exc), 5000)
             return None
@@ -1307,18 +1303,9 @@ class MainWindow(QMainWindow):
             self._extract_current(entry, doc, tables)
         window = self.raw.visible_bytes() + BYTES_PER_ROW
         data = doc.data[self._offset : self._offset + window]
-        tokens = []
-        string_starts: set[int] = set()
-        if tables is not None and data:
-            bits = Bits(data)
-            pos = 0
-            while pos < bits.length:
-                string_starts.add(pos // 8)
-                r = decode(bits, tables, pos, DecodeRules(end_terminated=True))
-                tokens.extend(r.tokens)
-                if r.end_bit <= pos or r.ended_by in (EndedBy.DATA, EndedBy.LIMIT):
-                    break
-                pos = r.end_bit
+        run = self._decode_window(data, tables)
+        tokens = run.tokens
+        string_starts = {bit // 8 for bit in run.starts}
         pointer_bytes: set[int] = set()
         if is_block and entry.doc is not None:
             for rec in entry.doc.strings:
@@ -1347,20 +1334,24 @@ class MainWindow(QMainWindow):
         self._sync_hex_panel()
         self._update_title()
 
+    @staticmethod
+    def _decode_window(data: bytes, tables: TableSet | None) -> RunResult:
+        """Decode one string after another over ``data`` until it runs out."""
+        if tables is None or not data:
+            return RunResult([], 0)
+        return decode_run(
+            Bits(data),
+            tables,
+            rules=DecodeRules(end_terminated=True),
+            runs=None,
+            ends_only=False,
+        )
+
     def _refresh_text_mode(self, doc: Document, tables: TableSet | None) -> None:
         if self.display.currentWidget() is not self.text:
             return
         data = doc.data[self._offset : self._offset + TEXT_WINDOW_BYTES]
-        tokens = []
-        if tables is not None and data:
-            bits = Bits(data)
-            pos = 0
-            while pos < bits.length:
-                r = decode(bits, tables, pos, DecodeRules(end_terminated=True))
-                tokens.extend(r.tokens)
-                if r.end_bit <= pos or r.ended_by in (EndedBy.DATA, EndedBy.LIMIT):
-                    break
-                pos = r.end_bit
+        tokens = self._decode_window(data, tables).tokens
         self.text.set_model(text_model(tokens, self._offset, len(data)))
         if self._selection:
             self.text.select_bytes(*self._selection)
@@ -1506,22 +1497,28 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _string(self, entry, index: int):
+        """One string of an entry's document by index, if both are there."""
         if entry is None or entry.doc is None:
             return None
-        return next((r for r in entry.doc.strings if r.index == index), None)
+        return entry.doc.string_by_index(index)
 
     def _on_translation_edited(self, index: int, text: str) -> None:
-        entry = self._entry
+        self._set_translation(self._entry, index, text, refresh=True)
+
+    def _set_translation(
+        self, entry, index: int, text: str, *, refresh: bool = False
+    ) -> None:
+        """Record a translation edit undoably; blank text, or the original
+        text again, clears the translation."""
         rec = self._string(entry, index)
         if rec is None:
             return
         after = text if text.strip() else None
-        if after is not None and after.replace("\n", "") == rec.original_text().replace(
-            "\n", ""
-        ):
+        if after is not None and rec.matches_original(after):
             after = None
         if after == rec.translation:
-            self._refresh_string_row(entry, index)
+            if refresh:
+                self._refresh_string_row(entry, index)
             return
         self.undo_stack.push(
             StringFieldCommand(
@@ -1634,10 +1631,17 @@ class MainWindow(QMainWindow):
     # Writing
     # ------------------------------------------------------------------
 
+    def _block_strings(self, entry: Entry) -> list | None:
+        """The block's strings, extracted afresh under its own table set;
+        ``None`` when the block cannot be read at all."""
+        doc = self._load_document(entry)
+        if doc is None or entry.config is None:
+            return None
+        self._extract_current(entry, doc, self._table_set_for(entry.config.table_id))
+        return doc.strings
+
     def _dirty_blocks(self) -> list[Entry]:
-        return [
-            e for e in self.workspace.entries if e.kind is EntryKind.BLOCK and e.dirty
-        ]
+        return [e for e in self.workspace.of_kind(EntryKind.BLOCK) if e.dirty]
 
     def _write_current(self) -> None:
         entry = self._entry
@@ -1671,7 +1675,6 @@ class MainWindow(QMainWindow):
             by_file.setdefault(id(b.parent), (b.parent, []))[1].append(b)
         for f in files or []:
             by_file.setdefault(id(f), (f, []))
-        tables = self.workspace.tables()
         ok = True
         for file_entry, file_blocks in by_file.values():
             parent_doc = self._load_document(file_entry)
@@ -1685,12 +1688,13 @@ class MainWindow(QMainWindow):
                 doc = self._load_document(block)
                 if doc is None or block.config is None:
                     continue
-                if block.config.table_id not in tables:
+                ts = self._table_set_for(block.config.table_id)
+                if ts is None:
                     problems.append(
                         f"{block.name}: table @{block.config.table_id} is not loaded"
+                        " or does not build"
                     )
                     continue
-                ts = TableSet.build(tables[block.config.table_id], tables)
                 self._extract_current(block, doc, ts)
                 base = doc.data if block.compression_id else new_data
                 res = layout_block(base, block.config, ts, doc.strings, self.registry)
@@ -1951,6 +1955,33 @@ class MainWindow(QMainWindow):
             return None
         return e.parent if e.kind is EntryKind.BLOCK else e
 
+    def _current_block(
+        self,
+        *,
+        need_doc: bool = False,
+        need_config: bool = False,
+        need_tables: bool = False,
+        complain: str | None = None,
+    ) -> Entry | None:
+        """The current entry when it is a block ready for what is asked of it.
+
+        ``complain`` is the message shown when it is not; without one the
+        caller just gets ``None``.
+        """
+        entry = self._entry
+        ready = entry is not None and entry.kind is EntryKind.BLOCK
+        if ready and need_doc and entry.doc is None:
+            ready = False
+        if ready and need_config and entry.config is None:
+            ready = False
+        if ready and need_tables and self._table_set() is None:
+            ready = False
+        if ready:
+            return entry
+        if complain is not None:
+            self._error(complain)
+        return None
+
     def _new_block(self, start: int | None = None, stop: int | None = None) -> None:
         file_entry = self._current_file()
         if file_entry is None or self._doc is None:
@@ -1986,8 +2017,8 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(1)
 
     def _edit_block(self) -> None:
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK:
+        entry = self._current_block()
+        if entry is None:
             return
         dialog = BlockDialog(
             list(self.workspace.tables()), entry.config, entry.name, self
@@ -2041,7 +2072,7 @@ class MainWindow(QMainWindow):
         )
         menu.addAction("New Bookmark", self._new_bookmark)
         if sel:
-            ptr_rec = self._string_for_pointer_at(sel[0])
+            ptr_rec = self._doc.string_for_pointer(sel[0])
             if ptr_rec is not None:
                 menu.addAction(
                     "Jump to pointer target",
@@ -2065,25 +2096,11 @@ class MainWindow(QMainWindow):
         menu.exec(pos)
 
     def _string_at(self, offset: int):
-        doc = self._doc
-        if doc is None:
-            return None
-        return next((r for r in doc.strings if r.start <= offset < r.end), None)
-
-    def _string_for_pointer_at(self, offset: int):
-        doc = self._doc
-        if doc is None:
-            return None
-        for rec in doc.strings:
-            for p in rec.pointers:
-                if p.address <= offset < p.address + p.size:
-                    return rec
-        return None
+        """The string of the current document holding ``offset``."""
+        return self._doc.string_at(offset) if self._doc is not None else None
 
     def _import_cartographer_dialog(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import Cartographer command file", self._last_dir(), "*.txt;;*"
-        )
+        path = self._pick_open("Import Cartographer command file", "*.txt;;*")
         if path:
             self.import_cartographer(path)
 
@@ -2093,10 +2110,12 @@ class MainWindow(QMainWindow):
         if file_entry is None:
             self._error("Open the ROM the command file describes first.")
             return []
+        text = self._read_text(path)
+        if text is None:
+            return []
         try:
-            with open(path, encoding="utf-8") as f:
-                cf = parse_command_file(f.read())
-        except (OSError, MapcharError) as exc:
+            cf = parse_command_file(text)
+        except MapcharError as exc:
             self._error(f"Cannot import {path}: {exc}")
             return []
         base = os.path.dirname(os.path.abspath(path))
@@ -2137,34 +2156,29 @@ class MainWindow(QMainWindow):
         self._remember_dir(path)
         if created:
             self._activate_entry(created[0])
-        message = f"Imported {len(created)} block(s) from {os.path.basename(path)}"
-        if notices:
-            TextDialog(
-                "Cartographer import", message + "\n\n" + "\n".join(notices), self
-            ).exec()
-        else:
-            self.statusBar().showMessage(message, 5000)
+        self._report(
+            "Cartographer import",
+            f"Imported {len(created)} block(s) from {os.path.basename(path)}",
+            notices,
+        )
         return created
 
     def _import_atlas_dialog(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import Atlas script", self._last_dir(), "*.txt;;*"
-        )
+        path = self._pick_open("Import Atlas script", "*.txt;;*")
         if path:
             self.import_atlas(path)
 
     def import_atlas(self, path: str) -> int:
         """Translations from an Atlas script into the current block's strings."""
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
-            self._error("Select the block the script belongs to first.")
+        entry = self._current_block(
+            need_doc=True, complain="Select the block the script belongs to first."
+        )
+        if entry is None:
             return 0
-        try:
-            with open(path, encoding="utf-8") as f:
-                script = read_atlas(f.read())
-        except OSError as exc:
-            self._error(f"Cannot read {path}: {exc}")
+        text = self._read_text(path)
+        if text is None:
             return 0
+        script = read_atlas(text)
         notices = list(script.notices)
         by_pointer = {p.address: r for r in entry.doc.strings for p in r.pointers}
         by_start = {r.start: r for r in entry.doc.strings}
@@ -2182,42 +2196,24 @@ class MainWindow(QMainWindow):
                 if rec is None:
                     notices.append(f"string {i}: no block string matches its address")
                     continue
-                self._on_translation_edited_for(entry, rec.index, item.text)
+                self._set_translation(entry, rec.index, item.text)
                 applied += 1
         finally:
             self.undo_stack.endMacro()
         self._remember_dir(path)
         self._refresh_view()
-        message = f"Imported {applied} string(s) from {os.path.basename(path)}"
-        if notices:
-            TextDialog(
-                "Atlas import", message + "\n\n" + "\n".join(notices), self
-            ).exec()
-        else:
-            self.statusBar().showMessage(message, 5000)
+        self._report(
+            "Atlas import",
+            f"Imported {applied} string(s) from {os.path.basename(path)}",
+            notices,
+        )
         return applied
-
-    def _on_translation_edited_for(self, entry, index: int, text: str) -> None:
-        rec = self._string(entry, index)
-        if rec is None:
-            return
-        after = text if text.strip() else None
-        if after is not None and after.replace("\n", "") == rec.original_text().replace(
-            "\n", ""
-        ):
-            after = None
-        if after != rec.translation:
-            self.undo_stack.push(
-                StringFieldCommand(
-                    self, entry, index, "translation", rec.translation, after
-                )
-            )
 
     def _add_selection_to_table(self) -> None:
         if not self._selection or self._doc is None:
             return
         s, e = self._selection
-        table_entry = self.tables_panel.entry_for_table(
+        table_entry = self.workspace.entry_for_table(
             self.table_pick.currentData() or ""
         )
         if table_entry is None:
@@ -2272,7 +2268,7 @@ class MainWindow(QMainWindow):
                 from mapchar.core.table import Entry as TableEntry
 
                 start.add(TableEntry(bits, TableEntryKind.END, "[end]"))
-                table_entry = self.tables_panel.entry_for_table(start.id)
+                table_entry = self.workspace.entry_for_table(start.id)
                 if table_entry is not None:
                     self.workspace.stamp(table_entry)
                 self._refresh_view()
@@ -2341,7 +2337,7 @@ class MainWindow(QMainWindow):
     def _build_table_from_hit(self, hit: Hit) -> None:
         entries = entries_from_hit(hit)
         table_id = self.table_pick.currentData()
-        target = self.tables_panel.entry_for_table(table_id or "")
+        target = self.workspace.entry_for_table(table_id or "")
         if (
             target is not None
             and QMessageBox.question(
@@ -2366,17 +2362,16 @@ class MainWindow(QMainWindow):
                 table.add(entry)
             self._add_memory_table(table, f"{name}.tbl")
             self._choose_table(name)
-        self.tables_panel.rebuild()
-        self._refresh_view()
+        self._tables_changed()
 
     # ------------------------------------------------------------------
     # Tables
     # ------------------------------------------------------------------
 
     def _show_table_editor(self) -> None:
-        entry = self.tables_panel.entry_for_table(self.table_pick.currentData() or "")
+        entry = self.workspace.entry_for_table(self.table_pick.currentData() or "")
         if entry is None:
-            tables = [e for e in self.workspace.entries if e.kind is EntryKind.TABLE]
+            tables = self.workspace.table_entries()
             entry = tables[0] if tables else None
         self._edit_table_entry(entry)
 
@@ -2392,27 +2387,17 @@ class MainWindow(QMainWindow):
 
     def _on_table_edited(self, entry: Entry) -> None:
         self.workspace.stamp(entry)
-        self.tables_panel.rebuild()
-        for e in self.workspace.entries:
-            if e.doc is not None:
-                e.doc.extraction_key = None
-        self._refresh_view()
+        self._tables_changed()
 
     def _save_table_entry(self, entry: Entry | None, ask: bool = False) -> None:
         if entry is None:
             return
         path = entry.path
         if ask or not path or entry.dialect != "native":
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Save table as native", path or self._last_dir(), "Tables (*.tbl)"
-            )
+            path = self._pick_save("Save table as native", path or "", "Tables (*.tbl)")
             if not path:
                 return
-        try:
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(write_native(entry.tables))
-        except OSError as exc:
-            self._error(f"Cannot write {path}: {exc}")
+        if not self._write_text(path, write_native(entry.tables)):
             return
         entry.path = path
         entry.dialect = "native"
@@ -2458,32 +2443,22 @@ class MainWindow(QMainWindow):
                 for e in self.workspace.children(file_entry)
                 if e.kind is EntryKind.BLOCK
             ]
-        suggested = os.path.join(
-            self._last_dir(),
-            (blocks[0].name if len(blocks) == 1 else file_entry.name) + ".txt",
-        )
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Dump to script", suggested, "Scripts (*.txt);;All files (*)"
+        name = blocks[0].name if len(blocks) == 1 else file_entry.name
+        path = self._pick_save(
+            "Dump to script", f"{name}.txt", "Scripts (*.txt);;All files (*)"
         )
         if not path:
             return
         payload = []
         for block in blocks:
-            doc = self._load_document(block)
-            if doc is None or block.config is None:
+            strings = self._block_strings(block)
+            if strings is None:
                 continue
-            tables = self.workspace.tables()
-            ts = (
-                TableSet.build(tables[block.config.table_id], tables)
-                if block.config.table_id in tables
-                else None
-            )
-            self._extract_current(block, doc, ts)
-            payload.append((block.name, block.config, doc.strings))
+            payload.append((block.name, block.config, strings))
         table_paths = [
             os.path.relpath(e.path, os.path.dirname(path))
-            for e in self.workspace.entries
-            if e.kind is EntryKind.TABLE and e.path
+            for e in self.workspace.table_entries()
+            if e.path
         ]
         text = write_script(
             payload,
@@ -2493,11 +2468,7 @@ class MainWindow(QMainWindow):
             else None,
             tables=table_paths,
         )
-        try:
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
-        except OSError as exc:
-            self._error(f"Cannot write {path}: {exc}")
+        if not self._write_text(path, text):
             return
         self._remember_dir(path)
         self.statusBar().showMessage(
@@ -2561,9 +2532,7 @@ class MainWindow(QMainWindow):
         self._refresh_view()
 
     def _open_project_dialog(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", self._last_dir(), f"{APP_NAME} projects (*.mapchar)"
-        )
+        path = self._pick_open("Open Project", f"{APP_NAME} projects (*.mapchar)")
         if path:
             self.open_project(path)
 
@@ -2580,10 +2549,7 @@ class MainWindow(QMainWindow):
         for e in loaded.entries:
             if e.kind is EntryKind.TABLE and e.path:
                 try:
-                    with open(e.path, encoding="utf-8", errors="replace") as f:
-                        tf = load_table_text(f.read(), e.path, e.dialect)
-                    for t in tf.tables:
-                        apply_charset(t, self.registry)
+                    tf = read_table_file(e.path, e.dialect, self.registry)
                     e.tables = tf.tables
                     e.dialect = tf.dialect
                 except (OSError, MapcharError) as exc:
@@ -2612,10 +2578,9 @@ class MainWindow(QMainWindow):
         return self._write_project(self.project_path)
 
     def _save_project_as(self) -> bool:
-        path, _ = QFileDialog.getSaveFileName(
-            self,
+        path = self._pick_save(
             "Save Project",
-            self.project_path or os.path.join(self._last_dir(), "project.mapchar"),
+            self.project_path or "project.mapchar",
             f"{APP_NAME} projects (*.mapchar)",
         )
         if not path:
@@ -2684,30 +2649,22 @@ class MainWindow(QMainWindow):
         self.find_replace.raise_()
         self.find_replace.find.setFocus()
 
-    def _fr_targets(self):
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
-            return None, []
-        return entry, entry.doc.strings
-
     @staticmethod
     def _fr_match(hay: str, needle: str, case: bool) -> int:
         return hay.find(needle) if case else hay.lower().find(needle.lower())
 
     def _fr_find_next(self, needle: str, case: bool) -> None:
-        entry, strings = self._fr_targets()
-        if not strings or not needle:
+        entry = self._current_block(need_doc=True)
+        if entry is None or not entry.doc.strings or not needle:
             return
+        strings = entry.doc.strings
         selected = self.strings.selected_indices()
         start = (selected[0] + 1) if selected else 0
         order = [r for r in strings if r.index >= start] + [
             r for r in strings if r.index < start
         ]
         for rec in order:
-            text = (
-                rec.translation if rec.translation is not None else rec.original_text()
-            )
-            if self._fr_match(text, needle, case) >= 0:
+            if self._fr_match(rec.current_text(), needle, case) >= 0:
                 self.strings.select_index(rec.index)
                 self._on_string_row(rec.index)
                 return
@@ -2716,7 +2673,7 @@ class MainWindow(QMainWindow):
     def _fr_replace_in(
         self, rec, needle: str, replacement: str, case: bool
     ) -> str | None:
-        text = rec.translation if rec.translation is not None else rec.original_text()
+        text = rec.current_text()
         if case:
             if needle not in text:
                 return None
@@ -2729,7 +2686,7 @@ class MainWindow(QMainWindow):
         return pattern.sub(lambda m: replacement, text)
 
     def _fr_replace_one(self, needle: str, replacement: str, case: bool) -> None:
-        entry, strings = self._fr_targets()
+        entry = self._current_block(need_doc=True)
         selected = self.strings.selected_indices()
         if not selected or not needle:
             self._fr_find_next(needle, case)
@@ -2741,12 +2698,12 @@ class MainWindow(QMainWindow):
         self._fr_find_next(needle, case)
 
     def _fr_replace_all(self, needle: str, replacement: str, case: bool) -> None:
-        entry, strings = self._fr_targets()
-        if not strings or not needle:
+        entry = self._current_block(need_doc=True)
+        if entry is None or not entry.doc.strings or not needle:
             return
         self.undo_stack.beginMacro("Replace all")
         n = 0
-        for rec in strings:
+        for rec in entry.doc.strings:
             new = self._fr_replace_in(rec, needle, replacement, case)
             if new is not None:
                 self._on_translation_edited(rec.index, new)
@@ -2755,9 +2712,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Replaced in {n} string(s)", 4000)
 
     def _find_pointers(self) -> None:
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
-            self._error("Select a block first.")
+        entry = self._current_block(need_doc=True, complain="Select a block first.")
+        if entry is None:
             return
         starts = [r.start for r in entry.doc.strings]
         if not starts:
@@ -2789,29 +2745,20 @@ class MainWindow(QMainWindow):
         self._refresh_view()
 
     def _export_atlas(self) -> None:
-        entry = self._entry
-        tables = self._table_set()
-        if (
-            entry is None
-            or entry.kind is not EntryKind.BLOCK
-            or entry.doc is None
-            or tables is None
-        ):
-            self._error("Select a block with a start table to export.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Atlas script",
-            os.path.join(self._last_dir(), f"{entry.name}.txt"),
-            "*.txt",
+        entry = self._current_block(
+            need_doc=True,
+            need_tables=True,
+            complain="Select a block with a start table to export.",
         )
+        if entry is None:
+            return
+        tables = self._table_set()
+        path = self._pick_save("Export Atlas script", f"{entry.name}.txt", "*.txt")
         if not path:
             return
         table_files = {}
-        for e in self.workspace.entries:
-            if e.kind is EntryKind.TABLE and any(
-                t.id in tables.tables for t in e.tables
-            ):
+        for e in self.workspace.table_entries():
+            if any(t.id in tables.tables for t in e.tables):
                 table_files[e.name if e.name.endswith(".tbl") else e.name + ".tbl"] = [
                     t for t in e.tables if t.id in tables.tables
                 ]
@@ -2819,40 +2766,28 @@ class MainWindow(QMainWindow):
             entry.name, entry.config, entry.doc.strings, tables, table_files
         )
         folder = os.path.dirname(path)
-        try:
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(export.script)
-            for name, text in export.tables.items():
-                with open(
-                    os.path.join(folder, name), "w", encoding="utf-8", newline="\n"
-                ) as f:
-                    f.write(text)
-        except OSError as exc:
-            self._error(f"Cannot write: {exc}")
+        if not self._write_text(path, export.script):
             return
+        for name, text in export.tables.items():
+            if not self._write_text(os.path.join(folder, name), text):
+                return
         self._remember_dir(path)
-        message = f"Exported {path} and {len(export.tables)} table file(s)"
-        if export.notices:
-            TextDialog(
-                "Atlas export", message + "\n\n" + "\n".join(export.notices), self
-            ).exec()
-        else:
-            self.statusBar().showMessage(message, 5000)
+        self._report(
+            "Atlas export",
+            f"Exported {path} and {len(export.tables)} table file(s)",
+            export.notices,
+        )
 
     def _export_cartographer(self) -> None:
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK or entry.config is None:
-            self._error("Select a block to export.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export command file",
-            os.path.join(self._last_dir(), f"{entry.name}.txt"),
-            "*.txt",
+        entry = self._current_block(
+            need_config=True, complain="Select a block to export."
         )
+        if entry is None:
+            return
+        path = self._pick_save("Export command file", f"{entry.name}.txt", "*.txt")
         if not path:
             return
-        table_entry = self.tables_panel.entry_for_table(entry.config.table_id)
+        table_entry = self.workspace.entry_for_table(entry.config.table_id)
         table_file = (
             os.path.basename(table_entry.path)
             if table_entry and table_entry.path
@@ -2869,34 +2804,19 @@ class MainWindow(QMainWindow):
         if not text:
             self._error("\n".join(notes))
             return
-        try:
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
-        except OSError as exc:
-            self._error(f"Cannot write {path}: {exc}")
+        if not self._write_text(path, text):
             return
         self._remember_dir(path)
-        if notes:
-            TextDialog("Cartographer export", "\n".join(notes), self).exec()
-        else:
-            self.statusBar().showMessage(f"Exported {path}", 5000)
+        self._report("Cartographer export", f"Exported {path}", notes)
 
     def _block_strings_by_name(self, file_entry: Entry | None) -> dict[str, list]:
         out: dict[str, list] = {}
-        for e in self.workspace.entries:
-            if e.kind is not EntryKind.BLOCK or (
-                file_entry and e.parent is not file_entry
-            ):
+        for e in self.workspace.of_kind(EntryKind.BLOCK):
+            if file_entry and e.parent is not file_entry:
                 continue
-            doc = self._load_document(e)
-            if doc is None or e.config is None:
-                continue
-            tables = self.workspace.tables()
-            ts = None
-            if e.config.table_id in tables:
-                ts = TableSet.build(tables[e.config.table_id], tables)
-            self._extract_current(e, doc, ts)
-            out[e.name] = doc.strings
+            strings = self._block_strings(e)
+            if strings is not None:
+                out[e.name] = strings
         return out
 
     def _import(self, kind: str) -> None:
@@ -2905,17 +2825,14 @@ class MainWindow(QMainWindow):
             "delimited": "Tables (*.tsv *.csv);;All files (*)",
             "po": "PO files (*.po);;All files (*)",
         }[kind]
-        path, _ = QFileDialog.getOpenFileName(self, "Import", self._last_dir(), filters)
+        path = self._pick_open("Import", filters)
         if not path:
             return
         self.import_file(path, kind)
 
     def import_file(self, path: str, kind: str, force: bool = False) -> None:
-        try:
-            with open(path, encoding="utf-8") as f:
-                text = f.read()
-        except OSError as exc:
-            self._error(f"Cannot read {path}: {exc}")
+        text = self._read_text(path)
+        if text is None:
             return
         file_entry = self._current_file()
         blocks = self._block_strings_by_name(file_entry)
@@ -2983,22 +2900,18 @@ class MainWindow(QMainWindow):
         self.undo_stack.endMacro()
         self._remember_dir(path)
         self._refresh_view()
-        message = f"Imported {applied} string(s) from {os.path.basename(path)}"
-        if notices:
-            TextDialog(
-                "Import notices", message + "\n\n" + "\n".join(notices), self
-            ).exec()
-        else:
-            self.statusBar().showMessage(message, 5000)
+        self._report(
+            "Import notices",
+            f"Imported {applied} string(s) from {os.path.basename(path)}",
+            notices,
+        )
 
     def _export(self, kind: str) -> None:
-        entry = self._entry
-        if entry is None or entry.kind is not EntryKind.BLOCK or entry.doc is None:
-            self._error("Select a block to export.")
+        entry = self._current_block(need_doc=True, complain="Select a block to export.")
+        if entry is None:
             return
         ext = {"tsv": "tsv", "csv": "csv", "po": "po"}[kind]
-        suggested = os.path.join(self._last_dir(), f"{entry.name}.{ext}")
-        path, _ = QFileDialog.getSaveFileName(self, "Export", suggested, f"*.{ext}")
+        path = self._pick_save("Export", f"{entry.name}.{ext}", f"*.{ext}")
         if not path:
             return
         self.export_file(path, kind)
@@ -3015,11 +2928,7 @@ class MainWindow(QMainWindow):
             text = write_po(records, rom)
         else:
             text = write_delimited(records, "\t" if kind == "tsv" else ",")
-        try:
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
-        except OSError as exc:
-            self._error(f"Cannot write {path}: {exc}")
+        if not self._write_text(path, text):
             return
         self._remember_dir(path)
         self.statusBar().showMessage(
@@ -3055,3 +2964,12 @@ class MainWindow(QMainWindow):
 
     def _error(self, message: str) -> None:
         QMessageBox.warning(self, APP_NAME, message)
+
+    def _report(self, title: str, message: str, notices=()) -> None:
+        """Say how it went: notices under the message in a dialog, or, with
+        none, the message alone in the status bar."""
+        notices = list(notices)
+        if notices:
+            TextDialog(title, message + "\n\n" + "\n".join(notices), self).exec()
+        else:
+            self.statusBar().showMessage(message, 5000)

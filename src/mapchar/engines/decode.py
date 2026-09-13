@@ -8,10 +8,12 @@ as a string end, never an error.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
-from mapchar.core.bits import Bits
+from mapchar.core.bits import Bits, align_up
 from mapchar.core.notices import Notice
 from mapchar.core.table import (
     BITS,
@@ -176,6 +178,74 @@ def decode(
     return DecodeResult(tokens, pos, ended, notices)
 
 
+@dataclass
+class RunResult:
+    """Consecutive decode runs read as one string."""
+
+    tokens: list[Token]
+    end_bit: int
+    starts: list[int] = field(default_factory=list)
+    """The bit position each run began at."""
+    notices: list[Notice] = field(default_factory=list)
+    ended_by: EndedBy | None = None
+    """How the last run ended; ``None`` when none ran."""
+
+
+def decode_run(
+    bits: Bits,
+    tables: TableSet,
+    start: int = 0,
+    rules: DecodeRules = DEFAULT_RULES,
+    *,
+    runs: int | None = None,
+    ends_only: bool = True,
+) -> RunResult:
+    """Decode consecutive runs from ``start``, each resuming where the last ended.
+
+    ``runs`` is how many to read -- a block's strings per pointer -- and
+    ``None`` reads on until the data runs out. Reading stops early when a run
+    makes no progress, when it ends at the end of the data or at the limit,
+    or, with ``ends_only``, when it ends any way other than an end token.
+
+    A run that legitimately ends behind its start -- a backwards skip range --
+    reads as no progress, so extraction keeps its own loop for that case.
+    """
+    tokens: list[Token] = []
+    notices: list[Notice] = []
+    starts: list[int] = []
+    pos = start
+    ended: EndedBy | None = None
+    left = runs
+    while left is None or left > 0:
+        if runs is None and pos >= bits.length:
+            break
+        starts.append(pos)
+        r = decode(bits, tables, pos, rules)
+        tokens.extend(r.tokens)
+        notices.extend(r.notices)
+        ended = r.ended_by
+        was, pos = pos, r.end_bit
+        if left is not None:
+            left -= 1
+        if pos <= was or ended in (EndedBy.DATA, EndedBy.LIMIT):
+            break
+        if ends_only and ended is not EndedBy.END_TOKEN:
+            break
+    return RunResult(tokens, pos, starts, notices, ended)
+
+
+def innermost_index(stack: Sequence[Any], match: Callable[[Any], bool]) -> int | None:
+    """Index of the innermost frame above the root that ``match`` accepts.
+
+    Leaving a table pops that frame and everything above it; the encoder
+    keeps its own frame shape and does the same walk.
+    """
+    for i in range(len(stack) - 1, 0, -1):
+        if match(stack[i]):
+            return i
+    return None
+
+
 def _frame_for(param: SwitchParam, tables: TableSet, owner: str) -> _Frame:
     if param.table_id == RETURN:
         return _Frame(RETURN, None, Stop(), False, None, owner)
@@ -202,12 +272,12 @@ def _pop_finished(stack: list[_Frame]) -> None:
 
 def _pop_table(stack: list[_Frame], table: Table) -> bool:
     """Pop the innermost frame of ``table`` and everything above it."""
-    for i in range(len(stack) - 1, 0, -1):
-        if stack[i].table is table:
-            del stack[i:]
-            _pop_finished(stack)
-            return True
-    return False
+    i = innermost_index(stack, lambda f: f.table is table)
+    if i is None:
+        return False
+    del stack[i:]
+    _pop_finished(stack)
+    return True
 
 
 def _advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
@@ -235,13 +305,7 @@ def _follow_skips(pos: int, skips: list[tuple[int, int]]) -> int:
 
 
 def _realign(pos: int, realign: tuple[int, int]) -> int:
-    multiple, offset = realign
-    if multiple <= 0:
-        return pos
-    rel = pos - offset
-    if rel <= 0:
-        return offset
-    return -(-rel // multiple) * multiple + offset
+    return align_up(pos, *realign)
 
 
 def _read_operands(
@@ -258,4 +322,13 @@ def _read_operands(
     return tuple(values), pos, False
 
 
-__all__ = ["DecodeResult", "DecodeRules", "EndedBy", "RAW", "decode"]
+__all__ = [
+    "RAW",
+    "DecodeResult",
+    "DecodeRules",
+    "EndedBy",
+    "RunResult",
+    "decode",
+    "decode_run",
+    "innermost_index",
+]

@@ -5,7 +5,6 @@ from __future__ import annotations
 from mapchar.core.bits import Bits
 from mapchar.core.block import (
     BlockConfig,
-    EndToken,
     Extraction,
     FixedLength,
     FixedSource,
@@ -19,7 +18,7 @@ from mapchar.core.block import (
 )
 from mapchar.core.notices import Notice
 from mapchar.core.table import Entry, EntryKind, TableSet
-from mapchar.core.tokens import Token
+from mapchar.core.tokens import CodeRef, TextRun, Token, escape_text, parse_text
 from mapchar.engines.decode import DecodeResult, DecodeRules, EndedBy, decode
 
 
@@ -31,6 +30,40 @@ def artificial(label: str, bit: int) -> Token:
     """
     text = f"[{label}]\\n" if label else "\\n"
     return Token("", bit, bit, Entry("", EntryKind.TEXT, text))
+
+
+def strip_artificial(text: str, config: BlockConfig) -> list[str]:
+    """The lines of a dumped string with the artificial codes taken out.
+
+    A dump closes a fixed string with an artificial end code and breaks its
+    fixed lines with artificial line codes; neither stands for bytes, so
+    neither is encoded. Only a final end code is artificial -- one earlier in
+    the text is the table's own end token and stays.
+    """
+    if config.show_end:
+        body = text.rstrip("\n")
+        items = parse_text(body)
+        if items and _is_code(items[-1], config.end_label):
+            text = body[: body.rfind("[")]
+    drop = config.line_label if config.line_length else ""
+    return [_without_code(line, drop) for line in text.split("\n")]
+
+
+def _is_code(item: TextRun | CodeRef, label: str) -> bool:
+    """Whether ``item`` is the bare code ``[label]``."""
+    return isinstance(item, CodeRef) and item.label == label and not item.words
+
+
+def _without_code(line: str, label: str) -> str:
+    """``line`` re-rendered without the bare ``[label]`` codes in it."""
+    out: list[str] = []
+    for item in parse_text(line):
+        if isinstance(item, TextRun):
+            out.append(escape_text(item.text))
+        elif not (label and _is_code(item, label)):
+            words = " ".join(item.words)
+            out.append(f"[{item.label}{' ' + words if words else ''}]")
+    return "".join(out)
 
 
 def extract(
@@ -52,13 +85,9 @@ def read_pointers(
     data: bytes, source: PointerTableSource | PointerListSource, registry
 ) -> tuple[list[PointerRef], list[int | None], list[Notice]]:
     """Every pointer of the source with its target offset (None when unmapped)."""
-    from mapchar.core.mapping import read_pointer, resolve_mapping
+    from mapchar.core.mapping import mapping_for, read_pointer
 
-    if registry is None:
-        from mapchar.plugins.registry import default_registry
-
-        registry = default_registry()
-    mapping = resolve_mapping(registry, source.mapping_id)
+    mapping = mapping_for(source, registry)
     notices: list[Notice] = []
     if mapping is None:
         notices.append(Notice(f"unknown mapping {source.mapping_id!r}"))
@@ -120,33 +149,16 @@ def _extract_pointers(
         if start >= bits.length:
             continue
         limit = stop_bit if stop_bit > start else bits.length
-        if isinstance(st, NextPointer):
-            nxt = ordered[i + 1] * 8 if i + 1 < len(ordered) else None
-            if nxt is not None and nxt > start:
-                limit = min(limit, nxt)
-                r = decode(bits, tables, start, _rules(config, limit, False))
-                tokens, end, res_notices = r.tokens, limit, r.notices
-            else:
-                tokens, end, res_notices = _decode_terminated(
-                    bits, config, tables, start, limit
-                )
-        elif isinstance(st, FixedLength):
-            piece_limit = min(start + st.length * 8, limit)
-            tokens, end, res_notices = _decode_fixed(
-                bits, config, tables, start, piece_limit
-            )
-            if st.stop_at_end:
-                # Pointer methods stop early at an end token; the record keeps
-                # the fixed extent so its slot stays whole.
-                pass
-        elif isinstance(st, Pascal):
-            tokens, end, res_notices = _decode_pascal(
-                bits, config, tables, start, limit, st
-            )
+        nxt = ordered[i + 1] * 8 if i + 1 < len(ordered) else None
+        if isinstance(st, NextPointer) and nxt is not None and nxt > start:
+            # The string owns every bit up to the next pointer's target.
+            limit = min(limit, nxt)
+            r = decode(bits, tables, start, _rules(config, limit, False))
+            tokens, end, res_notices = r.tokens, limit, r.notices
         else:
-            tokens, end, res_notices = _decode_terminated(
-                bits, config, tables, start, limit
-            )
+            # A fixed string keeps its whole extent even when it stops early
+            # at an end token, so its slot stays whole.
+            tokens, end, res_notices = _decode_one(bits, config, tables, start, limit)
         strings.append(
             StringRecord(
                 len(strings),
@@ -196,28 +208,15 @@ def _extract_range(
     notices: list[Notice] = []
     stop_bit = min(source.stop * 8, bits.length)
     pos = source.start * 8
-    st = config.string_type
-    if isinstance(st, NextPointer):
+    if isinstance(config.string_type, NextPointer):
         notices.append(
             Notice("'next pointer' needs a pointer source; reading to end tokens")
         )
-        st = EndToken()
     while pos < stop_bit:
         start = pos
-        if isinstance(st, FixedLength):
-            limit = min(start + st.length * 8, stop_bit)
-            tokens, end, res_notices = _decode_fixed(bits, config, tables, start, limit)
-            record_end = limit
-        elif isinstance(st, Pascal):
-            tokens, end, res_notices = _decode_pascal(
-                bits, config, tables, start, stop_bit, st
-            )
-            record_end = end
-        else:
-            tokens, end, res_notices = _decode_terminated(
-                bits, config, tables, start, stop_bit
-            )
-            record_end = end
+        tokens, record_end, res_notices = _decode_one(
+            bits, config, tables, start, stop_bit
+        )
         if record_end <= start:
             break
         strings.append(
@@ -245,10 +244,27 @@ def _extract_fixed(
     return Extraction(strings, notices)
 
 
+def _decode_one(
+    bits: Bits, config: BlockConfig, tables: TableSet, start: int, stop_bit: int
+) -> tuple[list[Token], int, list[Notice]]:
+    """One string of the block's string type, read within ``stop_bit``."""
+    st = config.string_type
+    if isinstance(st, FixedLength):
+        limit = min(start + st.length * 8, stop_bit)
+        return _decode_fixed(bits, config, tables, start, limit)
+    if isinstance(st, Pascal):
+        return _decode_pascal(bits, config, tables, start, stop_bit, st)
+    return _decode_terminated(bits, config, tables, start, stop_bit)
+
+
 def _decode_terminated(
     bits: Bits, config: BlockConfig, tables: TableSet, start: int, stop_bit: int
 ) -> tuple[list[Token], int, list[Notice]]:
-    """One string of ``strings_per_pointer`` end-token runs."""
+    """One string of ``strings_per_pointer`` end-token runs.
+
+    Not :func:`~mapchar.engines.decode.decode_run`: a backwards skip range
+    moves a run's end behind its start, which stops that function early.
+    """
     tokens: list[Token] = []
     notices: list[Notice] = []
     pos = start
@@ -310,6 +326,6 @@ def _decode_counted(
         if used >= count:
             break
         tokens.append(token)
-        used += token.weight if token.entry is not None else 1
+        used += token.pascal_weight
         end = token.bit_end
     return tokens, end, r.notices

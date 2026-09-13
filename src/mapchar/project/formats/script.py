@@ -26,6 +26,8 @@ from mapchar.core.block import (
     WriteMode,
 )
 from mapchar.core.errors import ScriptError
+from mapchar.core.numbers import format_num, parse_num
+from mapchar.core.text import split_lines
 
 HEADER = "@mapchar script 1"
 
@@ -63,10 +65,6 @@ class Script:
 # --- writing ---------------------------------------------------------------
 
 
-def _num(value: int) -> str:
-    return f"${value:X}"
-
-
 def _quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -75,19 +73,23 @@ def format_config(config: BlockConfig) -> str:
     parts: list[str] = []
     s = config.source
     if isinstance(s, RangeSource):
-        parts += ["source=range", f"start={_num(s.start)}", f"stop={_num(s.stop)}"]
+        parts += [
+            "source=range",
+            f"start={format_num(s.start)}",
+            f"stop={format_num(s.stop)}",
+        ]
     elif isinstance(s, FixedSource):
         parts += [
             "source=fixed",
-            f"start={_num(s.start)}",
+            f"start={format_num(s.start)}",
             f"count={s.count}",
             f"length={s.length}",
         ]
     elif isinstance(s, PointerTableSource):
         parts += [
             "source=pointers",
-            f"start={_num(s.start)}",
-            f"stop={_num(s.stop)}",
+            f"start={format_num(s.start)}",
+            f"stop={format_num(s.stop)}",
             f"size={s.size}",
             f"stride={s.stride}",
             f"endian={s.endian}",
@@ -98,7 +100,7 @@ def format_config(config: BlockConfig) -> str:
     elif isinstance(s, PointerListSource):
         parts += [
             "source=list",
-            "addresses=" + ",".join(_num(a) for a in s.addresses),
+            "addresses=" + ",".join(format_num(a) for a in s.addresses),
             f"size={s.size}",
             f"endian={s.endian}",
             f"mapping={s.mapping_id}",
@@ -125,7 +127,8 @@ def format_config(config: BlockConfig) -> str:
         parts.append(f"realign={config.realign[0]}:{config.realign[1]}")
     if config.skips:
         parts.append(
-            "skips=" + ",".join(f"{_num(a)}>{_num(b)}" for a, b in config.skips)
+            "skips="
+            + ",".join(f"{format_num(a)}>{format_num(b)}" for a, b in config.skips)
         )
     if config.line_length:
         parts.append(f"lines={config.line_length}")
@@ -134,11 +137,11 @@ def format_config(config: BlockConfig) -> str:
     if config.line_label != "line":
         parts.append(f"line_label={config.line_label}")
     if config.bound is not None:
-        parts.append(f"bound={_num(config.bound)}")
+        parts.append(f"bound={format_num(config.bound)}")
     if config.write_mode is not None:
         parts.append(f"mode={config.write_mode.value}")
     if config.fill != 0xFF:
-        parts.append(f"fill={_num(config.fill)}")
+        parts.append(f"fill={format_num(config.fill)}")
     return " ".join(parts)
 
 
@@ -166,19 +169,16 @@ def write_script(
         out.append("")
         out.append(f"@block {_quote(name)} {format_config(config)}")
         for rec in strings:
-            ptrs = "".join(f" {_num(p.address)}" for p in rec.pointers)
+            ptrs = "".join(f" {format_num(p.address)}" for p in rec.pointers)
             ptr_part = f" ptr{ptrs}" if ptrs else ""
-            out.append(
-                f"@string {rec.index} at {_num(rec.start)}-{_num(rec.end)}{ptr_part}"
-            )
-            original = rec.original_text()
+            span = f"{format_num(rec.start)}-{format_num(rec.end)}"
+            out.append(f"@string {rec.index} at {span}{ptr_part}")
             if mode is DumpMode.ORIGINALS:
-                out.extend(_content_lines(original))
+                out.extend(_content_lines(rec.original_text()))
                 continue
-            translation = rec.translation if rec.translation is not None else original
             if mode is DumpMode.BOTH:
-                out.extend("# " + line for line in original.split("\n"))
-            out.extend(_content_lines(translation))
+                out.extend("# " + line for line in rec.original_text().split("\n"))
+            out.extend(_content_lines(rec.current_text()))
     return "\n".join(out) + "\n"
 
 
@@ -189,10 +189,6 @@ _STRING = re.compile(
     r"(?:\s+ptr(?P<ptrs>(?:\s+(?:\$[0-9A-Fa-f]+|\d+))*))?\s*$"
 )
 _QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
-
-
-def _parse_num(word: str) -> int:
-    return int(word[1:], 16) if word.startswith("$") else int(word)
 
 
 def _unquote(text: str) -> str:
@@ -209,15 +205,15 @@ def parse_config(spec: str) -> BlockConfig:
     kind = fields.get("source", "range")
     source: Source
     if kind == "range":
-        source = RangeSource(_parse_num(fields["start"]), _parse_num(fields["stop"]))
+        source = RangeSource(parse_num(fields["start"]), parse_num(fields["stop"]))
     elif kind == "fixed":
         source = FixedSource(
-            _parse_num(fields["start"]), int(fields["count"]), int(fields["length"])
+            parse_num(fields["start"]), int(fields["count"]), int(fields["length"])
         )
     elif kind == "pointers":
         source = PointerTableSource(
-            _parse_num(fields["start"]),
-            _parse_num(fields["stop"]),
+            parse_num(fields["start"]),
+            parse_num(fields["stop"]),
             int(fields["size"]),
             int(fields.get("stride", fields["size"])),
             fields.get("endian", "little"),
@@ -227,7 +223,7 @@ def parse_config(spec: str) -> BlockConfig:
         )
     elif kind == "list":
         source = PointerListSource(
-            tuple(_parse_num(a) for a in fields["addresses"].split(",") if a),
+            tuple(parse_num(a) for a in fields["addresses"].split(",") if a),
             int(fields["size"]),
             fields.get("endian", "little"),
             fields.get("mapping", "linear"),
@@ -259,7 +255,7 @@ def parse_config(spec: str) -> BlockConfig:
     skips = ()
     if fields.get("skips"):
         skips = tuple(
-            (_parse_num(a), _parse_num(b))
+            (parse_num(a), parse_num(b))
             for a, b in (pair.split(">") for pair in fields["skips"].split(","))
         )
     return BlockConfig(
@@ -270,9 +266,9 @@ def parse_config(spec: str) -> BlockConfig:
         realign=realign,
         skips=skips,
         line_length=int(fields.get("lines", "0")),
-        bound=_parse_num(fields["bound"]) if "bound" in fields else None,
+        bound=parse_num(fields["bound"]) if "bound" in fields else None,
         write_mode=WriteMode(fields["mode"]) if "mode" in fields else None,
-        fill=_parse_num(fields["fill"]) if "fill" in fields else 0xFF,
+        fill=parse_num(fields["fill"]) if "fill" in fields else 0xFF,
         show_end="show_end" in fields,
         end_label=fields.get("show_end", "end"),
         line_label=fields.get("line_label", "line"),
@@ -297,7 +293,7 @@ def parse_script(text: str, path: str | None = None) -> Script:
         content.clear()
         originals.clear()
 
-    for n, raw in enumerate(text.replace("\r\n", "\n").split("\n"), start=1):
+    for n, raw in enumerate(split_lines(text), start=1):
         line = raw
         if not seen_header:
             if not line.strip():
@@ -340,11 +336,11 @@ def parse_script(text: str, path: str | None = None) -> Script:
                 sm = _STRING.match(line)
                 if not sm or block is None:
                     raise ScriptError("bad @string line", path, n)
-                ptrs = tuple(_parse_num(w) for w in (sm.group("ptrs") or "").split())
+                ptrs = tuple(parse_num(w) for w in (sm.group("ptrs") or "").split())
                 current = ScriptString(
                     int(sm.group("index")),
-                    _parse_num(sm.group("start")),
-                    _parse_num(sm.group("end")),
+                    parse_num(sm.group("start")),
+                    parse_num(sm.group("end")),
                     ptrs,
                     "",
                 )

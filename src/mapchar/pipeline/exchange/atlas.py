@@ -5,22 +5,25 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from mapchar.core.bits import format_key
 from mapchar.core.block import (
     BlockConfig,
-    FixedLength,
-    FixedSource,
     Pascal,
     StringRecord,
     WriteMode,
 )
+from mapchar.core.numbers import format_num, parse_num
 from mapchar.core.table import EntryKind, Table, TableSet
+from mapchar.core.text import split_lines
 from mapchar.core.tokens import (
     CodeRef,
     TextRun,
+    bits_for,
     escape_text,
     operand_values,
     parse_text,
 )
+from mapchar.pipeline.extract import strip_artificial
 
 ADDRESS_TYPES = {
     "linear": "LINEAR",
@@ -42,20 +45,12 @@ class AtlasExport:
 # --- tables in the abcde dialect ------------------------------------------
 
 
-def _abcde_key(bits: str) -> str:
-    if len(bits) % 4 == 0:
-        return "".join(
-            format(int(bits[i : i + 4], 2), "X") for i in range(0, len(bits), 4)
-        )
-    return "%" + bits
-
-
 def write_abcde_tables(tables: list[Table]) -> str:
     lines: list[str] = []
     for table in tables:
         lines.append(f"@{table.id}")
         for e in table.sorted_entries():
-            key = _abcde_key(e.bits)
+            key = format_key(e.bits)
             weight = f"<{e.weight}>" if e.weight != 1 else ""
             if e.kind is EntryKind.TEXT:
                 lines.append(f"{key}{weight}={_abcde_text(e.text)}")
@@ -72,14 +67,7 @@ def write_abcde_tables(tables: list[Table]) -> str:
                     if p.table_id == "return":
                         params.append("-1")
                         continue
-                    stop = p.stop
-                    if stop.count is not None:
-                        m = str(stop.count)
-                    elif stop.fallback is not None:
-                        fb = stop.fallback
-                        m = "$" + _abcde_key(fb) if len(fb) % 8 == 0 else "%" + fb
-                    else:
-                        m = "0"
+                    m = p.stop.spec(any_marker="0")
                     if p.table_id == "raw":
                         params.append(m + ("+" if p.shared else ""))
                     elif p.table_id == "bits":
@@ -126,18 +114,13 @@ def atlas_text(text: str, tables: TableSet | None) -> str:
         elif ref.is_raw_bits:
             out.append("".join(f"<%{b}>" for b in ref.label[1:]))
         elif ref.words and tables is not None:
-            entry = None
-            for t in tables.tables.values():
-                entry = t.labels.get(ref.label)
-                if entry is not None:
-                    break
+            found = tables.entry_for_label(ref.label)
+            entry = found[0][1] if found else None
             if entry is None or entry.kind is not EntryKind.CODE:
                 out.append(f"[{ref.label} {' '.join(ref.words)}]")
                 continue
             values = operand_values(entry, ref.words)
-            bits = "".join(
-                spec.bits_of(v) for spec, v in zip(entry.operands, values, strict=True)
-            )
+            bits = bits_for(entry, values)[len(entry.bits) :]
             out.append(f"[{ref.label}]")
             for i in range(0, len(bits) - len(bits) % 8, 8):
                 out.append(f"<${int(bits[i : i + 8], 2):02X}>")
@@ -192,20 +175,16 @@ def write_atlas(
             out.append('#ENDIANSWAP("TRUE")')
         offset = getattr(src, "offset", 0)
         if offset:
-            out.append(f"#HDR({_num(offset)})")
+            out.append(f"#HDR({format_num(offset)})")
     st = config.string_type
     if isinstance(st, Pascal):
         out.append('#STRTYPE("PASCAL")')
         out.append(f"#PASCALLEN({st.width})")
         if st.counts_tokens:
             out.append('#PASCALTYPE("TOKENS")')
-    fixed_len = None
-    if isinstance(st, FixedLength):
-        fixed_len = st.length
-    elif isinstance(src, FixedSource):
-        fixed_len = src.length
+    fixed_len = config.fixed_length
     if fixed_len is not None:
-        out.append(f"#FIXEDLENGTH({fixed_len}, {_num(config.fill)})")
+        out.append(f"#FIXEDLENGTH({fixed_len}, {format_num(config.fill)})")
     if config.realign[0]:
         out.append(f"#STRINGALIGN({config.realign[0]})")
         if config.realign[1]:
@@ -215,34 +194,22 @@ def write_atlas(
     if packed and strings:
         bound = config.bound if config.bound is not None else getattr(src, "stop", None)
         if bound is not None:
-            out.append(f"#JMP({_num(strings[0].start)}, {_num(bound - 1)})")
+            out.append(f"#JMP({format_num(strings[0].start)}, {format_num(bound - 1)})")
         else:
-            out.append(f"#JMP({_num(strings[0].start)})")
+            out.append(f"#JMP({format_num(strings[0].start)})")
     width = {1: "W8", 2: "W16", 3: "W24", 4: "W32"}
     for rec in strings:
         out.append("")
         out.append(f"// #{rec.index}")
         if not packed:
-            out.append(f"#JMP({_num(rec.start)}, {_num(rec.end - 1)})")
+            out.append(f"#JMP({format_num(rec.start)}, {format_num(rec.end - 1)})")
         if mapping in ADDRESS_TYPES:
             for ptr in rec.pointers:
-                out.append(f"#{width.get(ptr.size, 'W16')}({_num(ptr.address)})")
-        text = rec.translation if rec.translation is not None else rec.original_text()
-        for line in _strip_artificial_codes(text, config).split("\n"):
+                out.append(f"#{width.get(ptr.size, 'W16')}({format_num(ptr.address)})")
+        text = rec.current_text()
+        for line in strip_artificial(text, config):
             out.append(atlas_text(line, tables))
     return AtlasExport("\n".join(out) + "\n", files, notices)
-
-
-def _strip_artificial_codes(text: str, config: BlockConfig) -> str:
-    if config.show_end and text.rstrip("\n").endswith(f"[{config.end_label}]"):
-        text = text.rstrip("\n")[: -len(f"[{config.end_label}]")]
-    if config.line_length:
-        text = text.replace(f"[{config.line_label}]", "")
-    return text
-
-
-def _num(value: int) -> str:
-    return f"${value:X}" if value >= 0 else f"$-{-value:X}"
 
 
 # --- importing -----------------------------------------------------------------
@@ -288,17 +255,6 @@ SUPPORTED = {
 _CMD = re.compile(r"^\s*#([A-Z0-9]+)\((.*)\)\s*(//.*)?$")
 
 
-def _atlas_num(word: str) -> int:
-    word = word.strip()
-    if word.startswith("$-"):
-        return -int(word[2:], 16)
-    if word.startswith("-$"):
-        return -int(word[2:], 16)
-    if word.startswith("$"):
-        return int(word[1:], 16)
-    return int(word)
-
-
 def read_atlas(text: str) -> AtlasScript:
     """The strings of an Atlas script with where they go, for matching."""
     script = AtlasScript()
@@ -315,7 +271,7 @@ def read_atlas(text: str) -> AtlasScript:
             pointers = []
         body_at = None
 
-    for n, raw in enumerate(text.replace("\r\n", "\n").split("\n"), start=1):
+    for n, raw in enumerate(split_lines(text), start=1):
         if re.match(r"^[ \t]*//", raw) or not raw.strip():
             continue
         m = _CMD.match(raw)
@@ -335,10 +291,10 @@ def read_atlas(text: str) -> AtlasScript:
             if am:
                 script.tables.append(am.group(1))
         elif name == "JMP":
-            insert = _atlas_num(args.split(",")[0])
+            insert = parse_num(args.split(",")[0])
         elif name in ("W8", "W16", "W24", "W32", "WLB"):
             parts = [p.strip() for p in args.split(",")]
-            pointers.append(_atlas_num(parts[-1]))
+            pointers.append(parse_num(parts[-1]))
     flush()
     return script
 

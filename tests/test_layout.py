@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from helpers import table_set
+from helpers import ASCII_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.engines.layout import layout, measure, wrap
@@ -20,7 +20,7 @@ BOX = TextBox(
 
 
 def test_layout_places_and_flags_overflow():
-    ts = table_set("@table main\n@charset ascii\n/00=[end]\nFE=[line]\\n\n", "main")
+    ts = table_set(ASCII_TABLE + "FE=[line]\\n\n", "main")
     ex = extract(
         b"AB CDEF\xfeGH\x00", BlockConfig(RangeSource(0, 11), EndToken(), "main"), ts
     )

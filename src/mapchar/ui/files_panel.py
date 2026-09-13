@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QLineEdit,
-    QTreeWidget,
     QTreeWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
 from mapchar.project.workspace import Entry, EntryKind, Workspace
 from mapchar.ui.glyphs import Glyph
-from mapchar.ui.icon_font import glyph_pixmap
+from mapchar.ui.icon_font import ThemedIcons, themed_icon
+from mapchar.ui.panel import WorkspaceTreePanel
 from mapchar.ui.theme import WARNING_INK
 
 GROUPS = {EntryKind.FILE: "ROMs", EntryKind.TABLE: "Tables", EntryKind.FONT: "Fonts"}
@@ -29,7 +28,7 @@ MARKERS: dict[EntryKind, tuple[Glyph, QPalette.ColorRole]] = {
 ICON_SIZE = QSize(13, 16)
 
 
-class FilesPanel(QWidget):
+class FilesPanel(ThemedIcons, WorkspaceTreePanel):
     entry_activated = Signal(object)
     """Clicked: show this entry."""
     entry_double_clicked = Signal(object)
@@ -37,30 +36,22 @@ class FilesPanel(QWidget):
     remove_requested = Signal(list)
 
     def __init__(self, workspace: Workspace, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.workspace = workspace
+        super().__init__(workspace, parent)
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter…")
         self.filter.setClearButtonEnabled(True)
-        self.tree = QTreeWidget()
+        self.box.insertWidget(0, self.filter)
         self.tree.setHeaderHidden(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.setIconSize(ICON_SIZE)
         self._icons: dict[tuple[Glyph, str], QIcon] = {}
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.filter)
-        layout.addWidget(self.tree)
         self._items: dict[int, QTreeWidgetItem] = {}
         self._groups: dict[EntryKind, QTreeWidgetItem] = {}
         self.filter.textChanged.connect(self._apply_filter)
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.itemDoubleClicked.connect(self._on_double)
         self.tree.customContextMenuRequested.connect(self._on_menu)
-        workspace.on_added.append(lambda e: self.rebuild())
-        workspace.on_removed.append(lambda e: self.rebuild())
-        workspace.on_reset.append(self.rebuild)
         workspace.on_current_changed.append(self._on_current)
         workspace.on_dirty_changed.append(lambda e: self._update_item(e))
         self.rebuild()
@@ -112,17 +103,13 @@ class FilesPanel(QWidget):
         """Baked once per glyph and color; dropped on a palette change."""
         icon = self._icons.get((glyph, key))
         if icon is None:
-            icon = QIcon(
-                glyph_pixmap(glyph, color, ICON_SIZE, self.devicePixelRatioF())
-            )
+            icon = themed_icon(self, glyph, color, size=ICON_SIZE)
             self._icons[(glyph, key)] = icon
         return icon
 
-    def changeEvent(self, event) -> None:
-        super().changeEvent(event)
-        if event.type() is QEvent.Type.PaletteChange:
-            self._icons.clear()
-            self.refresh_labels()
+    def _bake_icons(self) -> None:
+        self._icons.clear()
+        self.refresh_labels()
 
     @staticmethod
     def _label(entry: Entry) -> str:
@@ -158,35 +145,26 @@ class FilesPanel(QWidget):
         for entry in self.workspace.entries:
             self._update_item(entry)
 
-    def _entry_of(self, item: QTreeWidgetItem | None) -> Entry | None:
-        if item is None:
-            return None
-        key = item.data(0, Qt.ItemDataRole.UserRole)
-        for entry in self.workspace.entries:
-            if id(entry) == key:
-                return entry
-        return None
-
     def selected_entries(self) -> list[Entry]:
         out = []
         for item in self.tree.selectedItems():
-            entry = self._entry_of(item)
+            entry = self.entry_of(item)
             if entry is not None:
                 out.append(entry)
         return out
 
     def _on_clicked(self, item, column) -> None:
-        entry = self._entry_of(item)
+        entry = self.entry_of(item)
         if entry is not None and len(self.tree.selectedItems()) <= 1:
             self.entry_activated.emit(entry)
 
     def _on_double(self, item, column) -> None:
-        entry = self._entry_of(item)
+        entry = self.entry_of(item)
         if entry is not None:
             self.entry_double_clicked.emit(entry)
 
     def _on_menu(self, pos: QPoint) -> None:
-        entry = self._entry_of(self.tree.itemAt(pos))
+        entry = self.entry_of(self.tree.itemAt(pos))
         self.context_menu_requested.emit(entry, self.tree.viewport().mapToGlobal(pos))
 
     def _on_current(self, entry: Entry | None) -> None:

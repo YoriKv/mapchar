@@ -38,49 +38,65 @@ class Banked:
     """Fixed-size banks mapped at one CPU address; NES-style.
 
     A 16-bit pointer holds the CPU address; the bank comes from ``bank``. A
-    wider pointer carries the bank number above bit 16.
+    wider pointer carries the bank number above bit 16, kept to ``bank_mask``
+    when one is set. ``low_bank`` maps an address below ``bank_base`` straight
+    to that offset, the way the Game Boy's fixed bank sits below the switched
+    window; ``bounded`` rejects an address past the end of the window;
+    ``wide_value`` writes the bank back above bit 16.
     """
 
     sizes = (2, 3, 4)
     needs_bank = True
+    bank_mask: int | None = None
+    low_bank = False
+    bounded = True
+    wide_value = False
 
-    def __init__(self, bank_size: int, bank_base: int, id: str | None = None):
+    def __init__(
+        self,
+        bank_size: int,
+        bank_base: int,
+        id: str | None = None,
+        name: str | None = None,
+        category: str = "Generic",
+    ):
         self.bank_size = bank_size
         self.bank_base = bank_base
         self.info = PluginInfo(
             id or f"banked:{bank_base:X}:{bank_size:X}",
-            f"Banked {bank_size:X} at {bank_base:X}",
+            name or f"Banked {bank_size:X} at {bank_base:X}",
             Stage.MAPPING,
-            "Generic",
+            category,
         )
 
     def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
         addr = value & 0xFFFF
         if value > 0xFFFF:
             bank = value >> 16
-        if not (self.bank_base <= addr < self.bank_base + self.bank_size):
+            if self.bank_mask is not None:
+                bank &= self.bank_mask
+        if addr < self.bank_base:
+            return addr if self.low_bank else None
+        if self.bounded and addr >= self.bank_base + self.bank_size:
             return None
         return bank * self.bank_size + (addr - self.bank_base)
 
     def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
-        return self.bank_base + offset % self.bank_size
+        b = offset // self.bank_size
+        addr = self.bank_base + offset % self.bank_size
+        if self.low_bank and b == 0:
+            return offset
+        return ((b << 16) | addr) if self.wide_value else addr
 
 
-class LoRom:
-    info = PluginInfo("lorom", "SNES LoROM", Stage.MAPPING, "Nintendo")
+class LoRom(Banked):
     sizes = (2, 3)
-    needs_bank = True
+    bank_mask = 0x7F
+    bounded = False
+    wide_value = True
 
-    def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
-        addr = value & 0xFFFF
-        if value > 0xFFFF:
-            bank = (value >> 16) & 0x7F
-        if addr < 0x8000:
-            return None
-        return bank * 0x8000 + (addr - 0x8000)
-
-    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
-        return ((offset // 0x8000) << 16) | (0x8000 + offset % 0x8000)
+    def __init__(self) -> None:
+        super().__init__(0x8000, 0x8000, "lorom", "SNES LoROM", "Nintendo")
 
 
 class HiRom:
@@ -97,24 +113,14 @@ class HiRom:
         return 0xC00000 + offset
 
 
-class GameBoyMapping:
-    info = PluginInfo("gb", "Game Boy banked", Stage.MAPPING, "Nintendo")
+class GameBoyMapping(Banked):
     sizes = (2, 3)
-    needs_bank = True
+    low_bank = True
+    bounded = False
+    wide_value = True
 
-    def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
-        addr = value & 0xFFFF
-        if value > 0xFFFF:
-            bank = value >> 16
-        if addr < 0x4000:
-            return addr
-        return bank * 0x4000 + (addr - 0x4000)
-
-    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
-        b = offset // 0x4000
-        if b == 0:
-            return offset
-        return (b << 16) | (0x4000 + offset % 0x4000)
+    def __init__(self) -> None:
+        super().__init__(0x4000, 0x4000, "gb", "Game Boy banked", "Nintendo")
 
 
 class GbaMapping:
@@ -148,6 +154,18 @@ def resolve_mapping(registry, id: str):
     if plugin is not None:
         return plugin
     return parse_banked(id)
+
+
+def mapping_for(source, registry=None):
+    """The mapping plugin a source names, or ``None`` when it is unknown.
+
+    Without a ``registry`` the built-in one answers.
+    """
+    if registry is None:
+        from mapchar.plugins.registry import default_registry
+
+        registry = default_registry()
+    return resolve_mapping(registry, source.mapping_id)
 
 
 def read_pointer(data: bytes, address: int, size: int, endian: str) -> int | None:

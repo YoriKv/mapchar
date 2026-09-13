@@ -7,88 +7,9 @@ and compresses back where the scheme allows.
 
 from __future__ import annotations
 
+from mapchar.core.bits import bits_to_bytes, bytes_to_bits, reverse_bits
 from mapchar.core.context import KEY_COMPLETE, KEY_CONSUMED, PipelineContext
 from mapchar.plugins.base import PluginInfo, Stage
-
-
-class GbaLz77:
-    """GBA/NDS BIOS LZ77: ``10 SS SS SS`` header, 8-flag groups, 12-bit back
-    references of 3..18 bytes."""
-
-    info = PluginInfo("gba_lz77", "GBA BIOS LZ77", Stage.COMPRESSION, "Nintendo")
-
-    def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
-        if len(data) < 4 or data[0] != 0x10:
-            raise ValueError("not an LZ77 stream (no 10 header)")
-        size = int.from_bytes(data[1:4], "little")
-        out = bytearray()
-        pos = 4
-        complete = False
-        while len(out) < size and pos < len(data):
-            flags = data[pos]
-            pos += 1
-            for bit in range(8):
-                if len(out) >= size:
-                    break
-                if pos >= len(data):
-                    break
-                if flags & (0x80 >> bit):
-                    if pos + 1 >= len(data):
-                        pos = len(data)
-                        break
-                    hi, lo = data[pos], data[pos + 1]
-                    pos += 2
-                    length = (hi >> 4) + 3
-                    disp = ((hi & 0x0F) << 8 | lo) + 1
-                    for _ in range(length):
-                        if len(out) < disp:
-                            raise ValueError("back reference before the start")
-                        out.append(out[-disp])
-                else:
-                    out.append(data[pos])
-                    pos += 1
-        complete = len(out) >= size
-        ctx.set(KEY_CONSUMED, pos)
-        ctx.set(KEY_COMPLETE, complete)
-        return bytes(out[:size])
-
-    def compress(self, data: bytes, ctx: PipelineContext) -> bytes:
-        out = bytearray(b"\x10" + len(data).to_bytes(3, "little"))
-        pos = 0
-        n = len(data)
-        while pos < n:
-            flags = 0
-            group = bytearray()
-            for bit in range(8):
-                if pos >= n:
-                    break
-                best_len, best_disp = 0, 0
-                window_start = max(0, pos - 0x1000)
-                for start in range(window_start, pos):
-                    length = 0
-                    while (
-                        length < 18
-                        and pos + length < n
-                        and data[start + length] == data[pos + length]
-                    ):
-                        length += 1
-                    if length > best_len:
-                        best_len, best_disp = length, pos - start
-                        if length == 18:
-                            break
-                if best_len >= 3:
-                    flags |= 0x80 >> bit
-                    hi = ((best_len - 3) << 4) | ((best_disp - 1) >> 8)
-                    group += bytes([hi, (best_disp - 1) & 0xFF])
-                    pos += best_len
-                else:
-                    group.append(data[pos])
-                    pos += 1
-            out.append(flags)
-            out += group
-        while len(out) % 4:
-            out.append(0)
-        return bytes(out)
 
 
 class BitPack:
@@ -104,7 +25,7 @@ class BitPack:
         )
 
     def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
-        bits = "".join(f"{b:08b}" for b in data)
+        bits = bytes_to_bits(data)
         n = len(bits) // self.width
         out = bytes(
             int(bits[i * self.width : (i + 1) * self.width], 2) for i in range(n)
@@ -117,8 +38,7 @@ class BitPack:
         bits = "".join(
             format(b & ((1 << self.width) - 1), f"0{self.width}b") for b in data
         )
-        bits += "0" * (-len(bits) % 8)
-        return bytes(int(bits[i : i + 8], 2) for i in range(0, len(bits), 8))
+        return bits_to_bytes(bits)
 
 
 class HuffmanTable:
@@ -210,15 +130,8 @@ class HuffmanTable:
             if path is None:
                 raise ValueError(f"symbol {symbol:02X} is not in the tree")
             bits.append(path)
-        stream = "".join(bits)
-        stream += "0" * (-len(stream) % 8)
-        out = bytearray()
-        for i in range(0, len(stream), 8):
-            chunk = stream[i : i + 8]
-            if self.lsb_first:
-                chunk = chunk[::-1]
-            out.append(int(chunk, 2))
-        return bytes(out)
+        out = bits_to_bytes("".join(bits))
+        return reverse_bits(out) if self.lsb_first else out
 
 
 class Lzss:
@@ -238,10 +151,18 @@ class Lzss:
     plus one) or ``ring`` (an absolute position in a ring buffer of
     ``2**window_bits`` bytes, initialised to ``ring_init`` and written from
     ``ring_start``). A ``size_header`` of ``gba`` (``10 SS SS SS``),
-    ``u16le``, ``u32le`` or ``none`` says how the decompressed size is known.
+    ``u16le``, ``u32le`` or ``none`` says how the decompressed size is known;
+    ``magic`` is a first byte the header must carry, and ``pad_to`` a multiple
+    the compressed output is zero-padded to.
     """
 
-    def __init__(self, params: dict, id: str = "lzss", name: str = "LZSS"):
+    def __init__(
+        self,
+        params: dict,
+        id: str = "lzss",
+        name: str = "LZSS",
+        category: str = "Generic",
+    ):
         self.window_bits = int(params.get("window_bits", 12))
         self.length_bits = int(params.get("length_bits", 4))
         self.min_match = int(params.get("min_match", 3))
@@ -252,7 +173,9 @@ class Lzss:
         self.ring_init = int(params.get("ring_init", 0))
         self.ring_start = int(params.get("ring_start", 0))
         self.size_header = str(params.get("size_header", "none"))
-        self.info = PluginInfo(id, name, Stage.COMPRESSION, "Generic")
+        self.magic = params.get("magic")
+        self.pad_to = int(params.get("pad_to", 0))
+        self.info = PluginInfo(id, name, Stage.COMPRESSION, category)
         if self.window_bits + self.length_bits != 16:
             raise ValueError("window_bits + length_bits must be 16")
 
@@ -309,6 +232,8 @@ class Lzss:
 
     def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
         size, pos = self._read_size(data)
+        if self.magic is not None and (len(data) < pos or data[0] != self.magic):
+            raise ValueError(f"not an LZ77 stream (no {self.magic:02X} header)")
         out = bytearray()
         ring = bytearray([self.ring_init]) * self.ring_size
         ring_pos = self.ring_start
@@ -427,7 +352,31 @@ class Lzss:
                 pos += count
             out.append(flags)
             out += group
+        while self.pad_to > 1 and len(out) % self.pad_to:
+            out.append(0)
         return bytes(out)
+
+
+GBA_LZ77 = {
+    "size_header": "gba",
+    "magic": 0x10,
+    "pad_to": 4,
+    "window_bits": 12,
+    "length_bits": 4,
+    "min_match": 3,
+    "flags_msb_first": True,
+    "set_is_ref": True,
+    "ref_format": "gba",
+    "offset_kind": "distance",
+}
+
+
+class GbaLz77(Lzss):
+    """GBA/NDS BIOS LZ77: ``10 SS SS SS`` header, 8-flag groups, 12-bit back
+    references of 3..18 bytes."""
+
+    def __init__(self) -> None:
+        super().__init__(GBA_LZ77, "gba_lz77", "GBA BIOS LZ77", "Nintendo")
 
 
 class PackBits:

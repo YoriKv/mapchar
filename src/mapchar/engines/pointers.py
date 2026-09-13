@@ -10,6 +10,18 @@ from mapchar.core.block import PointerTableSource
 from mapchar.core.mapping import pointer_bytes
 
 
+def common_stride(addrs: list[int]) -> tuple[int, float]:
+    """The most common distance between consecutive addresses, and its share.
+
+    Fewer than two addresses have no stride at all: ``(0, 0.0)``.
+    """
+    if len(addrs) < 2:
+        return 0, 0.0
+    diffs = Counter(b - a for a, b in zip(addrs, addrs[1:], strict=False))
+    stride, seen = diffs.most_common(1)[0]
+    return stride, seen / (len(addrs) - 1)
+
+
 @dataclass
 class Candidate:
     mapping_id: str
@@ -30,11 +42,7 @@ class Candidate:
         return sorted(a for addrs in self.hits.values() for a in addrs)
 
     def regularity(self) -> float:
-        addrs = self.addresses
-        if len(addrs) < 2:
-            return 0.0
-        diffs = Counter(b - a for a, b in zip(addrs, addrs[1:], strict=False))
-        return diffs.most_common(1)[0][1] / (len(addrs) - 1)
+        return common_stride(self.addresses)[1]
 
     def source(self) -> PointerTableSource:
         addrs = self.addresses
@@ -96,10 +104,7 @@ def discover(
                 cand.hits[start] = found
         if not cand.hits:
             continue
-        addrs = cand.addresses
-        if len(addrs) >= 2:
-            diffs = Counter(b - a for a, b in zip(addrs, addrs[1:], strict=False))
-            cand.stride = diffs.most_common(1)[0][0]
+        cand.stride = common_stride(cand.addresses)[0]
         results.append(cand)
     results.sort(key=lambda c: (c.explained, c.regularity()), reverse=True)
     return results

@@ -63,3 +63,40 @@ def bits_to_hex(bits: str) -> str:
     if len(bits) % 4:
         raise ValueError("not a whole number of nibbles")
     return "".join(format(int(bits[i : i + 4], 2), "X") for i in range(0, len(bits), 4))
+
+
+def format_key(bits: str) -> str:
+    """``bits`` as hex digits, or ``%bits`` when they are not whole nibbles."""
+    if len(bits) % 4:
+        return "%" + bits
+    return bits_to_hex(bits)
+
+
+def parse_hex(text: str, default: int = 0) -> int:
+    """A hex number written with any of ``$``, ``0x`` or ``_``; empty is ``default``."""
+    text = text.strip().replace("$", "").replace("0x", "").replace("_", "")
+    if not text:
+        return default
+    return int(text, 16)
+
+
+def align_up(pos: int, multiple: int, offset: int = 0) -> int:
+    """The first position at or after ``pos`` that is ``offset`` past a multiple.
+
+    A ``multiple`` of zero or less leaves ``pos`` alone; anything at or before
+    ``offset`` lands on ``offset``.
+    """
+    if multiple <= 0:
+        return pos
+    rel = pos - offset
+    if rel <= 0:
+        return offset
+    return -(-rel // multiple) * multiple + offset
+
+
+_REVERSED = bytes(int(format(b, "08b")[::-1], 2) for b in range(256))
+
+
+def reverse_bits(data: bytes) -> bytes:
+    """Every byte with its bits in the opposite order."""
+    return data.translate(_REVERSED)

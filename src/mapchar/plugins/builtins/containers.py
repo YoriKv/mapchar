@@ -17,16 +17,29 @@ GB_LOGO = bytes.fromhex("CEED6666CC0D000B")
 GBA_LOGO = bytes.fromhex("24FFAE51699AA221")
 
 
-class Raw:
-    info = PluginInfo("raw", "Flat file", Stage.CONTAINER, "Generic")
+class _Flat:
+    """A container whose payload is the whole file: no header, no offset.
+
+    ``mapping`` names the pointer mapping the format implies, if any.
+    """
+
+    def mapping(self, source: ReadSource) -> str | None:
+        return None
 
     def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
         ctx.set(KEY_SOURCE_OFFSET, 0)
         ctx.set(KEY_HEADER_SIZE, 0)
+        suggested = self.mapping(source)
+        if suggested is not None:
+            ctx.set(KEY_SUGGESTED_MAPPING, suggested)
         return source.data
 
     def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes:
         return data
+
+
+class Raw(_Flat):
+    info = PluginInfo("raw", "Flat file", Stage.CONTAINER, "Generic")
 
 
 class INes:
@@ -88,7 +101,7 @@ class SnesHeadered:
         return target.existing[:512] + data
 
 
-class Snes:
+class Snes(_Flat):
     info = PluginInfo(
         "snes",
         "SNES",
@@ -99,14 +112,8 @@ class Snes:
         size_multiple=1024,
     )
 
-    def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
-        ctx.set(KEY_SOURCE_OFFSET, 0)
-        ctx.set(KEY_HEADER_SIZE, 0)
-        ctx.set(KEY_SUGGESTED_MAPPING, _snes_mapping(source.data))
-        return source.data
-
-    def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes:
-        return data
+    def mapping(self, source: ReadSource) -> str | None:
+        return _snes_mapping(source.data)
 
 
 def _snes_mapping(rom: bytes) -> str:
@@ -124,7 +131,7 @@ def _snes_mapping(rom: bytes) -> str:
     return "lorom"
 
 
-class GameBoy:
+class GameBoy(_Flat):
     info = PluginInfo(
         "gb",
         "Game Boy / Color",
@@ -135,17 +142,11 @@ class GameBoy:
         min_size=0x150,
     )
 
-    def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
-        ctx.set(KEY_SOURCE_OFFSET, 0)
-        ctx.set(KEY_HEADER_SIZE, 0)
-        ctx.set(KEY_SUGGESTED_MAPPING, "gb")
-        return source.data
-
-    def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes:
-        return data
+    def mapping(self, source: ReadSource) -> str | None:
+        return "gb"
 
 
-class GameBoyAdvance:
+class GameBoyAdvance(_Flat):
     info = PluginInfo(
         "gba",
         "Game Boy Advance",
@@ -156,14 +157,8 @@ class GameBoyAdvance:
         min_size=0xC0,
     )
 
-    def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
-        ctx.set(KEY_SOURCE_OFFSET, 0)
-        ctx.set(KEY_HEADER_SIZE, 0)
-        ctx.set(KEY_SUGGESTED_MAPPING, "gba")
-        return source.data
-
-    def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes:
-        return data
+    def mapping(self, source: ReadSource) -> str | None:
+        return "gba"
 
 
 def register(registry) -> None:

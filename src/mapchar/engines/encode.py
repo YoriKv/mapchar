@@ -29,11 +29,12 @@ from mapchar.core.table import (
 from mapchar.core.tokens import (
     CodeRef,
     TextRun,
+    bits_for,
     operand_values,
     parse_text,
     render,
 )
-from mapchar.engines.decode import DecodeRules, EndedBy, decode
+from mapchar.engines.decode import DecodeRules, EndedBy, decode_run, innermost_index
 
 _Frame = tuple[str, int | None, bool, str | None]
 """``(table_id, counter, shared, fallback_bits)``; counter None is unlimited."""
@@ -284,13 +285,12 @@ def _successors(
     if tid.startswith(f"{RETURN}@"):
         owner = tid.split("@", 1)[1]
         new_stack = list(stack[:-1])
-        for i in range(len(new_stack) - 1, 0, -1):
-            if new_stack[i][0] == owner:
-                del new_stack[i:]
-                break
+        i = innermost_index(new_stack, lambda f: f[0] == owner)
+        if i is not None:
+            del new_stack[i:]
+        elif pos < n:
+            return out  # the string would end before its text does
         else:
-            if pos < n:
-                return out  # the string would end before its text does
             new_stack = new_stack[:1]
         return [(pos, new_stack, forbidden, "", False)]
     # Closing a fallback frame: its bits, at any position (always emitted).
@@ -313,10 +313,9 @@ def _successors(
     if len(stack) > 1:
         for ret in idx.returns:
             new_stack = list(stack)
-            for i in range(len(new_stack) - 1, 0, -1):
-                if new_stack[i][0] == tid:
-                    del new_stack[i:]
-                    break
+            i = innermost_index(new_stack, lambda f: f[0] == tid)
+            if i is not None:
+                del new_stack[i:]
             s = emit(ret.bits, 0, new_stack=new_stack, advance=0)
             if s:
                 # The return counts its weight in the frame it was matched in
@@ -372,10 +371,7 @@ def _successors(
                 values = operand_values(entry, atom.words)
             except ValueError:
                 return out
-            bits = entry.bits + "".join(
-                spec.bits_of(v) for spec, v in zip(entry.operands, values, strict=True)
-            )
-            s = emit(bits, entry.weight)
+            s = emit(bits_for(entry, values), entry.weight)
             if s:
                 out.append(_with_longer(s, idx, entry))
     return out
@@ -399,26 +395,23 @@ def _verify(
 ) -> None:
     data = Bits(result.data)
     rules = DecodeRules(end_terminated=end_terminated, limit_bit=len(result.bits))
-    tokens = []
-    pos = 0
-    for _ in range(max(ends, 1) if end_terminated else 1):
-        r = decode(data, tables, pos, rules)
-        tokens.extend(r.tokens)
-        pos = r.end_bit
-        if r.ended_by is not EndedBy.END_TOKEN:
-            break
-    got = render(tokens).replace("\n", "")
+    run = decode_run(data, tables, 0, rules, runs=max(ends, 1) if end_terminated else 1)
+    got = render(run.tokens).replace("\n", "")
     want = "".join(a if isinstance(a, str) else _ref_text(a) for a in atoms)
     from mapchar.core.tokens import escape_text
 
     want_cmp = "".join(
         escape_text(a) if isinstance(a, str) else _ref_text(a) for a in atoms
     )
-    if got != want_cmp or r.end_bit != len(result.bits):
+    if got != want_cmp or run.end_bit != len(result.bits):
         raise EncodeError(
             f"encoding does not decode back to the text (got {got!r})", None, want[:40]
         )
-    if end_terminated and result.ends_with_end and r.ended_by is not EndedBy.END_TOKEN:
+    if (
+        end_terminated
+        and result.ends_with_end
+        and run.ended_by is not EndedBy.END_TOKEN
+    ):
         raise EncodeError("the end token did not end the string", None, want[:40])
 
 

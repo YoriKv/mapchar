@@ -28,3 +28,18 @@ class Document:
     @property
     def size(self) -> int:
         return len(self.data)
+
+    def string_by_index(self, index: int) -> StringRecord | None:
+        return next((r for r in self.strings if r.index == index), None)
+
+    def string_at(self, offset: int) -> StringRecord | None:
+        """The string whose bytes hold ``offset``."""
+        return next((r for r in self.strings if r.start <= offset < r.end), None)
+
+    def string_for_pointer(self, address: int) -> StringRecord | None:
+        """The string one of whose pointers occupies ``address``."""
+        for rec in self.strings:
+            for p in rec.pointers:
+                if p.address <= address < p.address + p.size:
+                    return rec
+        return None

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 
-import pytest
-
-from helpers import table_set, tables_from
+from conftest import ABCDE, needs_abcde
+from helpers import ABC_TABLE, pointer_rom, table_set, tables_from
 from mapchar.core.block import BlockConfig, EndToken, PointerTableSource, RangeSource
 from mapchar.pipeline.exchange.atlas import (
     atlas_text,
@@ -19,18 +16,12 @@ from mapchar.pipeline.exchange.cartographer import (
     write_command_file,
 )
 from mapchar.pipeline.extract import extract
-from mapchar.plugins.registry import default_registry
 from mapchar.project.formats.table_legacy import read_abcde
 
-BODY = (
-    "@table main\n41=A\n42=B\n43=C\n/00=[end]\nFE=[line]\\n\n$F0=[color],u8\n"
-    "!F1=[item] @items:1\n@table items\n01=[Herb]\n!FF=return\n"
+BODY = ABC_TABLE + (
+    "$F0=[color],u8\n!F1=[item] @items:1\n@table items\n01=[Herb]\n!FF=return\n"
 )
 TS = table_set(BODY, "main")
-REG = default_registry()
-ABCDE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "abcde", "abcde.pl"
-)
 
 
 def test_abcde_tables_roundtrip():
@@ -47,16 +38,15 @@ def test_atlas_text():
     assert atlas_text("x\\[y\\]", None) == "x[y]"
 
 
-def test_write_and_read_atlas_script():
-    table = (0x10).to_bytes(2, "little") + (0x13).to_bytes(2, "little")
-    data = table + b"\xff" * 12 + bytes.fromhex("41 42 00 43 00") + b"\xff" * 8
+def test_write_and_read_atlas_script(registry):
+    data = pointer_rom((0x10, 0x13), "41 42 00 43 00")
     cfg = BlockConfig(
         PointerTableSource(0, 4, 2, 2, "little", "linear"),
         EndToken(),
         "main",
         bound=0x19,
     )
-    ex = extract(data, cfg, TS, REG)
+    ex = extract(data, cfg, TS, registry)
     ex.strings[0].translation = "AB[color $03]C[end]"
     export = write_atlas(
         "D", cfg, ex.strings, TS, {"main.tbl": list(TS.tables.values())}
@@ -77,16 +67,12 @@ def test_write_and_read_atlas_script():
     assert stopped.stopped_at is not None and len(stopped.strings) == 2
 
 
-@pytest.mark.skipif(
-    shutil.which("perl") is None or not os.path.exists(ABCDE),
-    reason="abcde not available",
-)
-def test_atlas_export_inserts_like_mapchar(tmp_path):
+@needs_abcde
+def test_atlas_export_inserts_like_mapchar(tmp_path, registry):
     """abcde's Atlas over the export writes what mapchar's layout writes."""
     from mapchar.pipeline.insert import apply_splices, layout_block
 
-    table = (0x10).to_bytes(2, "little") + (0x13).to_bytes(2, "little")
-    data = table + b"\xff" * 12 + bytes.fromhex("41 42 00 43 00") + b"\xff" * 8
+    data = pointer_rom((0x10, 0x13), "41 42 00 43 00")
     cfg = BlockConfig(
         PointerTableSource(0, 4, 2, 2, "little", "linear"),
         EndToken(),
@@ -94,10 +80,10 @@ def test_atlas_export_inserts_like_mapchar(tmp_path):
         bound=0x19,
         fill=0xFF,
     )
-    ex = extract(data, cfg, TS, REG)
+    ex = extract(data, cfg, TS, registry)
     ex.strings[0].translation = "ABC[item][Herb][end]"
     ex.strings[1].translation = "B[end]"
-    res = layout_block(data, cfg, TS, ex.strings, REG)
+    res = layout_block(data, cfg, TS, ex.strings, registry)
     assert res.ok
     expected = apply_splices(data, res.splices)
     export = write_atlas(
@@ -109,7 +95,14 @@ def test_atlas_export_inserts_like_mapchar(tmp_path):
     target = tmp_path / "rom.bin"
     target.write_bytes(data)
     result = subprocess.run(
-        ["perl", ABCDE, "-cm", "abcde::Atlas", "rom.bin", "script.txt"],
+        [
+            "perl",
+            str(ABCDE / "abcde.pl"),
+            "-cm",
+            "abcde::Atlas",
+            "rom.bin",
+            "script.txt",
+        ],
         cwd=tmp_path,
         capture_output=True,
         text=True,

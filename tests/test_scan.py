@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from helpers import table_set
+from helpers import ASCII_TABLE, table_set
 from mapchar.engines.scan import scan, score_window
 
-TS = table_set("@table main\n@charset ascii\n/00=[end]\n", "main")
+TS = table_set(ASCII_TABLE, "main")
 
 
 def test_scan_finds_text_and_terminator():

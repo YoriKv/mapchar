@@ -7,7 +7,7 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
-    from PySide6.QtCore import QSettings, QStandardPaths
+    from PySide6.QtCore import QStandardPaths
     from PySide6.QtGui import QIcon, QPixmap
     from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -19,14 +19,14 @@ def main(argv: list[str] | None = None) -> int:
         seed_examples,
     )
     from mapchar.plugins.registry import default_registry
+    from mapchar.ui import settings
     from mapchar.ui.main_window import MainWindow
     from mapchar.ui.theme import apply_theme
 
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("mapchar")
     app.setOrganizationName("mapchar")
-    settings = QSettings("mapchar", "mapchar")
-    apply_theme(app, str(settings.value("theme", "light")))
+    apply_theme(app, str(settings().value("theme", "light")))
     # The live window and taskbar icon on every platform; the packaged Windows
     # and macOS apps also embed packaging/mapchar.ico / .icns at build time.
     icon = QPixmap()

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapchar.core.bits import parse_hex
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -27,13 +28,7 @@ from mapchar.core.block import (
     RangeSource,
 )
 from mapchar.project.formats.script import DumpMode
-
-
-def parse_hex(text: str, default: int = 0) -> int:
-    text = text.strip().replace("$", "").replace("0x", "").replace("_", "")
-    if not text:
-        return default
-    return int(text, 16)
+from mapchar.ui.widgets import ResultsTable
 
 
 class HexEdit(QLineEdit):
@@ -346,19 +341,14 @@ class DiscoveryDialog(QDialog):
 
     def __init__(self, candidates, parent: QWidget | None = None):
         super().__init__(parent)
-        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
-
         self.setWindowTitle("Find Pointers")
         self.candidates = candidates
         layout = QVBoxLayout(self)
-        self.table = QTableWidget(len(candidates), 6)
-        self.table.setHorizontalHeaderLabels(
+        self.table = ResultsTable(
             ["Mapping", "Size", "Endian", "Strings", "Stride", "First address"]
         )
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        for row, c in enumerate(candidates):
-            cells = [
+        self.table.fill(
+            [
                 c.mapping_id,
                 str(c.size),
                 c.endian,
@@ -366,9 +356,8 @@ class DiscoveryDialog(QDialog):
                 str(c.stride),
                 f"{c.addresses[0]:X}" if c.addresses else "",
             ]
-            for col, text in enumerate(cells):
-                self.table.setItem(row, col, QTableWidgetItem(text))
-        self.table.resizeColumnsToContents()
+            for c in candidates
+        )
         if candidates:
             self.table.selectRow(0)
         layout.addWidget(self.table, 1)
@@ -383,5 +372,4 @@ class DiscoveryDialog(QDialog):
         self.resize(560, 320)
 
     def chosen(self):
-        rows = self.table.selectionModel().selectedRows()
-        return self.candidates[rows[0].row()] if rows else None
+        return self.table.pick(self.candidates)

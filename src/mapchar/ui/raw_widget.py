@@ -10,9 +10,7 @@ from PySide6.QtWidgets import QAbstractScrollArea, QWidget
 
 from mapchar.core.table import EntryKind
 from mapchar.core.tokens import Token
-from mapchar.ui import theme
-
-BYTES_PER_ROW = 16
+from mapchar.ui import BYTES_PER_ROW, theme
 
 
 @dataclass

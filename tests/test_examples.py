@@ -11,20 +11,26 @@ import os
 import re
 import shutil
 import subprocess
+from dataclasses import replace
 
 import pytest
 
+from conftest import ABCDE, ROOT, needs_abcde
+from helpers import (
+    cartographer_blocks,
+    load_abcde_tables,
+    normalise_dump,
+    relayout,
+    texts,
+)
+from mapchar.core.context import PipelineContext
 from mapchar.core.table import TableSet
 from mapchar.pipeline.exchange.cartographer import parse_command_file
 from mapchar.pipeline.extract import extract
-from mapchar.pipeline.insert import apply_splices, layout_block
-from mapchar.plugins.charsets import apply_charset
-from mapchar.plugins.registry import default_registry
+from mapchar.plugins.base import ReadSource, Stage
 from mapchar.project.formats.table_legacy import load_table_text
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ABCDE = os.path.join(os.path.dirname(ROOT), "abcde")
-EXAMPLES = os.path.join(ABCDE, "eg", "NES")
+EXAMPLES = ABCDE / "eg" / "NES"
 GAMES = {
     "Dragon Quest IV": "Dragon Quest IV - Michibikareshi Monotachi (J) (PRG1) [!].nes",
     "Dragon Warrior II": "Dragon Warrior II (U) [!].nes",
@@ -33,82 +39,48 @@ GAMES = {
 
 def _rom(game: str) -> str | None:
     name = GAMES[game]
-    for folder in (
-        os.path.join(EXAMPLES, game),
-        os.path.join(ROOT, "sample-projects", game),
-    ):
-        path = os.path.join(folder, name)
-        if os.path.exists(path):
-            return path
+    for folder in (EXAMPLES / game, ROOT / "sample-projects" / game):
+        path = folder / name
+        if path.exists():
+            return str(path)
     return None
 
 
 def _expected_blocks(text: str) -> list[tuple[str, set[str]]]:
     """``(block name, its strings)`` in command-file order."""
-    blocks: list[tuple[str, set[str]]] = []
-    name = None
-    body: list[str] = []
-
-    def flush() -> None:
-        if name is not None:
-            joined = "\n".join(body)
-            strings = {
+    return [
+        (
+            name,
+            {
                 s.rstrip("\n")
-                for s in re.split(r"(?<=\n)(?=//POINTER|//Block Range)", joined)
+                for s in re.split(r"(?<=\n)(?=//POINTER|//Block Range)", body)
                 if s.strip()
-            }
-            blocks.append((name, strings))
-
-    for line in text.split("\n"):
-        m = re.match(r"^//BLOCK #\d+ NAME:\t\t(.*)$", line)
-        if m:
-            flush()
-            name, body = m.group(1), []
-            continue
-        if name is None:
-            continue
-        if (
-            line.startswith("//")
-            and not line.startswith("//POINTER")
-            and not line.startswith("//Block Range")
-        ):
-            continue
-        if line.startswith("#"):
-            continue
-        body.append(line)
-    flush()
-    return blocks
+            },
+        )
+        for name, body in cartographer_blocks(text)
+    ]
 
 
 def _normalise(text: str) -> str:
-    text = re.sub(r"//POINTER[^\n]*\n|//Block Range[^\n]*\n", "", text)
-    text = re.sub(r"<\$([0-9A-Fa-f]{2})>", r"[$\1]", text)
-    text = re.sub(
-        r"\[([^\]$%][^\]]*)\]",
-        lambda m: "[" + re.sub(r"\s+", "_", m.group(1)) + "]",
-        text,
-    )
-    return text.replace("\n", "")
+    """One dumped string as one line, in mapchar's notation."""
+    return normalise_dump(text).replace("\n", "")
 
 
+@needs_abcde
 @pytest.mark.parametrize("game", list(GAMES))
-def test_example_project(game, tmp_path):
+def test_example_project(game, tmp_path, registry):
     rom = _rom(game)
     if rom is None:
         pytest.skip(f"{GAMES[game]} not present")
-    if shutil.which("perl") is None or not os.path.exists(
-        os.path.join(ABCDE, "abcde.pl")
-    ):
-        pytest.skip("abcde not available")
-    folder = os.path.join(EXAMPLES, game)
+    folder = EXAMPLES / game
     for name in os.listdir(folder):
         if name.endswith((".tbl", ".txt")):
-            shutil.copy(os.path.join(folder, name), tmp_path / name)
+            shutil.copy(folder / name, tmp_path / name)
     shutil.copy(rom, tmp_path / "rom.nes")
     result = subprocess.run(
         [
             "perl",
-            os.path.join(ABCDE, "abcde.pl"),
+            str(ABCDE / "abcde.pl"),
             "-cm",
             "abcde::Cartographer",
             "rom.nes",
@@ -124,24 +96,11 @@ def test_example_project(game, tmp_path):
     expected = _expected_blocks((tmp_path / "expected.txt").read_text(encoding="utf-8"))
     with open(rom, "rb") as f:
         data = f.read()
-    registry = default_registry()
-    from mapchar.core.context import PipelineContext
-    from mapchar.plugins.base import ReadSource, Stage
-
     ctx = PipelineContext()
     payload = registry.plugin(Stage.CONTAINER, "ines").read(ReadSource(data), ctx)
     header = len(data) - len(payload)
     cf = parse_command_file((tmp_path / "Cartographer.txt").read_text(encoding="utf-8"))
-    tables = {}
-    for name in sorted(os.listdir(tmp_path)):
-        if name.endswith(".tbl"):
-            tf = load_table_text(
-                (tmp_path / name).read_text(encoding="utf-8"), name, "abcde"
-            )
-            for t in tf.tables:
-                apply_charset(t, registry)
-                tables[t.id] = t
-    from dataclasses import replace
+    tables = load_abcde_tables(tmp_path, registry)
 
     assert len(expected) == len(cf.blocks)
     for (_, want_strings), block in zip(expected, cf.blocks, strict=True):
@@ -171,76 +130,65 @@ def test_example_project(game, tmp_path):
             bound=(cfg.bound - header) if cfg.bound else None,
             skips=tuple((a - header, b - header) for a, b in cfg.skips),
         )
-        ex = extract(payload, cfg, ts, registry)
-        got = {_normalise(s.original_text()) for s in ex.strings}
+        got = {_normalise(t) for t in texts(extract(payload, cfg, ts, registry))}
         want = {_normalise(s) for s in want_strings}
         assert got == want, block.name
-        res = layout_block(payload, cfg, ts, ex.strings, registry)
+        res, out = relayout(payload, cfg, ts, {}, registry)
         assert res.ok, (block.name, res.problems)
-        assert apply_splices(payload, res.splices) == payload, block.name
+        assert out == payload, block.name
 
 
 SMW = "Super Mario World"
 SMW_ROM = "Super Mario World (USA).sfc"
-SAMPLES = os.path.join(ROOT, "tools", "samples")
+SAMPLES = ROOT / "tools" / "samples"
 
 
-def test_super_mario_world():
+def test_super_mario_world(registry):
     """The in-repo SMW sample: the message boxes and the level-name parts."""
-    rom = os.path.join(ROOT, "sample-projects", SMW, SMW_ROM)
-    if not os.path.exists(rom):
+    rom = ROOT / "sample-projects" / SMW / SMW_ROM
+    if not rom.exists():
         pytest.skip(f"{SMW_ROM} not present")
-    folder = os.path.join(SAMPLES, SMW)
-    with open(rom, "rb") as f:
-        data = f.read()
-    registry = default_registry()
-    assert registry.detect_container(data, rom).info.id == "snes"  # no header
-    with open(os.path.join(folder, "Cartographer.txt"), encoding="utf-8") as f:
-        cf = parse_command_file(f.read())
-    tables = {}
-    for name in sorted(os.listdir(folder)):
-        if name.endswith(".tbl"):
-            with open(os.path.join(folder, name), encoding="utf-8") as f:
-                tf = load_table_text(f.read(), name, "abcde")
-            assert not tf.notices, (name, tf.notices)
-            for t in tf.tables:
-                apply_charset(t, registry)
-                tables[t.id] = t
+    folder = SAMPLES / SMW
+    data = rom.read_bytes()
+    assert registry.detect_container(data, str(rom)).info.id == "snes"  # no header
+    cf = parse_command_file((folder / "Cartographer.txt").read_text(encoding="utf-8"))
+    tables = load_abcde_tables(folder, registry, assert_clean=True)
     blocks = {}
     for block in cf.blocks:
         ts = TableSet.build(tables[block.table_file.removesuffix(".tbl")], tables)
         ex = extract(data, block.config, ts, registry)
         assert not ex.notices, (block.name, ex.notices)
-        res = layout_block(data, block.config, ts, ex.strings, registry)
+        res, out = relayout(data, block.config, ts, {}, registry)
         assert res.ok, (block.name, res.problems)
-        assert apply_splices(data, res.splices) == data, block.name
+        assert out == data, block.name
         blocks[block.name] = (block.config, ts, ex)
 
     config, ts, ex = blocks["Message boxes"]
-    texts = [s.original_text() for s in ex.strings]
-    assert len(texts) == 22
-    assert texts[0].startswith("Welcome!   This is[line]\nDinosaur Land.  In[line]\n")
-    assert all(t.count("[line]") == 8 for t in texts)
+    originals = texts(ex)
+    assert len(originals) == 22
+    assert originals[0].startswith(
+        "Welcome!   This is[line]\nDinosaur Land.  In[line]\n"
+    )
+    assert all(t.count("[line]") == 8 for t in originals)
     assert len(ex.strings[1].pointers) == 4  # the four switch palaces
-    assert "[$" not in "".join(texts)
+    assert "[$" not in "".join(originals)
     # An edit shorter than the original re-inserts and reads back.
-    ex.strings[0].translation = texts[0].replace("Welcome!   ", "Hi!   ", 1)
-    res = layout_block(data, config, ts, ex.strings, registry)
+    shorter = originals[0].replace("Welcome!   ", "Hi!   ", 1)
+    res, out = relayout(data, config, ts, {0: shorter}, registry)
     assert res.ok, res.problems
-    again = extract(apply_splices(data, res.splices), config, ts, registry)
+    again = extract(out, config, ts, registry)
     assert again.strings[0].original_text().startswith("Hi!   This is[line]\n")
-    assert [s.original_text() for s in again.strings[1:]] == texts[1:]
+    assert texts(again)[1:] == originals[1:]
 
     config, ts, ex = blocks["Level names"]
-    texts = [s.original_text() for s in ex.strings]
-    assert len(texts) == 57
-    assert texts[:2] == ["YOSHI'S [end]", "STAR [end]"]
-    assert texts[-1] == " [end]"  # the empty part, named by three tables
+    originals = texts(ex)
+    assert len(originals) == 57
+    assert originals[:2] == ["YOSHI'S [end]", "STAR [end]"]
+    assert originals[-1] == " [end]"  # the empty part, named by three tables
     assert len(ex.strings[-1].pointers) == 3
-    assert all(t.endswith("[end]") and t.count("[end]") == 1 for t in texts)
-    assert "[$" not in "".join(texts)
-    ex.strings[1].translation = "SUN [end]"
-    res = layout_block(data, config, ts, ex.strings, registry)
+    assert all(t.endswith("[end]") and t.count("[end]") == 1 for t in originals)
+    assert "[$" not in "".join(originals)
+    res, out = relayout(data, config, ts, {1: "SUN [end]"}, registry)
     assert res.ok, res.problems
-    again = extract(apply_splices(data, res.splices), config, ts, registry)
-    assert [s.original_text() for s in again.strings[1:3]] == ["SUN [end]", texts[2]]
+    again = extract(out, config, ts, registry)
+    assert texts(again)[1:3] == ["SUN [end]", originals[2]]

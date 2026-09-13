@@ -121,6 +121,15 @@ class BlockConfig:
         return isinstance(self.source, PointerTableSource | PointerListSource)
 
     @property
+    def fixed_length(self) -> int | None:
+        """The byte length every string has, when they all have one."""
+        if isinstance(self.string_type, FixedLength):
+            return self.string_type.length
+        if isinstance(self.source, FixedSource):
+            return self.source.length
+        return None
+
+    @property
     def effective_write_mode(self) -> WriteMode:
         if self.write_mode is not None:
             return self.write_mode
@@ -170,6 +179,29 @@ class StringRecord:
         from mapchar.core.tokens import render
 
         return render(self.original)
+
+    def current_text(self) -> str:
+        """The translation when there is one, else the original text."""
+        return (
+            self.translation if self.translation is not None else self.original_text()
+        )
+
+    def matches_original(self, text: str) -> bool:
+        """Whether ``text`` is the original text, line breaks aside."""
+        return text.replace("\n", "") == self.original_text().replace("\n", "")
+
+
+def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:
+    """The exclusive end packed strings may not cross.
+
+    The configured bound; else a range source's stop; else the last string's
+    original end (a pointer table's stop bounds pointers, not text).
+    """
+    if config.bound is not None:
+        return config.bound
+    if isinstance(config.source, RangeSource):
+        return config.source.stop
+    return strings[-1].end if strings else 0
 
 
 @dataclass

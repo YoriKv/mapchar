@@ -7,8 +7,13 @@ class MapcharError(Exception):
     """Base of every error mapchar raises on purpose."""
 
 
-class TableError(MapcharError):
-    """A table file could not be loaded. Carries the file and line."""
+class LocatedError(MapcharError):
+    """An error in a file, formatted ``path:line: message``.
+
+    ``placeholder`` stands in for a file that was not named.
+    """
+
+    placeholder = "<file>"
 
     def __init__(self, message: str, path: str | None = None, line: int | None = None):
         self.message = message
@@ -17,23 +22,22 @@ class TableError(MapcharError):
         super().__init__(self.format())
 
     def format(self) -> str:
-        where = self.path or "<table>"
+        where = self.path or self.placeholder
         if self.line is not None:
             where = f"{where}:{self.line}"
         return f"{where}: {self.message}"
 
 
-class ScriptError(MapcharError):
+class TableError(LocatedError):
+    """A table file could not be loaded. Carries the file and line."""
+
+    placeholder = "<table>"
+
+
+class ScriptError(LocatedError):
     """A script file could not be parsed."""
 
-    def __init__(self, message: str, path: str | None = None, line: int | None = None):
-        self.message = message
-        self.path = path
-        self.line = line
-        where = path or "<script>"
-        if line is not None:
-            where = f"{where}:{line}"
-        super().__init__(f"{where}: {message}")
+    placeholder = "<script>"
 
 
 class EncodeError(MapcharError):

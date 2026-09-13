@@ -217,11 +217,10 @@ def _load_preset(registry, stage, category, path, result) -> None:
 def _load_charset_table(registry, category, path, result) -> None:
     from mapchar.core.tokens import plain_text
     from mapchar.plugins.base import PluginInfo
-    from mapchar.project.formats.table_legacy import load_table_text
+    from mapchar.project.tables import read_table_file
 
     try:
-        with open(path, encoding="utf-8") as f:
-            tf = load_table_text(f.read(), path)
+        tf = read_table_file(path)
     except Exception as exc:  # noqa: BLE001
         result.issues.append(PluginLoadIssue(path, str(exc)))
         return

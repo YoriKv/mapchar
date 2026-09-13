@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -25,7 +25,7 @@ from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.engines.layout import Layout, layout
 from mapchar.ui import theme
 from mapchar.ui.glyphs import Glyph
-from mapchar.ui.icon_font import glyph_icon
+from mapchar.ui.icon_font import ThemedIcons, themed_icon
 
 
 class GlyphSheet:
@@ -121,7 +121,7 @@ class GlyphSheet:
         return out
 
 
-class PreviewWindow(QWidget):
+class PreviewWindow(ThemedIcons, QWidget):
     font_changed = Signal(object)
     """A new Font value for the bound font entry."""
     box_changed = Signal(object)
@@ -288,17 +288,10 @@ class PreviewWindow(QWidget):
     # --- state -----------------------------------------------------------
 
     def _bake_icons(self) -> None:
-        """The page arrows in the theme's button-text color; pixmaps, so they
-        are re-baked on a palette change."""
-        color = self.palette().color(QPalette.ColorRole.ButtonText)
-        ratio = self.devicePixelRatioF()
-        self.prev.setIcon(glyph_icon(Glyph.ARROW_LEFT, color, ratio=ratio))
-        self.next.setIcon(glyph_icon(Glyph.ARROW_RIGHT, color, ratio=ratio))
-
-    def changeEvent(self, event) -> None:
-        super().changeEvent(event)
-        if event.type() is QEvent.Type.PaletteChange:
-            self._bake_icons()
+        """The page arrows in the theme's button-text color."""
+        role = QPalette.ColorRole.ButtonText
+        self.prev.setIcon(themed_icon(self, Glyph.ARROW_LEFT, role))
+        self.next.setIcon(themed_icon(self, Glyph.ARROW_RIGHT, role))
 
     def set_font(self, font: Font | None) -> None:
         self._font = font

@@ -16,11 +16,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapchar.core.bits import parse_hex
 from mapchar.core.errors import TableError
 from mapchar.core.table import Entry as TableEntry
-from mapchar.core.table import EntryKind, Table
+from mapchar.core.table import Table
+from mapchar.engines.relsearch import DIGIT, LOWER, RUNS, UPPER, entries_from_base
 from mapchar.project.formats.table_native import format_entry, format_key, parse_entry
 from mapchar.project.workspace import Entry
+from mapchar.ui.widgets import fill_pick, select_data
+
+ALPHABETS = {"A-Z": UPPER, "a-z": LOWER, "0-9": DIGIT}
+"""The Fill dialog's canned runs, by the alphabet each names."""
 
 
 class TableEditor(QWidget):
@@ -77,21 +83,13 @@ class TableEditor(QWidget):
 
     def set_entry(self, entry: Entry | None) -> None:
         self._entry = entry
-        self.table_pick.blockSignals(True)
-        self.table_pick.clear()
-        if entry is not None:
-            self.title.setText(entry.name)
-            for t in entry.tables:
-                self.table_pick.addItem(t.id, t.id)
-        else:
-            self.title.setText("No table")
-        self.table_pick.blockSignals(False)
+        tables = entry.tables if entry is not None else []
+        self.title.setText(entry.name if entry is not None else "No table")
+        fill_pick(self.table_pick, [(t.id, t.id) for t in tables], None, False)
         self._fill()
 
     def select_table(self, table_id: str) -> None:
-        i = self.table_pick.findData(table_id)
-        if i >= 0:
-            self.table_pick.setCurrentIndex(i)
+        select_data(self.table_pick, table_id)
 
     def prefill(self, key_bits: str) -> None:
         self.new_line.setText(f"{format_key(key_bits)}=")
@@ -181,7 +179,7 @@ class TableEditor(QWidget):
         if not ok or not text.strip():
             return
         try:
-            delta = int(text.strip().replace("$", ""), 16)
+            delta = parse_hex(text)
         except ValueError:
             self.status.setText("Not a hex number.")
             return
@@ -215,7 +213,7 @@ class TableEditor(QWidget):
         table = self._table
         if table is None:
             return
-        templates = ["A-Z", "a-z", "0-9", "A-Z a-z 0-9", "custom…"]
+        templates = [*ALPHABETS, "A-Z a-z 0-9", "custom…"]
         choice, ok = QInputDialog.getItem(
             self, "Fill", "Characters:", templates, 0, False
         )
@@ -226,37 +224,25 @@ class TableEditor(QWidget):
             if not ok or not chars:
                 return
         else:
-            chars = "".join(
-                {
-                    "A-Z": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-                    "a-z": "abcdefghijklmnopqrstuvwxyz",
-                    "0-9": "0123456789",
-                }[part]
-                for part in choice.split()
-            )
+            chars = "".join(RUNS[ALPHABETS[part]] for part in choice.split())
         start_text, ok = QInputDialog.getText(
             self, "Fill", "First key (hex):", text="00"
         )
         if not ok:
             return
+        digits = start_text.strip().replace("$", "")
         try:
-            width = max(len(start_text.strip().replace("$", "")), 2)
-            start = int(start_text.strip().replace("$", ""), 16)
+            start = parse_hex(digits, default=-1)
         except ValueError:
+            start = -1
+        if start < 0:
             self.status.setText("Not a hex key.")
             return
-        bits_width = width * 4
-        added = 0
-        for i, ch in enumerate(chars):
-            value = start + i
-            if value >= 1 << bits_width:
-                break
-            bits = format(value, f"0{bits_width}b")
-            from mapchar.core.tokens import escape_text
-
-            table.add(TableEntry(bits, EntryKind.TEXT, escape_text(ch)), replace=True)
-            added += 1
-        self.status.setText(f"Filled {added} entries from {start:0{width}X}.")
+        width = max(len(digits), 2)
+        entries = entries_from_base(start, width * 4, "big", chars)
+        for entry in entries:
+            table.add(entry, replace=True)
+        self.status.setText(f"Filled {len(entries)} entries from {start:0{width}X}.")
         self.changed.emit(self._entry)
         self._fill()
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from mapchar.core.bits import hex_to_bits
+from mapchar.core.bits import format_key, hex_to_bits
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Notice
 from mapchar.core.table import (
@@ -21,10 +21,11 @@ from mapchar.core.table import (
     Entry,
     EntryKind,
     OperandSpec,
-    Stop,
     SwitchParam,
     Table,
+    parse_stop,
 )
+from mapchar.core.text import split_lines
 
 HEADER = "@mapchar table 1"
 
@@ -45,12 +46,6 @@ class TableFile:
     tables: list[Table]
     notices: list[Notice] = field(default_factory=list)
     dialect: str = "native"
-
-
-def split_lines(text: str) -> list[str]:
-    if text.startswith("﻿"):
-        text = text[1:]
-    return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
 def is_native(text: str) -> bool:
@@ -214,23 +209,7 @@ def parse_param(word: str) -> SwitchParam:
     if not m:
         raise ValueError(f"bad switch parameter {word!r}")
     table, stop, shared = m.group("table", "stop", "shared")
-    if stop == "*":
-        s = Stop()
-    elif stop.isdigit():
-        s = Stop(count=int(stop))
-    elif stop.startswith("$"):
-        s = Stop(fallback=hex_to_bits(stop[1:]))
-    else:
-        s = Stop(fallback=stop[1:])
-    return SwitchParam(table, s, bool(shared))
-
-
-def format_key(bits: str) -> str:
-    if len(bits) % 4 == 0:
-        return "".join(
-            format(int(bits[i : i + 4], 2), "X") for i in range(0, len(bits), 4)
-        )
-    return "%" + bits
+    return SwitchParam(table, parse_stop(stop), bool(shared))
 
 
 def format_entry(entry: Entry) -> str:
@@ -267,9 +246,11 @@ __all__ = [
     "RAW",
     "TableFile",
     "format_entry",
+    "format_key",
     "is_native",
     "parse_entry",
     "parse_native",
     "parse_param",
+    "split_lines",
     "write_native",
 ]

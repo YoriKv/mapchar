@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.tokens import Token
+from mapchar.ui import settings
 
 WORD_WRAP_KEY = "view/text_word_wrap"
 
@@ -43,16 +44,7 @@ def text_model(tokens: list[Token], offset: int, length: int) -> TextModel:
     spans: list[tuple[int, int, int, int]] = []
     at = 0
     for token in tokens:
-        if token.entry is None and not token.fallback:
-            n = len(token.bits)
-            text = "".join(
-                f"[${int(token.bits[i : i + 8], 2):02X}]"
-                for i in range(0, n - n % 8, 8)
-            )
-            if n % 8:
-                text += f"[%{token.bits[n - n % 8 :]}]"
-        else:
-            text = token.text()
+        text = token.text()
         byte_start = offset + token.bit_start // 8
         byte_end = offset + max(byte_start - offset + 1, -(-token.bit_end // 8))
         spans.append((at, at + len(text), byte_start, byte_end))
@@ -88,10 +80,8 @@ class TextWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.edit, 1)
         layout.addLayout(bar)
-        settings = QSettings("mapchar", "mapchar")
-        self.wrap.setChecked(
-            str(settings.value(WORD_WRAP_KEY, "true")).lower() == "true"
-        )
+        stored = settings().value(WORD_WRAP_KEY, "true")
+        self.wrap.setChecked(str(stored).lower() == "true")
         self.wrap.toggled.connect(self._on_wrap)
         self._apply_wrap(self.wrap.isChecked())
         self.edit.selectionChanged.connect(self._on_selection)
@@ -99,9 +89,7 @@ class TextWidget(QWidget):
         self._reported: tuple[int, int] | None = None
 
     def _on_wrap(self, on: bool) -> None:
-        QSettings("mapchar", "mapchar").setValue(
-            WORD_WRAP_KEY, "true" if on else "false"
-        )
+        settings().setValue(WORD_WRAP_KEY, "true" if on else "false")
         self._apply_wrap(on)
 
     def _apply_wrap(self, on: bool) -> None:

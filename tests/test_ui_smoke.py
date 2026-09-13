@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from helpers import pointer_rom, texts
+from mapchar.core.block import RangeSource, Status
+from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.main_window import MainWindow
-
-TABLE = "@mapchar table 1\n@table main\n41=A\n42=B\n/00=[end]\n"
+from window_helpers import ASCII_TABLE, TABLE, add_block, open_rom_and_table
 
 
 @pytest.fixture
@@ -22,13 +26,9 @@ def window(qtbot, tmp_path, monkeypatch):
 
 
 def test_open_rom_table_block_and_dump(window, tmp_path, monkeypatch):
-    rom = tmp_path / "game.bin"
-    rom.write_bytes(bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20)
-    tbl = tmp_path / "main.tbl"
-    tbl.write_text(TABLE)
-    entry = window.open_rom(str(rom))
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    entry = open_rom_and_table(window, tmp_path, data, rom_name="game.bin")
     assert entry is not None and window._doc is not None and window._doc.size == 26
-    window.open_table(str(tbl))
     assert window.table_pick.currentData() == "main"
     window._refresh_view()
     model = window.raw._model
@@ -40,19 +40,8 @@ def test_open_rom_table_block_and_dump(window, tmp_path, monkeypatch):
     assert 0 in model.string_starts and 3 in model.string_starts
 
     # A block over the first six bytes, created without the dialog.
-    from mapchar.core.block import BlockConfig, EndToken, RangeSource
-    from mapchar.project.workspace import Entry, EntryKind
-
-    block = Entry(
-        EntryKind.BLOCK,
-        "b",
-        str(rom),
-        parent=entry,
-        config=BlockConfig(RangeSource(0, 6), EndToken(), "main"),
-    )
-    window._push_add(block)
-    window._activate_entry(block)
-    assert [s.original_text() for s in window._doc.strings] == ["AB[end]", "BA[end]"]
+    add_block(window, entry, "b", RangeSource(0, 6))
+    assert texts(window._doc.strings) == ["AB[end]", "BA[end]"]
     assert window.strings.table.rowCount() == 2
 
     out = tmp_path / "dump.txt"
@@ -77,7 +66,7 @@ def test_open_rom_table_block_and_dump(window, tmp_path, monkeypatch):
     # Undo removes the last added entry.
     window.undo_stack.clear()
     window._push_add(
-        Entry(EntryKind.BOOKMARK, "bm", str(rom), parent=window.workspace.entries[0])
+        Entry(EntryKind.BOOKMARK, "bm", entry.path, parent=window.workspace.entries[0])
     )
     assert len(window.workspace.entries) == 4
     window.undo_stack.undo()
@@ -98,12 +87,8 @@ def test_navigation_and_selection(window, tmp_path):
 
 
 def test_text_display_mode(window, tmp_path):
-    rom = tmp_path / "t.bin"
-    rom.write_bytes(bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4)
-    tbl = tmp_path / "t.tbl"
-    tbl.write_text(TABLE)
-    window.open_rom(str(rom))
-    window.open_table(str(tbl))
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    open_rom_and_table(window, tmp_path, data)
     window.mode_button.setChecked(True)
     assert window.display.currentWidget() is window.text
     assert window.text.edit.toPlainText() == "AB[end]BA[end][$FF][$FF][$FF][$FF]"
@@ -120,24 +105,9 @@ def test_text_display_mode(window, tmp_path):
 
 
 def test_edit_and_write(window, tmp_path):
-    from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
-    from mapchar.project.workspace import Entry, EntryKind
-
-    rom = tmp_path / "w.bin"
-    rom.write_bytes(bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4)
-    tbl = tmp_path / "t.tbl"
-    tbl.write_text(TABLE)
-    file_entry = window.open_rom(str(rom))
-    window.open_table(str(tbl))
-    block = Entry(
-        EntryKind.BLOCK,
-        "b",
-        str(rom),
-        parent=file_entry,
-        config=BlockConfig(RangeSource(0, 6), EndToken(), "main", fill=0xEE),
-    )
-    window._push_add(block)
-    window._activate_entry(block)
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6), fill=0xEE)
     window._on_translation_edited(0, "A[end]")
     rec = block.doc.strings[0]
     assert rec.translation == "A[end]" and rec.status is Status.EDITED and block.dirty
@@ -150,7 +120,10 @@ def test_edit_and_write(window, tmp_path):
     window.undo_stack.undo()
     assert block.doc.strings[1].translation is None
     assert window._write_blocks([block])
-    assert rom.read_bytes() == bytes.fromhex("41 00 EE 42 41 00") + b"\xff" * 4
+    assert (
+        Path(file_entry.path).read_bytes()
+        == bytes.fromhex("41 00 EE 42 41 00") + b"\xff" * 4
+    )
     assert not block.dirty and block.doc.strings[0].translation is None
     assert block.doc.strings[0].original_text() == "A[end]"
     window.undo_stack.undo()  # undoing the edit after a write re-marks the block
@@ -162,24 +135,9 @@ def test_edit_and_write(window, tmp_path):
 
 
 def test_import_export_and_find_replace(window, tmp_path):
-    from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
-    from mapchar.project.workspace import Entry, EntryKind
-
-    rom = tmp_path / "i.bin"
-    rom.write_bytes(bytes.fromhex("41 42 00 42 41 00"))
-    tbl = tmp_path / "t.tbl"
-    tbl.write_text(TABLE)
-    file_entry = window.open_rom(str(rom))
-    window.open_table(str(tbl))
-    block = Entry(
-        EntryKind.BLOCK,
-        "D",
-        str(rom),
-        parent=file_entry,
-        config=BlockConfig(RangeSource(0, 6), EndToken(), "main"),
-    )
-    window._push_add(block)
-    window._activate_entry(block)
+    data = bytes.fromhex("41 42 00 42 41 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
     window._on_translation_edited(0, "B[end]")
     tsv = tmp_path / "d.tsv"
     window.export_file(str(tsv), "tsv")
@@ -220,33 +178,12 @@ def test_import_export_and_find_replace(window, tmp_path):
 
 
 def test_pointer_block_in_window(window, tmp_path, monkeypatch):
-    from mapchar.core.block import (
-        BlockConfig,
-        EndToken,
-        PointerTableSource,
-        RangeSource,
-    )
-    from mapchar.project.workspace import Entry, EntryKind
+    from mapchar.core.block import PointerTableSource
 
-    table = (0x10).to_bytes(2, "little") + (0x13).to_bytes(2, "little")
-    rom = tmp_path / "p.bin"
-    rom.write_bytes(
-        table + b"\xff" * 12 + bytes.fromhex("41 42 00 42 00") + b"\xff" * 8
-    )
-    tbl = tmp_path / "t.tbl"
-    tbl.write_text(TABLE)
-    file_entry = window.open_rom(str(rom))
-    window.open_table(str(tbl))
-    block = Entry(
-        EntryKind.BLOCK,
-        "P",
-        str(rom),
-        parent=file_entry,
-        config=BlockConfig(RangeSource(0x10, 0x15), EndToken(), "main", bound=0x18),
-    )
-    window._push_add(block)
-    window._activate_entry(block)
-    assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+    data = pointer_rom((0x10, 0x13), "41 42 00 42 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "P", RangeSource(0x10, 0x15), bound=0x18)
+    assert texts(block.doc.strings) == ["AB[end]", "B[end]"]
     monkeypatch.setattr("mapchar.ui.dialogs.DiscoveryDialog.exec", lambda self: 1)
     window._find_pointers()
     assert block.config.source == PointerTableSource(0, 4, 2, 2, "little", "linear", 0)
@@ -256,9 +193,9 @@ def test_pointer_block_in_window(window, tmp_path, monkeypatch):
     assert {0, 1, 2, 3} <= window.raw._model.pointer_bytes
     window._on_translation_edited(0, "ABB[end]")
     assert window._write_blocks([block])
-    data = rom.read_bytes()
-    assert data[0x10:0x18] == bytes.fromhex("41 42 42 00 42 00 FF FF")
-    assert data[:4] == bytes.fromhex("10 00 14 00")
+    written = Path(file_entry.path).read_bytes()
+    assert written[0x10:0x18] == bytes.fromhex("41 42 42 00 42 00 FF FF")
+    assert written[:4] == bytes.fromhex("10 00 14 00")
 
 
 def test_cartographer_and_atlas_import(window, tmp_path):
@@ -274,7 +211,7 @@ def test_cartographer_and_atlas_import(window, tmp_path):
     assert [e.name for e in created] == ["Intro"]
     block = created[0]
     assert block.config.table_id == "main"
-    assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+    assert texts(block.doc.strings) == ["AB[end]", "B[end]"]
     (tmp_path / "atlas.txt").write_text(
         '#VAR(T, TABLE)\n#ADDTBL("main.tbl", T)\n#ACTIVETBL(T)\n#JMP($0, $4)\nBA[end]\n'
         "#JMP($3, $4)\nA[end]\n"
@@ -287,7 +224,6 @@ def test_cartographer_and_atlas_import(window, tmp_path):
 
 def test_table_editor_shift_and_fill(window, tmp_path, monkeypatch):
     from mapchar.core.table import Table
-    from mapchar.project.workspace import Entry, EntryKind
 
     table = Table("t")
     entry = Entry(EntryKind.TABLE, "t.tbl", None, dialect="native", tables=[table])
@@ -310,43 +246,35 @@ def test_table_editor_shift_and_fill(window, tmp_path, monkeypatch):
 
 
 def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
-    from mapchar.core.block import BlockConfig, EndToken, RangeSource
     from mapchar.core.context import PipelineContext
     from mapchar.plugins.builtins.compression import GbaLz77
-    from mapchar.project.workspace import Entry, EntryKind
 
     payload = b"HELLO HELLO HELLO\x00WORLD WORLD\x00" * 3
     packed = GbaLz77().compress(payload, PipelineContext())
-    rom = tmp_path / "z.bin"
     slot = len(packed) + 8  # the compressed slot has spare room at its end
-    rom.write_bytes(b"\xff" * 16 + packed + b"\xff" * 8 + b"\xff" * 24)
-    tbl = tmp_path / "t.tbl"
-    tbl.write_text("@mapchar table 1\n@table main\n@charset ascii\n/00=[end]\n")
-    file_entry = window.open_rom(str(rom))
-    window.open_table(str(tbl))
+    data = b"\xff" * 16 + packed + b"\xff" * 8 + b"\xff" * 24
+    file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     window.compression_pick.setCurrentIndex(
         window.compression_pick.findData("gba_lz77")
     )
     window._go_to(16)
     assert "compressed bytes at 10 → 90 bytes" in window.decompress_window.status.text()
-    block = Entry(
-        EntryKind.BLOCK,
+    block = add_block(
+        window,
+        file_entry,
         "Z",
-        str(rom),
-        parent=file_entry,
-        config=BlockConfig(RangeSource(0, len(payload)), EndToken(), "main", fill=0x20),
+        RangeSource(0, len(payload)),
+        fill=0x20,
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=slot,
     )
-    window._push_add(block)
-    window._activate_entry(block)
     assert block.doc.data == payload and len(block.doc.strings) == 6
     window._on_translation_edited(0, "HI HI HI[end]")
     assert window._write_blocks([block])
-    data = rom.read_bytes()
-    assert data[:16] == b"\xff" * 16 and data[16 + slot :] == b"\xff" * 24
-    out = GbaLz77().decompress(data[16:], PipelineContext())
+    written = Path(file_entry.path).read_bytes()
+    assert written[:16] == b"\xff" * 16 and written[16 + slot :] == b"\xff" * 24
+    out = GbaLz77().decompress(written[16:], PipelineContext())
     assert out.startswith(b"HI HI HI\x00" + b" " * 9 + b"WORLD WORLD\x00")
     assert block.doc.strings[0].original_text() == "HI HI HI[end]"
 
@@ -354,9 +282,7 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
 def test_preview_and_wrap(window, tmp_path):
     from PySide6.QtGui import QColor, QImage
 
-    from mapchar.core.block import BlockConfig, EndToken, RangeSource
     from mapchar.core.font import CodeEffect, Effect, TextBox
-    from mapchar.project.workspace import Entry, EntryKind
 
     # A 16-column 8x8 glyph sheet: glyph i has i%8+1 inked columns.
     sheet = QImage(128, 16, QImage.Format.Format_ARGB32)
@@ -368,24 +294,11 @@ def test_preview_and_wrap(window, tmp_path):
                 sheet.setPixelColor(col * 8 + x, row * 8 + y, QColor(255, 255, 255))
     png = tmp_path / "font.png"
     sheet.save(str(png))
-    rom = tmp_path / "f.bin"
-    rom.write_bytes(b"AB CD EF GH IJ\x00")
-    tbl = tmp_path / "t.tbl"
-    tbl.write_text(
-        "@mapchar table 1\n@table main\n@charset ascii\n/00=[end]\nFE=[line]\\n\n"
+    file_entry = open_rom_and_table(
+        window, tmp_path, b"AB CD EF GH IJ\x00", table=ASCII_TABLE + "FE=[line]\\n\n"
     )
-    file_entry = window.open_rom(str(rom))
-    window.open_table(str(tbl))
     font_entry = window.open_font(str(png))
-    block = Entry(
-        EntryKind.BLOCK,
-        "F",
-        str(rom),
-        parent=file_entry,
-        config=BlockConfig(RangeSource(0, 15), EndToken(), "main"),
-    )
-    window._push_add(block)
-    window._activate_entry(block)
+    block = add_block(window, file_entry, "F", RangeSource(0, 15))
     window._show_preview()
     assert block.box is not None and block.box.font_index == 0
     from dataclasses import replace
@@ -476,30 +389,14 @@ def test_hex_panel_overtypes_in_place(window, tmp_path, qtbot):
 
 
 def test_fonts_panel_lists_and_binds(window, tmp_path):
-    from mapchar.core.block import BlockConfig, EndToken, RangeSource
-    from mapchar.project.workspace import Entry, EntryKind
-
-    rom = tmp_path / "g.bin"
-    rom.write_bytes(b"AB\x00")
-    tbl = tmp_path / "t.tbl"
-    tbl.write_text(TABLE)
-    file_entry = window.open_rom(str(rom))
-    window.open_table(str(tbl))
-    png = tmp_path / "f.png"
     from PySide6.QtGui import QImage
 
+    file_entry = open_rom_and_table(window, tmp_path, b"AB\x00")
+    png = tmp_path / "f.png"
     QImage(128, 8, QImage.Format.Format_ARGB32).save(str(png))
     font_entry = window.open_font(str(png))
     assert window.fonts_panel.tree.topLevelItemCount() == 1
-    block = Entry(
-        EntryKind.BLOCK,
-        "B",
-        str(rom),
-        parent=file_entry,
-        config=BlockConfig(RangeSource(0, 3), EndToken(), "main"),
-    )
-    window._push_add(block)
-    window._activate_entry(block)
+    block = add_block(window, file_entry, "B", RangeSource(0, 3))
     window._edit_font_entry(font_entry)
     assert block.box is not None and block.box.font_index == 0
     window.fonts_panel.rebuild()
@@ -507,7 +404,6 @@ def test_fonts_panel_lists_and_binds(window, tmp_path):
 
 
 def test_cartographer_import_strips_the_header(window, tmp_path):
-    from mapchar.core.block import RangeSource
     from mapchar.plugins.builtins.containers import NES_MAGIC
 
     header = NES_MAGIC + bytes([1, 0, 0, 0]) + b"\x00" * 8
@@ -521,4 +417,4 @@ def test_cartographer_import_strips_the_header(window, tmp_path):
     window.open_rom(str(rom))
     block = window.import_cartographer(str(tmp_path / "cmd.txt"))[0]
     assert block.config.source == RangeSource(0, 5)
-    assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+    assert texts(block.doc.strings) == ["AB[end]", "B[end]"]

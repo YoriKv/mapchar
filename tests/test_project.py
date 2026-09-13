@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from helpers import table_set
+from helpers import ABC_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
 from mapchar.core.context import PipelineContext
 from mapchar.core.document import Document
@@ -38,7 +38,7 @@ def test_project_roundtrip(tmp_path):
     f = ws.open_file(str(rom), container_id="raw")
     cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
     b = ws.add(Entry(EntryKind.BLOCK, "Dialogue", str(rom), parent=f, config=cfg))
-    ts = table_set("@table main\n41=A\n42=B\n/00=[end]\n", "main")
+    ts = table_set(ABC_TABLE, "main")
     ex = extract(rom.read_bytes(), cfg, ts)
     b.doc = Document(rom.read_bytes(), PipelineContext(), True, strings=ex.strings)
     b.doc.strings[1].translation = "C[end]"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from helpers import table_set
-from mapchar.core.bits import Bits
+from mapchar.core.bits import Bits, align_up
 from mapchar.core.tokens import render
 from mapchar.engines.decode import DecodeRules, EndedBy, decode
 
@@ -153,3 +153,8 @@ def test_labelled_return_with_raw_bytes():
     ts = table_set("@table main\n41=A\n!FF=[bye] @raw:1 return\n", "main")
     r = decode(Bits(bytes.fromhex("41 FF 01 41")), ts, 0)
     assert render(r.tokens) == "A[bye][$01]" and r.ended_by is EndedBy.RETURN
+
+
+def test_realign_rounds_up_to_the_next_multiple():
+    assert (align_up(5, 4), align_up(8, 4), align_up(5, 4, 2)) == (8, 8, 6)
+    assert align_up(5, 0) == 5  # no multiple, no move

@@ -41,8 +41,7 @@ def apply_script(
                     f"{sb.name}/{ss.index}: script says ${ss.start:X}-${ss.end:X}, "
                     f"project has ${rec.start:X}-${rec.end:X}"
                 )
-            original = rec.original_text().replace("\n", "")
-            if ss.text.replace("\n", "") == original:
+            if rec.matches_original(ss.text):
                 if rec.translation is not None:
                     rec.translation = None
                     rec.status = Status.UNTOUCHED

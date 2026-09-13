@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from helpers import table_set
+from helpers import ABC_TABLE, table_set
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -11,6 +11,8 @@ from mapchar.core.block import (
     WriteMode,
 )
 from mapchar.core.errors import ScriptError
+from mapchar.core.numbers import format_num, parse_num
+from mapchar.core.text import escape, unescape
 from mapchar.pipeline.extract import extract
 from mapchar.project.formats.script import (
     DumpMode,
@@ -20,9 +22,7 @@ from mapchar.project.formats.script import (
     write_script,
 )
 
-TS = table_set(
-    "@table main\n41=A\n42=B\n40=@\n23=#\n5C=\\\\\n/00=[end]\nFE=[line]\\n\n", "main"
-)
+TS = table_set(ABC_TABLE + "40=@\n23=#\n5C=\\\\\n", "main")
 
 
 def test_config_roundtrip():
@@ -78,3 +78,11 @@ def test_script_errors():
         parse_script("@mapchar script 1\ntext without string\n")
     with pytest.raises(ScriptError):
         parse_script('@mapchar script 1\n@block "b" source=bogus\n')
+
+
+def test_numbers_and_escapes_round_trip():
+    """The number and escape spelling every table and script format shares."""
+    assert [parse_num(t) for t in ("$FF", "-$10", "$-10", "16")] == [255, -16, -16, 16]
+    assert format_num(255) == "$FF" and format_num(-16) == "$-10"
+    raw = "a\\b\nc\td"
+    assert escape(raw, "\t") == "a\\\\b\\nc\\td" and unescape(escape(raw, "\t")) == raw

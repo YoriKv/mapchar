@@ -1,21 +1,18 @@
 from __future__ import annotations
 
-from helpers import table_set
+from helpers import ABC_TABLE, table_set, texts
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
     FixedSource,
     Pascal,
+    PointerListSource,
     RangeSource,
 )
 from mapchar.pipeline.extract import extract
 
-TS = table_set("@table main\n41=A\n42=B\n43=C\n/00=[end]\nFE=[line]\\n\n", "main")
-
-
-def texts(ex):
-    return [s.original_text() for s in ex.strings]
+TS = table_set(ABC_TABLE, "main")
 
 
 def test_range_end_tokens():
@@ -82,3 +79,25 @@ def test_skips():
     data = bytes.fromhex("41 FF FF 42 00")
     cfg = BlockConfig(RangeSource(0, 5), EndToken(), "main", skips=((1, 3),))
     assert texts(extract(data, cfg, TS)) == ["AB[end]"]
+
+
+def test_backwards_skip_reads_every_string(registry):
+    """A Cartographer ``AUTO JUMP`` whose stop is behind its start.
+
+    Reading byte $9 continues at $4, so the two-byte ``X`` at $8 reads $8 and
+    $4 and ends its run back at $5 -- behind where the run started. Both
+    pointers still read both of their runs.
+    """
+    ts = table_set(ABC_TABLE + "4341=X\n", "main")
+    # Pointers to $4 and $8, then A[end] B[end] at $4 and the 43 of X at $8.
+    data = bytes.fromhex("04 00 08 00 41 00 42 00 43")
+    cfg = BlockConfig(
+        PointerListSource((0, 2), 2, "little", "linear"),
+        EndToken(),
+        "main",
+        strings_per_pointer=2,
+        skips=((9, 4),),
+    )
+    ex = extract(data, cfg, ts, registry)
+    assert texts(ex) == ["A[end]B[end]", "X[end]B[end]"]
+    assert [(s.start, s.end) for s in ex.strings] == [(4, 8), (8, 8)]

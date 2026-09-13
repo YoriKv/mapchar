@@ -8,6 +8,7 @@ codes that the encoder resolves against a table set.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from mapchar.core.table import Entry, EntryKind, OperandSpec
@@ -33,10 +34,7 @@ class Token:
         """Every bit this token stands for, operands included."""
         if self.entry is None:
             return self.bits
-        return self.entry.bits + "".join(
-            spec.bits_of(value)
-            for spec, value in zip(self.entry.operands, self.operands, strict=False)
-        )
+        return bits_for(self.entry, self.operands)
 
     @property
     def is_end(self) -> bool:
@@ -50,8 +48,20 @@ class Token:
     def weight(self) -> int:
         return 0 if self.entry is None else self.entry.weight
 
+    @property
+    def pascal_weight(self) -> int:
+        """Weight for a Pascal length count, where unmatched data counts as one."""
+        return 1 if self.entry is None else self.weight
+
     def text(self) -> str:
         return render_token(self)
+
+
+def bits_for(entry: Entry, values: Iterable[int]) -> str:
+    """An entry's bits with its operand ``values`` packed after them."""
+    return entry.bits + "".join(
+        spec.bits_of(value) for spec, value in zip(entry.operands, values, strict=False)
+    )
 
 
 _ESCAPES = {"[": "\\[", "]": "\\]", "\\": "\\\\"}
@@ -68,11 +78,12 @@ def render_token(token: Token) -> str:
         return ""
     if entry is None:
         n = len(token.bits)
-        if n % 8 == 0:
-            return "".join(
-                f"[${int(token.bits[i : i + 8], 2):02X}]" for i in range(0, n, 8)
-            )
-        return f"[%{token.bits}]"
+        whole = n - n % 8
+        out = "".join(
+            f"[${int(token.bits[i : i + 8], 2):02X}]" for i in range(0, whole, 8)
+        )
+        # A tail of fewer than eight bits is shown as bits.
+        return out + (f"[%{token.bits[whole:]}]" if n % 8 else "")
     if entry.kind in (EntryKind.TEXT, EntryKind.END, EntryKind.SWITCH):
         # Table text is already in script form; ``\n`` becomes a line break
         # on dump and is ignored on insert, so dumps re-insert unchanged.

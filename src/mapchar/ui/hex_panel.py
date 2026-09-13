@@ -15,11 +15,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-WINDOW = 4096
-ROW = 16
+from mapchar.core.bits import parse_hex
+from mapchar.ui import BYTES_PER_ROW, TEXT_WINDOW_BYTES
 
-
-LINE_LEN = 6 + 2 + ROW * 3 - 1 + 2 + ROW + 1
+LINE_LEN = 6 + 2 + BYTES_PER_ROW * 3 - 1 + 2 + BYTES_PER_ROW + 1
 """Characters per dump line, newline included."""
 
 
@@ -37,12 +36,12 @@ class _HexView(QPlainTextEdit):
         pos = self.textCursor().position()
         row, col = divmod(pos, LINE_LEN)
         hex_start = 8
-        if col < hex_start or col >= hex_start + ROW * 3 - 1:
+        if col < hex_start or col >= hex_start + BYTES_PER_ROW * 3 - 1:
             return None
         rel = col - hex_start
         if rel % 3 == 2:
             return None
-        byte = self._panel._offset + row * ROW + rel // 3
+        byte = self._panel._offset + row * BYTES_PER_ROW + rel // 3
         if byte >= len(self._panel._data):
             return None
         return byte, rel % 3
@@ -127,8 +126,8 @@ class HexPanel(QWidget):
         self._data = data
         self._selection = selection
         if selection and self.follow.isChecked():
-            offset = max(0, selection[0] - selection[0] % ROW)
-        self._offset = offset - offset % ROW
+            offset = max(0, selection[0] - selection[0] % BYTES_PER_ROW)
+        self._offset = offset - offset % BYTES_PER_ROW
         if not self.isVisible():
             return
         self._render()
@@ -139,12 +138,12 @@ class HexPanel(QWidget):
     def _render(self) -> None:
         caret = self.view.textCursor().position()
         lines = []
-        end = min(self._offset + WINDOW, len(self._data))
-        for at in range(self._offset, end, ROW):
-            chunk = self._data[at : at + ROW]
+        end = min(self._offset + TEXT_WINDOW_BYTES, len(self._data))
+        for at in range(self._offset, end, BYTES_PER_ROW):
+            chunk = self._data[at : at + BYTES_PER_ROW]
             hexes = " ".join(f"{b:02X}" for b in chunk)
             ascii_ = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in chunk)
-            lines.append(f"{at:06X}  {hexes:<{ROW * 3 - 1}}  {ascii_}")
+            lines.append(f"{at:06X}  {hexes:<{BYTES_PER_ROW * 3 - 1}}  {ascii_}")
         self.view.setPlainText("\n".join(lines))
         if self._selection is None or not self.follow.isChecked():
             cursor = self.view.textCursor()
@@ -153,12 +152,12 @@ class HexPanel(QWidget):
         if self._selection:
             s, e = self._selection
             if self._offset <= s < end:
-                row = (s - self._offset) // ROW
-                col = (s - self._offset) % ROW
+                row = (s - self._offset) // BYTES_PER_ROW
+                col = (s - self._offset) % BYTES_PER_ROW
                 start = row * LINE_LEN + 8 + col * 3
                 n = min(e, end) - s
-                rows_span = (col + n - 1) // ROW
-                length = n * 3 - 1 + rows_span * (LINE_LEN - ROW * 3)
+                rows_span = (col + n - 1) // BYTES_PER_ROW
+                length = n * 3 - 1 + rows_span * (LINE_LEN - BYTES_PER_ROW * 3)
                 cursor = self.view.textCursor()
                 cursor.setPosition(start)
                 cursor.setPosition(
@@ -169,13 +168,13 @@ class HexPanel(QWidget):
 
     def _on_goto(self) -> None:
         try:
-            self.go_to_requested.emit(int(self.goto.text().replace("$", ""), 16))
+            self.go_to_requested.emit(parse_hex(self.goto.text()))
         except ValueError:
             pass
 
     def _on_apply(self) -> None:
         try:
-            at = int(self.at.text().replace("$", ""), 16)
+            at = parse_hex(self.at.text())
             data = bytes.fromhex(self.bytes.text().replace("$", "").replace(",", " "))
         except ValueError:
             self.bytes.setStyleSheet("")
