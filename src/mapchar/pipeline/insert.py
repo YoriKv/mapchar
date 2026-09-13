@@ -262,28 +262,6 @@ def apply_splices(data: bytes, splices: list[Splice]) -> bytes:
     return bytes(out)
 
 
-def check_roundtrip(
-    data: bytes, config: BlockConfig, tables: TableSet, strings
-) -> list[str]:
-    """After a layout, the strings that do not decode back as expected."""
-    from mapchar.pipeline.extract import extract
-
-    ex = extract(data, config, tables)
-    problems = []
-    by_index = {s.index: s for s in ex.strings}
-    for rec in strings:
-        want = rec.current_text()
-        got = by_index.get(rec.index)
-        if got is None:
-            problems.append(f"string {rec.index} vanished")
-            continue
-        if not got.matches_original(want):
-            if got.ended_by_data if hasattr(got, "ended_by_data") else False:
-                continue
-            problems.append(f"string {rec.index} reads back differently")
-    return problems
-
-
 __all__ = [
     "EndedBy",
     "LayoutResult",

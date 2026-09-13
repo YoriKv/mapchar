@@ -41,8 +41,8 @@ the preview system in [preview.md](preview.md).
   - **font** — a glyph sheet registered for [preview](preview.md).
 - **Interpretation chain** — bytes reach the screen through three configurable
   steps, each run in reverse on write:
-  - **container** — unwraps the file: iNES header, SNES copier header, joined
-    chips;
+  - **container** — unwraps the file: an iNES or SNES copier header, an N64
+    byte order, a `.smd` or SNES interleave, joined chips;
   - **compression** — Huffman, LZ, bit-packed text;
   - **encoding** — the table set plus the string rules that cut the bytes
     into strings.
@@ -69,12 +69,19 @@ the preview system in [preview.md](preview.md).
   - the central view, a tab pair: **Raw** and **Strings**;
   - the navigation bar under Raw; the string status bar under Strings.
 - **Hex** dock — optional, at the bottom, hidden by default.
-- **Panels** menu — toggles each dock. **Reset Panel Layout** restores the
-  defaults.
+- **Navigate** menu — **Back / Forward** through the entries visited, **Go to
+  Address**, and the ends of the file.
+- **Panels** menu — toggles each dock. **Reset Panel Layout** puts the docks
+  back where a fresh install has them, leaving the window's own size alone.
 - **Tool windows** — separate top-level windows that remember their
-  placement: Search, Scan, Table Editor, Preview, Decompressed view.
+  placement: Search, Scan, Table Editor, Preview, Decompressed view, Find and
+  Replace.
+- **Long operations** — the text scan, the relative search, the structure scan
+  and pointer discovery all run with a Stop button and a progress reading, and
+  hand back whatever they found when stopped.
 - **Window size and dock layout** are remembered per machine, never in the
-  project.
+  project. They are written a moment after they change rather than at quit, so
+  a drag survives a crash.
 - **Messages** — errors appear as modal warnings; progress and results go to
   the status bar.
 - **Quitting** asks about an unsaved project first, then about unsaved file
@@ -91,10 +98,11 @@ the preview system in [preview.md](preview.md).
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
   [Dump, export and import](#dump-export-and-import)).
-- **Drag and drop** onto the window: `.mapchar` opens the project; `.tbl`
-  registers a table; `.png` registers a font; a script or translator file
-  imports; anything else opens as a ROM. Hold **Ctrl** while dropping to be
-  asked.
+- **Drag and drop** onto the window: `.mapchar` opens the project and claims
+  the whole drop; `.tbl` registers a table; `.png` registers a font; `.tsv`,
+  `.csv` and `.po` import as translator files; a `.txt` carrying a native
+  script or table header imports or registers as that; anything else opens as
+  a ROM. Hold **Ctrl** while dropping to be asked instead.
 
 ## The Files panel
 
@@ -111,8 +119,10 @@ the preview system in [preview.md](preview.md).
   - **?** (file missing) or **!** (read notices), washing the row amber.
 - **Tooltips** give paths, container, offset and length, the start table, and
   any notice text.
-- **Selecting** — click opens an entry; Shift/Ctrl extend the selection; with
-  several rows selected only Remove and Move Up/Down apply.
+- **Selecting** — click opens an entry; a table opens the Table Editor and a
+  font the Preview window's Font tab, neither becoming the view; Shift/Ctrl
+  extend the selection; with several rows selected only Remove and Move
+  Up/Down apply.
 - **Filter box** (Ctrl+F) matches every typed word in any order. A matching
   child keeps its parent visible.
 - **Double-click** — bookmark jumps; table opens the Table Editor; file or
@@ -126,8 +136,9 @@ the preview system in [preview.md](preview.md).
   settings), never on bytes. The clipboard carries absolute paths, so entries
   paste into another mapchar window.
 - **Remove (Del)** asks once for the whole selection and names child blocks
-  and bookmarks, unsaved edits being discarded, and blocks using a removed
-  table (they keep an in-project copy of it).
+  and bookmarks, unsaved edits being discarded, and blocks reading through a
+  removed table: they keep their translations, but cannot be re-read or written
+  until the table is loaded again.
 
 ## Tables
 
@@ -138,20 +149,32 @@ the preview system in [preview.md](preview.md).
   **Save As Native** writes the conversion out. Conversion notices (dropped
   duplicates, renamed labels, generated kanji tables) are listed once per
   file.
-- **Charsets** — a table can sit on a built-in charset (ASCII, Shift-JIS,
-  EUC-JP, UTF-16) and only list its overrides.
+- **Charsets** — a table can sit on a built-in charset (ASCII, Latin-1,
+  Shift-JIS as CP932, EUC-JP as JIS X 0213, UTF-8, UTF-16) and only list its
+  overrides. A table file that is not UTF-8 is read as `cp932`, else
+  `latin-1`, and says which in a notice.
 - **Table Editor** (View ▸ Table Editor…) edits a table over a live view of
   the bytes:
-  - a grid of Key / Text / Kind (text, end, code, switch) / Weight, with the
-    operand and switch fields shown for the kinds that have them;
-  - **Add from selection** — the bytes selected in the raw view become a new
-    key;
+  - a grid of one row per key: its line in the native grammar, edited as
+    text, beside what that line means (kind, operands, switches);
+  - **Add** — a typed entry line; the raw view's **Add to Table…** prefills it
+    from the selected bytes;
   - **Shift keys** — moves a range of keys up or down by a constant;
-  - **Fill…** — templates: `A–Z`, `a–z`, `0–9`, a typed string laid over a
-    key range, or a charset;
+  - **Fill…** — templates: `A–Z`, `a–z`, `0–9`, the three together, `あ-ん`,
+    `ア-ン`, or a typed string, laid over consecutive keys from a start key;
+    keys that already have entries are left alone unless the prompt is
+    answered with Overwrite (a whole standard encoding is a **charset** on the
+    table, not a fill);
   - every change is one undo step and re-decodes every view using the table.
-- **Reload** — a table file edited outside the app is re-read on request or
-  when its timestamp changes, with a prompt if the in-app copy has edits.
+- **Where the edits live** — in the project, as an overlay of the entries
+  added, changed and removed over the file, so the table file on disk keeps
+  saying what it said for every other tool that reads it. **Save As Native**
+  writes them out and spends the overlay. A table with no file of its own —
+  from a relative search, or from **Add from selection** — is carried whole by
+  the project the same way.
+- **Reload** — a table file edited outside the app is re-read when its
+  timestamp changes, with a prompt if the in-app copy has edits. The edits stay
+  on top of what was re-read, and win where they overlap.
 
 ## Raw view
 
@@ -171,10 +194,15 @@ The exploration surface, the equivalent of celPix's tile canvas.
   switch remembered per machine. The toggle is a button on the navigation
   bar (Ctrl+Shift+A) and is remembered per machine. Selections follow each
   other between the two modes.
-- **Navigation** — the address row (Hex, a mapping preset, or Custom bank
-  fields), an offset box, page and row steps, **−B / +B / 0B** byte nudges,
-  Home/End, and a file-position rail. **Back / Forward** walk a trail of
-  visited entries.
+- **Navigation** — the address format (Hex, a console mapping preset, or Custom
+  bank fields), an address box, Home, page and row steps, **−B / +B** byte
+  steps, and End. The format is remembered per machine and drives the address
+  box, **Go to Address** and the Hex panel's address column alike. **Back /
+  Forward** (Alt+Left / Alt+Right, or the browser buttons on a mouse) walk a
+  trail of the entries visited.
+- **The keys work wherever the focus is** — a picked table or a clicked row
+  does not take the navigation keys away — except inside a text field or a list,
+  which spend the arrows themselves.
 - **Selection** — drag over hex or text; both columns follow. The status bar
   shows offset, length and the selected bytes' decode.
 - **Context menu** — New Block from Selection, New Bookmark, Add to Table
@@ -188,8 +216,9 @@ The exploration surface, the equivalent of celPix's tile canvas.
 All searches run over the current file through its container and
 compression, and report offsets in the file's coordinates.
 
-- **Find** (Ctrl+F in a view) — hex bytes, or text encoded through the start
-  table; next and previous, wrapping.
+- **Find** (Ctrl+F in a view) — hex bytes, or `"quoted text"` run through the
+  encode engine, so multi-character entries, `[codes]` and table switches are
+  all searchable; next and previous, wrapping.
 - **Relative search** (Search window):
   - type a word; the tool finds byte runs with the same relative pattern,
     for 8- and 16-bit codes, in either endianness;
@@ -197,18 +226,23 @@ compression, and report offsets in the file's coordinates.
     runs, so `Hello` matches even when `H` and `e` are in different runs;
   - **Wildcards** — `?` matches any one code;
   - hits list offset, the matched bytes, and the inferred base for each run;
+  - **Limit** — how many hits to keep; a search that reaches it says so, so
+    the limit is never a silent truncation;
+  - kana are runs too: hiragana and katakana in gojūon order, so a Japanese
+    word finds its font the same way a Latin one does;
   - **Build table** — a hit seeds a new table (or extends the current one)
-    with the inferred letters, given the alphabets to lay out (`A–Z`, `a–z`,
-    `0–9`, or a custom order).
+    with the inferred characters, given the alphabets to lay out (`A–Z`,
+    `a–z`, `0–9`, `あ-ん`, `ア-ン`, or a custom order).
 - **Scan** (Scan window) — scores the file for text-likeness under the start
   table, in windows of a chosen size:
-  - the score is the fraction of bytes that decode to text tokens, weighted
-    by dictionary-word hits for Latin tables;
+  - the score is the fraction of bits that decode to text tokens, plus a
+    capped bonus for dictionary-word hits in Latin tables, less a penalty that
+    grows with the share of unmatched data;
   - results are ranked regions with their score, the most common terminator
     byte in each, and the byte the region most often starts strings with;
-  - **Go to** jumps the raw view there; **New Block** creates a block over
-    the region with the guessed end token;
-  - the scan runs with a Stop button and a progress bar.
+  - selecting a region jumps the raw view there; **New block from region**
+    creates a block over it with the guessed end token;
+  - the scan runs with a Stop button and a percentage readout.
 - **Pointer discovery** — see [Pointers](#pointers).
 
 ## Blocks
@@ -245,11 +279,14 @@ the block's **Edit…** open the block dialog.
   defaults to `stop`, or to the last string's end for pointer sources.
 - **Write mode** — **Packed** or **Slotted**; see [Writing](#writing-back-to-disk).
 - **Fill byte** — what pads unused space on write.
-- A block inherits its parent file's container and compression and
-  may override compression, in which case it is a decompressed region with
-  its own **spare room** rule (keep bytes, fill).
-- **Jump to Source** shows the parent file at the block's offset in the raw
-  view.
+- **Compression** — a block inherits its parent file's container and
+  compression and may override the compression, in which case it is a
+  decompressed region over the compressed slot at its offset, with its own
+  **spare room** rule (fill, or keep the bytes that were there).
+- **Jump to Source** shows the parent file at the block's own offset in the
+  raw view — its compressed slot for a decompressed block, its first pointer
+  for a pointer list — with the block's start table picked and, where it has
+  one, its compression armed in the Compression preview.
 
 ## Pointers
 
@@ -259,7 +296,7 @@ the block's **Edit…** open the block dialog.
 - **Pointer table entry** in the Strings view — every string lists the
   pointers that reach it; a target reached by several pointers is one string
   with several pointers, written back to all of them.
-- **Discovery** (Strings view ▸ Find Pointers, or Search window):
+- **Discovery** (**Search ▸ Find Pointers…**, Ctrl+Shift+P, on a block):
   - for the selected string (or every string in the block), compute the
     pointer value under each mapping and each of 16/24/32 bits, both
     endiannesses, with an optional offset range;
@@ -267,6 +304,8 @@ the block's **Edit…** open the block dialog.
   - results are grouped by the (mapping, size, endian, offset) combination
     that explains the most strings, with the address range they occupy and
     the stride between them;
+  - the search runs with a Stop button and a progress bar, and a stopped
+    search still offers what it had ranked;
   - **Use as pointer table** converts the block's source to a pointer table
     from the chosen result; **Attach** adds the found addresses to the
     strings without changing the source.
@@ -279,23 +318,29 @@ The editing surface, opened on a block.
 
 - **Columns** — `#`, address, pointers, **Original** (read-only, the decode
   of the bytes on disk), **Translation** (editable), bytes used / bytes
-  available, status, notes. Columns can be hidden and reordered.
+  available, status, notes. The header's context menu hides and shows
+  columns, and dragging a header section reorders them; Translation stays.
 - **Status**, per string: **untouched**, **edited**, **too long** (the
   encoding does not fit; see [Writing](#writing-back-to-disk)), **invalid**
   (the translation cannot be encoded), **review** (set by hand or by import),
   and, when a preview font is bound, **overflows box**.
 - **Editing** — the Translation cell is a multi-line editor:
   - typing edits text; `[` opens code completion listing the table set's
-    codes with their operand shapes; Ctrl+Return commits;
-  - **Insert code** buttons for the most-used codes of the table set;
-  - the byte readout updates as you type, from a live encode;
-  - **Revert** copies Original back; **Copy Original to All** fills empty
-    translations;
-  - **Wrap** (preview bound only) inserts line codes to fit the box; see
-    [preview.md](preview.md#wrapping).
-- **Filter** — words in any order over original, translation and notes;
-  status chips narrow to one status; **Go to address** selects the string
-  covering an offset.
+    codes with their operand shapes; Ctrl+Return (or Return) commits and Esc
+    cancels;
+  - **Shift+Return** writes the block's newline code — the code carrying the
+    *newline* effect, else `[line]` — never a line break, which the script
+    grammar drops;
+  - **Insert code** buttons for the codes this block's strings use most;
+  - the byte readout updates as you type, from a live encode, against the
+    room the string has; the Preview follows the draft and lists what the
+    font cannot spell;
+  - **Revert** copies Original back; **Copy Original to Empty Translations**
+    fills the ones with none;
+  - the Preview window's **Wrap translation** (font and box bound) inserts line
+    codes to fit the box; see [preview.md](preview.md#wrapping).
+- **Filter** — words in any order over original, translation and notes; a
+  status box narrows to one status.
 - **Selection sync** — selecting a string highlights its bytes in the raw
   view and the Hex panel; selecting bytes there selects the string.
 - **Bulk edit** — Find and Replace across translations of the block or the
@@ -306,8 +351,9 @@ The editing surface, opened on a block.
 
 - **What a write does** — encodes every translation of a block through the
   table set, lays the results out, rewrites pointers, then runs the chain in
-  reverse (compress, container) and writes only the bytes that
-  changed.
+  reverse (compress, container) over the file as it stands on disk at that
+  moment, and writes the result back — the block's own region is the only part
+  of the file the write changes.
 - **Write mode:**
   - **Packed** (default with pointers) — strings are laid end to end from the
     block's first string address, each pointer is rewritten to its string's
@@ -324,10 +370,18 @@ The editing surface, opened on a block.
   give back the same tokens; a mismatch is **invalid** and blocks the write.
 - **File ▸ Write (Ctrl+W)** writes the current block; **Write All
   (Ctrl+Shift+W)** writes every block with edits; the Files panel writes one
-  entry. Blocks over one compressed region write together.
-- Other open entries on the same file refresh afterwards. Opening, creating
-  or saving a project with unsaved edits offers **Write All / Continue
-  Without / Cancel**.
+  entry. An entry that cannot be written says why: a bookmark has no bytes of
+  its own, a table file is written with **Save As Native…**, a glyph sheet is
+  never written to, and a view-only entry names the stage that has no way
+  back.
+- **Blocks over one compressed region write together** — they are laid out
+  into one decompressed buffer and it is compressed once, since the region
+  holds one stream.
+- **Other open entries on the same file refresh afterwards** — a block over a
+  compressed region by decompressing again, since its bytes are a reading of
+  the region rather than a window on it. One with unsaved edits keeps them.
+- Opening, creating or saving a project with unsaved edits offers **Write All
+  / Continue Without / Cancel**.
 
 ## Dump, export and import
 
@@ -358,12 +412,38 @@ The editing surface, opened on a block.
   through the start table; it hides when nothing decodes.
 - **Jump to Next** skips past a complete structure; **Scan** searches forward
   for the next complete structure with a Stop button; **To Block** creates a
-  decompressed block over the structure.
+  decompressed block over one. All three want a *complete* structure: the
+  preview will show the prefix of a stream that runs out mid-way, but a
+  prefix's length is the window's rather than the structure's, so nothing steps
+  by it or records it as a block's slot.
 - **Editing** decompressed text goes through such a block; writing
-  re-compresses into the slot and **spare room** fills the rest.
-- Schemes are plugins: Huffman (tree in ROM, table-driven), LZSS variants,
-  bit-packed text (5/6-bit alphabets), and the generic decompressors shared
-  with graphics tools.
+  re-compresses into the slot, and **spare room** decides what becomes of the
+  room a shorter result leaves — *fill* writes the block's fill byte over it,
+  *keep* writes short and leaves the old stream's tail standing. A result that
+  does not fit is refused, and a slot whose length nobody recorded is bounded by
+  the end of the region rather than unbounded.
+- Schemes are plugins, and every one of them compresses back:
+  - **LZSS family**, one engine and a preset per framing — GBA/NDS BIOS LZ77,
+    the 4 KiB ring LZSS behind a u32 size prefix, the Okumura framing it came
+    from, and SLZ16/SLZ24;
+  - **command LZ** — LZ1 (Zelda 3) and LZ2 (SMW, Yoshi's Island), each with a
+    byte-exact parse and a ~13%-smaller one;
+  - **Kosinski** and **PRS**, Sega's two general-purpose schemes;
+  - **RLE** — RLE1 and RLE2, Konami RLE in its Contra and FDS readings, and
+    PackBits;
+  - **bit-packed text**, registered ready-made in 5-, 6- and 7-bit alphabets
+    and available as an engine for any other width;
+  - **Huffman** through a node table in the ROM, which is the one scheme with
+    nothing to register ready-made — the node layout and the tree's address are
+    the format — so it ships as the `_huffman.toml` example over its engine.
+- A scheme **with no end to find** — PackBits, RLE2, bit-packed text, the
+  Okumura LZSS, Huffman with no end symbol — never reports a complete
+  structure, so Scan cannot find one and a block over one carries an explicit
+  length. Every decoder bounds what one read may produce, and a stream that
+  runs out part way through is an **error** — except under a partial preview,
+  which asks for the prefix decoded so far, so the raw view can show a
+  structure continuing past its window without a short read passing for a
+  whole one.
 
 ## Preview
 
@@ -375,11 +455,12 @@ in the game. It is described in [preview.md](preview.md).
 - **Panels ▸ Hex Panel** — a dump (address · hex · ASCII) of the decoded
   buffer from the current offset, following the raw view's selection.
 - **Overtype** — typing a hex digit over a byte in the dump changes that
-  nibble in place, one undo step per digit; the bytes line below writes a
-  run of hex bytes at an offset. Both make the file entry unsaved. Text is
-  decoded, not editable here.
-- **Go to**, **Find** (hex bytes or quoted text through the start table),
-  **Follow selection**.
+  nibble in place, one undo step per digit, the caret moving on to the next
+  nibble; the bytes line below writes a run of hex bytes at an offset. Both make
+  the file entry unsaved. Text is decoded, not editable here.
+- **Go to**, **Find** (hex bytes or quoted text through the start table) with
+  next and previous, and **Follow selection**, which is remembered per machine.
+- The address column follows the navigation bar's address format.
 - Refreshes only while visible.
 
 ## Projects
@@ -390,11 +471,21 @@ in the game. It is described in [preview.md](preview.md).
   and text boxes; the view position per entry.
 - Not saved: zoom, theme, window layout, undo history.
 - **New / Open / Open Recent / Save / Save As** as in celPix; paths are stored
-  relative to the project file; missing files prompt **Locate…**; older
-  versions are upgraded on load and newer ones open with what this build
-  understands.
+  relative to the project file; older versions are upgraded on load, which the
+  status line says, and newer ones open with what this build understands.
+  **Open Recent** lists projects by name, newest first, drops rows whose file
+  has gone, and offers **Clear List**.
+- **Missing files** — a project that references files that are not there offers
+  to locate them as it opens, and **File ▸ Locate Missing Files…** walks them
+  at any time. One answer corrects every entry that named that file, and a row
+  still named after the file takes the new name.
+- **Saving the project resolves unsaved edits first** — a project holds
+  references, not bytes, so it asks to **Write All**, continue without writing,
+  or cancel.
 - **Unsaved marker** — the title bar shows the project unsaved when its
-  serialized form differs from disk.
+  serialized form differs from disk — a table edit included, since that is
+  project state. A session that has never been saved as a project has nothing
+  to differ from and never prompts.
 
 ## Plugins
 
@@ -403,13 +494,21 @@ in the game. It is described in [preview.md](preview.md).
   and mappings.
 - **Where they live** — **File ▸ Open plugins folder…** opens
   `<AppData>/mapchar/plugins` with typed subfolders (`containers`,
-  `compression`, `charsets`, `mappings`), seeded with `_`-prefixed
-  examples and a README; a `plugins/` folder beside a `.mapchar` file loads
-  with that project; `MAPCHAR_PLUGIN_PATH` adds folders.
+  `compression`, `charsets`, `mappings`), seeded with `README.md` and an
+  `_`-prefixed working example per folder, which a copy without the underscore
+  activates; a `plugins/` folder beside a `.mapchar` file loads and unloads with
+  that project; `MAPCHAR_PLUGIN_PATH` adds folders. A `.tbl` file in `charsets`
+  registers as a charset named after the file, with no code at all.
 - **Refresh plugins (F5)** reloads everything and re-reads the current entry.
+  Entries with unsaved edits keep what they hold rather than being re-read.
 - **Trust** — code plugins ask for trust once per file content, with a
-  SHA-256 prefix; the default is No. Presets never ask.
-- **Load failures** are reported in a dialog and never crash the app. An
+  SHA-256 prefix; the default is No, and a plugin that came with a project says
+  so. A file approved this session can be edited and refreshed without asking
+  again. Presets never ask.
+- **Load failures** are reported in a dialog — at startup, after a refresh, as
+  a project's folder is scanned, and again from **Open plugins folder…** — and
+  never crash the app. A plugin whose trust prompt was declined is not a
+  failure: it is said once in the status bar, not in a dialog every launch. An
   entry whose plugin is missing opens view-only through a pass-through.
 
 ## Undo
@@ -418,20 +517,25 @@ in the game. It is described in [preview.md](preview.md).
   block, container and table edits; view moves; translation edits and status
   changes; hex overtypes; font and box edits.
 - **Ctrl+Z / Ctrl+Shift+Z** undo the latest action from any surface. Undoing
-  a change made elsewhere switches back to that entry and view.
+  a change made elsewhere switches back to that entry **and** the view it was
+  made in — the Strings tab on its row, the Raw tab at its offset.
 - **Unsaved state follows undo** — undoing back to the saved state reads
-  clean again.
-- Opening or starting a project clears the history.
+  clean again, and redoing marks it unsaved once more.
+- **A run of edits on one string is one step**, and a run that ends back where
+  it began is no step at all. Moving to another row, or to another entry, ends
+  the run. Consecutive view moves in one entry merge the same way.
+- Opening or starting a project clears the history and the visit trail.
 
 ## Keyboard reference
 
-**Help ▸ Shortcuts… (F1)** shows the live list.
+**Help ▸ Shortcuts… (F1)** shows the live list, built from the menu bar plus
+the keys and mouse gestures no menu row can carry.
 
 | Area | Keys |
 |---|---|
-| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh plugins · Ctrl+Q Quit |
-| Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+F Find · Ctrl+H Find and Replace · Ctrl+Return commit cell |
-| View | Ctrl+1 Raw · Ctrl+2 Strings · Ctrl+= / Ctrl+- zoom · Ctrl+T Table Editor · Ctrl+P Preview |
-| Navigate | Alt+Left/Right history · Home/End · arrows byte/row · PgUp/PgDn page · - / + byte nudge · 0 clear nudge · Ctrl+G go to address |
-| Search | Ctrl+Shift+F Search window · Ctrl+Shift+R relative search · F3 / Shift+F3 next / previous |
+| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh plugins · Ctrl+Q Quit |
+| Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Return commit cell |
+| View | Ctrl+1 Raw · Ctrl+2 Strings · Ctrl+Shift+A Aligned / Text display · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
+| Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
+| Search | Ctrl+Shift+F Search window · Ctrl+Shift+R scan · Ctrl+F find bytes · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
 | Files panel | Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter |

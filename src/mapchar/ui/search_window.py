@@ -10,12 +10,14 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from mapchar.engines.relsearch import Hit, relative_search
 from mapchar.ui.widgets import CancellableRun, ResultsTable
+from mapchar.ui.window_layout import remember_layout
 
 
 class SearchWindow(CancellableRun, QWidget):
@@ -27,12 +29,17 @@ class SearchWindow(CancellableRun, QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("Search")
+        # Size and position remembered between runs, like every tool
+        # window (:mod:`mapchar.ui.window_layout`).
+        self._layout = remember_layout(self, "search_window")
         self._data: bytes = b""
         self._hits: list[Hit] = []
         layout = QVBoxLayout(self)
         row = QHBoxLayout()
         self.query = QLineEdit()
-        self.query.setPlaceholderText("Relative search: letters, digits, ? wildcard")
+        self.query.setPlaceholderText(
+            "Relative search: letters, digits, kana, ? wildcard"
+        )
         self.width = QComboBox()
         self.width.addItem("8-bit", (1,))
         self.width.addItem("16-bit", (2,))
@@ -40,11 +47,18 @@ class SearchWindow(CancellableRun, QWidget):
         self.case_gap = QCheckBox("Case gap")
         self.case_gap.setChecked(True)
         self.case_gap.setToolTip("Upper and lower case may sit at any distance apart")
+        self.limit = QSpinBox()
+        self.limit.setRange(1, 1000000)
+        self.limit.setValue(500)
+        self.limit.setSingleStep(500)
+        self.limit.setToolTip("How many hits to keep before stopping")
         self.run = QPushButton("Search")
         self.stop = QPushButton("Stop")
         row.addWidget(self.query, 1)
         row.addWidget(self.width)
         row.addWidget(self.case_gap)
+        row.addWidget(QLabel("Limit"))
+        row.addWidget(self.limit)
         row.addWidget(self.run)
         row.addWidget(self.stop)
         layout.addLayout(row)
@@ -76,21 +90,25 @@ class SearchWindow(CancellableRun, QWidget):
             return
         with self.running():
             try:
-                self._hits = relative_search(
+                found = relative_search(
                     self._data,
                     query,
                     widths=self.width.currentData(),
                     case_gap=self.case_gap.isChecked(),
+                    limit=self.limit.value(),
                     progress=self.progress,
                 )
             except ValueError as exc:
                 self._hits = []
                 self.status.setText(str(exc))
             else:
-                self.status.setText(
-                    f"{len(self._hits)} hit(s)"
-                    + (" (stopped)" if self.cancelled else "")
-                )
+                self._hits = found.hits
+                note = ""
+                if found.truncated:
+                    note = " — the limit stopped the search; raise Limit for more"
+                elif self.cancelled:
+                    note = " (stopped)"
+                self.status.setText(f"{len(self._hits)} hit(s){note}")
         self._fill()
 
     def _fill(self) -> None:

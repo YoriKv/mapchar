@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unicodedata
+
 from helpers import ABC_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
 from mapchar.pipeline.extract import extract
@@ -64,3 +66,34 @@ def test_apply_records():
     assert len(report.skipped) == 3
     report = apply_records([drift], {"Dialogue": target}, force=True)
     assert report.applied == 1 and target[0].translation == "y"
+
+
+def test_csv_carries_a_byte_order_mark_and_kana_survives_both_ways():
+    recs = records_for("会話", strings())
+    recs[0].translation = "はじめまして[end]"
+    recs[0].notes = "漢字, with a comma"
+    csv_text = write_delimited(recs, ",")
+    assert csv_text.startswith("\ufeff")  # what a spreadsheet needs to read UTF-8
+    assert not write_delimited(recs, "\t").startswith("\ufeff")
+    assert "\ufeff" not in write_po(recs)
+    for text in (csv_text, csv_text.lstrip("\ufeff"), write_delimited(recs, "\t")):
+        back = read_delimited(text)
+        assert [r.id for r in back] == ["会話/0", "会話/1"]
+        assert back[0].translation == "はじめまして[end]"
+        assert back[0].notes == "漢字, with a comma"
+
+
+def test_a_decomposed_record_still_finds_its_string():
+    target = strings()
+    for s in target:
+        s.translation, s.status = None, Status.UNTOUCHED
+    target[0].original = list(target[0].original)
+    recs = records_for("Dialogue", target)
+    # A translator's editor may hand the original back decomposed; the row is
+    # about the same string, so it is not "original changed".
+    recs[0].original = unicodedata.normalize("NFD", "A[line]\nB[end]")
+    recs[0].translation = unicodedata.normalize("NFD", "あが[end]")
+    report = apply_records(recs, {"Dialogue": target})
+    assert report.skipped == [] and report.applied == 2
+    assert target[0].translation == "あが[end]"
+    assert unicodedata.is_normalized("NFC", target[0].translation)

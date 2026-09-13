@@ -1,0 +1,43 @@
+# The LZSS family: a flag bit per token, literals and (offset, length) pairs.
+#
+# These parameters cover most variants a game uses, and every shipped framing is
+# this engine with different numbers — gba_lz77, lzss_ring, lzss_classic, slz16
+# and slz24 — so start from whichever is closest and change what differs.
+#
+# Work out the layout from the game's decompressor: which bit means a reference,
+# which end of the flag byte it is read from, and how the two reference bytes
+# pack the offset and the length.
+id = "my_lzss"
+name = "My LZSS"
+engine = "lzss"
+
+[params]
+window_bits = 12       # offset field width; window_bits + length_bits = 16
+length_bits = 4        # length field width
+min_match = 3          # a reference copies length + min_match bytes
+flags_msb_first = true # read each flag byte from its high bit
+set_is_ref = true      # a set flag bit means a reference, not a literal
+ref_format = "gba"     # "gba", "offset_length" or "okumura"
+offset_kind = "distance" # "distance" back from the write position, or "ring"
+distance_bias = 1      # a stored distance is the real one less this
+size_header = "none"   # "gba", "u16le", "u32le", "u16be", "u24be" or "none"
+# Without a size header there is no end to find, so no decode over this preset
+# reports a complete structure and a block over one needs an explicit length.
+#
+# The nearest distance to write, when the format can encode one its consumer
+# rejects (the VRAM-safe BIOS call and a stored 0). Defaults to distance_bias:
+# min_distance = 2
+#
+# A first byte the header must carry, under an optional mask:
+# magic = 0x10
+# magic_mask = 0xF0
+#
+# For offset_kind = "ring", the ring buffer's fill byte and first write
+# position (Okumura's are 0x20 and 0xFEE):
+# ring_init = 0x20
+# ring_start = 0xFEE
+#
+# Whether a declared size of zero is an empty payload rather than noise, and
+# whether a final reference may overrun the declared size and be cut short:
+# allow_zero_size = false
+# clip_last_match = true

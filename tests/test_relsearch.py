@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from mapchar.engines.relsearch import entries_from_hit, relative_search
+from mapchar.engines.relsearch import (
+    HIRAGANA,
+    KATAKANA,
+    RUNS,
+    entries_from_hit,
+    relative_search,
+)
 
 
 def encode(text: str, upper: int, lower: int, digit: int = 0x30) -> bytes:
@@ -22,7 +28,7 @@ def test_finds_8bit_with_case_gap():
     hits = relative_search(data, "Hello99", widths=(1,))
     assert [h.offset for h in hits] == [16]
     assert hits[0].bases == {"upper": 0x80, "lower": 0xA0, "digit": 0xC0}
-    assert relative_search(data, "Hello99", widths=(1,), case_gap=False) == []
+    assert relative_search(data, "Hello99", widths=(1,), case_gap=False).hits == []
     assert relative_search(data, "Hell?99", widths=(1,))[0].offset == 16
 
 
@@ -59,5 +65,45 @@ def test_cancel():
         calls.append(done)
         return False
 
-    assert relative_search(data, "AB", widths=(1,), progress=progress) == []
+    assert relative_search(data, "AB", widths=(1,), progress=progress).hits == []
     assert calls
+
+
+def test_limit_reports_truncation():
+    data = b"\x41\x42" * 400
+    found = relative_search(data, "AB", widths=(1,), limit=10)
+    assert len(found) == 10 and found.truncated
+    found = relative_search(data, "AB", widths=(1,), limit=10000)
+    assert len(found) == 400 and not found.truncated
+
+
+def kana_bytes(text: str, base: int, run: str) -> bytes:
+    return bytes(base + RUNS[run].index(ch) for ch in text)
+
+
+def test_finds_kana_in_gojuon_order():
+    data = b"\x00" * 4 + kana_bytes("ひめさま", 0x40, HIRAGANA) + b"\xff"
+    hits = relative_search(data, "ひめさま", widths=(1,))
+    assert [h.offset for h in hits] == [4]
+    assert hits[0].bases == {HIRAGANA: 0x40}
+    katakana = kana_bytes("アイテム", 0xA0, KATAKANA)
+    hit = relative_search(b"\x00" + katakana, "アイテム", widths=(1,))[0]
+    assert hit.bases == {KATAKANA: 0xA0}
+    # A mixed query pins both runs at once.
+    mixed = kana_bytes("かな", 0x40, HIRAGANA) + kana_bytes("カナ", 0xA0, KATAKANA)
+    hit = relative_search(mixed, "かなカナ", widths=(1,))[0]
+    assert hit.bases == {HIRAGANA: 0x40, KATAKANA: 0xA0}
+
+
+def test_kana_entries_from_a_hit_are_the_whole_alphabet():
+    data = kana_bytes("あいう", 0x20, HIRAGANA)
+    hit = relative_search(data, "あいう", widths=(1,))[0]
+    entries = entries_from_hit(hit)
+    assert len(entries) == len(RUNS[HIRAGANA])
+    assert (entries[0].bits, entries[0].text) == ("00100000", "あ")
+    assert entries[-1].text == "ん"
+
+
+def test_a_decomposed_query_is_not_a_kana_of_the_run():
+    with pytest.raises(ValueError, match="kana"):
+        relative_search(b"\x00" * 8, "が", widths=(1,))

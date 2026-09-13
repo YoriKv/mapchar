@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from mapchar.core.table import Entry, EntryKind, OperandSpec
+from mapchar.core.table import Entry, OperandSpec, TokenKind
 
 
 @dataclass(frozen=True)
@@ -38,11 +38,11 @@ class Token:
 
     @property
     def is_end(self) -> bool:
-        return self.entry is not None and self.entry.kind is EntryKind.END
+        return self.entry is not None and self.entry.kind is TokenKind.END
 
     @property
     def is_code(self) -> bool:
-        return self.entry is None or self.entry.kind is not EntryKind.TEXT
+        return self.entry is None or self.entry.kind is not TokenKind.TEXT
 
     @property
     def weight(self) -> int:
@@ -84,14 +84,14 @@ def render_token(token: Token) -> str:
         )
         # A tail of fewer than eight bits is shown as bits.
         return out + (f"[%{token.bits[whole:]}]" if n % 8 else "")
-    if entry.kind in (EntryKind.TEXT, EntryKind.END, EntryKind.SWITCH):
+    if entry.kind in (TokenKind.TEXT, TokenKind.END, TokenKind.SWITCH):
         # Table text is already in script form; ``\n`` becomes a line break
         # on dump and is ignored on insert, so dumps re-insert unchanged.
         return entry.text.replace("\\n", "\n")
-    if entry.kind is EntryKind.RETURN:
+    if entry.kind is TokenKind.RETURN:
         return ""
     label = entry.text
-    if entry.kind is EntryKind.CODE and entry.operands:
+    if entry.kind is TokenKind.CODE and entry.operands:
         words = [
             spec.render(value)
             for spec, value in zip(entry.operands, token.operands, strict=False)

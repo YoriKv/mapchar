@@ -6,7 +6,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from mapchar.core.block import PointerTableSource
+from mapchar.core.block import PointerRef, PointerTableSource
 from mapchar.core.mapping import pointer_bytes
 
 
@@ -30,6 +30,13 @@ class Candidate:
     offset: int
     hits: dict[int, list[int]] = field(default_factory=dict)
     """String start offset to the addresses holding a pointer to it."""
+    values: dict[int, int] = field(default_factory=dict)
+    """String start offset to the pointer value that reaches it.
+
+    Kept beside :attr:`hits` because a found address is only half of what a
+    pointer is: **Attach** puts the reading back on the string, and the value
+    read is what a write-back re-derives and compares against.
+    """
     stride: int = 0
     """The most common distance between consecutive hit addresses."""
 
@@ -44,6 +51,28 @@ class Candidate:
     def regularity(self) -> float:
         return common_stride(self.addresses)[1]
 
+    def refs(self) -> dict[int, tuple[PointerRef, ...]]:
+        """Per string start, the pointers this candidate found reaching it.
+
+        What **Attach** puts on the strings: each ref names where the value sits
+        and the whole reading that found it, so nothing else has to be carried
+        alongside for the pointer to be written back.
+        """
+        return {
+            start: tuple(
+                PointerRef(
+                    address,
+                    self.size,
+                    self.endian,
+                    self.mapping_id,
+                    self.offset,
+                    self.values[start],
+                )
+                for address in addrs
+            )
+            for start, addrs in self.hits.items()
+        }
+
     def source(self) -> PointerTableSource:
         addrs = self.addresses
         return PointerTableSource(
@@ -57,7 +86,7 @@ class Candidate:
         )
 
 
-def _find_all(data: bytes, needle: bytes, align: int = 1) -> list[int]:
+def _find_all(data: bytes, needle: bytes) -> list[int]:
     out = []
     at = data.find(needle)
     while at >= 0:
@@ -102,6 +131,7 @@ def discover(
             found = _find_all(data, needle)
             if found:
                 cand.hits[start] = found
+                cand.values[start] = value
         if not cand.hits:
             continue
         cand.stride = common_stride(cand.addresses)[0]

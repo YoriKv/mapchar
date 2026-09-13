@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 
 from helpers import tables_from
 from mapchar.core.bits import format_key
 from mapchar.core.errors import TableError
-from mapchar.core.table import EntryKind, Stop
+from mapchar.core.table import Stop, TokenKind
 from mapchar.project.formats.table_native import (
     HEADER,
     is_native,
@@ -54,23 +56,23 @@ def test_parse_sample():
     assert main.entries["0000000001000001"].text == "あ"
     assert main.entries["01"].text == "x"
     end = main.entries["11111111"]
-    assert end.kind is EntryKind.END and end.label == "end"
+    assert end.kind is TokenKind.END and end.label == "end"
     assert main.entries["11111110"].text == "[line]\\n"
     color = main.entries["11110000"]
-    assert color.kind is EntryKind.CODE and color.operands[0].spec() == "u8"
+    assert color.kind is TokenKind.CODE and color.operands[0].spec() == "u8"
     item = main.entries["11110001"]
-    assert item.kind is EntryKind.SWITCH
+    assert item.kind is TokenKind.SWITCH
     assert item.params[0].table_id == "items" and item.params[0].stop == Stop(count=1)
     assert main.entries["11110010"].params[0].stop.any
     assert main.entries["01000011"].weight == 2
-    assert tables["items"].entries["11111111"].kind is EntryKind.RETURN
+    assert tables["items"].entries["11111111"].kind is TokenKind.RETURN
     assert main.labels["end"] is end
     assert main.labels["line"] is main.entries["11111110"]
 
 
 def test_switch_text_forms():
     silent = parse_entry("!F1=@t:1")
-    assert silent.kind is EntryKind.SWITCH and silent.text == "" and silent.silent
+    assert silent.kind is TokenKind.SWITCH and silent.text == "" and silent.silent
     assert silent.label is None
     plain = parse_entry("!F2=Name: @t:1 @u:*")
     assert plain.text == "Name:" and [p.spec() for p in plain.params] == [
@@ -138,3 +140,26 @@ def test_roundtrip_through_writer():
 
 def test_format_key_spells_whole_nibbles_as_hex():
     assert format_key("11111111") == "FF" and format_key("01") == "%01"
+
+
+def test_a_kana_table_id_round_trips_through_the_writer():
+    body = "@table かんじ\n41=亜\n@table main\n!42=[k] @かんじ:1\n"
+    tables = parse_native(HEADER + "\n" + body).tables
+    out = write_native(tables)
+    assert "@table かんじ" in out and "@かんじ:1" in out
+    again = parse_native(out).tables
+    assert [t.id for t in again] == ["かんじ", "main"]
+
+
+def test_decomposed_entry_text_is_written_back_composed():
+    decomposed = unicodedata.normalize("NFD", "が")
+    assert len(decomposed) == 2
+    tables = parse_native(f"{HEADER}\n@table main\n41={decomposed}\n").tables
+    assert tables[0].entries["01000001"].text == "が"
+    assert write_native(tables).endswith("41=が\n")
+
+
+@pytest.mark.parametrize("bad", ["@table かん じ", "@table a b"])
+def test_an_id_with_whitespace_is_rejected(bad):
+    with pytest.raises(TableError, match="invalid table id"):
+        parse_native(HEADER + "\n" + bad + "\n41=A\n")

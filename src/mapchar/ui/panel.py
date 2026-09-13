@@ -17,8 +17,12 @@ class WorkspaceTreePanel(QWidget):
     The base owns the tree, the subscription that rebuilds it when entries come
     and go, and the item-to-entry lookup; a subclass fills :meth:`rebuild` and
     calls it once its own widgets exist. A row names its entry by ``id()`` in
-    the tree item's ``UserRole``.
+    the tree item's ``UserRole``. A subclass whose tree has to answer for itself
+    — drag reordering, keys of its own — names that tree's class in
+    :attr:`tree_class`.
     """
+
+    tree_class: type[QTreeWidget] = QTreeWidget
 
     def __init__(
         self,
@@ -29,7 +33,7 @@ class WorkspaceTreePanel(QWidget):
     ):
         super().__init__(parent)
         self.workspace = workspace
-        self.tree = QTreeWidget()
+        self.tree = self.tree_class()
         self.box = QVBoxLayout(self)
         self.box.setContentsMargins(0, 0, 0, 0)
         self.box.addWidget(self.tree)

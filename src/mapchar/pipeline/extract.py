@@ -17,7 +17,7 @@ from mapchar.core.block import (
     StringRecord,
 )
 from mapchar.core.notices import Notice
-from mapchar.core.table import Entry, EntryKind, TableSet
+from mapchar.core.table import Entry, TableSet, TokenKind
 from mapchar.core.tokens import CodeRef, TextRun, Token, escape_text, parse_text
 from mapchar.engines.decode import DecodeResult, DecodeRules, EndedBy, decode
 
@@ -29,7 +29,7 @@ def artificial(label: str, bit: int) -> Token:
     fixed strings read line by line.
     """
     text = f"[{label}]\\n" if label else "\\n"
-    return Token("", bit, bit, Entry("", EntryKind.TEXT, text))
+    return Token("", bit, bit, Entry("", TokenKind.TEXT, text))
 
 
 def strip_artificial(text: str, config: BlockConfig) -> list[str]:

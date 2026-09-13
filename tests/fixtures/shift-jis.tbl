@@ -1,0 +1,13 @@
+# A Shift-JIS table, as romjuice and Cartographer left them behind:
+# its comment and its entry text are cp932 bytes, not UTF-8.
+# 「かな」 and 漢字 both appear, so a mis-decode is visible.
+@main
+41=A
+42=B
+82A0=あ
+82A1=い
+8341=ア
+8342=イ
+8ABA=漢
+81798179=「」
+/00=[end]

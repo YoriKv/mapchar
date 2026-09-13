@@ -1,0 +1,75 @@
+"""A compression: DTE, where one byte stands for a pair of bytes.
+
+Dual-tile encoding is the most common hand-rolled text packing in 8-bit games:
+bytes from ``FIRST_CODE`` up index a table of pairs, everything else is a
+literal. It is a compression rather than a table feature because it changes how
+many bytes a string occupies, which is what the write-back has to respect.
+
+Copy it, drop the underscore, and replace ``PAIRS`` with the table from your
+ROM. Reading the table out of the ROM instead is a few lines: take
+``PAIRS = [(rom[i], rom[i + 1]) for i in ...]`` in ``bind_tree``, which mapchar
+calls with the whole decompressed file when a plugin has it.
+"""
+
+from mapchar.core.context import KEY_COMPLETE, KEY_CONSUMED, PipelineContext
+from mapchar.plugins.base import PluginInfo, Stage
+
+FIRST_CODE = 0x80
+PAIRS = [
+    (0x1D, 0x1E),  # "th"
+    (0x1E, 0x11),  # "he"
+    (0x00, 0x1D),  # " t"
+]
+END = 0xFF
+
+
+class Dte:
+    info = PluginInfo("my_dte", "DTE (byte pairs)", Stage.COMPRESSION)
+
+    def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        """Expand from the *start* of ``data`` and say how far you read.
+
+        A block is decompressed one string at a time, so the two keys matter:
+        ``KEY_CONSUMED`` is how many packed bytes this string took — it is what
+        advances the read to the next one — and ``KEY_COMPLETE`` says the end
+        marker was actually seen rather than the buffer running out.
+        """
+        out = bytearray()
+        used = 0
+        complete = False
+        for byte in data:
+            used += 1
+            if byte >= FIRST_CODE and byte - FIRST_CODE < len(PAIRS):
+                out.extend(PAIRS[byte - FIRST_CODE])
+                continue
+            out.append(byte)
+            if byte == END:
+                complete = True
+                break
+        ctx.set(KEY_CONSUMED, used)
+        ctx.set(KEY_COMPLETE, complete)
+        return bytes(out)
+
+    def compress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        """Pack it back. Omit this method to make blocks read through it view-only.
+
+        Greedy longest-first is right here because every pair is two bytes: with
+        codes of differing width it would not be, and the encoder is where that
+        difference has to be paid for.
+        """
+        codes = {pair: FIRST_CODE + i for i, pair in enumerate(PAIRS)}
+        out = bytearray()
+        i = 0
+        while i < len(data):
+            code = codes.get((data[i], data[i + 1])) if i + 1 < len(data) else None
+            if code is None:
+                out.append(data[i])
+                i += 1
+            else:
+                out.append(code)
+                i += 2
+        return bytes(out)
+
+
+def register(registry) -> None:
+    registry.register(Dte())

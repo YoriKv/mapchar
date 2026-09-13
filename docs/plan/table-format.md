@@ -20,7 +20,12 @@ prefix character exactly one meaning, and names its dialect in a header line.
 
 ## File structure
 
-A table file is UTF-8 text, LF or CRLF, optional BOM. Three kinds of line:
+A table file is UTF-8 text, LF or CRLF, optional BOM. A file whose bytes are
+not UTF-8 — the Shift-JIS tables legacy tools left behind — is read as `cp932`,
+and failing that as `latin-1`; the encoding used is recorded on the loaded file
+and, when it is not UTF-8, said in a notice. Text is normalised to **NFC** on
+load, so a decomposed dakuten kana becomes one composed character whatever the
+file spelled, and a file written back is NFC. Three kinds of line:
 
 | Line starts with | It is                                                     |
 |------------------|-----------------------------------------------------------|
@@ -36,8 +41,10 @@ Directives:
 | `@table id`         | Starts a logical table named `id`. Entries before the first `@table` belong to a table named after the file. |
 | `@charset name`     | The built-in charset the current table sits on ([Charsets](#charsets)).             |
 
-`id` is `[A-Za-z0-9_.-]+` and is unique across every loaded file. A file may
-hold any number of tables. Line order carries no meaning inside a table.
+`id` is `[\w.-]+` — letters and digits of any script, `_`, `.` and `-`, so
+`@table かんじ` names a table after what is in it — and is unique across every
+loaded file. A file may hold any number of tables. Line order carries no
+meaning inside a table.
 
 ```
 @mapchar table 1
@@ -133,8 +140,11 @@ is:
 - In table text and in scripts, a literal bracket is written `\[` or `\]`.
   The other escapes are `\n` (a line break: emitted after the token on dump,
   ignored on insert, so dumps stay re-insertable) and `\\`.
-- Text is compared after NFC normalisation; tables are written back as
-  typed.
+- Text is NFC: an entry's text is composed when the file loads and written
+  back composed. The encoder compares text decomposed, so a table that spells
+  `が` in one entry and one that spells it as `か` plus a separate dakuten code
+  — which is how a ROM that draws the mark on its own does — both encode the
+  same typed text.
 - `<`, `>` and `=` carry no meaning in text.
 
 A text entry's text can therefore never be mistaken for a code, and a script
@@ -199,11 +209,19 @@ the charset code for code; an entry with empty text removes a code.
 |---------------|------------------------------------------------------------|
 | `none`        | nothing (the default)                                      |
 | `ascii`       | `20`–`7E`                                                  |
-| `latin-1`     | `20`–`7E`, `A0`–`FF`                                       |
-| `shift-jis`   | every single- and double-byte Shift-JIS code               |
-| `euc-jp`      | every EUC-JP code                                          |
-| `utf-16le`, `utf-16be` | the BMP, as 16-bit keys                           |
-| `utf-8`       | one entry per encoded code point up to 4 bytes             |
+| `latin-1`     | `20`–`7E`, `A1`–`AC`, `AE`–`FF` (the blank `A0` and the soft hyphen `AD` are left out, as every unprintable code is) |
+| `shift-jis`   | every single- and double-byte **CP932** code: Shift-JIS plus the NEC and IBM extension rows Japanese games use |
+| `euc-jp`      | every **JIS X 0213** EUC-JP code (`euc_jis_2004`), a superset of plain EUC-JP |
+| `utf-16le`, `utf-16be` | every plane as 16-bit keys, an astral code point as a surrogate pair (4 bytes) |
+| `utf-8`       | one entry per encoded code point, every plane, up to 4 bytes |
+
+A charset may also carry **aliases**: text the encoder accepts for a code whose
+own text is something else, so nothing is lost where an encoding folds several
+characters onto one code. `shift-jis` and `euc-jp` alias the JIS X 0201 yen
+sign `¥` to `5C` and the overline `‾` to `7E` — typing either encodes to that
+byte, while the byte still decodes as plain ASCII `\` or `~` — and every
+character `cp932` folds (`¢`, `£`, `¬`, `‖`, `−`, `〜`) reaches its code the
+same way.
 
 Charsets are plugins; more can be added.
 
@@ -246,6 +264,8 @@ new one.
 | romjuice `!HEX` in table 1, table 2  | `!HEX=[swap] @table2:*` in table 1; `!HEX=return` in table 2. romjuice's swap persists across strings; the conversion does not, and says so |
 | romjuice duplicate keys              | first wins, the rest are dropped with a notice                          |
 | romjuice `\r`                        | `\n`                                                                    |
+| A file that is not UTF-8             | read as `cp932`, else `latin-1`, with a notice naming the encoding       |
+| abcde's NFD text                     | composed to NFC, as all table text is                                   |
 | abcde `@id`                          | `@table id`                                                             |
 | abcde `%bits`, `KEY<w>`              | unchanged                                                               |
 | abcde `!KEY=<label>,params`          | `!KEY=[label] params` with `<@id>:N` → `@id:N`, bare `N` → `@raw:N`, `<binary>:N` → `@bits:N`, `0` → `:*`, `-1` → `return`, `$hex`/`%bin` → `:$hex`/`:%bin`, `+` kept |

@@ -48,3 +48,44 @@ def add_block(window, file_entry, name, source, **config) -> Entry:
     window._push_add(block)
     window._activate_entry(block)
     return block
+
+
+def make_window(qtbot, monkeypatch):
+    """A live ``MainWindow`` whose modals answer themselves: one left open is a
+    hang the offscreen platform can never clear.
+
+    The three-way "unsaved edits" gate is a box with its own labels rather than a
+    standard question, so it is answered by taking its destructive button; the
+    reported warnings are collected onto ``window.errors`` for a test to read.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    from mapchar.ui.main_window import MainWindow
+
+    monkeypatch.setattr(
+        "mapchar.ui.main_window.window.QMessageBox.question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Discard),
+    )
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    errors: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        staticmethod(lambda _p, _t, message, *a, **k: errors.append(message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "clickedButton",
+        lambda self: next(
+            (
+                b
+                for b in self.buttons()
+                if self.buttonRole(b) == QMessageBox.ButtonRole.DestructiveRole
+            ),
+            None,
+        ),
+    )
+    window = MainWindow()
+    window.errors = errors
+    qtbot.addWidget(window)
+    return window

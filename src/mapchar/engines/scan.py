@@ -7,7 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from mapchar.core.bits import Bits
-from mapchar.core.table import EntryKind, TableSet
+from mapchar.core.table import TableSet, TokenKind
+from mapchar.core.text import fold
 from mapchar.core.tokens import plain_text
 from mapchar.engines.decode import DecodeRules, decode
 
@@ -50,13 +51,13 @@ def score_window(data: bytes, tables: TableSet) -> tuple[float, list]:
         if t.entry is None:
             unmatched += t.bit_end - t.bit_start
             chars.append(" ")
-        elif t.entry.kind is EntryKind.TEXT:
+        elif t.entry.kind is TokenKind.TEXT:
             text_bits += t.bit_end - t.bit_start
             chars.append(plain_text(t.entry.text))
         else:
             chars.append(" ")
     fraction = text_bits / bits.length
-    words = "".join(chars).lower().split()
+    words = fold("".join(chars)).split()
     hits = sum(1 for w in words if w in WORDS)
     score = fraction + min(0.3, 0.05 * hits) - 0.5 * (unmatched / bits.length) ** 2
     return max(0.0, min(1.0, score)), r.tokens
@@ -109,8 +110,8 @@ def _guess_terminator(data: bytes, tables: TableSet) -> tuple[int | None, int | 
     enders: Counter[int] = Counter()
     initials: Counter[int] = Counter()
     for a, b in zip(tokens, tokens[1:], strict=False):
-        a_is_break = a.entry is None or a.entry.kind is EntryKind.END
-        b_is_text = b.entry is not None and b.entry.kind is EntryKind.TEXT
+        a_is_break = a.entry is None or a.entry.kind is TokenKind.END
+        b_is_text = b.entry is not None and b.entry.kind is TokenKind.TEXT
         if a_is_break and b_is_text and a.bit_end - a.bit_start == 8:
             enders[int(a.bits, 2)] += 1
             initials[data[b.bit_start // 8]] += 1

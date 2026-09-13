@@ -1,0 +1,24 @@
+# Huffman text through a node table stored in the ROM.
+#
+# Each node is `node_size` bytes holding two links; a link with `leaf_flag` set
+# is a symbol (masked by `leaf_mask`), otherwise it is the index of the next
+# node. Decoding walks from `root`, one bit per step, one symbol per leaf.
+#
+# `tree_offset` is where the node table sits in the *decompressed file* — the
+# offsets mapchar shows, headers already skipped — and the tree is read from
+# there, so nothing has to be copied into this file.
+id = "my_huffman"
+name = "My Huffman text"
+engine = "huffman"
+
+[params]
+tree_offset = 0x1C000 # where the node table starts
+node_size = 4         # bytes per node
+left = 0              # byte offset of the left link within a node
+right = 2             # byte offset of the right link
+link_size = 2         # bytes per link, little-endian
+leaf_flag = 0x8000    # a link with this bit set is a symbol
+leaf_mask = 0xFF      # the symbol is the link masked by this
+root = 0              # the node index decoding starts at
+lsb_first = false     # read each byte's bits from the high bit
+end_symbol = 0x00     # the symbol that ends a string

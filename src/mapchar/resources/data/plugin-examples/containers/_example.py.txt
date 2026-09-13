@@ -1,0 +1,66 @@
+"""A container: how a file is wrapped, and how to put it back.
+
+This one skips a fixed-size header and keeps it on write — the shape nearly
+every cartridge dump with a copier or emulator header has. Copy it, drop the
+underscore, and change the four numbers at the top.
+
+A container never opens paths: it is handed a ``ReadSource`` holding the bytes
+(several joined files already joined) and returns the payload the rest of the
+pipeline sees. Offsets everywhere else are into that payload, which is why
+``read`` publishes where it started: the hex view adds it back to show a real
+file address.
+"""
+
+from mapchar.core.context import (
+    KEY_HEADER_SIZE,
+    KEY_SOURCE_OFFSET,
+    KEY_SUGGESTED_MAPPING,
+    PipelineContext,
+)
+from mapchar.plugins.base import PluginInfo, ReadSource, Stage, WriteTarget
+
+HEADER_SIZE = 0x200
+MAGIC = b"MYROM\x1a"
+
+
+class MyContainer:
+    # Detection reads this and nothing else — no code of yours runs before the
+    # file is open, so a container claims files by describing itself. `magic`
+    # decides alone when it matches (any one pair is enough); otherwise an
+    # extension match counts. `min_size` and `size_multiple` only ever *reject*
+    # a file, so declaring one makes this container more selective, never
+    # greedier.
+    info = PluginInfo(
+        "my_container",
+        "My container (0x200 header)",
+        Stage.CONTAINER,
+        extensions=(".myrom",),
+        magic=((0, MAGIC),),
+        min_size=HEADER_SIZE,
+    )
+
+    def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
+        ctx.set(KEY_SOURCE_OFFSET, HEADER_SIZE)  # payload offset 0 is here
+        ctx.set(KEY_HEADER_SIZE, HEADER_SIZE)  # what a pointer mapping skips
+        ctx.set(KEY_SUGGESTED_MAPPING, "banked")  # the mapping to start at
+        return source.data[HEADER_SIZE:]
+
+    def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes:
+        """The whole new file. Omit this method to make the format view-only.
+
+        ``target.existing`` is what is on disk now, so the header is kept
+        rather than invented. It is empty when writing a file that does not
+        exist yet, which is when a container has to build its framing.
+        """
+        header = target.existing[:HEADER_SIZE]
+        if len(header) < HEADER_SIZE:
+            header = MAGIC + bytes(HEADER_SIZE - len(MAGIC))
+        return header + data
+
+    def describe(self, source: ReadSource, ctx: PipelineContext) -> dict:
+        """Optional: what File ▸ Container Info shows about this file."""
+        return {"Header": f"{HEADER_SIZE} bytes", "Payload": len(source.data) - HEADER_SIZE}
+
+
+def register(registry) -> None:
+    registry.register(MyContainer())

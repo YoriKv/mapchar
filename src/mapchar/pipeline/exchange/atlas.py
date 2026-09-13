@@ -13,7 +13,7 @@ from mapchar.core.block import (
     WriteMode,
 )
 from mapchar.core.numbers import format_num, parse_num
-from mapchar.core.table import EntryKind, Table, TableSet
+from mapchar.core.table import Table, TableSet, TokenKind
 from mapchar.core.text import split_lines
 from mapchar.core.tokens import (
     CodeRef,
@@ -52,13 +52,13 @@ def write_abcde_tables(tables: list[Table]) -> str:
         for e in table.sorted_entries():
             key = format_key(e.bits)
             weight = f"<{e.weight}>" if e.weight != 1 else ""
-            if e.kind is EntryKind.TEXT:
+            if e.kind is TokenKind.TEXT:
                 lines.append(f"{key}{weight}={_abcde_text(e.text)}")
-            elif e.kind is EntryKind.END:
+            elif e.kind is TokenKind.END:
                 lines.append(f"/{key}{weight}={_abcde_text(e.text)}")
-            elif e.kind is EntryKind.RETURN:
+            elif e.kind is TokenKind.RETURN:
                 lines.append(f"!{key}{weight}=,-1")
-            elif e.kind is EntryKind.CODE:
+            elif e.kind is TokenKind.CODE:
                 n = sum(o.bits for o in e.operands) // 8
                 lines.append(f"!{key}{weight}=<[{e.text}]>,{n}")
             else:
@@ -116,7 +116,7 @@ def atlas_text(text: str, tables: TableSet | None) -> str:
         elif ref.words and tables is not None:
             found = tables.entry_for_label(ref.label)
             entry = found[0][1] if found else None
-            if entry is None or entry.kind is not EntryKind.CODE:
+            if entry is None or entry.kind is not TokenKind.CODE:
                 out.append(f"[{ref.label} {' '.join(ref.words)}]")
                 continue
             values = operand_values(entry, ref.words)

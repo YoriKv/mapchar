@@ -5,10 +5,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, TypeVar
 
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QLabel,
+    QProgressDialog,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -19,6 +21,42 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
 
 T = TypeVar("T")
+
+
+PICKER_WIDTH = 160
+"""The closed width of a codec or table picker: one number, so a bar of them
+reads as a row whatever names the registry and the project give their items."""
+
+
+class CompactComboBox(QComboBox):
+    """A combo box whose closed button is a stated width in pixels.
+
+    A stock combo reserves the width of its longest item, which long plugin,
+    table and preset names turn into dead space in a bar — and a bar whose
+    width changes as the items do. Only the size *hints* are set, so a layout
+    may still stretch one; the open list is widened back to its longest item,
+    so every entry stays readable while choosing.
+    """
+
+    def __init__(self, width: int = PICKER_WIDTH, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._width = width
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        hint = super().sizeHint()
+        hint.setWidth(self._width)
+        return hint
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        hint = super().minimumSizeHint()
+        hint.setWidth(self._width)
+        return hint
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt override
+        view = self.view()
+        width = view.sizeHintForColumn(0) + view.verticalScrollBar().sizeHint().width()
+        view.setMinimumWidth(max(self.width(), width))
+        super().showPopup()
 
 
 class ResultsTable(QTableWidget):
@@ -97,6 +135,54 @@ class CancellableRun:
         return not self._cancelled
 
 
+class ModalProgress:
+    """A progress bar with a Stop button over one long call, in front of a window.
+
+    :class:`CancellableRun`'s counterpart for work started from a **menu** rather
+    than from a tool window that has a run/stop row of its own: the search for
+    pointers has nowhere to put those two buttons, and a menu row that freezes the
+    window for a minute with no way out is the one thing every long operation here
+    is supposed not to do.
+
+    Used as a context manager; :meth:`progress` is what the engine is handed, and
+    it pumps the event loop so the Stop button can be clicked at all. The engine
+    is asked to stop rather than interrupted, so a cancelled run still returns
+    whatever it had found by then.
+    """
+
+    def __init__(self, parent: QWidget | None, title: str, label: str) -> None:
+        dialog = QProgressDialog(label, "Stop", 0, 1, parent)
+        dialog.setWindowTitle(title)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(0)  # the work has already started
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        self.dialog = dialog
+
+    def __enter__(self) -> ModalProgress:
+        self.dialog.setValue(0)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.dialog.reset()
+        self.dialog.close()
+        self.dialog.deleteLater()
+
+    @property
+    def cancelled(self) -> bool:
+        return self.dialog.wasCanceled()
+
+    def cancel(self) -> None:
+        self.dialog.cancel()
+
+    def progress(self, done: int, total: int) -> bool:
+        """Report how far the work is; ``False`` asks the engine to stop."""
+        self.dialog.setMaximum(max(total, 1))
+        self.dialog.setValue(min(done, max(total, 1)))
+        QApplication.processEvents()
+        return not self.dialog.wasCanceled()
+
+
 def fill_pick(
     combo: QComboBox,
     items: Iterable[tuple[str, object]],
@@ -130,4 +216,12 @@ def select_data(combo: QComboBox, value: object) -> bool:
     return True
 
 
-__all__ = ["CancellableRun", "ResultsTable", "fill_pick", "select_data"]
+__all__ = [
+    "PICKER_WIDTH",
+    "CancellableRun",
+    "CompactComboBox",
+    "ModalProgress",
+    "ResultsTable",
+    "fill_pick",
+    "select_data",
+]

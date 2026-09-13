@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from mapchar.core.notices import Notice
+from mapchar.core.text import nfc
 from mapchar.core.tokens import Token
 
 
@@ -161,6 +162,14 @@ class StringRecord:
     lines: tuple[int, ...] = ()
     """Token indices where fixed-line pieces start (fixed-line layout only)."""
 
+    def __setattr__(self, name: str, value: object) -> None:
+        # A translation is NFC however it arrived — typed, imported from a
+        # script, a translator file or a PO — so it compares and encodes
+        # against NFC table text.
+        if name == "translation" and isinstance(value, str):
+            value = nfc(value)
+        object.__setattr__(self, name, value)
+
     @property
     def start(self) -> int:
         """First byte."""
@@ -187,8 +196,10 @@ class StringRecord:
         )
 
     def matches_original(self, text: str) -> bool:
-        """Whether ``text`` is the original text, line breaks aside."""
-        return text.replace("\n", "") == self.original_text().replace("\n", "")
+        """Whether ``text`` is the original text, line breaks and form aside."""
+        return nfc(text).replace("\n", "") == nfc(self.original_text()).replace(
+            "\n", ""
+        )
 
 
 def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:

@@ -1,0 +1,46 @@
+"""A mapping: how a pointer value becomes an offset in the file, and back.
+
+Most cartridge layouts are the banked preset next to this file — reach for code
+only when the arithmetic is not "bank times size plus address". This one is the
+case that keeps coming up: a bank *table* in the ROM, where bank numbers are
+not contiguous, so the offset cannot be computed from the value alone.
+
+Both directions must round-trip: ``to_value(to_offset(v)) == v`` for every
+pointer the game actually holds, because that is what writing a block back
+does. Returning ``None`` from ``to_offset`` says the value points outside the
+file, and the string is reported instead of read from a wrong place.
+"""
+
+from mapchar.plugins.base import PluginInfo, Stage
+
+BANK_SIZE = 0x4000
+BANK_BASE = 0x8000
+# Which 16 KiB chunk of the file each bank number lives in — a mapper's own
+# order, read off the cartridge rather than assumed.
+BANK_ORDER = [0, 2, 1, 3, 6, 7, 4, 5]
+
+
+class TableBanked:
+    info = PluginInfo("my_table_banked", "Banked through a bank table", Stage.MAPPING)
+
+    # Pointer widths this mapping can be used with, and whether a block has to
+    # supply a bank number (a 2-byte pointer carries only the CPU address).
+    sizes = (2, 3)
+    needs_bank = True
+
+    def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
+        address = value & 0xFFFF
+        if value > 0xFFFF:  # a 3-byte pointer carries its own bank
+            bank = value >> 16
+        if address < BANK_BASE or address >= BANK_BASE + BANK_SIZE:
+            return None
+        if bank >= len(BANK_ORDER):
+            return None
+        return BANK_ORDER[bank] * BANK_SIZE + (address - BANK_BASE)
+
+    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
+        return BANK_BASE + (offset % BANK_SIZE)
+
+
+def register(registry) -> None:
+    registry.register(TableBanked())

@@ -33,9 +33,10 @@ delivers; every phase is built.
 ## Maintaining this section
 
 - A changed decision changes the doc that states it, in the same change.
-- Phases say what each delivers, never what is done. When a part ships, its
-  description moves out of `plan/` into the regular docs and the phase entry
-  shrinks to what is still ahead.
+- These six docs are the reference documentation for mapchar itself, and they
+  stay here: `plan/` is where the design is written down, not a staging area
+  something graduates from. [phases.md](phases.md) says what each phase
+  delivered; everything else says how the app is now.
 - Reference behaviour of the tools being replaced stays in
   [`../romjuice.md`](../romjuice.md), [`../abcde/`](../abcde/README.md) and
   [`../table-dialects.md`](../table-dialects.md); this section only says what

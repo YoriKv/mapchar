@@ -19,13 +19,13 @@ from mapchar.core.table import (
     RAW,
     RETURN,
     Entry,
-    EntryKind,
     OperandSpec,
     SwitchParam,
     Table,
+    TokenKind,
     parse_stop,
 )
-from mapchar.core.text import split_lines
+from mapchar.core.text import nfc, split_lines
 
 HEADER = "@mapchar table 1"
 
@@ -34,7 +34,8 @@ _ENTRY = re.compile(
 )
 _LABEL_HEAD = re.compile(r"^\[(" + LABEL_PATTERN.pattern + r")\]")
 _PARAM = re.compile(
-    r"^@(?P<table>[A-Za-z0-9_.-]+):(?P<stop>\*|\d+|\$[0-9A-Fa-f]+|%[01]+)(?P<shared>\+?)$"
+    r"^@(?P<table>" + ID_PATTERN.pattern + r"):"
+    r"(?P<stop>\*|\d+|\$[0-9A-Fa-f]+|%[01]+)(?P<shared>\+?)$"
     r"|^return$"
 )
 
@@ -46,6 +47,9 @@ class TableFile:
     tables: list[Table]
     notices: list[Notice] = field(default_factory=list)
     dialect: str = "native"
+    encoding: str = "utf-8"
+    """The encoding the file was decoded as; a legacy table is often
+    ``cp932`` (:func:`mapchar.core.text.read_text_any` decides)."""
 
 
 def is_native(text: str) -> bool:
@@ -87,6 +91,7 @@ def parse_native(
             keyword = parts[0] if parts else ""
             arg = parts[1].strip() if len(parts) > 1 else ""
             if keyword == "table":
+                arg = nfc(arg)
                 if not ID_PATTERN.fullmatch(arg):
                     raise TableError(f"invalid table id {arg!r}", path, n)
                 if any(t.id == arg for t in tables):
@@ -131,10 +136,10 @@ def parse_entry(line: str) -> Entry:
     w = int(weight) if weight is not None else 1
     if prefix == "":
         _check_text(rhs)
-        return Entry(bits, EntryKind.TEXT, rhs, w)
+        return Entry(bits, TokenKind.TEXT, rhs, w)
     if prefix == "/":
         _check_text(rhs)
-        return Entry(bits, EntryKind.END, rhs, w)
+        return Entry(bits, TokenKind.END, rhs, w)
     if prefix == "$":
         label, rest = _take_label(rhs, "$")
         if not rest.startswith(","):
@@ -143,10 +148,10 @@ def parse_entry(line: str) -> Entry:
         if not specs or any(not s for s in specs):
             raise ValueError("empty operand spec")
         operands = tuple(OperandSpec.parse(s) for s in specs)
-        return Entry(bits, EntryKind.CODE, label, w, operands=operands)
+        return Entry(bits, TokenKind.CODE, label, w, operands=operands)
     # prefix == "!"
     if rhs.strip() == "return":
-        return Entry(bits, EntryKind.RETURN, "", w)
+        return Entry(bits, TokenKind.RETURN, "", w)
     if rhs.strip().startswith("return"):
         raise ValueError("'return' takes no label or parameters")
     text, params = _split_switch(rhs)
@@ -156,7 +161,7 @@ def parse_entry(line: str) -> Entry:
         raise ValueError("'return' must be the last parameter")
     _check_text(text)
     return Entry(
-        bits, EntryKind.SWITCH, text, w, params=tuple(map(parse_param, params))
+        bits, TokenKind.SWITCH, text, w, params=tuple(map(parse_param, params))
     )
 
 
@@ -216,14 +221,14 @@ def format_entry(entry: Entry) -> str:
     key = format_key(entry.bits)
     if entry.weight != 1:
         key += f"<{entry.weight}>"
-    if entry.kind is EntryKind.TEXT:
+    if entry.kind is TokenKind.TEXT:
         return f"{key}={entry.text}"
-    if entry.kind is EntryKind.END:
+    if entry.kind is TokenKind.END:
         return f"/{key}={entry.text}"
-    if entry.kind is EntryKind.CODE:
+    if entry.kind is TokenKind.CODE:
         specs = ",".join(o.spec() for o in entry.operands)
         return f"${key}=[{entry.text}],{specs}"
-    if entry.kind is EntryKind.RETURN:
+    if entry.kind is TokenKind.RETURN:
         return f"!{key}=return"
     params = " ".join(p.spec() for p in entry.params)
     return f"!{key}={entry.text} {params}"

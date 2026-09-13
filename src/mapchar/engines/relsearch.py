@@ -2,28 +2,42 @@
 
 A query such as ``Hello`` becomes constraints on the differences between
 codes. Letters of one case form a run whose codes are consecutive, digits
-another; ``?`` matches anything. A hit reports the base code of every run
-it pinned down, which is what seeds a table.
+another, hiragana and katakana one each in gojūon order — the order a Japanese
+game's font is laid out in — and ``?`` matches anything. A hit reports the base
+code of every run it pinned down, which is what seeds a table.
 """
 
 from __future__ import annotations
 
 from array import array
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from mapchar.core.bits import bytes_to_bits
-from mapchar.core.table import Entry, EntryKind
+from mapchar.core.table import Entry, TokenKind
+from mapchar.core.text import graphemes, nfc
 from mapchar.core.tokens import escape_text
 
 UPPER = "upper"
 LOWER = "lower"
 DIGIT = "digit"
+HIRAGANA = "hiragana"
+KATAKANA = "katakana"
 RUNS = {
     UPPER: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     LOWER: "abcdefghijklmnopqrstuvwxyz",
     DIGIT: "0123456789",
+    HIRAGANA: (
+        "あいうえおかきくけこさしすせそたちつてとなにぬねの"
+        "はひふへほまみむめもやゆよらりるれろわをん"
+    ),
+    KATAKANA: (
+        "アイウエオカキクケコサシスセソタチツテトナニヌネノ"
+        "ハヒフヘホマミムメモヤユヨラリルレロワヲン"
+    ),
 }
+"""Run name to its characters in code order: the 46 gojūon kana without the
+voiced forms, which a ROM usually spells with a separate dakuten code."""
 
 
 @dataclass(frozen=True)
@@ -42,6 +56,24 @@ class Hit:
         return len(self.codes) * self.width
 
 
+@dataclass
+class Hits:
+    """What a search found, and whether it stopped early."""
+
+    hits: list[Hit] = field(default_factory=list)
+    truncated: bool = False
+    """The limit was reached: more hits may sit past the last one."""
+
+    def __len__(self) -> int:
+        return len(self.hits)
+
+    def __iter__(self):
+        return iter(self.hits)
+
+    def __getitem__(self, index):
+        return self.hits[index]
+
+
 @dataclass(frozen=True)
 class _Term:
     run: str | None
@@ -50,7 +82,7 @@ class _Term:
 
 def _terms(query: str) -> list[_Term]:
     terms: list[_Term] = []
-    for ch in query:
+    for ch in graphemes(nfc(query)):
         if ch == "?":
             terms.append(_Term(None, 0))
             continue
@@ -60,7 +92,7 @@ def _terms(query: str) -> list[_Term]:
                 terms.append(_Term(run, i))
                 break
         else:
-            raise ValueError(f"{ch!r} is not a letter, digit or '?'")
+            raise ValueError(f"{ch!r} is not a letter, digit, kana or '?'")
     return terms
 
 
@@ -86,17 +118,19 @@ def relative_search(
     case_gap: bool = True,
     limit: int = 500,
     progress: Callable[[int, int], bool] | None = None,
-) -> list[Hit]:
-    """Every place the query's relative pattern occurs.
+) -> Hits:
+    """Every place the query's relative pattern occurs, up to ``limit``.
 
     With ``case_gap`` off, lower case must follow upper case directly
     (``a == A + 26``). ``progress(done, total)`` returns False to cancel.
+    A search that hits ``limit`` says so, so the caller can offer a larger one.
     """
     terms = _terms(query)
     if not any(t.run for t in terms):
-        raise ValueError("the query needs at least one letter or digit")
+        raise ValueError("the query needs at least one letter, digit or kana")
     n = len(terms)
-    hits: list[Hit] = []
+    found = Hits()
+    hits = found.hits
     combos = [(w, e) for w in widths for e in (endians if w > 1 else ("little",))]
     total = len(combos) * len(data)
     done = 0
@@ -107,7 +141,7 @@ def relative_search(
             for i in range(count - n + 1):
                 if progress is not None and i % 65536 == 0:
                     if not progress(done + i * width, total):
-                        return hits
+                        return found
                 bases: dict[str, int] = {}
                 ok = True
                 for k, term in enumerate(terms):
@@ -137,9 +171,10 @@ def relative_search(
                         )
                     )
                     if len(hits) >= limit:
-                        return hits
+                        found.truncated = True
+                        return found
         done += len(data)
-    return hits
+    return found
 
 
 def _code_bits(code: int, bit_width: int, endian: str) -> str:
@@ -154,22 +189,21 @@ def entries_from_base(
 ) -> list[Entry]:
     """TEXT entries for ``chars`` over consecutive codes from ``base``.
 
-    The first code that does not fit ``bit_width`` bits ends the run.
+    One entry per grapheme, so a decomposed dakuten kana takes one code and
+    not two. The first code that does not fit ``bit_width`` bits ends the run.
     """
     entries: list[Entry] = []
-    for i, ch in enumerate(chars):
+    for i, ch in enumerate(graphemes(nfc(chars))):
         code = base + i
         if code >= 1 << bit_width:
             break
         entries.append(
-            Entry(_code_bits(code, bit_width, endian), EntryKind.TEXT, escape_text(ch))
+            Entry(_code_bits(code, bit_width, endian), TokenKind.TEXT, escape_text(ch))
         )
     return entries
 
 
-def entries_from_hit(
-    hit: Hit, runs: tuple[str, ...] = (UPPER, LOWER, DIGIT)
-) -> list[Entry]:
+def entries_from_hit(hit: Hit, runs: tuple[str, ...] = tuple(RUNS)) -> list[Entry]:
     """Table entries for every run the hit pinned down, as full alphabets."""
     entries: list[Entry] = []
     for run in runs:

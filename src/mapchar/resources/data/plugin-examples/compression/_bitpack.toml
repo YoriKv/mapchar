@@ -1,0 +1,12 @@
+# Fixed-width symbols packed across byte boundaries: the cheapest text packing
+# there is. Six bits per character fits a 64-glyph font into three bytes per
+# four characters, which is why so many games do exactly this.
+#
+# Symbols come out one byte each, so the table you decode the result with is an
+# ordinary 8-bit table.
+id = "my_bitpack"
+name = "My 5-bit packed text"
+engine = "bitpack"
+
+[params]
+width = 5  # bits per symbol

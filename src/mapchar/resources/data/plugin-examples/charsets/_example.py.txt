@@ -1,0 +1,39 @@
+"""A charset: the glyphs a new table starts from.
+
+A charset is pure data — ``entries()`` yields ``(bits, text)`` pairs — and it is
+what saves typing 90 lines by hand for a game whose font is in its own order.
+New Table ▸ Charset lists every one registered, and the entries you then edit
+in the table override what the charset gave you.
+
+This one is the common 8-bit layout: letters and digits in ranges, with a few
+codes spelled out. Copy it, drop the underscore, and change the ranges.
+
+``bits`` is a string of ``0`` and ``1`` — one entry may be any number of bits
+wide, which is what lets a charset describe a variable-width encoding — so
+build it with ``format(value, "08b")`` and not by hand.
+"""
+
+from mapchar.plugins.base import PluginInfo, Stage
+
+# (first byte, the characters it starts) pairs.
+RANGES = [
+    (0x0A, "0123456789"),
+    (0x14, "ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+    (0x2E, "abcdefghijklmnopqrstuvwxyz"),
+]
+SINGLES = {0x00: " ", 0x48: ".", 0x49: ",", 0x4A: "!", 0x4B: "?", 0x4C: "'"}
+
+
+class MyCharset:
+    info = PluginInfo("my_font_order", "My game's font order", Stage.CHARSET)
+
+    def entries(self):
+        for first, text in RANGES:
+            for i, char in enumerate(text):
+                yield format(first + i, "08b"), char
+        for value, char in SINGLES.items():
+            yield format(value, "08b"), char
+
+
+def register(registry) -> None:
+    registry.register(MyCharset())

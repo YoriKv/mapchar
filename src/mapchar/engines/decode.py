@@ -20,11 +20,11 @@ from mapchar.core.table import (
     RAW,
     RETURN,
     Entry,
-    EntryKind,
     Stop,
     SwitchParam,
     Table,
     TableSet,
+    TokenKind,
 )
 from mapchar.core.tokens import Token
 
@@ -159,14 +159,14 @@ def decode(
         _count(stack, entry.weight)
 
         # 5. Kind-specific behaviour.
-        if entry.kind is EntryKind.RETURN:
+        if entry.kind is TokenKind.RETURN:
             if not _pop_table(stack, frame.table):
                 return DecodeResult(tokens, pos, EndedBy.RETURN, notices)
             continue
-        if entry.kind is EntryKind.END and rules.end_terminated:
+        if entry.kind is TokenKind.END and rules.end_terminated:
             pos = _realign(pos, rules.realign)
             return DecodeResult(tokens, pos, EndedBy.END_TOKEN, notices)
-        if entry.kind is EntryKind.SWITCH:
+        if entry.kind is TokenKind.SWITCH:
             _pop_finished(stack)
             # Innermost last, so the first parameter runs first.
             for param in reversed(entry.params):

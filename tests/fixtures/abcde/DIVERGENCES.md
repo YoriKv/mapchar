@@ -15,7 +15,7 @@ behaviour is documented under `docs/`.
 | A RAW `FIXED_STRING` block dumps one string | A range source with fixed length dumps every string; the first is compared | `test_verify_abcde.py` |
 | Unmatched bytes print `<$XX>` | `[$XX]`, converted on Atlas export | `test_verify_abcde.py` normalises |
 | Pointer sorting by string comparison; duplicate targets dumped repeatedly | Numeric sort; one string per target with all its pointers | phase 3 |
-| Tables NFD-normalised, output NFC | Text compared after NFC, stored as typed | — |
+| Tables and scripts NFD-normalised, Cartographer output NFC | NFC everywhere: table text, translations, font alphabets and search needles are composed on load and stored composed, and the encoder decomposes atoms so either spelling encodes | `tests/test_unicode.py` |
 | Fallback bits not emitted at end of text on insert | Always emitted when the frame closes | phase 2 |
 | Encoder without longest-prefix safety, non-optimal, end tokens suppress alternatives, frames keyed by file name | Prefix-safe Dijkstra keyed by table identity | phase 2 |
 | romjuice text-mode ROM reads, stale end-of-file buffer, last-line truncation, `!00` never swapping | Not reproduced; `!` swaps import as `*` switches | `test_table_legacy.py::test_romjuice_swap` |

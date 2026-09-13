@@ -4,22 +4,28 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass, field, replace
 from itertools import count
 
-from mapchar.core.block import BlockConfig
+from mapchar.core.block import BlockConfig, Status
+from mapchar.core.capabilities import EntryKind
 from mapchar.core.document import Document
 from mapchar.core.font import Font, TextBox
+from mapchar.core.notices import Notice
 from mapchar.core.table import Table
 
 
-class EntryKind(Enum):
-    FILE = "file"
-    BLOCK = "block"
-    BOOKMARK = "bookmark"
-    TABLE = "table"
-    FONT = "font"
+@dataclass
+class StringState:
+    """One string's saved translation state, apart from any document.
+
+    What the project file stores per string, and what an entry carries while no
+    document of its own exists to hold it (:attr:`Entry.pending_strings`).
+    """
+
+    translation: str | None = None
+    status: Status = Status.UNTOUCHED
+    notes: str = ""
 
 
 @dataclass
@@ -47,8 +53,14 @@ class Entry:
     bookmark_offset: int = 0
     slice_offset: int = 0
     """Blocks with their own compression: where the compressed data starts."""
-    slice_length: int = 0
-    """Its compressed length; 0 means "found on first read"."""
+    slice_length: int | None = None
+    """Its compressed length; ``None`` when nobody recorded one.
+
+    Distinct from zero, which is a slot with no room in it. Unknown means the
+    slot runs to the end of the parent's buffer, and that is what bounds a
+    write-back — never widened from a decode, which stops where its input did
+    rather than where the slot does.
+    """
     spare_room: str = "fill"
     """What fills a slot a shorter re-compression leaves: ``fill`` or ``keep``."""
     font: Font | None = None
@@ -58,9 +70,39 @@ class Entry:
     dialect: str | None = None
     """Tables: the dialect the file was read with."""
     tables: list[Table] = field(default_factory=list)
-    """Tables: the loaded logical tables."""
+    """Tables: the loaded logical tables, the file's plus the overlay."""
+    file_tables: list[Table] = field(default_factory=list)
+    """Tables: what the file alone gave, before any in-app edit.
+
+    The baseline :func:`~mapchar.project.tables.overlay_of` measures the overlay
+    against, kept apart from :attr:`tables` so the file on disk stays the file
+    on disk. Empty for a table entry with no file, whose every entry is
+    therefore an addition the project carries whole.
+    """
+    table_overlay: dict[str, dict[str, str | None]] = field(default_factory=dict)
+    """Tables: the in-app edits over the file, per table id.
+
+    Per table id, per entry key: the entry's line in the native grammar for one
+    added or changed, and ``None`` for one removed. It is what the project file
+    stores instead of rewriting the table file, so a file other tools read keeps
+    working; **Save Table** folds it back in and empties it.
+    """
+    notices: tuple[Notice, ...] = ()
+    """Tables: what reading the file had to say about it.
+
+    Set by every read of the file — the open, a reload from disk, a project
+    load — and shown on the Table Editor's status line, which is where a
+    conversion from a legacy dialect reports what it could not keep.
+    """
     session: EntrySession = field(default_factory=EntrySession)
     doc: Document | None = None
+    pending_strings: dict[int, StringState] | None = None
+    """Blocks: translation state with no document to live in yet.
+
+    Set by a project load and by dropping a document, and consumed by the next
+    extraction. It is also what a save serialises when the block was never
+    opened, so state survives a session that never looked at it.
+    """
     live_revision: int = 0
     saved_revision: int = 0
     missing: bool = False
@@ -99,12 +141,20 @@ class Workspace:
         return next(self._revisions)
 
     def stamp(self, entry: Entry, revision: int | None = None) -> None:
+        before = entry.dirty
         entry.live_revision = revision if revision is not None else self.next_revision()
-        self._fire(self.on_dirty_changed, entry)
+        if entry.dirty != before:
+            self._fire(self.on_dirty_changed, entry)
 
     def mark_saved(self, entry: Entry) -> None:
+        before = entry.dirty
         entry.saved_revision = entry.live_revision
-        self._fire(self.on_dirty_changed, entry)
+        if entry.dirty != before:
+            self._fire(self.on_dirty_changed, entry)
+
+    def dirty_entries(self) -> list[Entry]:
+        """Every entry with unsaved edits, in list order."""
+        return [e for e in self.entries if e.dirty]
 
     # --- lookup --------------------------------------------------------
 
@@ -187,17 +237,31 @@ class Workspace:
     def close(self, entry: Entry) -> list[Entry]:
         """Remove an entry and its children; returns what was removed."""
         removed = [c for c in self.entries if c.parent is entry] + [entry]
+        anchor = min(
+            (self.entries.index(e) for e in removed if e in self.entries), default=0
+        )
         for e in removed:
             if e in self.entries:
                 self.entries.remove(e)
                 self._fire(self.on_removed, e)
         if self.current in removed:
-            self.set_current(self._neighbour(entry))
+            self.set_current(self._neighbour(anchor))
         return removed
 
-    def _neighbour(self, entry: Entry) -> Entry | None:
-        candidates = [e for e in self.entries if e.kind is not EntryKind.BOOKMARK]
-        return candidates[0] if candidates else None
+    def _neighbour(self, anchor: int) -> Entry | None:
+        """Where ``current`` goes when the entry holding it closed: the nearest
+        showable row after the hole, else the nearest before it.
+
+        The row that took the closed one's place is the one the eye is already
+        on; falling back to the end of the list only happens when nothing
+        follows. Bookmarks are skipped — they can never be current.
+        """
+        after = self.entries[anchor:]
+        before = reversed(self.entries[:anchor])
+        return next(
+            (e for e in after if e.kind is not EntryKind.BOOKMARK),
+            next((e for e in before if e.kind is not EntryKind.BOOKMARK), None),
+        )
 
     def reorder(self, entry: Entry, new_index: int) -> None:
         group = [entry] + self.children(entry)
@@ -208,14 +272,29 @@ class Workspace:
         self._fire(self.on_reset)
 
     def replace(self, entries: list[Entry], current: Entry | None) -> None:
-        self.entries = list(entries)
-        self.current = current
+        """Swap the whole list for ``entries`` — a loaded project replaces the
+        workspace, never merges into it.
+
+        The old list goes as one ``on_reset`` over an *empty* list, so a listener
+        that rebuilds from ``entries`` tears down rather than re-reading rows
+        that are about to go; the new list arrives as an ``on_added`` per entry,
+        which is how it is built. ``current`` is set last, so the activation
+        lands on a populated list.
+        """
+        self.set_current(None)
+        self.entries.clear()
         self._fire(self.on_reset)
-        self._fire(self.on_current_changed, current)
+        self.entries.extend(entries)
+        for entry in entries:
+            self._fire(self.on_added, entry)
+        self.set_current(current)
 
     def set_current(self, entry: Entry | None) -> None:
         if entry is self.current:
             return
+        # A bookmark is a place in another entry, never a thing to show.
+        assert entry is None or entry.kind is not EntryKind.BOOKMARK
+        assert entry is None or entry in self.entries
         self.current = entry
         self._fire(self.on_current_changed, entry)
 
@@ -225,6 +304,128 @@ class Workspace:
             if e.doc is not None:
                 e.doc.extraction_key = None
 
+    def drop_document(self, entry: Entry) -> None:
+        """Discard an entry's cached document, keeping its translation state.
+
+        Once a load has consumed :attr:`Entry.pending_strings` the document is
+        the only place those translations exist, so a drop that did not stash
+        them back would silently revert the block to the bytes on disk.
+        """
+        if entry.doc is not None and entry.doc.strings:
+            states = {
+                rec.index: StringState(rec.translation, rec.status, rec.notes)
+                for rec in entry.doc.strings
+                if rec.translation is not None
+                or rec.status is not Status.UNTOUCHED
+                or rec.notes
+            }
+            # An extracted document is the newer answer; a pending set the
+            # extraction never consumed is still the only one there is.
+            if states or entry.pending_strings is None:
+                entry.pending_strings = states or None
+        entry.doc = None
+
+    def invalidate_path(self, path: str, keep: Entry | None = None) -> None:
+        """Drop the cached documents of entries reading ``path`` (after a save).
+
+        ``keep`` — the entry that just wrote — holds on to its own, which is
+        already the bytes now on disk, and so do the blocks under it: a file and
+        its blocks deposit as one write, and that write refreshes them in place.
+        An entry with unsaved edits keeps its document too: that is where they
+        live, and it simply stays based on the pre-save bytes until it is written
+        or reloaded.
+        """
+        key = normalize_path(path)
+        for entry in self.entries:
+            if entry is keep or (keep is not None and entry.parent is keep):
+                continue
+            if entry.dirty:
+                continue
+            if entry.doc is None:
+                continue
+            if any(normalize_path(p) == key for p in entry.paths):
+                self.drop_document(entry)
+
     def _fire(self, callbacks, *args) -> None:
         for cb in list(callbacks):
             cb(*args)
+
+
+def missing_paths(ws: Workspace) -> list[str]:
+    """Every referenced path not on disk, de-duplicated, in list order.
+
+    De-duplicated *before* the stat: a ROM carries its blocks and bookmarks, and
+    every one of them names the same file, so one shared file is one worklist
+    row — located once, corrected everywhere.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    for entry in ws.entries:
+        for path in entry.paths:
+            key = normalize_path(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            if not os.path.exists(path):
+                result.append(path)
+    return result
+
+
+def relocate_path(ws: Workspace, old_path: str, new_path: str) -> list[Entry]:
+    """Re-point every reference to ``old_path`` at ``new_path``; the entries
+    touched.
+
+    Rewrites an entry's ``path``, any of its ``extra_paths`` naming the same
+    file, and a font's own record of where its sheet came from — so relocating a
+    shared ROM fixes the file and the blocks and bookmarks under it together.
+    Pure data: the caller re-reads whatever was affected.
+    """
+    key = normalize_path(old_path)
+    old_name, new_name = os.path.basename(old_path), os.path.basename(new_path)
+    touched: list[Entry] = []
+    for entry in ws.entries:
+        changed = bool(entry.path) and normalize_path(entry.path) == key  # type: ignore[arg-type]
+        if changed:
+            entry.path = new_path
+            # A row named after its file follows the file; a name the user typed
+            # is theirs and survives the move.
+            if entry.name == old_name:
+                entry.name = new_name
+            if entry.font is not None:
+                entry.font = replace(entry.font, path=new_path)
+        moved_extra = tuple(
+            new_path if normalize_path(p) == key else p for p in entry.extra_paths
+        )
+        if moved_extra != entry.extra_paths:
+            entry.extra_paths = moved_extra
+            changed = True
+        if changed:
+            touched.append(entry)
+    return touched
+
+
+def retarget_files(ws: Workspace, entry: Entry, paths: tuple[str, ...]) -> list[Entry]:
+    """Re-point a file entry at ``paths``, carrying its children; the entries
+    touched.
+
+    The file list is the entry's identity as much as its contents: ``paths[0]``
+    is the row in the Files panel, the key a block or bookmark is found by, and
+    the file a write is attributed to. So the children move in the same step —
+    their offsets are counted against the *join*, so one left on the old list
+    would address something else. A row still named after its first file follows
+    the new one, the same rule :func:`relocate_path` uses. Pure data: the caller
+    drops the affected documents and reads them again.
+    """
+    if entry.kind is not EntryKind.FILE or not paths:
+        return []
+    first, *rest = paths
+    named_after_file = bool(entry.path) and entry.name == os.path.basename(entry.path)
+    # The children are found before the path moves: they are keyed by the one
+    # that is about to change.
+    touched = [entry, *ws.children(entry)]
+    for moved in touched:
+        moved.path = first
+        moved.extra_paths = tuple(rest)
+    if named_after_file:
+        entry.name = os.path.basename(first)
+    return touched

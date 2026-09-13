@@ -149,11 +149,18 @@ def parse_banked(id: str) -> Banked | None:
 
 
 def resolve_mapping(registry, id: str):
-    """A mapping plugin by id, including on-demand banked ids; None if unknown."""
+    """A mapping plugin by id, including on-demand banked ids; None if unknown.
+
+    A retired id is forwarded here too (:func:`~mapchar.plugins.aliases.current_id`),
+    since a parameterised id is built rather than registered and so never reaches
+    the registry's own fallback.
+    """
     plugin = registry.plugin(Stage.MAPPING, id)
     if plugin is not None:
         return plugin
-    return parse_banked(id)
+    from mapchar.plugins.aliases import current_id
+
+    return parse_banked(current_id(id))
 
 
 def mapping_for(source, registry=None):

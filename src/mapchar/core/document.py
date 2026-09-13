@@ -17,13 +17,20 @@ class Document:
     ctx: PipelineContext
     writable: bool
     raw: bytes = b""
-    """The file bytes before the container, kept for write-back."""
+    """The file bytes as the load read them, before the container ran.
+
+    A record of what was opened, not a write-back buffer: a save reads the
+    destination again at the moment it writes, so that nothing captured here can
+    undo a change made to the file since.
+    """
     missing_plugins: list[str] = field(default_factory=list)
     table_set: TableSet | None = None
     strings: list[StringRecord] = field(default_factory=list)
     notices: list[Notice] = field(default_factory=list)
     extraction_key: tuple | None = None
     """What the strings were extracted from, to skip a repeat."""
+    too_long: int = 0
+    """How many strings the last layout found would not fit; a Files-panel mark."""
 
     @property
     def size(self) -> int:

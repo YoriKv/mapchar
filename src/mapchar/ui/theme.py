@@ -46,6 +46,20 @@ TINT_STRING_RULE = QColor(120, 120, 120, 160)
 # themes' surfaces.
 WARNING_INK = QColor(0xAE, 0x7A, 0x11)
 ERROR_INK = QColor(0xDC, 0x58, 0x58)
+# The Preview's paper. Named here with the rest of the fixed colours rather than
+# written into the renderer, because it is a *theme* decision that happens not to
+# vary: a glyph sheet's own palette is what the preview shows, and a paper that
+# followed the window's surface would tint the art on one theme and not the
+# other. Deliberately not black — an all-black glyph still has to be visible on
+# it, and the grid lines above have to read without glowing.
+PREVIEW_PAPER = QColor(0x18, 0x18, 0x1C)
+# The rule the Preview draws over that paper, one line per pixel of the box, as
+# the raw view rules string boundaries: faint enough that it does not compete
+# with the art, and fixed with the paper rather than following the window.
+PREVIEW_GRID = QColor(0xFF, 0xFF, 0xFF, 28)
+# The amber wash behind a Files row that opened as something other than what it
+# says — a file that is not there, or a read that had to give something up.
+NOTICE_WASH = QColor(WARNING_INK.red(), WARNING_INK.green(), WARNING_INK.blue(), 40)
 
 
 @dataclass(frozen=True)
@@ -114,11 +128,13 @@ def apply_theme(app: QApplication | None, name: str) -> None:
     app.setProperty("mapchar_theme", name)
 
 
-def ink(widget, color: QColor) -> None:
-    """Override only the widget's WindowText."""
-    p = widget.palette()
-    p.setColor(QPalette.ColorRole.WindowText, color)
-    widget.setPalette(p)
-
-
-__all__ = ["Qt", "THEMES", "apply_theme", "ink", "palette_for"]
+__all__ = [
+    "ERROR_INK",
+    "NOTICE_WASH",
+    "PREVIEW_GRID",
+    "PREVIEW_PAPER",
+    "THEMES",
+    "WARNING_INK",
+    "apply_theme",
+    "palette_for",
+]

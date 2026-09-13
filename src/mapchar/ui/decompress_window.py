@@ -6,16 +6,29 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from mapchar.ui.raw_widget import RawWidget, RowModel
+from mapchar.ui.window_layout import remember_layout
 
 
 class DecompressWindow(QWidget):
+    """The floating view of what the picked scheme yields at the current offset.
+
+    Scan walks forward over the whole file one offset at a time, which is long
+    enough to need a way out: Stop sits beside it and is the only control live
+    while a scan runs (:meth:`set_scanning`), so nothing else can be asked of a
+    window whose offset is about to move.
+    """
+
     jump_next = Signal()
     scan_next = Signal()
+    scan_stop = Signal()
     to_block = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Tool)
         self.setWindowTitle("Decompressed view")
+        # Size and position remembered between runs, like every tool
+        # window (:mod:`mapchar.ui.window_layout`).
+        self._layout = remember_layout(self, "decompress_window")
         layout = QVBoxLayout(self)
         self.status = QLabel("")
         layout.addWidget(self.status)
@@ -24,19 +37,41 @@ class DecompressWindow(QWidget):
         row = QHBoxLayout()
         self.next = QPushButton("Jump to Next")
         self.scan = QPushButton("Scan")
+        self.stop = QPushButton("Stop")
+        self.stop.setEnabled(False)
         self.block = QPushButton("To Block")
         row.addWidget(self.next)
         row.addWidget(self.scan)
+        row.addWidget(self.stop)
         row.addStretch(1)
         row.addWidget(self.block)
         layout.addLayout(row)
         self.next.clicked.connect(self.jump_next)
         self.scan.clicked.connect(self.scan_next)
+        self.stop.clicked.connect(self.scan_stop)
         self.block.clicked.connect(self.to_block)
+        self._scanning = False
         self.resize(760, 360)
+
+    def set_scanning(self, active: bool) -> None:
+        """Swap the window over to a running scan and back.
+
+        Stop is the one live control; the structure buttons come back under
+        :meth:`show_result`, which the refresh after the scan calls, so nothing
+        here re-arms a button the new position does not justify.
+        """
+        self._scanning = active
+        self.stop.setEnabled(active)
+        self.scan.setEnabled(not active)
+        self.next.setEnabled(False)
+        self.block.setEnabled(False)
+        self.raw.setEnabled(not active)
 
     def show_result(self, model: RowModel | None, status: str, complete: bool) -> None:
         self.raw.set_model(model)
         self.status.setText(status)
-        self.block.setEnabled(model is not None and complete)
-        self.next.setEnabled(model is not None and complete)
+        # A scan's own progress refreshes run through here; while one is running
+        # the only live control is Stop.
+        live = model is not None and complete and not self._scanning
+        self.block.setEnabled(live)
+        self.next.setEnabled(live)

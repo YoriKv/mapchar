@@ -16,11 +16,11 @@ from mapchar.core.notices import Level, Notice
 from mapchar.core.table import (
     RETURN,
     Entry,
-    EntryKind,
     OperandSpec,
     Stop,
     SwitchParam,
     Table,
+    TokenKind,
     parse_stop,
     sanitize_id,
     sanitize_label,
@@ -193,7 +193,7 @@ def read_romjuice(
                 note(n, "swap entry dropped: no second table given")
                 continue
             entry = Entry(
-                bits, EntryKind.SWITCH, "[swap]", params=(SwitchParam(swap_table),)
+                bits, TokenKind.SWITCH, "[swap]", params=(SwitchParam(swap_table),)
             )
             pending.append((n, entry))
             continue
@@ -220,7 +220,7 @@ def read_romjuice(
             kanji.setdefault(tid, []).append((bits, base))
             entry = Entry(
                 bits,
-                EntryKind.SWITCH,
+                TokenKind.SWITCH,
                 f"[{tid}]",
                 params=(SwitchParam(tid, Stop(count=count)),),
             )
@@ -238,7 +238,7 @@ def read_romjuice(
                 continue
             label = f"raw_{int(bits, 2):0{width * 2}X}"
             entry = Entry(
-                bits, EntryKind.CODE, label, operands=(OperandSpec("bytes", count * 8),)
+                bits, TokenKind.CODE, label, operands=(OperandSpec("bytes", count * 8),)
             )
             pending.append((n, entry))
             continue
@@ -251,7 +251,7 @@ def read_romjuice(
         value = _rj_unescape(line[eq + 1 :])
         if width == 2:
             two_byte[int(bits, 2)] = value
-        pending.append((n, Entry(bits, EntryKind.TEXT, legacy_text(value))))
+        pending.append((n, Entry(bits, TokenKind.TEXT, legacy_text(value))))
 
     for n, entry in pending:
         if entry.bits in table.entries:
@@ -269,7 +269,7 @@ def read_romjuice(
         for b in range(256):
             text_value = two_byte.get(base + b)
             if text_value is not None:
-                kt.add(Entry(format(b, "08b"), EntryKind.TEXT, legacy_text(text_value)))
+                kt.add(Entry(format(b, "08b"), TokenKind.TEXT, legacy_text(text_value)))
         if not kt.entries:
             notices.append(Notice(f"kanji table {tid} has no entries", Level.WARNING))
         tables.append(kt)
@@ -302,20 +302,20 @@ def read_cartographer(
             bits = _even_key(key, path, n)
             entry = Entry(
                 bits,
-                EntryKind.CODE,
+                TokenKind.CODE,
                 sanitize_label(label),
                 operands=(OperandSpec("bytes", int(count) * 8),),
             )
         elif first == "/":
             key, _, value = line[1:].partition("=")
             bits = _even_key(key, path, n)
-            entry = Entry(bits, EntryKind.END, _cart_text(value))
+            entry = Entry(bits, TokenKind.END, _cart_text(value))
         elif _HEXKEY.match(first):
             key, eq, value = line.partition("=")
             if not eq:
                 raise TableError("entry without '='", path, n)
             bits = _even_key(key, path, n)
-            entry = Entry(bits, EntryKind.TEXT, _cart_text(value))
+            entry = Entry(bits, TokenKind.TEXT, _cart_text(value))
         else:
             raise TableError("line must start with a hex digit, '/' or '$'", path, n)
         _add_or_note(table, entry, n, notices)
@@ -366,7 +366,7 @@ def read_atlas(
             bits = _even_key(key, path, n)
             _add_or_note(
                 table,
-                Entry(bits, EntryKind.TEXT, legacy_text(value + "\n")),
+                Entry(bits, TokenKind.TEXT, legacy_text(value + "\n")),
                 n,
                 notices,
             )
@@ -385,14 +385,14 @@ def read_atlas(
                 continue
             bits = _even_key(key, path, n)
             _add_or_note(
-                table, Entry(bits, EntryKind.END, legacy_text(value)), n, notices
+                table, Entry(bits, TokenKind.END, legacy_text(value)), n, notices
             )
             continue
         key, eq, value = line.partition("=")
         if not eq or not _HEXKEY.match(key):
             raise TableError("not a table entry", path, n)
         bits = _even_key(key, path, n)
-        _add_or_note(table, Entry(bits, EntryKind.TEXT, legacy_text(value)), n, notices)
+        _add_or_note(table, Entry(bits, TokenKind.TEXT, legacy_text(value)), n, notices)
     result = TableFile([table], notices, "atlas")
     result.end_marker = end_marker  # type: ignore[attr-defined]
     return result
@@ -448,7 +448,7 @@ def read_abcde(
         w = int(weight) if weight is not None else 1
         is_end = "/" in prefixes
         if "!" not in prefixes:
-            kind = EntryKind.END if is_end else EntryKind.TEXT
+            kind = TokenKind.END if is_end else TokenKind.TEXT
             entry = Entry(bits, kind, legacy_text(rhs.replace("\\n", "\n")), w)
         else:
             entry = _abcde_switch(bits, w, rhs, is_end, n, path, note)
@@ -490,7 +490,7 @@ def _abcde_switch(
                     n,
                 )
             if not label and not params:
-                return Entry(bits, EntryKind.RETURN, "", weight)
+                return Entry(bits, TokenKind.RETURN, "", weight)
             params.append(SwitchParam(RETURN))
             break
         target = tid if tid is not None else ("bits" if binary else "raw")
@@ -503,7 +503,7 @@ def _abcde_switch(
     if is_end:
         note(n, "'/' on a switch entry dropped: the string does not end on return")
     return Entry(
-        bits, EntryKind.SWITCH, _switch_text(label), weight, params=tuple(params)
+        bits, TokenKind.SWITCH, _switch_text(label), weight, params=tuple(params)
     )
 
 

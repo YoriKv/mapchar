@@ -1,16 +1,141 @@
-"""Undo commands: thin before/after pairs that call window ``apply_*`` methods."""
+"""Undo commands: thin before/after pairs that call window ``apply_*`` methods.
+
+Undo/redo is built on Qt's ``QUndoStack``/``QUndoCommand`` — a deliberate
+exception to the Qt-free-model rule, because history is per-launch UI session
+state and Qt's stack provides the menu actions, the merging and the obsolete
+handling for free while ``core``/``pipeline``/``project`` stay Qt-free.
+
+One **unified session stack** holds every command in chronological order — files
+panel structure, per-entry configuration, view moves, translations, hex
+overtypes, table and font edits — so a single Ctrl+Z always reverts the most
+recent action whichever surface made it. Three things follow from that, and they
+are what :class:`_StateCommand` exists to state once:
+
+- **The guard.** Applying pokes the same widgets and paths a user gesture does,
+  so every apply runs inside the window's ``_undo_apply()`` guard and the push
+  sites bail while it is set. An apply can then never push a second command.
+- **Reach.** A command scoped to an entry has to get back to that entry before it
+  can land (:class:`_CurrentEntryCommand`), and an *edit* has to get back to the
+  view it was made in as well (:class:`_EditContextCommand`) — reverting a
+  translation while the Raw tab is up would happen somewhere the user cannot see
+  it. A change that shows wherever you are — a rename, a reorder — reaches
+  nothing (:class:`_InPlaceCommand`), because yanking the view to it would be a
+  surprise rather than context.
+- **Revision tokens.** An entry is unsaved when its live revision differs from
+  the one on disk, so an edit that minted a fresh token on the way *back* would
+  leave an undone change dirty for ever. Every command over bytes or records
+  therefore carries the revision on **both** sides of its pair and hands each
+  side the token that belongs to it: undo restores the token the entry had
+  before, and an undo back to what was written reads clean again.
+
+``QUndoStack.push()`` runs ``redo()`` immediately, so push sites capture the
+before state *first* and let the first ``redo()`` do the work — which is also why
+a command can read the live revision in its own constructor.
+"""
 
 from __future__ import annotations
+
+from dataclasses import fields
 
 from PySide6.QtGui import QUndoCommand
 
 from mapchar.project.workspace import Entry
 
+# QUndoStack only attempts mergeWith between commands whose id() match, and -1
+# never merges; any other command landing in between breaks the chain.
 OFFSET_ID = 1
+FIELD_ID = 2
+FONT_ID = 3
+BOX_ID = 4
+
+
+class _StateCommand(QUndoCommand):
+    """One entry's state moving between a captured ``before`` and ``after``.
+
+    The shape almost every command here has: hold the pair, and in each direction
+    hand the right half to one window ``apply_*`` helper inside the window's
+    re-entrancy guard. Subclasses supply :meth:`_apply` and pick their reach by
+    subclassing, rather than by overriding :meth:`_reach` directly. Commands
+    whose two directions are not the same operation over a pair — adding versus
+    removing an entry — are not this shape and stay written out.
+    """
+
+    def __init__(self, window, entry: Entry | None, text: str, before, after) -> None:
+        super().__init__(text)
+        self.window = window
+        self.entry = entry
+        self.before = before
+        self.after = after
+
+    def redo(self) -> None:
+        self._run(self.after)
+
+    def undo(self) -> None:
+        self._run(self.before)
+
+    def _run(self, state) -> None:
+        with self.window._undo_apply():
+            if self._reach():
+                self._apply(state)
+
+    def _reach(self) -> bool:
+        """Put the window where this command's change belongs; False to skip."""
+        raise NotImplementedError
+
+    def _apply(self, state) -> None:
+        """Land ``state`` — one direction of this command, on the window."""
+        raise NotImplementedError
+
+
+class _CurrentEntryCommand(_StateCommand):
+    """A change to the entry *on screen*: undo returns to it first.
+
+    The stack is chronological across entries, so a step made in another entry
+    has to switch the view back before it can be reverted where it happened.
+    """
+
+    def _reach(self) -> bool:
+        return self.window._ensure_current(self.entry)
+
+
+class _InPlaceCommand(_StateCommand):
+    """A change visible wherever you are, so the view never moves for it.
+
+    A rename, a reorder, a table edit: the Files panel or the Table Editor is
+    where it shows, and yanking the view to the affected entry would be a
+    surprise rather than the context the change needs.
+    """
+
+    def _reach(self) -> bool:
+        return True
+
+
+class _EditContextCommand(_StateCommand):
+    """A change made *in* a view, reverted where it was made.
+
+    The same entry is edited from the Strings tab and from the Raw tab plus the
+    Hex dock, so a step that came back in the other one would revert something
+    off screen. The view — and the row or offset within it — therefore travels
+    with the command alongside the entry.
+    """
+
+    def __init__(self, window, entry, text, before, after, view: str, where) -> None:
+        super().__init__(window, entry, text, before, after)
+        self.view = view
+        self.where = where
+
+    def _reach(self) -> bool:
+        return self.window._ensure_edit_context(self.entry, self.view, self.where)
 
 
 class EntryCommand(QUndoCommand):
-    """Add (or remove) an entry together with its children."""
+    """Add (or remove) an entry together with its children.
+
+    Written out rather than a :class:`_StateCommand`: its two directions are
+    genuinely different operations rather than one operation over a pair, and
+    what redo has to put back — the index the row sat at, the children that came
+    away with it — is learnt by doing the removal.
+    """
 
     def __init__(self, window, entry: Entry, add: bool):
         super().__init__(("Add " if add else "Remove ") + entry.name)
@@ -21,13 +146,17 @@ class EntryCommand(QUndoCommand):
         self.children: list[Entry] = []
 
     def _do_add(self) -> None:
-        self.window.apply_entry_add(self.entry, self.index, self.children)
+        with self.window._undo_apply():
+            self.window.apply_entry_add(self.entry, self.index, self.children)
 
     def _do_remove(self) -> None:
-        ws = self.window.workspace
-        self.index = ws.entries.index(self.entry) if self.entry in ws.entries else None
-        removed = self.window.apply_entry_remove(self.entry)
-        self.children = [e for e in removed if e is not self.entry]
+        with self.window._undo_apply():
+            ws = self.window.workspace
+            self.index = (
+                ws.entries.index(self.entry) if self.entry in ws.entries else None
+            )
+            removed = self.window.apply_entry_remove(self.entry)
+            self.children = [e for e in removed if e is not self.entry]
 
     def redo(self) -> None:
         self._do_add() if self.add else self._do_remove()
@@ -36,100 +165,282 @@ class EntryCommand(QUndoCommand):
         self._do_remove() if self.add else self._do_add()
 
 
-class OffsetCommand(QUndoCommand):
+class OffsetCommand(_CurrentEntryCommand):
     """A view move; consecutive moves in one entry merge."""
 
     def __init__(self, window, entry: Entry, before: int, after: int):
-        super().__init__("Move view")
-        self.window = window
-        self.entry = entry
-        self.before = before
-        self.after = after
-        self._first = True
+        super().__init__(window, entry, "Move view", before, after)
 
     def id(self) -> int:
         return OFFSET_ID
 
-    def mergeWith(self, other) -> bool:
+    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
+        # The same-entry check is load-bearing on the unified stack: moves in two
+        # entries can sit adjacent and must stay separate steps.
         if not isinstance(other, OffsetCommand) or other.entry is not self.entry:
             return False
         self.after = other.after
         if self.after == self.before:
-            self.setObsolete(True)
+            self.setObsolete(True)  # the run walked back to where it started
         return True
 
-    def redo(self) -> None:
-        if self._first:
-            self._first = False
-            self._apply(self.after)
-            return
-        self._apply(self.after)
-
-    def undo(self) -> None:
-        self._apply(self.before)
-
-    def _apply(self, offset: int) -> None:
-        w = self.window
-        w._applying_undo = True
-        try:
-            w.apply_offset(self.entry, offset)
-        finally:
-            w._applying_undo = False
+    def _apply(self, state: int) -> None:
+        self.window.apply_offset(self.entry, state)
 
 
-FIELD_ID = 2
-
-
-class StringFieldCommand(QUndoCommand):
+class StringFieldCommand(_EditContextCommand):
     """One field of one string: translation, notes or status.
 
-    Consecutive edits of the same field of the same string merge into one
-    step, so a run of typing in a cell is undone at once.
+    State is the value paired with the revision token it leaves the entry at, so
+    an undo hands back the exact unsaved-state the entry had before it.
+
+    ``run`` is what lets a run of edits on one cell collapse into a single step
+    without a paste, a status toggle or a move to another row merging into it:
+    the window bumps the run number when the run ends (the selection moves, the
+    entry changes), and only commands sharing one merge.
     """
 
-    def __init__(self, window, entry: Entry, index: int, field: str, before, after):
-        super().__init__(f"Edit {field}")
-        self.window = window
-        self.entry = entry
+    def __init__(
+        self,
+        window,
+        entry: Entry,
+        index: int,
+        field: str,
+        before,
+        after,
+        *,
+        run: int = 0,
+    ):
+        revision = entry.live_revision
+        super().__init__(
+            window,
+            entry,
+            f"Edit {field}",
+            (before, revision),
+            (after, revision if after == before else window.workspace.next_revision()),
+            "strings",
+            index,
+        )
         self.index = index
         self.field = field
-        self.before = before
-        self.after = after
+        self.run = run
 
     def id(self) -> int:
         return FIELD_ID
 
-    def mergeWith(self, other) -> bool:
+    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
         if (
             not isinstance(other, StringFieldCommand)
             or other.entry is not self.entry
             or other.index != self.index
             or other.field != self.field
+            or other.run != self.run
         ):
             return False
+        # other's redo has already run, so its half of the pair is the live state.
         self.after = other.after
+        if self.after[0] == self.before[0]:
+            # The run typed its way back to what it started from — drop the empty
+            # step, and hand the entry back the revision it had before it.
+            self.setObsolete(True)
+            self.window.workspace.stamp(self.entry, self.before[1])
         return True
 
-    def redo(self) -> None:
-        self.window.apply_string_field(self.entry, self.index, self.field, self.after)
+    def _apply(self, state) -> None:
+        value, revision = state
+        self.window.apply_string_field(
+            self.entry, self.index, self.field, value, revision
+        )
 
-    def undo(self) -> None:
-        self.window.apply_string_field(self.entry, self.index, self.field, self.before)
 
-
-class BytesCommand(QUndoCommand):
+class BytesCommand(_EditContextCommand):
     """A splice of bytes into a file entry's buffer (hex overtype)."""
 
     def __init__(self, window, entry: Entry, offset: int, before: bytes, after: bytes):
-        super().__init__(f"Edit bytes at {offset:X}")
-        self.window = window
-        self.entry = entry
+        revision = entry.live_revision
+        super().__init__(
+            window,
+            entry,
+            f"Edit bytes at {offset:X}",
+            (before, revision),
+            (after, window.workspace.next_revision()),
+            "raw",
+            offset,
+        )
         self.offset = offset
-        self.before = before
-        self.after = after
 
-    def redo(self) -> None:
-        self.window.apply_bytes(self.entry, self.offset, self.after)
+    def _apply(self, state) -> None:
+        data, revision = state
+        self.window.apply_bytes(self.entry, self.offset, data, revision)
 
-    def undo(self) -> None:
-        self.window.apply_bytes(self.entry, self.offset, self.before)
+
+class RenameEntryCommand(_InPlaceCommand):
+    """An entry's name: the Files panel's inline rename and Rename…."""
+
+    def __init__(self, window, entry: Entry, before: str, after: str):
+        super().__init__(window, entry, f"Rename {before}", before, after)
+
+    def _apply(self, state: str) -> None:
+        self.window.apply_entry_name(self.entry, state)
+
+
+class BlockEditCommand(_CurrentEntryCommand):
+    """A block's name and configuration, changed together in one step.
+
+    The string records travel with it: the window stashes the translations before
+    it drops the document, so an edit (and its undo) re-reads the region without
+    losing what was typed into it.
+    """
+
+    def __init__(self, window, entry: Entry, before: tuple, after: tuple):
+        super().__init__(window, entry, f"Edit {entry.name}", before, after)
+
+    def _apply(self, state: tuple) -> None:
+        self.window.apply_block_config(self.entry, *state)
+
+
+class ContainerCommand(_CurrentEntryCommand):
+    """A file entry's container and the files joined into it."""
+
+    def __init__(self, window, entry: Entry, before: tuple, after: tuple):
+        super().__init__(
+            window, entry, f"Edit container of {entry.name}", before, after
+        )
+
+    def _apply(self, state: tuple) -> None:
+        self.window.apply_container(self.entry, *state)
+
+
+class EntryOrderCommand(_InPlaceCommand):
+    """The order of the whole entry list: a drag, Move Up/Down, or a sort.
+
+    Held as the two full orders rather than as a move, so redo lands exactly what
+    the first run did however the rows are grouped on screen.
+    """
+
+    def __init__(self, window, text: str, before: list[Entry], after: list[Entry]):
+        # No entry of its own: the change is the list, which is why it reaches
+        # nothing and why the base class's entry slot holds None.
+        super().__init__(window, None, text, before, after)
+
+    def _apply(self, state: list[Entry]) -> None:
+        self.window.apply_entry_order(state)
+
+
+def _changed(before, after) -> frozenset[str]:
+    """Which fields of two frozen values differ."""
+    return frozenset(
+        f.name
+        for f in fields(before)
+        if getattr(before, f.name) != getattr(after, f.name)
+    )
+
+
+class _ValueCommand(_InPlaceCommand):
+    """One frozen value on an entry, replaced whole, with its revision token.
+
+    Consecutive edits of **the same fields** of the same entry merge, so typing a
+    number into one spin box is one step while moving to the next field starts
+    another. In place because both of these show in a panel and in the Preview
+    window rather than in the view the user is navigating.
+    """
+
+    _id = 0
+
+    def __init__(self, window, entry: Entry, before, after, text: str):
+        revision = entry.live_revision
+        super().__init__(
+            window,
+            entry,
+            text,
+            (before, revision),
+            (after, revision if after == before else window.workspace.next_revision()),
+        )
+
+    def id(self) -> int:
+        return self._id
+
+    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
+        if type(other) is not type(self) or other.entry is not self.entry:
+            return False
+        if _changed(self.before[0], self.after[0]) != _changed(
+            other.before[0], other.after[0]
+        ):
+            return False
+        self.after = other.after
+        if self.after[0] == self.before[0]:
+            self.setObsolete(True)
+            self.window.workspace.stamp(self.entry, self.before[1])
+        return True
+
+    def _apply(self, state) -> None:
+        raise NotImplementedError
+
+
+class FontCommand(_ValueCommand):
+    """A font entry's ``Font``: sheet geometry, its alphabet and its widths."""
+
+    _id = FONT_ID
+
+    def __init__(self, window, entry: Entry, before, after):
+        super().__init__(window, entry, before, after, f"Edit font {entry.name}")
+
+    def _apply(self, state) -> None:
+        font, revision = state
+        self.window.apply_font(self.entry, font, revision)
+
+
+class BoxCommand(_ValueCommand):
+    """A block's ``TextBox``: its geometry and its codes' layout effects."""
+
+    _id = BOX_ID
+
+    def __init__(self, window, entry: Entry, before, after):
+        super().__init__(window, entry, before, after, f"Edit text box of {entry.name}")
+
+    def _apply(self, state) -> None:
+        box, revision = state
+        self.window.apply_box(self.entry, box, revision)
+
+
+class TableCommand(_InPlaceCommand):
+    """One Table Editor change: the entry's tables before and after it.
+
+    Never merges. One gesture — a line edited, a fill, a shift, a removal — is
+    one step, and each re-decodes every view reading that table. In place because
+    the Table Editor is where the change shows, and a table is read by entries
+    the view is not on.
+    """
+
+    def __init__(self, window, entry: Entry, before: list, after: list):
+        revision = entry.live_revision
+        super().__init__(
+            window,
+            entry,
+            f"Edit table {entry.name}",
+            (before, revision),
+            (after, window.workspace.next_revision()),
+        )
+
+    def _apply(self, state) -> None:
+        tables, revision = state
+        self.window.apply_tables(self.entry, tables, revision)
+
+
+class PointerCommand(_CurrentEntryCommand):
+    """The pointers **Attach** put on a block's strings, as one step.
+
+    One gesture, however many strings the discovery reached: a per-string undo
+    would leave the block holding half a result. Carries no revision token,
+    because the pointers live on the document rather than in the project file —
+    :meth:`~mapchar.ui.main_window.pointers.PointerDiscoveryMixin.apply_pointers`
+    says why.
+    """
+
+    def __init__(self, window, entry: Entry, before: dict, after: dict):
+        super().__init__(
+            window, entry, f"Attach pointers in {entry.name}", before, after
+        )
+
+    def _apply(self, state) -> None:
+        self.window.apply_pointers(self.entry, state)

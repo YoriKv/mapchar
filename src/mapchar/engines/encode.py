@@ -21,15 +21,17 @@ from mapchar.core.table import (
     RAW,
     RETURN,
     Entry,
-    EntryKind,
     SwitchParam,
     Table,
     TableSet,
+    TokenKind,
 )
+from mapchar.core.text import nfc, nfd
 from mapchar.core.tokens import (
     CodeRef,
     TextRun,
     bits_for,
+    escape_text,
     operand_values,
     parse_text,
     render,
@@ -81,10 +83,10 @@ def _index(table: Table) -> _Index:
     best = None
     bits_list = list(table.entries)
     for entry in table.entries.values():
-        if entry.kind is EntryKind.RETURN:
+        if entry.kind is TokenKind.RETURN:
             idx.returns.append(entry)
             continue
-        if entry.kind is EntryKind.CODE:
+        if entry.kind is TokenKind.CODE:
             idx.codes[entry.text] = entry
             atoms_n = 1
         else:
@@ -93,32 +95,54 @@ def _index(table: Table) -> _Index:
             except ValueError:
                 continue
             if not atoms:
-                if entry.kind is EntryKind.SWITCH:
+                if entry.kind is TokenKind.SWITCH:
                     idx.silent.append(entry)
                 continue
             idx.by_first.setdefault(_atom_key(atoms[0]), []).append((atoms, entry))
             atoms_n = len(atoms)
         ratio = len(entry.bits) / atoms_n
         best = ratio if best is None else min(best, ratio)
+    # Aliases: extra text that encodes as an entry's bits without the entry
+    # decoding as it (the yen sign on Shift-JIS 5C).
+    for text, bits in table.aliases.items():
+        entry = table.entries.get(bits)
+        if entry is None or entry.kind not in (TokenKind.TEXT, TokenKind.END):
+            continue
+        atoms = tuple(_atoms(text))
+        if atoms:
+            idx.by_first.setdefault(_atom_key(atoms[0]), []).append((atoms, entry))
     for lst in idx.by_first.values():
         lst.sort(key=lambda ae: (-len(ae[0]), len(ae[1].bits)))
-    for bits in bits_list:
-        suffixes = tuple(
-            other[len(bits) :]
-            for other in bits_list
-            if len(other) > len(bits) and other.startswith(bits)
-        )
+    # Sorted, every extension of a key follows it without a gap, so the
+    # suffixes are found in one pass instead of comparing every pair — a
+    # charset table is tens of thousands of entries.
+    ordered = sorted(bits_list)
+    for i, bits in enumerate(ordered):
+        suffixes = []
+        for other in ordered[i + 1 :]:
+            if not other.startswith(bits):
+                break
+            suffixes.append(other[len(bits) :])
         if suffixes:
-            idx.longer[bits] = suffixes
+            idx.longer[bits] = tuple(suffixes)
     idx.min_bits_per_atom = best if best is not None else 1.0
     return idx
 
 
 def _atoms(text: str) -> list[str | CodeRef]:
+    """Script ``text`` as the atoms one search step covers: a code, or one
+    character of decomposed text.
+
+    Text is decomposed so that a table entry and a translation meet whatever
+    form each was typed in: an entry spelling ``が`` matches both of the atoms
+    a composed ``が`` makes, and an entry pair of ``か`` and a lone dakuten —
+    which is how a ROM that draws the mark separately spells it — matches them
+    one at a time.
+    """
     atoms: list[str | CodeRef] = []
     for item in parse_text(text):
         if isinstance(item, TextRun):
-            atoms.extend(item.text)
+            atoms.extend(nfd(item.text))
         else:
             atoms.append(item)
     return atoms
@@ -239,9 +263,11 @@ def encode(
                 heap, (priority, next(tie), ncost, nstate, bits + emitted, is_end)
             )
 
-    context = "".join(
-        a if isinstance(a, str) else f"[{a.label}]"
-        for a in atoms[max(0, farthest - 10) : farthest + 10]
+    context = nfc(
+        "".join(
+            a if isinstance(a, str) else f"[{a.label}]"
+            for a in atoms[max(0, farthest - 10) : farthest + 10]
+        )
     )
     raise EncodeError(
         f"unable to encode; best attempt failed at position {farthest}",
@@ -349,17 +375,17 @@ def _successors(
             _atoms_equal(entry_atoms[i], atoms[pos + i]) for i in range(k)
         ):
             continue
-        interior_end = entry.kind is EntryKind.END and pos + k != n
+        interior_end = entry.kind is TokenKind.END and pos + k != n
         if interior_end and end_terminated and used + 1 >= ends:
             continue
-        push = _frames_for(entry.params, tid) if entry.kind is EntryKind.SWITCH else ()
+        push = _frames_for(entry.params, tid) if entry.kind is TokenKind.SWITCH else ()
         s = emit(
             entry.bits,
             entry.weight,
             # The decoder starts the next run from the root frame.
             new_stack=[stack[0]] if interior_end and end_terminated else None,
             push=push,
-            is_end=entry.kind is EntryKind.END,
+            is_end=entry.kind is TokenKind.END,
             advance=k,
         )
         if s:
@@ -398,12 +424,12 @@ def _verify(
     run = decode_run(data, tables, 0, rules, runs=max(ends, 1) if end_terminated else 1)
     got = render(run.tokens).replace("\n", "")
     want = "".join(a if isinstance(a, str) else _ref_text(a) for a in atoms)
-    from mapchar.core.tokens import escape_text
-
     want_cmp = "".join(
         escape_text(a) if isinstance(a, str) else _ref_text(a) for a in atoms
     )
-    if got != want_cmp or run.end_bit != len(result.bits):
+    if not _same_text(nfc(got), nfc(want_cmp), tables) or run.end_bit != len(
+        result.bits
+    ):
         raise EncodeError(
             f"encoding does not decode back to the text (got {got!r})", None, want[:40]
         )
@@ -413,6 +439,35 @@ def _verify(
         and run.ended_by is not EndedBy.END_TOKEN
     ):
         raise EncodeError("the end token did not end the string", None, want[:40])
+
+
+def _same_text(got: str, want: str, tables: TableSet) -> bool:
+    """Whether the decode ``got`` is the text that was encoded.
+
+    An alias encodes as a code whose own text is something else (the yen sign
+    on Shift-JIS ``5C`` decodes as a backslash), so where the two differ the
+    aliases of the table set are allowed to stand in.
+    """
+    if got == want:
+        return True
+    aliases = {
+        text: entry.text
+        for table in tables.tables.values()
+        for text, bits in table.aliases.items()
+        if (entry := table.entries.get(bits)) is not None
+    }
+    g = w = 0
+    while g < len(got) and w < len(want):
+        if got[g] == want[w]:
+            g, w = g + 1, w + 1
+            continue
+        for text, entry_text in aliases.items():
+            if want.startswith(text, w) and got.startswith(entry_text, g):
+                g, w = g + len(entry_text), w + len(text)
+                break
+        else:
+            return False
+    return g == len(got) and w == len(want)
 
 
 def _ref_text(ref: CodeRef) -> str:

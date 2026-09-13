@@ -8,9 +8,23 @@ from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QAbstractScrollArea, QWidget
 
-from mapchar.core.table import EntryKind
+from mapchar.core.table import TokenKind
 from mapchar.core.tokens import Token
 from mapchar.ui import BYTES_PER_ROW, theme
+
+TEXT_FAMILIES = (
+    "Monospace",
+    "DejaVu Sans Mono",
+    "Noto Sans Mono CJK JP",
+    "Noto Sans CJK JP",
+    "MS Gothic",
+    "Yu Gothic",
+    "Meiryo",
+    "Hiragino Sans",
+    "monospace",
+)
+"""Families in fallback order: a monospaced face for the hex, then faces that
+draw kana and kanji, so a Japanese decode is not a row of boxes."""
 
 
 @dataclass
@@ -41,7 +55,8 @@ class RawWidget(QAbstractScrollArea):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._model: RowModel | None = None
-        self._font = QFont("Monospace")
+        self._font = QFont()
+        self._font.setFamilies(TEXT_FAMILIES)
         self._font.setStyleHint(QFont.StyleHint.TypeWriter)
         self._font.setPointSize(10)
         self._metrics = QFontMetrics(self._font)
@@ -75,6 +90,22 @@ class RawWidget(QAbstractScrollArea):
         hex_x = (self._address_digits + 2) * cw
         text_x = hex_x + BYTES_PER_ROW * 3 * cw + cw
         return hex_x, text_x, BYTES_PER_ROW * 3 * cw
+
+    def _cell(self, column_x: int, rel: int, span: int = 1) -> QRect:
+        """The cells of ``span`` bytes from ``rel``, in the column at ``column_x``.
+
+        A byte owns three character widths, and whatever is drawn for it —
+        tint, hex pair, decoded text — is placed in that rect rather than
+        advanced to by the font, whose true character width is fractional.
+        """
+        row, col = divmod(rel, BYTES_PER_ROW)
+        cw = self.char_width
+        return QRect(
+            column_x + col * 3 * cw,
+            row * self.row_height,
+            span * 3 * cw,
+            self.row_height,
+        )
 
     # --- model ---------------------------------------------------------
 
@@ -134,22 +165,15 @@ class RawWidget(QAbstractScrollArea):
             for b in range(first, last + 1):
                 if b >= len(model.data):
                     break
-                row, col = divmod(b, BYTES_PER_ROW)
-                if row >= rows:
+                if b // BYTES_PER_ROW >= rows:
                     break
-                y = row * rh
-                painter.fillRect(QRect(hex_x + col * 3 * cw, y, 3 * cw, rh), color)
-                painter.fillRect(QRect(text_x + col * 3 * cw, y, 3 * cw, rh), color)
+                painter.fillRect(self._cell(hex_x, b), color)
+                painter.fillRect(self._cell(text_x, b), color)
 
         # Pointer bytes of the current block.
         for rel in model.pointer_bytes:
-            if 0 <= rel < len(model.data):
-                row, col = divmod(rel, BYTES_PER_ROW)
-                if row < rows:
-                    painter.fillRect(
-                        QRect(hex_x + col * 3 * cw, row * rh, 3 * cw, rh),
-                        theme.TINT_POINTER,
-                    )
+            if 0 <= rel < len(model.data) and rel // BYTES_PER_ROW < rows:
+                painter.fillRect(self._cell(hex_x, rel), theme.TINT_POINTER)
 
         # Selection.
         if self._sel is not None:
@@ -157,36 +181,33 @@ class RawWidget(QAbstractScrollArea):
             for b in range(
                 max(s - model.offset, 0), min(e - model.offset, len(model.data))
             ):
-                row, col = divmod(b, BYTES_PER_ROW)
-                y = row * rh
-                painter.fillRect(
-                    QRect(hex_x + col * 3 * cw, y, 3 * cw, rh), theme.TINT_SELECTION
-                )
-                painter.fillRect(
-                    QRect(text_x + col * 3 * cw, y, 3 * cw, rh), theme.TINT_SELECTION
-                )
+                painter.fillRect(self._cell(hex_x, b), theme.TINT_SELECTION)
+                painter.fillRect(self._cell(text_x, b), theme.TINT_SELECTION)
 
-        # Addresses and hex.
-        painter.setPen(QPen(pal.text().color()))
+        # Addresses and hex, each pair centred in its own cell.
+        center = Qt.AlignmentFlag.AlignCenter
         for row in range(rows):
             start = row * BYTES_PER_ROW
             if start >= len(model.data):
                 break
-            y = row * rh + ascent
             painter.setPen(QPen(dim))
-            painter.drawText(cw, y, f"{model.offset + start:0{self._address_digits}X}")
+            painter.drawText(
+                cw,
+                row * rh + ascent,
+                f"{model.offset + start:0{self._address_digits}X}",
+            )
             painter.setPen(QPen(pal.text().color()))
-            chunk = model.data[start : start + BYTES_PER_ROW]
-            painter.drawText(hex_x, y, " ".join(f"{b:02X}" for b in chunk))
+            for rel in range(start, min(start + BYTES_PER_ROW, len(model.data))):
+                painter.drawText(
+                    self._cell(hex_x, rel), center, f"{model.data[rel]:02X}"
+                )
 
         # String boundary rules.
         painter.setPen(QPen(theme.TINT_STRING_RULE, 1))
         for rel in model.string_starts:
-            if 0 <= rel < len(model.data):
-                row, col = divmod(rel, BYTES_PER_ROW)
-                if row < rows:
-                    x = text_x + col * 3 * cw - cw // 2
-                    painter.drawLine(x, row * rh, x, row * rh + rh)
+            if 0 <= rel < len(model.data) and rel // BYTES_PER_ROW < rows:
+                cell = self._cell(text_x, rel)
+                painter.drawLine(cell.left(), cell.top(), cell.left(), cell.bottom())
 
         # Decoded text, each token under its first byte, clipped to its span.
         painter.setPen(QPen(pal.text().color()))
@@ -205,11 +226,19 @@ class RawWidget(QAbstractScrollArea):
                 text = token.text().replace("\n", "↵")
             if not text:
                 continue
-            x = text_x + col * 3 * cw
-            width = min(span_bytes, BYTES_PER_ROW - col) * 3 * cw - cw // 2
+            span = self._cell(text_x, first, min(span_bytes, BYTES_PER_ROW - col))
+            advance = self._metrics.horizontalAdvance(text)
+            if advance <= span.width():
+                painter.drawText(span, center, text)
+                continue
+            # A kanji is wider than the three cells one byte gets: measure the
+            # token and let it run into the cells to its right, never past the
+            # row. Every token still starts over its first byte, so the text
+            # column stays aligned with the hex column.
+            width = min(advance, (BYTES_PER_ROW - col) * 3 * cw)
             painter.save()
-            painter.setClipRect(QRect(x, row * rh, width, rh))
-            painter.drawText(x, row * rh + ascent, text)
+            painter.setClipRect(QRect(span.left(), span.top(), width, rh))
+            painter.drawText(span.left(), row * rh + ascent, text)
             painter.restore()
 
     @staticmethod
@@ -219,11 +248,11 @@ class RawWidget(QAbstractScrollArea):
         if token.entry is None:
             return theme.TINT_RAW
         kind = token.entry.kind
-        if kind is EntryKind.END:
+        if kind is TokenKind.END:
             return theme.TINT_END
-        if kind in (EntryKind.SWITCH, EntryKind.RETURN):
+        if kind in (TokenKind.SWITCH, TokenKind.RETURN):
             return theme.TINT_SWITCH
-        if kind is EntryKind.CODE:
+        if kind is TokenKind.CODE:
             return theme.TINT_CODE
         return None
 

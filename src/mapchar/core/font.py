@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
+from mapchar.core.text import char_units, nfc
+
 
 @dataclass(frozen=True)
 class Font:
@@ -17,7 +19,10 @@ class Font:
     base: int = 0
     """Glyph index of the first character of ``chars``."""
     chars: str = ""
-    """Characters laid over consecutive glyphs from ``base``."""
+    """Characters laid over consecutive glyphs from ``base``, one glyph each.
+
+    A character is a grapheme: a base plus the combining marks that follow it,
+    so a decomposed dakuten kana takes one glyph slot, not two."""
     glyphs: dict[str, int] = field(default_factory=dict)
     """Explicit token text (or ``[label]``) to glyph index."""
     widths: tuple[int, ...] = ()
@@ -29,12 +34,26 @@ class Font:
     transparent: int | None = 0
     """Palette index or None; RGB sheets use the top-left pixel's colour."""
 
+    def __post_init__(self) -> None:
+        # The alphabet and the overrides are NFC, so text decoded from a table
+        # finds its glyph however the font's characters were typed.
+        object.__setattr__(self, "chars", nfc(self.chars))
+        composed = {nfc(t): g for t, g in self.glyphs.items()}
+        if composed != self.glyphs:
+            object.__setattr__(self, "glyphs", composed)
+
+    @property
+    def units(self) -> tuple[str, ...]:
+        """``chars`` as one string per glyph slot from ``base``."""
+        return char_units(self.chars)
+
     def glyph_for(self, text: str) -> int | None:
-        if text in self.glyphs:
-            return self.glyphs[text]
-        i = self.chars.find(text) if len(text) == 1 else -1
-        if i >= 0:
-            return self.base + i
+        composed = nfc(text)
+        if composed in self.glyphs:
+            return self.glyphs[composed]
+        units = self.units
+        if composed in units:
+            return self.base + units.index(composed)
         return None
 
     def advance(self, glyph: int | None) -> int:

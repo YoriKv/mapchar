@@ -30,8 +30,20 @@ ENV_VAR = "MAPCHAR_PLUGIN_PATH"
 
 @dataclass
 class PluginLoadIssue:
+    """One plugin file that did not load. Collected, never raised, so one bad
+    file cannot stop the app or the other plugins from starting.
+
+    ``declined`` separates **a choice from a breakage**: a code plugin the user
+    refused at the trust prompt did exactly what they asked, and reporting it as
+    a failure would put a "plugins failed to load" modal in front of them at
+    every launch and every refresh for as long as the answer stands. It is still
+    an issue — something in the folder is not running — so it is collected here
+    and told apart where it is shown, not dropped.
+    """
+
     path: str
     message: str
+    declined: bool = False
 
     def __str__(self) -> str:
         return f"{self.path}: {self.message}"
@@ -44,24 +56,38 @@ class DiscoveryResult:
 
 
 class TrustStore:
-    """Approved SHA-256 digests of code plugins, in a JSON file."""
+    """Approved SHA-256 digests of code plugins, in a JSON file.
+
+    Trust is keyed on the **content hash**, not the path: approving a plugin
+    approves *that exact code*, so moving or renaming the file keeps trust and
+    editing it does not. A corrupt or unreadable store starts empty rather than
+    crashing — the worst case is re-prompting, never silently trusting.
+    """
 
     def __init__(self, path: str | None):
         self.path = path
         self._digests: set[str] = set()
-        self._session: set[str] = set()
+        # Paths approved during *this* run, so a plugin author can edit and
+        # refresh a file they already said yes to without a prompt per save.
+        # Empty at every launch, so changed code still prompts across runs.
+        self._session_paths: set[str] = set()
         if path and os.path.exists(path):
             try:
-                with open(path, encoding="utf-8") as f:
+                with open(path, encoding="utf-8-sig") as f:
                     self._digests = set(json.load(f).get("trusted", []))
             except (OSError, ValueError):
                 self._digests = set()
 
     def is_trusted(self, digest: str) -> bool:
-        return digest in self._digests or digest in self._session
+        return digest in self._digests
 
-    def trust(self, digest: str, persist: bool = True) -> None:
-        self._session.add(digest)
+    def is_session_path(self, path: str) -> bool:
+        """Whether this path was approved earlier in this run (the author loop)."""
+        return path in self._session_paths
+
+    def trust(self, digest: str, path: str | None = None, persist: bool = True) -> None:
+        if path is not None:
+            self._session_paths.add(path)
         if persist:
             self._digests.add(digest)
             self._save()
@@ -108,7 +134,13 @@ class ScopedRegistry:
                 return
         from dataclasses import replace
 
-        plugin.info = replace(info, category=self._category)
+        try:
+            # The heading is presentation, so a plugin that refuses the write
+            # (``__slots__``, a read-only descriptor, a property) is registered
+            # as it is rather than dropped — the plugin is the point.
+            plugin.info = replace(info, category=self._category)
+        except (AttributeError, TypeError):
+            pass
         try:
             self._registry.register(plugin)
         except RegistryError as exc:
@@ -144,7 +176,14 @@ def discover(
             continue
         for name in sorted(os.listdir(root)):
             path = os.path.join(root, name)
-            if os.path.isfile(path) and not name.startswith("_"):
+            if (
+                os.path.isfile(path)
+                and not name.startswith("_")
+                and name.endswith((".toml", ".py", ".tbl"))
+            ):
+                # Only a file that *looks* like a plugin: the folder also holds
+                # the seeded README, and the point is to catch a plugin that
+                # will never load, not to police what else a user keeps here.
                 result.issues.append(
                     PluginLoadIssue(path, "loose file; plugins go in a typed subfolder")
                 )
@@ -167,25 +206,36 @@ def discover(
 
 
 def _load_preset(registry, stage, category, path, result) -> None:
+    """Adapt one TOML preset into a plugin and register it.
+
+    The **whole** load is guarded, not just the parts known to raise: a preset
+    is a hand-edited file, every engine reads its own parameters, and a bad
+    value anywhere in one of them must come back as an issue against that file
+    rather than a traceback out of discovery and through ``app.main``. One bad
+    TOML in the plugin folder cannot be the reason the app does not start.
+    """
     try:
         with open(path, "rb") as f:
-            data = tomllib.load(f)
-    except (OSError, ValueError) as exc:
-        result.issues.append(PluginLoadIssue(path, f"bad TOML: {exc}"))
-        return
+            # tomllib insists on UTF-8 with no byte-order mark; a Windows
+            # editor's mark is stripped rather than made an issue.
+            data = tomllib.loads(f.read().decode("utf-8-sig"))
+        result.loaded.append(_build_preset(registry, stage, category, path, data))
+    except Exception as exc:  # noqa: BLE001 - report, never abort startup
+        result.issues.append(PluginLoadIssue(path, f"preset load failed: {exc}"))
+
+
+def _build_preset(registry, stage, category, path, data) -> str:
+    """The registered id, or raise with what is wrong with this preset."""
+    _check_declared_stage(data, stage)
     engine = str(data.get("engine", ""))
     pid = str(data.get("id", os.path.splitext(os.path.basename(path))[0]))
     name = str(data.get("name", pid))
     params = data.get("params", {}) or {}
     plugin = None
     if stage is Stage.MAPPING and engine == "banked":
-        try:
-            plugin = Banked(int(params["bank_size"]), int(params["bank_base"]), pid)
-        except (KeyError, ValueError) as exc:
-            result.issues.append(
-                PluginLoadIssue(path, f"banked needs bank_size and bank_base: {exc}")
-            )
-            return
+        if not {"bank_size", "bank_base"} <= set(params):
+            raise ValueError("banked needs params bank_size and bank_base")
+        plugin = Banked(int(params["bank_size"]), int(params["bank_base"]), pid)
     elif stage is Stage.COMPRESSION and engine == "huffman":
         from mapchar.plugins.builtins.compression import HuffmanTable
 
@@ -198,20 +248,29 @@ def _load_preset(registry, stage, category, path, result) -> None:
         from mapchar.plugins.builtins.compression import BitPack
 
         plugin = BitPack(int(params.get("width", 6)))
-        plugin.info = type(plugin.info)(pid, name, stage, category)
     if plugin is None:
-        result.issues.append(
-            PluginLoadIssue(path, f"unknown engine {engine!r} for {stage.value}")
-        )
-        return
+        raise ValueError(f"unknown engine {engine!r} for {stage.value}")
     from dataclasses import replace
 
     plugin.info = replace(plugin.info, id=pid, name=name, category=category)
-    try:
-        registry.register(plugin)
-        result.loaded.append(pid)
-    except RegistryError as exc:
-        result.issues.append(PluginLoadIssue(path, str(exc)))
+    registry.register(plugin)
+    return pid
+
+
+def _check_declared_stage(data: dict, stage: Stage) -> None:
+    """Raise if the preset states a stage the folder it sits in contradicts.
+
+    The folder is authoritative, so no preset has to declare a stage. Saying it
+    anyway is tolerated while it agrees — a preset stays self-describing — but a
+    conflicting one is an error rather than a silent move into another pathway,
+    which would otherwise look like the file being ignored.
+    """
+    declared = data.get("stage")
+    if declared is not None and str(declared) != stage.value:
+        raise ValueError(
+            f"stage {declared!r} conflicts with the folder's stage {stage.value!r} "
+            "- drop the stage field; the folder determines it"
+        )
 
 
 def _load_charset_table(registry, category, path, result) -> None:
@@ -245,6 +304,33 @@ def _load_charset_table(registry, category, path, result) -> None:
         result.issues.append(PluginLoadIssue(path, str(exc)))
 
 
+def _is_approved(
+    path: str,
+    digest: str,
+    trust: TrustStore | None,
+    confirm: Callable[[str, str], bool] | None,
+) -> bool:
+    """Trusted already, or approved now (and then remembered). **Default deny.**
+
+    No trust store and no confirm callback means nothing can say yes, so nothing
+    runs: a gate that opens when its keeper is absent is not a gate, and the
+    absent keeper is exactly the headless case — a test, a script, a build that
+    never wired the prompt up.
+    """
+    if trust is not None and trust.is_trusted(digest):
+        return True
+    if trust is not None and trust.is_session_path(path):
+        # The author loop: a path approved earlier this run reloads without a
+        # prompt when its code changes. Across runs the new hash prompts again.
+        trust.trust(digest, path)
+        return True
+    if confirm is not None and confirm(path, digest[:12]):
+        if trust is not None:
+            trust.trust(digest, path)
+        return True
+    return False
+
+
 def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
     try:
         with open(path, "rb") as f:
@@ -253,11 +339,16 @@ def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
         result.issues.append(PluginLoadIssue(path, str(exc)))
         return
     digest = hashlib.sha256(source).hexdigest()
-    if trust is not None and not trust.is_trusted(digest):
-        if confirm is None or not confirm(path, digest[:12]):
-            result.issues.append(PluginLoadIssue(path, "not trusted; skipped"))
-            return
-        trust.trust(digest)
+    if not _is_approved(path, digest, trust, confirm):
+        result.issues.append(
+            PluginLoadIssue(
+                path,
+                "not approved to run: the trust prompt for this code plugin was "
+                "declined",
+                declined=True,
+            )
+        )
+        return
     module_name = f"mapchar_plugin_{digest[:16]}"
     spec = importlib.util.spec_from_loader(module_name, loader=None, origin=path)
     module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
@@ -279,39 +370,87 @@ def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
         sys.modules.pop(module_name, None)
 
 
-EXAMPLE_README = """mapChar plugins
+# The plugin folder's own documentation, seeded beside the typed subfolders.
+# Not a plugin, and ``.md`` is not a suffix discovery loads, so it sits there
+# inertly.
+PLUGIN_README = "README.md"
 
-Put plugins in the typed folders beside this file:
-  containers/   .py
-  compression/  .py, .toml presets (engine = "huffman", "lzss" or "bitpack")
-  charsets/     .py, .tbl (a table file registers as a charset named after it)
-  mappings/     .py, .toml presets (engine = "banked")
-
-Files starting with _ are ignored. Code plugins ask for trust once per file
-content. Refresh with F5.
-"""
-
-EXAMPLE_MAPPING = """# A banked mapping preset: 16 KiB banks at $8000 (NES-style).
-id = "example_banked"
-name = "Example banked mapping"
-engine = "banked"
-
-[params]
-bank_size = 0x4000
-bank_base = 0x8000
-"""
+# Reference files mapchar used to seed and no longer ships, by folder (``""``
+# being the root). Retiring an example is not the same as replacing one: a name
+# that stops being shipped stops being *rewritten*, so without this it sits in
+# every upgraded folder for ever, teaching whatever it taught the day it was
+# written.
+#
+# **Names only, and only names mapchar itself minted.** The ``_`` prefix and the
+# README are the reserved namespace this function already writes into without
+# asking; removing one of its own retired names is the same promise as
+# overwriting a live one. A user's own work never starts with ``_`` — that is
+# what activating an example means — so nothing here can reach it.
+RETIRED_EXAMPLES: dict[str, tuple[str, ...]] = {
+    "": ("README.txt",),
+    "mappings": ("_example_banked.toml",),
+}
 
 
 def seed_examples(user_dir: str) -> None:
-    """Create the typed folders and the ``_``-prefixed examples once."""
+    """Refresh the shipped reference material in the plugin root.
+
+    The examples are ``_``-prefixed so discovery ignores them: living
+    documentation a user copies, dropping the underscore, to activate.
+    :data:`PLUGIN_README` is seeded alongside them.
+
+    **A stale copy is replaced**, matched by filename, so the examples describe
+    the version actually running rather than whichever one first created the
+    folder, and a **retired** one is removed on the same rule
+    (:data:`RETIRED_EXAMPLES`). Neither can take a user's work with it: what
+    they edit is the activated copy under a different name. Files whose contents
+    already match are left alone, so an unchanged folder is not rewritten on
+    every launch.
+
+    Failures are swallowed — reference material is not worth blocking startup
+    over. The ``.py`` examples ship as ``.py.txt`` because frozen builds exclude
+    ``.py`` data files; the suffix is dropped here.
+    """
+    from mapchar import resources
+
+    root = os.path.abspath(user_dir)
+    try:
+        os.makedirs(root, exist_ok=True)
+    except OSError:
+        return
+    for folder, retired in RETIRED_EXAMPLES.items():
+        for name in retired:
+            try:
+                os.remove(os.path.join(root, folder, name))
+            except OSError:
+                pass
+    _seed_file(resources.resource("data", "plugin-examples", PLUGIN_README), root)
     for folder in FOLDERS:
-        os.makedirs(os.path.join(user_dir, folder), exist_ok=True)
-    files = {
-        "README.txt": EXAMPLE_README,
-        os.path.join("mappings", "_example_banked.toml"): EXAMPLE_MAPPING,
-    }
-    for rel, text in files.items():
-        path = os.path.join(user_dir, rel)
-        if not os.path.exists(path):
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
+        dest = os.path.join(root, folder)
+        try:
+            os.makedirs(dest, exist_ok=True)
+            entries = list(
+                resources.resource("data", "plugin-examples", folder).iterdir()
+            )
+        except OSError:
+            continue
+        for entry in entries:
+            _seed_file(entry, dest)
+
+
+def _seed_file(entry, dest_dir: str) -> None:
+    """Write one shipped file into ``dest_dir`` unless it is already identical."""
+    dest = os.path.join(dest_dir, entry.name.removesuffix(".txt"))
+    try:
+        shipped = entry.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        return
+    try:
+        if os.path.exists(dest):
+            with open(dest, encoding="utf-8") as f:
+                if f.read() == shipped:
+                    return
+        with open(dest, "w", encoding="utf-8", newline="\n") as f:
+            f.write(shipped)
+    except OSError:
+        pass

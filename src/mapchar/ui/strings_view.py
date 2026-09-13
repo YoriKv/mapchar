@@ -2,14 +2,15 @@
 
 Presentation only: the window hands it rows and takes back edits. The
 Translation cell is a multi-line editor with code completion on ``[``;
-Return commits, Shift+Return breaks a line, Esc cancels.
+Ctrl+Return (or Return) commits, Shift+Return inserts the block's newline
+code, Esc cancels. Columns hide and reorder from the header's context menu.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, QPoint, QStringListModel, Qt, Signal
+from PySide6.QtCore import QPoint, QStringListModel, Qt, Signal
 from PySide6.QtGui import QColor, QFontDatabase, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapchar.core.text import fold
 from mapchar.ui import theme
 
 (
@@ -59,6 +61,27 @@ STATUS_FILTERS = [
 ]
 
 
+@dataclass(frozen=True)
+class CodeInfo:
+    """One code of the table set, as the editor offers it."""
+
+    label: str
+    operands: str = ""
+    """The operand shapes, as the table spells them (``u8``, ``2``…)."""
+    uses: int = 0
+    """How often the block's strings hold it, for the Insert code buttons."""
+
+    @property
+    def completion(self) -> str:
+        """What the completion popup lists: the label with its operand shapes."""
+        return f"[{self.label}{' ' + self.operands if self.operands else ''}]"
+
+    @property
+    def insertion(self) -> str:
+        """What typing it inserts: a code with operands is left open to type in."""
+        return f"[{self.label} " if self.operands else f"[{self.label}]"
+
+
 @dataclass
 class RowData:
     index: int
@@ -74,24 +97,37 @@ class RowData:
 
 
 class CodeEditor(QPlainTextEdit):
-    """The translation editor: completes ``[labels]``, commits on Return."""
+    """The translation editor: completes ``[labels]``, commits on Ctrl+Return.
+
+    Plain Return commits too — a cell editor's Return belongs to the cell —
+    and Shift+Return writes the block's newline code.
+    """
 
     commit = Signal()
     cancel = Signal()
 
-    def __init__(self, labels: list[str], parent: QWidget | None = None):
+    def __init__(
+        self,
+        codes: list[CodeInfo],
+        newline_code: str = "[line]",
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
         self.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.setTabChangesFocus(True)
+        self.newline_code = newline_code
+        """What Shift+Return writes: the block's newline code."""
+        self._insertions = {c.completion: c.insertion for c in codes}
         self.completer = QCompleter(
-            QStringListModel([f"[{lb}]" for lb in labels]), self
+            QStringListModel([c.completion for c in codes]), self
         )
         self.completer.setWidget(self)
         self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.completer.activated.connect(self._insert_completion)
 
-    def _insert_completion(self, text: str) -> None:
+    def _insert_completion(self, chosen: str) -> None:
+        text = self._insertions.get(chosen, chosen)
         cursor = self.textCursor()
         start = self._code_start(cursor)
         if start is not None:
@@ -125,7 +161,9 @@ class CodeEditor(QPlainTextEdit):
             return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                self.insertPlainText("\n")
+                # A line break is a code in the ROM, never a literal newline:
+                # the script grammar drops those on the way back in.
+                self.insertPlainText(self.newline_code)
             else:
                 self.commit.emit()
             return
@@ -153,11 +191,12 @@ class TranslationDelegate(QStyledItemDelegate):
     def __init__(self, view: StringsView):
         super().__init__(view)
         self.view = view
-        self.labels: list[str] = []
+        self.codes: list[CodeInfo] = []
+        self.newline_code = "[line]"
         self._editor: CodeEditor | None = None
 
     def createEditor(self, parent, option, index):
-        editor = CodeEditor(self.labels, parent)
+        editor = CodeEditor(self.codes, self.newline_code, parent)
         editor.commit.connect(lambda: self._finish(editor, True))
         editor.cancel.connect(lambda: self._finish(editor, False))
         editor.textChanged.connect(
@@ -216,6 +255,10 @@ class StringsView(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.setWordWrap(False)
         self.table.verticalHeader().hide()
+        header = self.table.horizontalHeader()
+        header.setSectionsMovable(True)
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._on_header_menu)
         self.delegate = TranslationDelegate(self)
         self.table.setItemDelegateForColumn(COL_TRANSLATION, self.delegate)
         self.codes = QWidget()
@@ -235,19 +278,28 @@ class StringsView(QWidget):
 
     # --- rows ------------------------------------------------------------
 
-    def set_labels(self, labels: list[str]) -> None:
-        self.delegate.labels = list(labels)
+    def set_codes(self, codes: list[CodeInfo]) -> None:
+        """The table set's codes, and buttons for the ones this block uses most."""
+        self.delegate.codes = list(codes)
         while self.codes_layout.count() > 1:
             item = self.codes_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        for label in labels[:24]:
-            button = QPushButton(f"[{label}]")
+        most_used = sorted(codes, key=lambda c: (-c.uses, c.label))[:24]
+        for code in most_used:
+            button = QPushButton(code.completion)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setToolTip(
+                f"{code.uses} use(s) in this block" if code.uses else "unused here"
+            )
             button.clicked.connect(
-                lambda _=False, lb=label: self._insert_code(f"[{lb}]")
+                lambda _=False, text=code.insertion: self._insert_code(text)
             )
             self.codes_layout.insertWidget(self.codes_layout.count() - 1, button)
+
+    def set_newline_code(self, code: str) -> None:
+        """What Shift+Return writes in the Translation cell."""
+        self.delegate.newline_code = code
 
     def _insert_code(self, code: str) -> None:
         editor = self.delegate.current_editor()
@@ -366,13 +418,13 @@ class StringsView(QWidget):
                 return
 
     def _apply_filter(self) -> None:
-        words = self.filter.text().lower().split()
+        words = fold(self.filter.text()).split()
         status = self.status_filter.currentText()
         for r in range(self.table.rowCount()):
             d = self._row_data(r)
             if d is None:
                 continue
-            hay = f"{d.original} {d.translation or ''} {d.notes}".lower()
+            hay = fold(f"{d.original} {d.translation or ''} {d.notes}")
             hidden = bool(words) and not all(w in hay for w in words)
             if status != "all" and d.status != status:
                 hidden = True
@@ -395,13 +447,33 @@ class StringsView(QWidget):
         if idx:
             self.row_selected.emit(idx[0])
 
+    def column_menu(self):
+        """A checkable entry per column: hide and show them.
+
+        Dragging a header section reorders them; Translation never goes away,
+        being the one column the view is for.
+        """
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        for column, name in enumerate(HEADERS):
+            action = menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(not self.table.isColumnHidden(column))
+            if column == COL_TRANSLATION:
+                action.setEnabled(False)
+            action.toggled.connect(
+                lambda on, c=column: self.table.setColumnHidden(c, not on)
+            )
+        return menu
+
+    def _on_header_menu(self, pos: QPoint) -> None:
+        self.column_menu().exec(self.table.horizontalHeader().mapToGlobal(pos))
+
     def _on_menu(self, pos: QPoint) -> None:
         self.context_menu_requested.emit(
             self.selected_indices(), self.table.viewport().mapToGlobal(pos)
         )
 
-    def event(self, event) -> bool:
-        return super().event(event)
 
-
-__all__ = ["QEvent", "RowData", "StringsView"]
+__all__ = ["CodeInfo", "RowData", "StringsView"]

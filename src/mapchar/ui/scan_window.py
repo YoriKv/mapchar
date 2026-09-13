@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from mapchar.core.table import TableSet
 from mapchar.engines.scan import Region, scan
 from mapchar.ui.widgets import CancellableRun, ResultsTable
+from mapchar.ui.window_layout import remember_layout
 
 
 class ScanWindow(CancellableRun, QWidget):
@@ -26,6 +27,9 @@ class ScanWindow(CancellableRun, QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("Scan")
+        # Size and position remembered between runs, like every tool
+        # window (:mod:`mapchar.ui.window_layout`).
+        self._layout = remember_layout(self, "scan_window")
         self._data: bytes = b""
         self._tables: TableSet | None = None
         self._regions: list[Region] = []

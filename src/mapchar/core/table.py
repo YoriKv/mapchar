@@ -8,13 +8,13 @@ and encode engines run over a table set, never over a file.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 
 from mapchar.core.bits import bits_to_hex, hex_to_bits
 from mapchar.core.errors import TableError
 from mapchar.core.numbers import parse_num
+from mapchar.core.text import nfc
 
 RAW = "raw"
 """Pseudo table id: one unmatched byte per match, shown ``[$XX]``."""
@@ -25,13 +25,15 @@ RETURN = "return"
 frame of the table the switch was matched in (at the top level, end the
 string). Always the last parameter."""
 
-ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
+ID_PATTERN = re.compile(r"[\w.-]+")
+"""A table id: letters and digits in any script, ``_``, ``.`` and ``-``, so
+``@table かんじ`` names a table after what is in it. No whitespace."""
 LABEL_PATTERN = re.compile(r"[^\[\]\s$%][^\[\]\s]*")
 BRACKETED = re.compile(r"\[(" + LABEL_PATTERN.pattern + r")\](?:\\n)*")
 """A text that is exactly one code, optionally followed by line-break escapes."""
 
 
-class EntryKind(Enum):
+class TokenKind(Enum):
     TEXT = "text"
     END = "end"
     CODE = "code"
@@ -180,7 +182,7 @@ class SwitchParam:
 @dataclass(frozen=True)
 class Entry:
     bits: str
-    kind: EntryKind
+    kind: TokenKind
     text: str = ""
     """TEXT, END and SWITCH: the text in script form (escapes intact, ``\\n``
     as two characters); a SWITCH with empty text is silent. CODE: the label.
@@ -188,6 +190,13 @@ class Entry:
     weight: int = 1
     operands: tuple[OperandSpec, ...] = ()
     params: tuple[SwitchParam, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Every entry's text is NFC, whatever form the file it came from used,
+        # so a table compares and encodes the same however it was typed.
+        composed = nfc(self.text)
+        if composed != self.text:
+            object.__setattr__(self, "text", composed)
 
     @property
     def label(self) -> str | None:
@@ -197,9 +206,9 @@ class Entry:
         text is exactly ``[label]`` is a labelled code too, so ``/FF=[end]``
         dumps and re-inserts as ``[end]``.
         """
-        if self.kind is EntryKind.CODE:
+        if self.kind is TokenKind.CODE:
             return self.text
-        if self.kind in (EntryKind.TEXT, EntryKind.END, EntryKind.SWITCH):
+        if self.kind in (TokenKind.TEXT, TokenKind.END, TokenKind.SWITCH):
             m = BRACKETED.fullmatch(self.text)
             if m:
                 return m.group(1)
@@ -208,24 +217,20 @@ class Entry:
     @property
     def silent(self) -> bool:
         """A switch that prints nothing; the encoder inserts it where needed."""
-        return self.kind is EntryKind.SWITCH and self.text == ""
+        return self.kind is TokenKind.SWITCH and self.text == ""
 
     @property
     def is_end(self) -> bool:
-        return self.kind is EntryKind.END
-
-    @property
-    def operand_bits(self) -> int:
-        return sum(o.bits for o in self.operands)
-
-
-def normalize(text: str) -> str:
-    return unicodedata.normalize("NFC", text)
+        return self.kind is TokenKind.END
 
 
 def sanitize_id(text: str) -> str:
-    """``text`` as a table id: everything ``ID_PATTERN`` rejects becomes ``_``."""
-    return re.sub(r"[^A-Za-z0-9_.-]", "_", text)
+    """``text`` as a table id: everything ``ID_PATTERN`` rejects becomes ``_``.
+
+    Letters of every script pass, so two Japanese-named tables in one legacy
+    file keep their own names instead of colliding on underscores.
+    """
+    return re.sub(r"[^\w.-]", "_", nfc(text))
 
 
 def sanitize_label(text: str) -> str:
@@ -244,12 +249,19 @@ class Table:
     """One logical table: entries keyed by bits, plus derived lookups."""
 
     def __init__(self, id: str, charset: str = "none"):
+        id = nfc(id)
         if not ID_PATTERN.fullmatch(id):
             raise TableError(f"invalid table id {id!r}")
         self.id = id
         self.charset = charset
         self.entries: dict[str, Entry] = {}
         self.labels: dict[str, Entry] = {}
+        self.aliases: dict[str, str] = {}
+        """Extra script-form text the encoder accepts for an entry's bits.
+
+        A charset that folds several characters onto one code puts the ones
+        that do not decode back here (Shift-JIS ``¥`` at ``5C``): typing them
+        encodes, while the code still decodes as the entry's own text."""
         self._by_length: dict[int, dict[str, Entry]] = {}
         self._lengths: tuple[int, ...] = ()
 
@@ -302,6 +314,12 @@ class Table:
             if entry is not None:
                 return entry
         return None
+
+    def add_alias(self, text: str, bits: str) -> None:
+        """Let script-form ``text`` encode as ``bits``, which an entry holds."""
+        text = nfc(text)
+        if text and bits in self.entries and text != self.entries[bits].text:
+            self.aliases[text] = bits
 
     def switch_targets(self) -> set[str]:
         ids: set[str] = set()

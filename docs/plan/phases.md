@@ -1,9 +1,9 @@
 # Phases
 
-The build order. Each phase names what it delivers and when it is complete.
-Every phase ends with its docs moved from `plan/` into the regular docs and
-its tests in place. Nothing in a later phase is started until the earlier
-one is complete.
+The build order. Each phase names what it delivers and when it is complete;
+every phase below is built, with its tests in place. Nothing in a later phase
+was started until the earlier one was complete. The other docs in this folder
+say what the app does now — this one says only in what order it arrived.
 
 ## 1. Foundation and dumping
 
@@ -12,8 +12,8 @@ into blocks and dump it.
 
 - The Qt-free core: the data model, the native table grammar and the four
   legacy dialect readers, charsets, the decode engine, containers for iNES,
-  SNES headered and headerless, GB and GBA, the registry and built-in
-  presets.
+  SNES headered, headerless and interleaved, GB, GBA, Nintendo 64 and Mega
+  Drive `.smd`, the registry and built-in presets.
 - Blocks with *range* and *fixed strings* sources, *end token* and *fixed
   length* string types, realign and skip ranges.
 - The native script writer.
@@ -69,8 +69,8 @@ Edit strings beside the original and write them back in place.
 
 - The compression stage, the Decompressed view, Jump to Next, scan and To
   Block; decompressed blocks with spare-room fill on write.
-- Built-in schemes: Huffman with an in-ROM tree, LZSS variants, bit-packed
-  alphabets, plus the generic decompressors.
+- Built-in schemes: LZSS variants, bit-packed alphabets, the command LZ, RLE
+  and the generic decompressors, plus Huffman over an in-ROM tree as a preset.
 - User and project plugin folders, discovery, trust, refresh, load-issue
   reporting, pass-through for missing plugins.
 - Complete when a compressed fixture round-trips through a block and a user

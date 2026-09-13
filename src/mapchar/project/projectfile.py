@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from mapchar.core.block import Status
 from mapchar.core.errors import MapcharError
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
+from mapchar.plugins.aliases import current_config_ids, current_id
 from mapchar.project.formats.script import format_config, parse_config
-from mapchar.project.workspace import Entry, EntryKind, EntrySession
+from mapchar.project.workspace import Entry, EntryKind, EntrySession, StringState
 
 PROJECT_VERSION = 1
 
@@ -21,19 +23,52 @@ class ProjectError(MapcharError):
 
 
 @dataclass
-class StringState:
-    translation: str | None = None
-    status: Status = Status.UNTOUCHED
-    notes: str = ""
-
-
-@dataclass
 class LoadedProject:
     entries: list[Entry]
     current: Entry | None
     strings: dict[int, dict[int, StringState]] = field(default_factory=dict)
-    """Per block entry index, per string index: the saved translation state."""
+    """Per block entry index, per string index: the saved translation state.
+
+    Also parked on each entry as
+    :attr:`~mapchar.project.workspace.Entry.pending_strings`, which is where a
+    block that is never opened keeps it.
+    """
     warnings: list[str] = field(default_factory=list)
+    version: int = PROJECT_VERSION
+    """The version the file claims, after any migration walked it forward."""
+    migrated_from: int | None = None
+    """The version it was written at, when a migration ran; ``None`` otherwise."""
+
+
+# -- migrations ------------------------------------------------------------
+#
+# One entry per version bump, keyed by the version it *reads*: ``_MIGRATIONS[n]``
+# takes a document written at version ``n`` and returns it at ``n + 1``. They run
+# in sequence, so a file several versions old is walked forward a step at a time
+# and no migration has to know about more than the bump it was written for.
+#
+# A migration rewrites only what a rename or a reshape moved. A defaulted key or
+# a widened range is not its business: reading those tolerantly is already
+# :func:`_entry_from`'s job, and doing it twice leaves two answers to maintain.
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+
+
+def _migrated(data: dict[str, Any]) -> tuple[dict[str, Any], int | None]:
+    """``data`` walked forward to :data:`PROJECT_VERSION`, and where it started.
+
+    The second element is the version the file claimed when it needed migrating,
+    and ``None`` when it did not — which is also the answer for a file from the
+    future, since there is nothing to walk it forward with. Each step is
+    idempotent, so re-running one over an already-current document is harmless.
+    """
+    stated = data.get("version", 1)
+    version = stated if isinstance(stated, int) and not isinstance(stated, bool) else 1
+    started = version
+    while (migration := _MIGRATIONS.get(version)) is not None:
+        data = migration(data)
+        version += 1
+        data["version"] = version
+    return data, started if version != started else None
 
 
 def _rel(path: str | None, base: str | None) -> str | None:
@@ -43,8 +78,8 @@ def _rel(path: str | None, base: str | None) -> str | None:
         return path
     try:
         rel = os.path.relpath(path, base)
-    except ValueError:
-        return path
+    except ValueError:  # another drive letter on Windows — keep it absolute
+        rel = path
     return rel.replace(os.sep, "/")
 
 
@@ -76,6 +111,42 @@ def _recover_case(path: str) -> str:
     return head
 
 
+def _string_records(entry: Entry) -> list[dict[str, Any]]:
+    """A block's translated strings as the file stores them, defaults omitted.
+
+    Read from the extracted document when there is one, and otherwise from
+    :attr:`~mapchar.project.workspace.Entry.pending_strings` — the state a block
+    that was loaded but never opened is still carrying. Without that fallback a
+    save would write back only the blocks the user happened to look at, and drop
+    the translations of every other one.
+    """
+    if entry.doc is not None and entry.doc.strings:
+        states = [
+            (rec.index, rec.translation, rec.status, rec.notes)
+            for rec in entry.doc.strings
+        ]
+    elif entry.pending_strings:
+        states = [
+            (i, st.translation, st.status, st.notes)
+            for i, st in sorted(entry.pending_strings.items())
+        ]
+    else:
+        return []
+    records: list[dict[str, Any]] = []
+    for index, translation, status, notes in states:
+        if translation is None and status is Status.UNTOUCHED and not notes:
+            continue
+        s: dict[str, Any] = {"i": index}
+        if translation is not None:
+            s["t"] = translation
+        if status is not Status.UNTOUCHED:
+            s["s"] = status.value
+        if notes:
+            s["n"] = notes
+        records.append(s)
+    return records
+
+
 def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str, Any]:
     d: dict[str, Any] = {"kind": entry.kind.value, "name": entry.name}
     if entry.path:
@@ -93,30 +164,18 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
         if entry.compression_id:
             d["compression_id"] = entry.compression_id
             d["slice_offset"] = entry.slice_offset
-            d["slice_length"] = entry.slice_length
+            # Written on the same test the reader applies, so a length round
+            # trips to itself: an absent key and a zero both mean "nobody
+            # measured it", and only one of the two is worth writing down.
+            if entry.slice_length:
+                d["slice_length"] = entry.slice_length
             if entry.spare_room != "fill":
                 d["spare_room"] = entry.spare_room
         if entry.config is not None:
             d["config"] = format_config(entry.config)
-        if entry.doc is not None:
-            strings = []
-            for rec in entry.doc.strings:
-                if (
-                    rec.translation is None
-                    and rec.status is Status.UNTOUCHED
-                    and not rec.notes
-                ):
-                    continue
-                s: dict[str, Any] = {"i": rec.index}
-                if rec.translation is not None:
-                    s["t"] = rec.translation
-                if rec.status is not Status.UNTOUCHED:
-                    s["s"] = rec.status.value
-                if rec.notes:
-                    s["n"] = rec.notes
-                strings.append(s)
-            if strings:
-                d["strings"] = strings
+        strings = _string_records(entry)
+        if strings:
+            d["strings"] = strings
     if entry.kind is EntryKind.BLOCK and entry.box is not None:
         b = entry.box
         d["box"] = {
@@ -144,8 +203,13 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
         }
     if entry.kind is EntryKind.BOOKMARK:
         d["offset"] = entry.bookmark_offset
-    if entry.kind is EntryKind.TABLE and entry.dialect:
-        d["dialect"] = entry.dialect
+    if entry.kind is EntryKind.TABLE:
+        if entry.dialect:
+            d["dialect"] = entry.dialect
+        # The in-app edits, never the table file itself: a file another tool
+        # reads keeps saying what it said until Save Table folds these in.
+        if entry.table_overlay:
+            d["overlay"] = {k: dict(v) for k, v in entry.table_overlay.items()}
     session: dict[str, Any] = {}
     if entry.session.table_id:
         session["table_id"] = entry.session.table_id
@@ -176,15 +240,74 @@ def save_project(path: str, entries: list[Entry], current: Entry | None) -> None
         f.write("\n")
 
 
+CLIPBOARD_KEY = "mapchar-entries"
+"""What marks a clipboard payload as a set of mapChar entries."""
+
+
+def entries_payload(entries: list[Entry]) -> str:
+    """``entries`` as clipboard text: the same records a project stores, with
+    **absolute** paths, so a copy pastes into another window and another project.
+
+    The parent index is taken within the copied list, so a block copied together
+    with its ROM stays attached to that ROM, and one copied alone arrives loose
+    for the paste to re-aim.
+    """
+    return json.dumps(
+        {
+            "version": PROJECT_VERSION,
+            CLIPBOARD_KEY: [entry_dict(e, entries, None) for e in entries],
+        },
+        ensure_ascii=False,
+    )
+
+
+def entries_from_payload(text: str) -> list[Entry]:
+    """The entries a clipboard payload carries, parents wired up among them.
+
+    Anything that is not a mapChar entry payload — any other text on the
+    clipboard — comes back as an empty list rather than as an error.
+    """
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    raw = data.get(CLIPBOARD_KEY) if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        return []
+    entries: list[Entry | None] = []
+    parents: list[int | None] = []
+    for item in raw:
+        try:
+            entry, parent_index, saved = _entry_from(item, "")
+        except Exception:  # noqa: BLE001 - a broken record is dropped, never fatal
+            entries.append(None)
+            parents.append(None)
+            continue
+        entry.pending_strings = saved or None
+        entries.append(entry)
+        parents.append(parent_index)
+    for entry, parent_index in zip(entries, parents, strict=True):
+        if entry is not None and parent_index is not None:
+            if 0 <= parent_index < len(entries):
+                entry.parent = entries[parent_index]
+    return [e for e in entries if e is not None]
+
+
 def load_project(path: str) -> LoadedProject:
     try:
-        with open(path, encoding="utf-8") as f:
+        # utf-8-sig: an editor that stamps a byte-order mark on the project
+        # file must not make it unreadable.
+        with open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
     except (OSError, ValueError) as exc:
         raise ProjectError(f"cannot read project: {exc}") from exc
-    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+    if not isinstance(data, dict) or not isinstance(data.get("entries", []), list):
         raise ProjectError("not a mapchar project")
     warnings: list[str] = []
+    # Before anything reads an entry key: every reader below is written against
+    # the current schema, so an older file is walked forward first and the rest
+    # of this function never learns there was more than one spelling.
+    data, migrated_from = _migrated(data)
     version = data.get("version", 1)
     if isinstance(version, int) and version > PROJECT_VERSION:
         warnings.append(
@@ -193,7 +316,7 @@ def load_project(path: str) -> LoadedProject:
     base = os.path.dirname(os.path.abspath(path))
     entries: list[Entry] = []
     strings: dict[int, dict[int, StringState]] = {}
-    raw_entries = data["entries"]
+    raw_entries = data.get("entries", [])
     parents: list[int | None] = []
     for i, raw in enumerate(raw_entries):
         try:
@@ -217,13 +340,25 @@ def load_project(path: str) -> LoadedProject:
     }
     current = None
     ci = data.get("current")
+    # ``True`` is an int in Python but never an index a writer meant.
+    if isinstance(ci, bool):
+        ci = None
     if isinstance(ci, int) and 0 <= ci < len(entries) and entries[ci] is not None:
         current = entries[ci]
+    if current is not None and current.kind is EntryKind.BOOKMARK:
+        current = None  # a bookmark can never be shown; a hand-edited index degrades
     for e in kept:
         if e.is_child and e.parent is None:
             warnings.append(f"{e.name}: parent entry missing")
     kept = [e for e in kept if not (e.is_child and e.parent is None)]
-    return LoadedProject(kept, current if current in kept else None, strings, warnings)
+    return LoadedProject(
+        kept,
+        current if current in kept else None,
+        strings,
+        warnings,
+        version if isinstance(version, int) else PROJECT_VERSION,
+        migrated_from,
+    )
 
 
 def _entry_from(
@@ -251,14 +386,37 @@ def _entry_from(
     )
     if kind is EntryKind.BLOCK and raw.get("config"):
         entry.config = parse_config(raw["config"])
+    # A project names plugins the build it was saved by had. A renamed id keeps
+    # resolving (mapchar.plugins.aliases), so the entry opens through the plugin
+    # that has its behaviour now rather than degrading to a pass-through.
+    entry.container_id = current_id(entry.container_id)
+    if entry.compression_id:
+        entry.compression_id = current_id(entry.compression_id)
+    if entry.config is not None:
+        entry.config = current_config_ids(entry.config)
     if kind is EntryKind.BLOCK:
         entry.slice_offset = int(raw.get("slice_offset", 0))
-        entry.slice_length = int(raw.get("slice_length", 0))
+        # A stored 0 reads as unknown: it is what an older file wrote for a
+        # length nobody had measured, and a slot with no room in it is not a
+        # thing anyone means.
+        stored = raw.get("slice_length")
+        entry.slice_length = int(stored) if stored else None
         entry.spare_room = str(raw.get("spare_room", "fill"))
     if kind is EntryKind.BOOKMARK:
         entry.bookmark_offset = int(raw.get("offset", 0))
     if kind is EntryKind.TABLE:
         entry.dialect = raw.get("dialect")
+        # Kept until the file has been read, which is what it is laid over
+        # (:func:`~mapchar.project.tables.adopt_tables`). A table entry with no
+        # file is carried whole here, so the overlay is all there is of it.
+        entry.table_overlay = {
+            str(table_id): {
+                str(bits): None if line is None else str(line)
+                for bits, line in rows.items()
+            }
+            for table_id, rows in (raw.get("overlay") or {}).items()
+            if isinstance(rows, dict)
+        }
     if kind is EntryKind.BLOCK and isinstance(raw.get("box"), dict):
         b = raw["box"]
         origin = b.get("origin", [0, 0])
@@ -303,5 +461,9 @@ def _entry_from(
             )
         except (KeyError, ValueError):
             continue
+    # On the entry as well as in the load report: until the block is opened and
+    # extracted this is the only place its translations exist, and a save has to
+    # be able to write them back (:func:`_string_records`).
+    entry.pending_strings = saved or None
     parent = raw.get("parent")
     return entry, (int(parent) if isinstance(parent, int) else None), saved

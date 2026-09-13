@@ -16,13 +16,15 @@ export. Tables are covered in [table-format.md](table-format.md).
 ## Native script
 
 A script is the text form of one or more blocks: UTF-8, LF or CRLF, the same
-three line kinds as a table file (`#` comment, `@` directive, content).
+three line kinds as a table file (`#` comment, `@` directive, content). Text is
+normalised to **NFC** on import, as table text is, so a translation composes
+however the translator's editor spelled it.
 
 ```
 @mapchar script 1
 @rom "Dragon Warrior (U).nes"
 @table "tables/main.tbl"
-@block "Dialogue" source=pointers start=$8000 stop=$8100 size=2 stride=2 endian=little mapping=banked:8000:4000:1 type=end table=main bound=$A000 mode=packed
+@block "Dialogue" source=pointers start=$8000 stop=$8100 size=2 stride=2 endian=little mapping=banked:8000:4000 offset=1 bank=0 type=end table=main bound=$A000 mode=packed
 @string 0 at $8123-$8140 ptr $8000
 Welcome to[line]
 Tantegel Castle.[end]
@@ -58,9 +60,10 @@ done well.[end]
 - **Import** — for each `@string`, the block named by the enclosing `@block`
   and the index select the project string; the content becomes its
   translation; a string whose content differs from its original is marked
-  **edited**. Extents and pointers in the script are checked against the
-  project and a mismatch is reported as a notice, since the project is the
-  authority.
+  **edited**. A string whose content is its own original spelled decomposed is
+  therefore untouched, not edited. Extents and pointers in the script are
+  checked against the project and a mismatch is reported as a notice, since the
+  project is the authority.
 
 Numbers are decimal or `$hex`. Strings are in double quotes with `\"` and
 `\\` escapes.
@@ -81,15 +84,19 @@ by `id`.
 
 - **TSV / CSV** — a header row then one row per string; line breaks inside
   a cell are kept (quoted per RFC 4180 in CSV; written `\n` in TSV). Export
-  chooses the delimiter; import detects it.
+  chooses the delimiter; import detects it. CSV is written UTF-8 with a
+  byte-order mark, which is what a spreadsheet needs to read it as UTF-8; TSV
+  and PO are written without one, and an import accepts either.
 - **PO** — one entry per string: `msgctxt "id"`, `msgid` original, `msgstr`
   translation, `#: rom:address` reference, `#. notes` as extracted comment,
   `#, fuzzy` when the status is *review*. Multi-line strings use PO's
   standard continuation. Plural forms are not used.
 - **Import rules** — a record whose `original` differs from the project's
-  current decode is skipped and listed, unless **Force** is on; `status`
-  becomes *edited* when the translation changed and *review* when the record
-  says so; `too_long` and `invalid` are recomputed, never imported.
+  current decode is skipped and listed, unless **Force** is on; the comparison
+  is on NFC, so a round trip through an editor that decomposes text skips
+  nothing. `status` becomes *edited* when the translation changed and *review*
+  when the record says so; `too_long` and `invalid` are recomputed, never
+  imported.
 
 ## Cartographer
 
@@ -127,7 +134,10 @@ A block imported from a command file dumps the same strings in native form.
 inserts ([`../abcde/atlas.md`](../abcde/atlas.md)):
 
 - `#VAR`/`#ADDTBL` for each table file, written in the abcde dialect next to
-  the script, with paths relative to the script;
+  the script, with paths relative to the script; a table id goes out as it is,
+  since abcde's `@id` accepts any line without angle brackets, and abcde
+  NFD-normalises both the `@id` and the `<@id>:` that names it, so they still
+  match;
 - `#ACTIVETBL`, `#JMP(start, bound-1)`, `#HDR(header)`;
 - per string: `#W16`/`#W24`/`#W32(addr)` for each pointer under a LINEAR or
   constant-offset mapping, or `#CREATEPTR`/`#WRITE` for LoROM, HiROM and GB;

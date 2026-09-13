@@ -1,0 +1,15 @@
+# A pointer mapping: fixed-size banks mapped at one CPU address.
+#
+# The layout nearly every cartridge mapper has. A 16-bit pointer holds the CPU
+# address and the block supplies the bank; a 3-byte pointer carries the bank
+# above bit 16. Copy this file, drop the underscore, and change the two numbers.
+#
+# `id` is what a project stores, so pick it once and keep it. Renaming it later
+# makes every block that used it read through a pass-through instead.
+id = "my_mapper"
+name = "My mapper (16 KiB at $8000)"
+engine = "banked"
+
+[params]
+bank_size = 0x4000  # the size of one switched bank
+bank_base = 0x8000  # the CPU address that bank is mapped at

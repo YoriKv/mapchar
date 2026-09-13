@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from mapchar.core.context import PipelineContext
+from mapchar.plugins.aliases import current_id
 from mapchar.plugins.base import (
+    RAW_CONTAINER,
     REQUIRED_METHODS,
     PluginInfo,
     ReadSource,
@@ -33,10 +35,33 @@ class PassThrough:
         return data
 
 
+# How much of a file detection looks at: comfortably past every signature a
+# container declares while staying one cheap read on a ROM of tens of megabytes.
+SIGNATURE_HEAD = 0x10000
+
+
+def _claim(info: PluginInfo, ext: str, head: bytes, size: int) -> int:
+    """How strongly ``info``'s container claims this file: 2 magic, 1 extension.
+
+    The size rules are narrowing terms, never a claim of their own: they fail
+    the whole match rather than contribute to it, so declaring one only makes a
+    container more selective. Otherwise every ROM-sized binary would be claimed
+    by whichever console's size rule its length happened to satisfy.
+    """
+    if size < info.min_size or (info.max_size is not None and size > info.max_size):
+        return 0
+    if info.size_multiple and size % info.size_multiple != info.size_remainder:
+        return 0
+    if info.magic:
+        # Magic is an assertion about the format, so it decides alone — a
+        # matching extension cannot rescue a container whose bytes disagree.
+        return 2 if any(head[at : at + len(m)] == m for at, m in info.magic) else 0
+    return 1 if ext and ext in info.extensions else 0
+
+
 class Registry:
     def __init__(self) -> None:
         self._plugins: dict[Stage, dict[str, Any]] = {s: {} for s in Stage}
-        self.aliases: dict[str, str] = {}
 
     def register(self, plugin: Any) -> None:
         info: PluginInfo = plugin.info
@@ -53,11 +78,15 @@ class Registry:
         table[info.id] = plugin
 
     def plugin(self, stage: Stage, id: str) -> Any | None:
+        """The plugin registered as ``id``, trying its current name if it misses.
+
+        A retired id keeps resolving through :mod:`mapchar.plugins.aliases`, so
+        a project or a preset written against an older build still opens.
+        """
         table = self._plugins[stage]
         if id in table:
             return table[id]
-        alias = self.aliases.get(id)
-        return table.get(alias) if alias else None
+        return table.get(current_id(id))
 
     def plugins(self, stage: Stage) -> list[Any]:
         return list(self._plugins[stage].values())
@@ -75,32 +104,35 @@ class Registry:
         info = PluginInfo(id, f"{id} (missing)", stage, "Missing")
         return PassThrough(info, id)
 
-    def detect_container(self, data: bytes, path: str | None = None) -> Any:
-        """Score containers from static info only; ties go to registration."""
+    def detect_container(
+        self, head: bytes, path: str | None = None, size: int | None = None
+    ) -> Any:
+        """The container that best claims a file, from static info only.
+
+        ``head`` is the file's leading bytes — :data:`SIGNATURE_HEAD` of them is
+        enough for every signature declared — and ``size`` its full length,
+        defaulting to ``len(head)`` when the whole file is passed. No plugin
+        code runs: a container claims files by describing itself, so detection
+        is safe to run across untrusted plugins before the file is open.
+
+        Magic decides on its own when declared, otherwise an extension match
+        counts, and the **size rules only reject**: a container that recognises
+        nothing about a file does not get to claim it because the length
+        happens to divide. Nothing claiming the file leaves the flat-file
+        container, which is the answer for a plain binary, and a tie goes to
+        registration order, so a user plugin never displaces a built-in on an
+        equal claim.
+        """
         ext = ""
         if path:
             name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
             ext = "." + name.rsplit(".", 1)[-1] if "." in name else ""
-        best, best_score = None, -1
-        size = len(data)
+        if size is None:
+            size = len(head)
+        best, best_score = self.plugin(Stage.CONTAINER, RAW_CONTAINER), 0
         for plugin in self.plugins(Stage.CONTAINER):
             info: PluginInfo = plugin.info
-            if size < info.min_size or (
-                info.max_size is not None and size > info.max_size
-            ):
-                continue
-            if info.size_multiple and size % info.size_multiple != info.size_remainder:
-                continue
-            score = 0
-            if info.magic:
-                if all(data[off : off + len(m)] == m for off, m in info.magic):
-                    score = 3
-                else:
-                    continue
-            elif ext and ext in info.extensions:
-                score = 2
-            elif info.size_multiple:
-                score = 1
+            score = _claim(info, ext, head, size)
             if score > best_score:
                 best, best_score = plugin, score
         return best

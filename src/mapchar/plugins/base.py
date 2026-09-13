@@ -4,22 +4,31 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NamedTuple, Protocol, runtime_checkable
 
-from mapchar.core.context import PipelineContext
+from mapchar.core.context import (
+    KEY_COMPLETE,
+    KEY_CONSUMED,
+    KEY_DECOMPRESS_PARTIAL,
+    PipelineContext,
+)
+from mapchar.core.errors import Stage
+
+RAW_CONTAINER = "raw"
+"""The flat-file container: the answer when nothing claims a file."""
 
 
-class Stage(Enum):
-    CONTAINER = "containers"
-    COMPRESSION = "compression"
-    CHARSET = "charsets"
-    MAPPING = "mappings"
+class ContainerField(NamedTuple):
+    """One value a container read out of a file, for Container Info.
 
-    @property
-    def folder(self) -> str:
-        """The user plugin subfolder that accepts this stage."""
-        return self.value
+    ``name`` is what the format calls the field and ``value`` what this file
+    holds; ``detail`` is what the container did with it, which is the part a
+    hex editor cannot give.
+    """
+
+    name: str
+    value: str
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -31,7 +40,11 @@ class PluginInfo:
     extensions: tuple[str, ...] = ()
     """Lower-case file extensions with the dot, for container detection."""
     magic: tuple[tuple[int, bytes], ...] = ()
-    """``(offset, bytes)`` pairs; when declared, all must match to detect."""
+    """``(offset, bytes)`` pairs; **any** match detects the format.
+
+    Several pairs are alternatives — the revisions of one format, or the two
+    places a signature may sit — not a conjunction: a container needing two
+    things to agree at once tests that in ``read``, where it can say why."""
     min_size: int = 0
     max_size: int | None = None
     size_multiple: int = 0
@@ -50,10 +63,37 @@ class ReadSource:
 
 @dataclass(frozen=True)
 class WriteTarget:
-    """What a container writes into: the destination's current bytes."""
+    """What a container writes into: the destination as it stands now.
+
+    ``existing`` is the destination's current contents (``b""`` when it does not
+    exist yet) and the write returns what should replace them, so a container is
+    a byte transform in both directions and the host does the one thing that
+    touches disk. That is what lets a container keep everything it did not
+    decode — a header, the banks around a slot — without re-deriving how to read
+    and rewrite a file.
+
+    ``offset``/``length`` describe the slot inside the destination the edited
+    bytes belong to; :attr:`whole_file` is the common case where they are the
+    whole of it. ``length`` is ``None`` when the slot's extent is not known,
+    which is not the same as zero: the bytes then run to the end of the
+    destination, and that is what bounds them.
+    """
 
     existing: bytes
     paths: tuple[str, ...] = ()
+    offset: int = 0
+    length: int | None = None
+
+    @property
+    def whole_file(self) -> bool:
+        """Whether the edited bytes are the entire destination, not a slot in it."""
+        return self.offset == 0 and self.length is None
+
+    def room(self) -> int:
+        """How many bytes fit from :attr:`offset`: the slot, or all that is left."""
+        if self.length is not None:
+            return self.length
+        return max(0, len(self.existing) - self.offset)
 
 
 @runtime_checkable
@@ -66,9 +106,44 @@ class Container(Protocol):
 
     def read(self, source: ReadSource, ctx: PipelineContext) -> bytes: ...
 
-    # Optional:
-    # def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes
-    # def describe(self, source: ReadSource, ctx: PipelineContext) -> dict[str, Any]
+    # The save half, and the three optional hooks: see ContainerExtras.
+
+
+class ContainerExtras(Protocol):
+    """The optional half of the container contract, declared rather than implied.
+
+    Every method here is reached by ``getattr`` and may simply be absent — a
+    container written before one existed, or with nothing to say, is not missing
+    anything. What a *failure* in one costs is nothing either: the pipeline
+    probes them, and one that raises is read as one that was never written, with
+    a notice recorded so the author finds out. So the rule for all four is the
+    same, and none of them can take a load down.
+
+    - ``write`` is the declaration that this container saves back at all;
+      without it every entry through it is view-only.
+    - ``describe`` is what Container Info shows: the fields the container read
+      out of the file, as ``ContainerField`` rows (or a plain ``name -> value``
+      mapping) in the format's own terms.
+    - ``default_mapping`` names the pointer mapping this file's layout implies,
+      for the block dialog to seed. Publishing ``KEY_SUGGESTED_MAPPING`` from
+      ``read`` says the same thing; a container that can answer without reading
+      answers here.
+    - ``header_size`` is what pointer mappings subtract: the bytes before the
+      mapped ROM image. Again the read-time twin is ``KEY_HEADER_SIZE``, and a
+      container that publishes neither is taken to add no header.
+    """
+
+    def write(
+        self, data: bytes, target: WriteTarget, ctx: PipelineContext
+    ) -> bytes: ...
+
+    def describe(
+        self, source: ReadSource, ctx: PipelineContext
+    ) -> Iterable[ContainerField] | dict[str, Any]: ...
+
+    def default_mapping(self, source: ReadSource) -> str | None: ...
+
+    def header_size(self, source: ReadSource) -> int: ...
 
 
 class Compression(Protocol):
@@ -76,7 +151,55 @@ class Compression(Protocol):
 
     def decompress(self, data: bytes, ctx: PipelineContext) -> bytes: ...
 
-    # Optional: def compress(self, data: bytes, ctx: PipelineContext) -> bytes
+    # Optional:
+    # def compress(self, data: bytes, ctx: PipelineContext) -> bytes
+    #     Shipping it *is* the declaration that a save-back works.
+    # def bind_tree(self, rom: bytes) -> None
+    #     A scheme whose tables live in the ROM rather than in the stream (a
+    #     Huffman tree at a fixed address) is handed the whole buffer before
+    #     each decode. Probed like a container's hooks, so a scheme that cannot
+    #     bind loses its decode, not the load.
+
+
+class PartialDecompression:
+    """:class:`Compression`'s two methods over a decoder that finds its own end.
+
+    A scheme whose decoder can report **where the structure ended** owes the
+    pipeline two facts on every read, and they are the same few lines whatever
+    the scheme is: take the partial flag off the context, decode, then publish
+    the compressed size and whether the structure completed.
+
+    Publishing both is a contract, not a convenience.
+    :data:`~mapchar.core.context.KEY_CONSUMED` is what a save-back measures its
+    slot against and what the structure scan steps over;
+    :data:`~mapchar.core.context.KEY_COMPLETE` is what stops a scan calling a
+    decode that merely ran out of buffer a hit. A scheme with **no end to
+    find** — a fixed-width bit packing, PackBits — states that for itself
+    instead and does not use this.
+
+    A subclass supplies :meth:`_decode` and :meth:`_encode`. ``_encode`` is
+    optional on the same rule as ``compress`` itself: a scheme that can be read
+    but not written leaves it unset, and then has to leave ``compress`` off too,
+    since shipping the method is the declaration that a save-back works.
+    """
+
+    def _decode(self, data: bytes, *, partial: bool) -> tuple[bytes, int, bool]:
+        """``(output, consumed, complete)`` for one structure at ``data[0]``."""
+        raise NotImplementedError
+
+    def _encode(self, data: bytes) -> bytes:
+        raise NotImplementedError
+
+    def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        out, consumed, complete = self._decode(
+            data, partial=bool(ctx.get(KEY_DECOMPRESS_PARTIAL))
+        )
+        ctx.set(KEY_CONSUMED, consumed)
+        ctx.set(KEY_COMPLETE, complete)
+        return out
+
+    def compress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        return self._encode(data)
 
 
 class Charset(Protocol):

@@ -34,10 +34,6 @@ class Bits:
         start = pos - first * 8
         return text[start : start + (end - pos)]
 
-    def byte_at_bit(self, pos: int) -> int:
-        """The byte holding bit ``pos``; used by the raw view's hex column."""
-        return self._data[pos // 8]
-
 
 def bits_to_bytes(bits: str) -> bytes:
     """Pack a bit string MSB-first, zero-padding the last byte."""

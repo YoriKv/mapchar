@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import unicodedata
+from dataclasses import replace
+
 from helpers import ASCII_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
-from mapchar.engines.layout import layout, measure, wrap
+from mapchar.engines.layout import layout, measure, unspellable, wrap
 from mapchar.pipeline.extract import extract
 
 FONT = Font(None, 8, 8, 16, 0, " ABCDEFGHIJKLMNOPQRSTUVWXYZ", widths=(4,) + (6,) * 26)
@@ -47,3 +50,89 @@ def test_measure_and_wrap():
     assert text == "ABCDE[line]FG"
     text, _ = wrap("A[line]B[color $03]C", FONT, BOX, "line")
     assert text == "AB[color $03]C"
+
+
+def test_space_without_a_glyph_is_never_a_gap():
+    """A space takes the font's space width and places nothing to tint."""
+    font = Font(None, 8, 8, 16, 1, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", space=4, missing=99)
+    result = layout("A B", font, BOX)
+    assert [(p.glyph, p.x) for p in result.placements] == [(1, 0), (2, 12)]
+
+
+def test_unmatched_bytes_draw_the_missing_glyph():
+    font = replace(FONT, missing=99)
+    assert [p.glyph for p in layout("A[$FF]B", font, BOX).placements] == [1, 99, 2]
+    ts = table_set(ASCII_TABLE, "main")
+    ex = extract(b"A\xff\x00", BlockConfig(RangeSource(0, 3), EndToken(), "main"), ts)
+    tokens = ex.strings[0].original
+    assert [p.glyph for p in layout(tokens, font, BOX).placements] == [1, 99]
+
+
+def test_multi_character_override_beats_single_characters():
+    font = replace(FONT, glyphs={"TH": 40})
+    assert [p.glyph for p in layout("THE", font, BOX).placements] == [40, 5]
+    assert measure("THE", font, BOX) == 14
+    # The same inside one multi-character text entry's token.
+    ts = table_set(ASCII_TABLE + "FD=THE\n", "main")
+    ex = extract(b"\xfd\x00", BlockConfig(RangeSource(0, 2), EndToken(), "main"), ts)
+    tokens = ex.strings[0].original
+    assert [p.glyph for p in layout(tokens, font, BOX).placements] == [40, 5]
+
+
+def test_unspellable_lists_what_the_font_cannot_draw():
+    assert unspellable("AB q z q", FONT) == ["q", "z"]
+    assert unspellable("A[line]B", FONT) == []
+
+
+def test_wrap_page_and_newline_in_either_order():
+    # The page the wrap inserts starts on its own first line: no [page][line].
+    text, over = wrap("AB CD EF GH IJ", FONT, BOX, "line", "page")
+    assert text == "AB CD[line]EF GH[page]IJ" and not over
+    assert "[line][page]" not in text and "[page][line]" not in text
+    # A newline before a page code is redundant and goes.
+    assert wrap("AB[line][page]CD", FONT, BOX, "line", "page")[0] == "AB[page]CD"
+    # One right after a page code is the page's own blank first line: it stays.
+    assert wrap("AB[page][line]CD", FONT, BOX, "line", "page")[0] == "AB[page][line]CD"
+
+
+def test_wrap_measures_space_and_glyph_effects():
+    box = replace(
+        BOX,
+        effects={
+            **BOX.effects,
+            "pad": CodeEffect(Effect.SPACE, 20),
+            "icon": CodeEffect(Effect.GLYPH, 5),
+        },
+    )
+    assert wrap("AB[pad]CD", FONT, box, "line")[0] == "AB[pad][line]CD"
+    assert wrap("AB[icon]CDE", FONT, box, "line")[0] == "AB[icon][line]CDE"
+
+
+KANA_FONT = Font(
+    None,
+    8,
+    8,
+    16,
+    0x40,
+    "あいうえお",
+    glyphs={"[line]": 0x7F, "がぎ": 0x50},
+    widths=(8,) * 0x60,
+)
+
+
+def test_a_decomposed_kana_takes_one_glyph_slot():
+    decomposed = unicodedata.normalize("NFD", "い")  # い has no mark of its own
+    assert decomposed == "い"
+    text = unicodedata.normalize("NFD", "あい")
+    result = layout(text, KANA_FONT, TextBox(width=64, height=8, line_height=8))
+    assert [p.glyph for p in result.placements] == [0x40, 0x41]
+    assert [p.x for p in result.placements] == [0, 8]
+
+
+def test_a_multi_character_override_wins_over_its_first_kana():
+    # A font may draw two kana in one cell; the override is matched whole,
+    # whatever form the text arrived in.
+    text = unicodedata.normalize("NFD", "がぎあ")
+    result = layout(text, KANA_FONT, TextBox(width=64, height=8, line_height=8))
+    assert [p.glyph for p in result.placements] == [0x50, 0x40]
+    assert unspellable(unicodedata.normalize("NFD", "が"), KANA_FONT) == ["が"]

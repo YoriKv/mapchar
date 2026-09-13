@@ -1,4 +1,4 @@
-"""Dialogs: block configuration, dump, shortcuts."""
+"""Dialogs: block configuration, the file container, dump, shortcuts."""
 
 from __future__ import annotations
 
@@ -7,9 +7,15 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
+    QListWidget,
+    QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -26,7 +32,9 @@ from mapchar.core.block import (
     PointerListSource,
     PointerTableSource,
     RangeSource,
+    WriteMode,
 )
+from mapchar.core.numbers import format_num, parse_num
 from mapchar.project.formats.script import DumpMode
 from mapchar.ui.widgets import ResultsTable
 
@@ -44,6 +52,14 @@ class HexEdit(QLineEdit):
 
 
 class BlockDialog(QDialog):
+    """New Block… and a block's Edit…: the whole of a block's configuration.
+
+    The compression row is what makes a block a *decompressed* region rather
+    than a window on the file's own bytes, so it carries the spare-room rule
+    with it: a re-compression that comes out shorter than the slot it replaces
+    has to say what fills the rest.
+    """
+
     def __init__(
         self,
         table_ids: list[str],
@@ -51,6 +67,11 @@ class BlockDialog(QDialog):
         name: str = "",
         parent: QWidget | None = None,
         mapping_ids: list[str] = (),
+        *,
+        compression_items: list[tuple[str, object]] = (),
+        compression_id: str | None = None,
+        spare_room: str = "fill",
+        suggested_mapping: str | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Block")
@@ -83,6 +104,11 @@ class BlockDialog(QDialog):
         self.ptr_mapping = QComboBox()
         self.ptr_mapping.setEditable(True)
         self.ptr_mapping.addItems(list(mapping_ids) or ["linear"])
+        # The container publishes what the header says the ROM is mapped as
+        # (``KEY_SUGGESTED_MAPPING``); a new block starts on that rather than on
+        # linear, which is wrong for every banked ROM.
+        if suggested_mapping and config is None:
+            self.ptr_mapping.setCurrentText(suggested_mapping)
         self.ptr_offset = QLineEdit("0")
         self.ptr_bank = QSpinBox()
         self.ptr_bank.setRange(0, 4095)
@@ -133,6 +159,27 @@ class BlockDialog(QDialog):
         self.bound = HexEdit()
         self.bound.setText("")
         form.addRow("Write bound (blank: stop)", self.bound)
+        self.write_mode = QComboBox()
+        self.write_mode.addItem("Automatic", None)
+        self.write_mode.addItem("Packed", WriteMode.PACKED)
+        self.write_mode.addItem("Slotted", WriteMode.SLOTTED)
+        form.addRow("Write mode", self.write_mode)
+        self.fill = HexEdit(0xFF)
+        form.addRow("Fill byte", self.fill)
+        self.compression = QComboBox()
+        self.compression.addItem("None (the file's own bytes)", None)
+        for label, data in compression_items:
+            self.compression.addItem(label, data)
+        form.addRow("Compression", self.compression)
+        self.spare_room = QComboBox()
+        self.spare_room.addItem("Fill with the fill byte", "fill")
+        self.spare_room.addItem("Keep the bytes that were there", "keep")
+        form.addRow("Spare room", self.spare_room)
+        at = self.compression.findData(compression_id)
+        self.compression.setCurrentIndex(max(at, 0))
+        at = self.spare_room.findData(spare_room)
+        self.spare_room.setCurrentIndex(max(at, 0))
+        self.compression.currentIndexChanged.connect(self._sync)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -193,6 +240,8 @@ class BlockDialog(QDialog):
         self.skips.setText(", ".join(f"{a:X}>{b:X}" for a, b in c.skips))
         if c.bound is not None:
             self.bound.set_value(c.bound)
+        self.write_mode.setCurrentIndex(max(self.write_mode.findData(c.write_mode), 0))
+        self.fill.set_value(c.fill)
 
     def _sync(self) -> None:
         kind = self.source_kind.currentIndex()
@@ -223,20 +272,53 @@ class BlockDialog(QDialog):
         self.pascal_width.setEnabled(st == 2 and not fixed_source)
         self.pascal_tokens.setEnabled(st == 2 and not fixed_source)
         self.spp.setEnabled(st == 0 and not fixed_source)
+        # Spare room is what a re-compression that came out short leaves behind,
+        # so it says nothing at all about a block read straight from the file.
+        self.spare_room.setEnabled(self.compression.currentData() is not None)
         self.line_length.setEnabled(st == 1 or fixed_source)
         self.show_end.setEnabled(st == 1 or fixed_source)
 
+    def _target_offset(self) -> int | None:
+        """The offset added to every pointer value, or ``None`` if unreadable.
+
+        One spelling for every number in the app
+        (:func:`~mapchar.core.numbers.parse_num`): decimal, or ``$hex``, either
+        sign. A field nobody filled in adds nothing.
+        """
+        text = self.ptr_offset.text().strip()
+        if not text:
+            return 0
+        try:
+            return parse_num(text)
+        except ValueError:
+            return None
+
+    def accept(self) -> None:
+        """Refuse to close on a number nobody can read.
+
+        Checked here rather than in :meth:`config`, which every caller reaches
+        only *after* the dialog has closed: an exception out of it would leave a
+        Qt slot carrying the traceback and the block half made.
+        """
+        if self.ptr_offset.isEnabled() and self._target_offset() is None:
+            QMessageBox.warning(
+                self,
+                "Block",
+                f"{self.ptr_offset.text().strip()!r} is not a number. Write a "
+                "decimal or a $hex value, with a leading - to subtract.",
+            )
+            self.ptr_offset.setFocus()
+            self.ptr_offset.selectAll()
+            return
+        super().accept()
+
     def _pointer_fields(self) -> dict:
-        offset_text = self.ptr_offset.text().strip() or "0"
-        if offset_text.lstrip("-").startswith("$"):
-            offset = int(offset_text.replace("$", ""), 16)
-        else:
-            offset = int(offset_text)
+        offset = self._target_offset()
         return {
             "size": self.ptr_size.value(),
             "endian": self.ptr_endian.currentText(),
             "mapping_id": self.ptr_mapping.currentText().strip() or "linear",
-            "offset": offset,
+            "offset": 0 if offset is None else offset,
             "bank": self.ptr_bank.value(),
         }
 
@@ -292,8 +374,114 @@ class BlockDialog(QDialog):
             skips=tuple(skips),
             line_length=self.line_length.value(),
             bound=parse_hex(bound_text) if bound_text else None,
+            write_mode=self.write_mode.currentData(),
+            fill=self.fill.value() & 0xFF,
             show_end=self.show_end.isChecked(),
         )
+
+    def compression_id(self) -> str | None:
+        """The scheme this block decompresses through, or ``None`` for the
+        file's own bytes."""
+        return self.compression.currentData()
+
+    def spare_room_rule(self) -> str:
+        return self.spare_room.currentData()
+
+
+class ContainerDialog(QDialog):
+    """Edit File Container…: what the region is made of and how it is unwrapped.
+
+    The files list is how split ROM chips are joined, and the order in it is the
+    order offsets are counted in, so it is reorderable rather than a fixed echo
+    of how the entry was opened. Applying re-reads the entry.
+    """
+
+    def __init__(
+        self,
+        container_items: list[tuple[str, object]],
+        paths: tuple[str, ...] | list[str],
+        container_id: str = "raw",
+        detected: str | None = None,
+        readonly_ids: frozenset[str] = frozenset(),
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Edit File Container")
+        self._readonly = readonly_ids
+        layout = QVBoxLayout(self)
+        self.files = QListWidget()
+        for path in paths:
+            self.files.addItem(path)
+        self.files.setCurrentRow(0)
+        layout.addWidget(QLabel("Files, joined end to end in this order:"))
+        layout.addWidget(self.files, 1)
+        row = QHBoxLayout()
+        for label, slot in (
+            ("Move Up", lambda: self._move(-1)),
+            ("Move Down", lambda: self._move(1)),
+            ("Append…", self._append),
+            ("Remove", self._remove),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(slot)
+            row.addWidget(button)
+        row.addStretch(1)
+        layout.addLayout(row)
+        form = QFormLayout()
+        self.container = QComboBox()
+        for label, data in container_items:
+            mark = "  (detected)" if data == detected else ""
+            self.container.addItem(f"{label}{mark}", data)
+        self.container.setCurrentIndex(max(self.container.findData(container_id), 0))
+        form.addRow("Container", self.container)
+        layout.addLayout(form)
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        layout.addWidget(self.note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.container.currentIndexChanged.connect(self._sync)
+        self.resize(520, 320)
+        self._sync()
+
+    def _sync(self) -> None:
+        if self.container.currentData() in self._readonly:
+            self.note.setText(
+                "This container has no way to put the bytes back, so the entry "
+                "will open view-only."
+            )
+        else:
+            self.note.setText("")
+
+    def _move(self, delta: int) -> None:
+        at = self.files.currentRow()
+        to = at + delta
+        if at < 0 or not 0 <= to < self.files.count():
+            return
+        item = self.files.takeItem(at)
+        self.files.insertItem(to, item)
+        self.files.setCurrentRow(to)
+
+    def _append(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Append file")
+        if path:
+            self.files.addItem(path)
+            self.files.setCurrentRow(self.files.count() - 1)
+
+    def _remove(self) -> None:
+        # Never the last one: a region with no files is not a region.
+        if self.files.count() > 1 and self.files.currentRow() >= 0:
+            self.files.takeItem(self.files.currentRow())
+
+    def paths(self) -> tuple[str, ...]:
+        return tuple(self.files.item(i).text() for i in range(self.files.count()))
+
+    def container_id(self) -> str:
+        return str(self.container.currentData())
 
 
 class DumpDialog(QDialog):
@@ -336,25 +524,112 @@ class TextDialog(QDialog):
         self.resize(560, 420)
 
 
+class PointerSearchDialog(QDialog):
+    """What the pointer search should cover, asked before it runs.
+
+    Both answers change the candidate space the search has to walk, so neither
+    can be settled afterwards. **Scope** is about cost — one string is a search
+    short enough to repeat while trying offsets, a hundred is not — and the
+    **offset range** is the one part of a pointer's arithmetic a ROM chooses
+    freely, so a table based somewhere other than the string it names is found
+    only by trying the offsets it might be based on.
+    """
+
+    def __init__(
+        self, strings: int, selected: int | None, parent: QWidget | None = None
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Find Pointers")
+        form = QFormLayout(self)
+        self.scope = QComboBox()
+        self.scope.addItem(f"Every string in the block ({strings})", False)
+        if selected is not None:
+            self.scope.addItem(f"The selected string only (#{selected})", True)
+        form.addRow("Look for", self.scope)
+        self.offset_from = QLineEdit("0")
+        self.offset_to = QLineEdit("0")
+        self.offset_step = QLineEdit("1")
+        form.addRow("Offset from (±dec or $hex)", self.offset_from)
+        form.addRow("Offset to", self.offset_to)
+        form.addRow("Offset step", self.offset_step)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def selected_only(self) -> bool:
+        return bool(self.scope.currentData())
+
+    def _numbers(self) -> tuple[int, int, int] | None:
+        """The three offset fields, or ``None`` if one of them does not read."""
+        try:
+            return (
+                parse_num(self.offset_from.text().strip() or "0"),
+                parse_num(self.offset_to.text().strip() or "0"),
+                parse_num(self.offset_step.text().strip() or "1"),
+            )
+        except ValueError:
+            return None
+
+    def offsets(self) -> tuple[int, ...]:
+        """The offsets to try, both ends included.
+
+        A step under one, or an end before the start, is the single offset the
+        range begins at — the fields were not really a range. How long a wide
+        range then takes is the search's Stop button's problem, not this
+        dialog's.
+        """
+        first, last, step = self._numbers() or (0, 0, 1)
+        if step < 1 or last < first:
+            return (first,)
+        return tuple(range(first, last + 1, step))
+
+    def accept(self) -> None:
+        # Refused here rather than in :meth:`offsets`, which every caller
+        # reaches only after the dialog has closed.
+        if self._numbers() is None:
+            QMessageBox.warning(
+                self,
+                "Find Pointers",
+                "The offset range is not made of numbers. Write decimal or "
+                "$hex values, with a leading - to subtract.",
+            )
+            return
+        super().accept()
+
+
 class DiscoveryDialog(QDialog):
-    """Pointer discovery results; the chosen candidate becomes the source."""
+    """Pointer discovery results, and which of two things to do with one.
+
+    A discovery answers two different questions, so it has two ways out. **Use
+    as pointer table** believes the whole result: the block's source becomes the
+    pointer table the candidate describes and the strings are re-read through it.
+    **Attach** believes only the addresses: the source stays as it was and the
+    strings gain the pointers that reach them, which is what a block whose
+    pointers are scattered rather than tabulated needs.
+    """
 
     def __init__(self, candidates, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Find Pointers")
         self.candidates = candidates
+        self.attach = False
+        """Whether the result was taken by Attach rather than as the source."""
         layout = QVBoxLayout(self)
         self.table = ResultsTable(
-            ["Mapping", "Size", "Endian", "Strings", "Stride", "First address"]
+            ["Mapping", "Size", "Endian", "Offset", "Strings", "Stride", "Addresses"]
         )
         self.table.fill(
             [
                 c.mapping_id,
                 str(c.size),
                 c.endian,
+                format_num(c.offset),
                 str(c.explained),
                 str(c.stride),
-                f"{c.addresses[0]:X}" if c.addresses else "",
+                f"{c.addresses[0]:X}–{c.addresses[-1]:X}" if c.addresses else "",
             ]
             for c in candidates
         )
@@ -365,11 +640,20 @@ class DiscoveryDialog(QDialog):
         buttons.addButton(
             "Use as pointer table", QDialogButtonBox.ButtonRole.AcceptRole
         )
+        self.attach_button = buttons.addButton(
+            "Attach", QDialogButtonBox.ButtonRole.AcceptRole
+        )
         buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        # The box emits ``clicked`` before ``accepted``, so which button was
+        # taken is known by the time the dialog closes on it.
+        buttons.clicked.connect(self._on_clicked)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
-        self.resize(560, 320)
+        self.resize(620, 320)
+
+    def _on_clicked(self, button) -> None:
+        self.attach = button is self.attach_button
 
     def chosen(self):
         return self.table.pick(self.candidates)

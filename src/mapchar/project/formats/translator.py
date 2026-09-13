@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from mapchar.core.block import Status, StringRecord
 from mapchar.core.numbers import format_num, parse_num
-from mapchar.core.text import escape, split_lines, unescape
+from mapchar.core.text import BOM, escape, split_lines, unescape
 
 FIELDS = ("id", "address", "original", "translation", "status", "notes")
 
@@ -42,6 +42,12 @@ def records_for(block_name: str, strings: list[StringRecord]) -> list[Record]:
 
 
 def write_delimited(records: list[Record], delimiter: str = "\t") -> str:
+    """The records as TSV or CSV text, ready to write as UTF-8.
+
+    CSV starts with a byte-order mark, which is what spreadsheets need to read
+    a UTF-8 file as UTF-8; TSV and PO stay without one. An import accepts
+    either, since :func:`~mapchar.core.text.split_lines` drops a mark.
+    """
     out = io.StringIO()
     if delimiter == "\t":
         out.write("\t".join(FIELDS) + "\n")
@@ -56,6 +62,7 @@ def write_delimited(records: list[Record], delimiter: str = "\t") -> str:
             ]
             out.write("\t".join(cells) + "\n")
         return out.getvalue()
+    out.write(BOM)
     writer = csv.writer(out, delimiter=delimiter, lineterminator="\n")
     writer.writerow(FIELDS)
     for r in records:

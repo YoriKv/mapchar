@@ -7,6 +7,7 @@ from mapchar.core.block import (
     FixedLength,
     NextPointer,
     PointerListSource,
+    PointerRef,
     PointerTableSource,
     RangeSource,
     WriteMode,
@@ -126,3 +127,29 @@ def test_discovery_finds_the_table(registry):
 def test_range_source_still_slotted():
     cfg = BlockConfig(RangeSource(0x10, 0x19), EndToken(), "main")
     assert cfg.effective_write_mode is WriteMode.SLOTTED
+
+
+def test_discovery_offset_range_widens_the_candidate_space(registry):
+    """An offset is the part of a pointer's arithmetic a ROM chooses freely, so a
+    table based somewhere other than the string it names is found only by trying
+    the offsets it might be based on."""
+    rom = pointer_rom((0x0E, 0x11), "41 42 00 43 00")
+    starts = [0x10, 0x13]
+    mappings = {"linear": resolve_mapping(registry, "linear")}
+    assert not discover(rom, starts, mappings, sizes=(2,), offsets=(0,))
+    cands = discover(rom, starts, mappings, sizes=(2,), offsets=(0, 2))
+    assert all(c.offset == 2 for c in cands)
+    best = cands[0]
+    assert (best.explained, best.endian) == (2, "little")
+    assert best.source() == PointerTableSource(0, 4, 2, 2, "little", "linear", 2)
+
+
+def test_discovery_refs_carry_the_whole_reading(registry):
+    """What **Attach** puts on the strings: where the value sits plus everything
+    needed to write it back, with no second lookup."""
+    mappings = {"linear": resolve_mapping(registry, "linear")}
+    best = discover(ROM, [0x10, 0x13], mappings, sizes=(2,), offsets=(0,))[0]
+    refs = best.refs()
+    assert [p.address for p in refs[0x10]] == [0, 4]  # one target, two pointers
+    assert refs[0x13] == (PointerRef(2, 2, "little", "linear", 0, 0x13),)
+    assert {p.value for p in refs[0x10]} == {0x10}
