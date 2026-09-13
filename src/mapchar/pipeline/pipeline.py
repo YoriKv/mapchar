@@ -1,7 +1,7 @@
 """The byte stages, run forward to load and backward to save.
 
-load:  file(s) ─► CONTAINER.read ─► RESHAPE.reshape ─► COMPRESSION.decompress
-save:  file(s) ◄─ CONTAINER.write ◄─ RESHAPE.unshape ◄─ COMPRESSION.compress
+load:  file(s) ─► CONTAINER.read ─► COMPRESSION.decompress
+save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress
 """
 
 from __future__ import annotations
@@ -49,7 +49,6 @@ class FileRef:
 class PathwayConfig:
     source: FileRef
     container_id: str = "raw"
-    reshape_id: str | None = None
     compression_id: str | None = None
 
 
@@ -91,10 +90,7 @@ def load(config: PathwayConfig, registry: Registry) -> Loaded:
         ctx,
     )
     for stage, plugin in stages[1:]:
-        if stage is Stage.RESHAPE:
-            data = _run(stage, plugin, "reshape", plugin.reshape, data, ctx)
-        else:
-            data = _run(stage, plugin, "decompress", plugin.decompress, data, ctx)
+        data = _run(stage, plugin, "decompress", plugin.decompress, data, ctx)
     return Loaded(data, ctx, writable, missing, raw)
 
 
@@ -102,10 +98,6 @@ def _stages(config: PathwayConfig, registry: Registry) -> list[tuple[Stage, Any]
     stages = [
         (Stage.CONTAINER, registry.resolve_stage(Stage.CONTAINER, config.container_id))
     ]
-    if config.reshape_id:
-        stages.append(
-            (Stage.RESHAPE, registry.resolve_stage(Stage.RESHAPE, config.reshape_id))
-        )
     if config.compression_id:
         stages.append(
             (
@@ -130,10 +122,7 @@ def encode_for_save(
             raise PipelineError(
                 stage, "write", plugin.info.id, "plugin cannot write back"
             )
-        if stage is Stage.COMPRESSION:
-            data = _run(stage, plugin, "compress", plugin.compress, data, ctx)
-        else:
-            data = _run(stage, plugin, "unshape", plugin.unshape, data, ctx)
+        data = _run(stage, plugin, "compress", plugin.compress, data, ctx)
     container = stages[0][1]
     if not writes_back(container, Stage.CONTAINER):
         raise PipelineError(

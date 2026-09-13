@@ -39,7 +39,6 @@ class Entry:
     path: str | None = None
     extra_paths: tuple[str, ...] = ()
     container_id: str = "raw"
-    reshape_id: str | None = None
     compression_id: str | None = None
     config: BlockConfig | None = None
     """Blocks only."""

@@ -11,8 +11,7 @@ def register_builtins(registry: Registry) -> None:
         compression,
         containers,
         mappings,
-        reshapes,
     )
 
-    for module in (containers, reshapes, compression, charsets, mappings):
+    for module in (containers, compression, charsets, mappings):
         module.register(registry)

@@ -29,9 +29,6 @@ class PassThrough:
     def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
         return source.data
 
-    def reshape(self, data: bytes, ctx: PipelineContext) -> bytes:
-        return data
-
     def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
         return data
 

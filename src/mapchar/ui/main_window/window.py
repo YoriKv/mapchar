@@ -206,18 +206,12 @@ class MainWindow(QMainWindow):
         self.container_pick = QComboBox()
         for plugin in self.registry.plugins(Stage.CONTAINER):
             self.container_pick.addItem(plugin.info.name, plugin.info.id)
-        self.reshape_pick = QComboBox()
-        self.reshape_pick.addItem("None", None)
-        for plugin in self.registry.plugins(Stage.RESHAPE):
-            self.reshape_pick.addItem(plugin.info.name, plugin.info.id)
         self.table_pick = QComboBox()
         self.table_pick.addItem("(no table)", None)
         self.compression_pick = QComboBox()
         self._fill_compression_pick()
         codecs.addWidget(QLabel(" Container "))
         codecs.addWidget(self.container_pick)
-        codecs.addWidget(QLabel("  Reshape "))
-        codecs.addWidget(self.reshape_pick)
         codecs.addWidget(QLabel("  Compression "))
         codecs.addWidget(self.compression_pick)
         codecs.addWidget(QLabel("  Start table "))
@@ -318,7 +312,6 @@ class MainWindow(QMainWindow):
         self.tables_panel.edit_requested.connect(self._edit_table_entry)
         self.fonts_panel.edit_requested.connect(self._edit_font_entry)
         self.container_pick.currentIndexChanged.connect(self._on_chain_changed)
-        self.reshape_pick.currentIndexChanged.connect(self._on_chain_changed)
         self.table_pick.currentIndexChanged.connect(self._on_table_pick)
         self.block_edit.clicked.connect(self._edit_block)
         self.block_dump.clicked.connect(self._dump)
@@ -971,7 +964,6 @@ class MainWindow(QMainWindow):
                 cfg = PathwayConfig(
                     FileRef(entry.paths),
                     entry.container_id,
-                    entry.reshape_id,
                     entry.compression_id,
                 )
                 loaded = load(cfg, self.registry)
@@ -1170,17 +1162,11 @@ class MainWindow(QMainWindow):
         registry, issues = self._reload_plugins(project_dir)
         self.registry = registry
         self._plugin_issues = list(issues)
-        for pick, stage, none_label in (
-            (self.container_pick, Stage.CONTAINER, None),
-            (self.reshape_pick, Stage.RESHAPE, "None"),
-        ):
-            pick.blockSignals(True)
-            pick.clear()
-            if none_label:
-                pick.addItem(none_label, None)
-            for plugin in self.registry.plugins(stage):
-                pick.addItem(plugin.info.name, plugin.info.id)
-            pick.blockSignals(False)
+        self.container_pick.blockSignals(True)
+        self.container_pick.clear()
+        for plugin in self.registry.plugins(Stage.CONTAINER):
+            self.container_pick.addItem(plugin.info.name, plugin.info.id)
+        self.container_pick.blockSignals(False)
         self._fill_compression_pick()
         for e in self.workspace.entries:
             e.doc = None
@@ -1202,7 +1188,7 @@ class MainWindow(QMainWindow):
 
     def _restore_session(self) -> None:
         entry = self._entry
-        widgets = (self.container_pick, self.reshape_pick, self.table_pick)
+        widgets = (self.container_pick, self.table_pick)
         for w in widgets:
             w.blockSignals(True)
         try:
@@ -1214,8 +1200,6 @@ class MainWindow(QMainWindow):
             if file_entry is not None:
                 i = self.container_pick.findData(file_entry.container_id)
                 self.container_pick.setCurrentIndex(max(i, 0))
-                i = self.reshape_pick.findData(file_entry.reshape_id)
-                self.reshape_pick.setCurrentIndex(max(i, 0))
             table_id = entry.session.table_id
             if entry.kind is EntryKind.BLOCK and entry.config is not None:
                 table_id = entry.config.table_id or table_id
@@ -1279,7 +1263,6 @@ class MainWindow(QMainWindow):
         if file_entry is None or file_entry.kind is not EntryKind.FILE:
             return
         file_entry.container_id = self.container_pick.currentData() or "raw"
-        file_entry.reshape_id = self.reshape_pick.currentData()
         file_entry.doc = None
         for child in self.workspace.children(file_entry):
             child.doc = None
@@ -1743,7 +1726,6 @@ class MainWindow(QMainWindow):
             cfg = PathwayConfig(
                 FileRef(file_entry.paths),
                 file_entry.container_id,
-                file_entry.reshape_id,
                 file_entry.compression_id,
             )
             try:

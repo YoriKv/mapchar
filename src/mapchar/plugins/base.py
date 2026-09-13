@@ -12,7 +12,6 @@ from mapchar.core.context import PipelineContext
 
 class Stage(Enum):
     CONTAINER = "containers"
-    RESHAPE = "reshape"
     COMPRESSION = "compression"
     CHARSET = "charsets"
     MAPPING = "mappings"
@@ -72,14 +71,6 @@ class Container(Protocol):
     # def describe(self, source: ReadSource, ctx: PipelineContext) -> dict[str, Any]
 
 
-class Reshape(Protocol):
-    info: PluginInfo
-
-    def reshape(self, data: bytes, ctx: PipelineContext) -> bytes: ...
-
-    # Optional: def unshape(self, data: bytes, ctx: PipelineContext) -> bytes
-
-
 class Compression(Protocol):
     info: PluginInfo
 
@@ -107,7 +98,6 @@ class Mapping(Protocol):
 
 REQUIRED_METHODS: dict[Stage, tuple[str, ...]] = {
     Stage.CONTAINER: ("read",),
-    Stage.RESHAPE: ("reshape",),
     Stage.COMPRESSION: ("decompress",),
     Stage.CHARSET: ("entries",),
     Stage.MAPPING: ("to_offset", "to_value"),
@@ -115,7 +105,6 @@ REQUIRED_METHODS: dict[Stage, tuple[str, ...]] = {
 
 SAVE_METHODS: dict[Stage, str | None] = {
     Stage.CONTAINER: "write",
-    Stage.RESHAPE: "unshape",
     Stage.COMPRESSION: "compress",
     Stage.CHARSET: None,
     Stage.MAPPING: None,

@@ -42,25 +42,11 @@ def test_snes_mapping_guess():
     assert ctx.get(KEY_SUGGESTED_MAPPING) == "lorom"
 
 
-def test_reshapes_invert():
-    reg = default_registry()
-    data = bytes(range(1, 12))
-    ctx = PipelineContext()
-    for pid in ("byteswap16", "reverse_bits", "deinterleave"):
-        p = reg.plugin(Stage.RESHAPE, pid)
-        assert writes_back(p, Stage.RESHAPE)
-        assert p.unshape(p.reshape(data, ctx), ctx) == data
-    assert (
-        reg.plugin(Stage.RESHAPE, "deinterleave").reshape(b"\x01\x02\x03", ctx)
-        == b"\x01\x03\x02"
-    )
-
-
 def test_missing_plugin_degrades():
     reg = default_registry()
-    p = reg.resolve_stage(Stage.RESHAPE, "nope")
-    assert isinstance(p, PassThrough) and not writes_back(p, Stage.RESHAPE)
-    assert reg.resolve_stage(Stage.RESHAPE, None) is None
+    p = reg.resolve_stage(Stage.COMPRESSION, "nope")
+    assert isinstance(p, PassThrough) and not writes_back(p, Stage.COMPRESSION)
+    assert reg.resolve_stage(Stage.COMPRESSION, None) is None
 
 
 def test_charsets():

@@ -21,7 +21,6 @@ except ModuleNotFoundError:  # Python 3.10
 
 FOLDERS: dict[str, Stage] = {
     "containers": Stage.CONTAINER,
-    "reshape": Stage.RESHAPE,
     "compression": Stage.COMPRESSION,
     "charsets": Stage.CHARSET,
     "mappings": Stage.MAPPING,
@@ -285,7 +284,6 @@ EXAMPLE_README = """mapChar plugins
 
 Put plugins in the typed folders beside this file:
   containers/   .py
-  reshape/      .py
   compression/  .py, .toml presets (engine = "huffman", "lzss" or "bitpack")
   charsets/     .py, .tbl (a table file registers as a charset named after it)
   mappings/     .py, .toml presets (engine = "banked")
@@ -304,27 +302,6 @@ bank_size = 0x4000
 bank_base = 0x8000
 """
 
-EXAMPLE_RESHAPE = '''"""Example reshape plugin: swaps the two halves of the file."""
-
-from mapchar.plugins.base import PluginInfo, Stage
-
-
-class SwapHalves:
-    info = PluginInfo("example_swap_halves", "Swap halves", Stage.RESHAPE)
-
-    def reshape(self, data, ctx):
-        half = len(data) // 2
-        return data[half:] + data[:half]
-
-    def unshape(self, data, ctx):
-        half = len(data) - len(data) // 2
-        return data[half:] + data[:half]
-
-
-def register(registry):
-    registry.register(SwapHalves())
-'''
-
 
 def seed_examples(user_dir: str) -> None:
     """Create the typed folders and the ``_``-prefixed examples once."""
@@ -333,7 +310,6 @@ def seed_examples(user_dir: str) -> None:
     files = {
         "README.txt": EXAMPLE_README,
         os.path.join("mappings", "_example_banked.toml"): EXAMPLE_MAPPING,
-        os.path.join("reshape", "_example_swap_halves.py.txt"): EXAMPLE_RESHAPE,
     }
     for rel, text in files.items():
         path = os.path.join(user_dir, rel)

@@ -85,8 +85,6 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
     if entry.kind is EntryKind.FILE:
         if entry.container_id != "raw":
             d["container_id"] = entry.container_id
-        if entry.reshape_id:
-            d["reshape_id"] = entry.reshape_id
         if entry.compression_id:
             d["compression_id"] = entry.compression_id
     if entry.kind in (EntryKind.BLOCK, EntryKind.BOOKMARK):
@@ -248,7 +246,6 @@ def _entry_from(
         path,
         extra,
         container_id=str(raw.get("container_id", "raw")),
-        reshape_id=raw.get("reshape_id"),
         compression_id=raw.get("compression_id"),
         session=session,
     )

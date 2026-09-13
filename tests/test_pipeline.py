@@ -18,13 +18,13 @@ def test_load_and_save_roundtrip(tmp_path):
     rom = tmp_path / "g.nes"
     rom.write_bytes(header + body)
     reg = default_registry()
-    cfg = PathwayConfig(FileRef((str(rom),)), "ines", "byteswap16")
+    cfg = PathwayConfig(FileRef((str(rom),)), "ines")
     loaded = load(cfg, reg)
     assert loaded.writable and not loaded.missing_plugins
     assert loaded.ctx.get(KEY_HEADER_SIZE) == 16
-    assert loaded.data[:2] == b"\x01\x00"
+    assert loaded.data == body
     new = bytearray(loaded.data)
-    new[0] = 0xEE
+    new[1] = 0xEE
     out = encode_for_save(bytes(new), cfg, reg, loaded.raw, loaded.ctx)
     assert out[:16] == header and out[17] == 0xEE and out[16] == 0
     assert deposit(out, cfg) == [str(rom)]
