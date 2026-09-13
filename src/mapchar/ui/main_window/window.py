@@ -20,8 +20,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QToolBar,
     QVBoxLayout,
@@ -30,14 +28,29 @@ from PySide6.QtWidgets import (
 
 from mapchar import __version__
 from mapchar.core.bits import Bits
-from mapchar.core.block import BlockConfig, EndToken, RangeSource
+from mapchar.core.block import (
+    BlockConfig,
+    EndToken,
+    FixedLength,
+    FixedSource,
+    RangeSource,
+    Status,
+    WriteMode,
+)
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.core.table import Table, TableSet
 from mapchar.engines.decode import DecodeRules, EndedBy, decode
 from mapchar.engines.relsearch import Hit, entries_from_hit
 from mapchar.pipeline.extract import extract
-from mapchar.pipeline.pipeline import FileRef, PathwayConfig, load
+from mapchar.pipeline.insert import apply_splices, layout_block
+from mapchar.pipeline.pipeline import (
+    FileRef,
+    PathwayConfig,
+    deposit,
+    encode_for_save,
+    load,
+)
 from mapchar.plugins.base import Stage
 from mapchar.plugins.charsets import apply_charset
 from mapchar.plugins.registry import Registry, default_registry
@@ -56,10 +69,16 @@ from mapchar.ui.dialogs import BlockDialog, DumpDialog, TextDialog, parse_hex
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.raw_widget import BYTES_PER_ROW, RawWidget, RowModel
 from mapchar.ui.search_window import SearchWindow
+from mapchar.ui.strings_view import RowData, StringsView
 from mapchar.ui.table_editor import TableEditor
 from mapchar.ui.tables_panel import TablesPanel
 from mapchar.ui.text_widget import TextWidget, text_model
-from mapchar.ui.undo_commands import EntryCommand, OffsetCommand
+from mapchar.ui.undo_commands import (
+    BytesCommand,
+    EntryCommand,
+    OffsetCommand,
+    StringFieldCommand,
+)
 
 MAX_RECENT = 10
 TEXT_WINDOW_BYTES = 4096
@@ -152,11 +171,7 @@ class MainWindow(QMainWindow):
         self.display = QStackedWidget()
         self.display.addWidget(self.raw)
         self.display.addWidget(self.text)
-        self.strings = QTableWidget(0, 4)
-        self.strings.setHorizontalHeaderLabels(["#", "Address", "Bytes", "Original"])
-        self.strings.horizontalHeader().setStretchLastSection(True)
-        self.strings.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.strings.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.strings = StringsView()
         self.tabs.addTab(self.display, "Raw")
         self.tabs.addTab(self.strings, "Strings")
         layout.addWidget(self.tabs, 1)
@@ -231,7 +246,11 @@ class MainWindow(QMainWindow):
         self.raw.selection_changed.connect(self._on_selection)
         self.raw.context_menu_requested.connect(self._raw_menu)
         self.offset_box.returnPressed.connect(self._on_offset_typed)
-        self.strings.itemSelectionChanged.connect(self._on_string_row)
+        self.strings.row_selected.connect(self._on_string_row)
+        self.strings.translation_edited.connect(self._on_translation_edited)
+        self.strings.notes_edited.connect(self._on_notes_edited)
+        self.strings.draft_changed.connect(self._on_draft)
+        self.strings.context_menu_requested.connect(self._strings_menu)
         self.search_window.go_to.connect(self._select_bytes)
         self.search_window.build_table.connect(self._build_table_from_hit)
         self.table_editor.changed.connect(self._on_table_edited)
@@ -257,6 +276,9 @@ class MainWindow(QMainWindow):
         act(file_menu, "New Bookmark", self._new_bookmark, "Ctrl+B")
         act(file_menu, "Dump…", self._dump, "Ctrl+D")
         file_menu.addSeparator()
+        act(file_menu, "Write", self._write_current, "Ctrl+W")
+        act(file_menu, "Write All", self._write_all, "Ctrl+Shift+W")
+        file_menu.addSeparator()
         act(file_menu, "New Project", self._new_project, "Ctrl+N")
         act(file_menu, "Open Project…", self._open_project_dialog, "Ctrl+O")
         self.recent_menu = file_menu.addMenu("Open Recent")
@@ -274,6 +296,10 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(redo)
         edit_menu.addSeparator()
         act(edit_menu, "Go to Address…", self._go_to_dialog, "Ctrl+G")
+        edit_menu.addSeparator()
+        act(edit_menu, "Revert Selected Strings", self._revert_selected)
+        act(edit_menu, "Toggle Review on Selected", self._toggle_review_selected)
+        act(edit_menu, "Copy Original to Empty Translations", self._copy_originals)
 
         view_menu = bar.addMenu("&View")
         act(view_menu, "Raw", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1")
@@ -711,7 +737,7 @@ class MainWindow(QMainWindow):
         self.codecs_bar.setEnabled(entry is not None)
         if doc is None:
             self.raw.set_model(None)
-            self.strings.setRowCount(0)
+            self.strings.set_rows([])
             self.nav_status.setText("")
             self.offset_box.setText("")
             self._update_title()
@@ -826,21 +852,358 @@ class MainWindow(QMainWindow):
         self.files_panel.refresh_labels()
 
     def _fill_strings(self, doc: Document) -> None:
-        self.strings.blockSignals(True)
-        self.strings.setRowCount(len(doc.strings))
-        for row, rec in enumerate(doc.strings):
-            cells = [
-                str(rec.index),
-                f"{rec.start:X}",
-                str(rec.length),
-                rec.original_text().replace("\n", "↵"),
-            ]
-            for col, text in enumerate(cells):
-                self.strings.setItem(row, col, QTableWidgetItem(text))
-        self.strings.resizeColumnToContents(0)
-        self.strings.resizeColumnToContents(1)
-        self.strings.resizeColumnToContents(2)
-        self.strings.blockSignals(False)
+        entry = self._entry
+        tables = self._table_set()
+        labels: list[str] = []
+        if tables is not None:
+            seen = set()
+            for t in tables.tables.values():
+                for label in t.labels:
+                    if label not in seen:
+                        seen.add(label)
+                        labels.append(label)
+        self.strings.set_labels(sorted(labels))
+        self.strings.set_rows(self._row_data(entry, doc, tables))
+
+    def _row_data(self, entry, doc: Document, tables) -> list[RowData]:
+        cfg = entry.config if entry is not None else None
+        result = None
+        if cfg is not None and tables is not None and doc.strings:
+            result = layout_block(doc.data, cfg, tables, doc.strings)
+        rows = []
+        for rec in doc.strings:
+            rows.append(self._row_for(rec, cfg, result))
+        return rows
+
+    def _row_for(self, rec, cfg, result) -> RowData:
+        used, room, problem = rec.length, self._room(rec, cfg), ""
+        status = rec.status.value
+        if result is not None:
+            enc = result.encoded.get(rec.index)
+            if enc is not None and enc.problem is None:
+                used = len(enc.data)
+            problems = [p for p in result.problems if p.index == rec.index]
+            if problems:
+                problem = problems[0].message
+                status = "too long" if problems[0].over else "invalid"
+        return RowData(
+            rec.index,
+            rec.start,
+            rec.original_text(),
+            rec.translation,
+            used,
+            room,
+            status,
+            rec.notes,
+            problem,
+        )
+
+    @staticmethod
+    def _room(rec, cfg) -> int:
+        if cfg is None:
+            return rec.length
+        if isinstance(cfg.string_type, FixedLength):
+            return cfg.string_type.length
+        if isinstance(cfg.source, FixedSource):
+            return cfg.source.length
+        if cfg.effective_write_mode is WriteMode.PACKED:
+            bound = (
+                cfg.bound
+                if cfg.bound is not None
+                else getattr(cfg.source, "stop", rec.end)
+            )
+            return max(bound - rec.start, 0)
+        return rec.length
+
+    def _refresh_string_row(self, entry, index: int) -> None:
+        doc = entry.doc
+        if doc is None:
+            return
+        rec = next((r for r in doc.strings if r.index == index), None)
+        if rec is None:
+            return
+        tables = self._table_set()
+        result = None
+        if tables is not None and entry.config is not None:
+            result = layout_block(doc.data, entry.config, tables, doc.strings)
+        self.strings.update_row(self._row_for(rec, entry.config, result))
+
+    # ------------------------------------------------------------------
+    # String edits
+    # ------------------------------------------------------------------
+
+    def _string(self, entry, index: int):
+        if entry is None or entry.doc is None:
+            return None
+        return next((r for r in entry.doc.strings if r.index == index), None)
+
+    def _on_translation_edited(self, index: int, text: str) -> None:
+        entry = self._entry
+        rec = self._string(entry, index)
+        if rec is None:
+            return
+        after = text if text.strip() else None
+        if after is not None and after.replace("\n", "") == rec.original_text().replace(
+            "\n", ""
+        ):
+            after = None
+        if after == rec.translation:
+            self._refresh_string_row(entry, index)
+            return
+        self.undo_stack.push(
+            StringFieldCommand(
+                self, entry, index, "translation", rec.translation, after
+            )
+        )
+
+    def _on_notes_edited(self, index: int, text: str) -> None:
+        entry = self._entry
+        rec = self._string(entry, index)
+        if rec is None or text == rec.notes:
+            return
+        self.undo_stack.push(
+            StringFieldCommand(self, entry, index, "notes", rec.notes, text)
+        )
+
+    def apply_string_field(self, entry, index: int, field: str, value) -> None:
+        rec = self._string(entry, index)
+        if rec is None:
+            return
+        if field == "translation":
+            rec.translation = value
+            if value is None:
+                rec.status = Status.UNTOUCHED
+            elif rec.status is Status.UNTOUCHED:
+                rec.status = Status.EDITED
+        elif field == "notes":
+            rec.notes = value
+        elif field == "status":
+            rec.status = Status(value)
+        self.workspace.stamp(entry)
+        if entry is self._entry:
+            self._refresh_string_row(entry, index)
+            self.files_panel.refresh_labels()
+        else:
+            self._activate_entry(entry)
+        self._update_title()
+
+    def _on_draft(self, text: str) -> None:
+        entry = self._entry
+        tables = self._table_set()
+        if entry is None or entry.config is None or tables is None:
+            return
+        from mapchar.engines.encode import encode
+
+        try:
+            r = encode(
+                text,
+                tables,
+                end_terminated=isinstance(entry.config.string_type, EndToken),
+            )
+            n = -(-len(r.bits) // 8)
+            self.statusBar().showMessage(f"{n} byte(s)")
+        except MapcharError as exc:
+            self.statusBar().showMessage(str(exc))
+
+    def _revert_selected(self) -> None:
+        for index in self.strings.selected_indices():
+            rec = self._string(self._entry, index)
+            if rec is not None and rec.translation is not None:
+                self.undo_stack.push(
+                    StringFieldCommand(
+                        self, self._entry, index, "translation", rec.translation, None
+                    )
+                )
+
+    def _toggle_review_selected(self) -> None:
+        for index in self.strings.selected_indices():
+            rec = self._string(self._entry, index)
+            if rec is None:
+                continue
+            new = Status.EDITED if rec.status is Status.REVIEW else Status.REVIEW
+            if new is Status.EDITED and rec.translation is None:
+                new = Status.UNTOUCHED
+            self.undo_stack.push(
+                StringFieldCommand(
+                    self, self._entry, index, "status", rec.status.value, new.value
+                )
+            )
+
+    def _copy_originals(self) -> None:
+        entry = self._entry
+        if entry is None or entry.doc is None:
+            return
+        self.undo_stack.beginMacro("Copy originals")
+        for rec in entry.doc.strings:
+            if rec.translation is None:
+                self.undo_stack.push(
+                    StringFieldCommand(
+                        self, entry, rec.index, "translation", None, rec.original_text()
+                    )
+                )
+        self.undo_stack.endMacro()
+
+    def _strings_menu(self, indices: list[int], pos: QPoint) -> None:
+        menu = QMenu(self)
+        menu.addAction("Revert to original", self._revert_selected)
+        menu.addAction("Toggle review", self._toggle_review_selected)
+        if indices:
+            rec = self._string(self._entry, indices[0])
+            if rec is not None:
+                menu.addAction(
+                    "Copy original",
+                    lambda: QApplication.clipboard().setText(rec.original_text()),
+                )
+        menu.exec(pos)
+
+    # ------------------------------------------------------------------
+    # Writing
+    # ------------------------------------------------------------------
+
+    def _dirty_blocks(self) -> list[Entry]:
+        return [
+            e for e in self.workspace.entries if e.kind is EntryKind.BLOCK and e.dirty
+        ]
+
+    def _write_current(self) -> None:
+        entry = self._entry
+        if entry is None:
+            return
+        if entry.kind is EntryKind.BLOCK:
+            self._write_blocks([entry])
+        elif entry.kind is EntryKind.FILE:
+            blocks = [b for b in self.workspace.children(entry) if b.dirty]
+            if entry.dirty or blocks:
+                self._write_blocks(blocks, files=[entry])
+            else:
+                self.statusBar().showMessage("Nothing to write", 3000)
+
+    def _write_all(self) -> bool:
+        blocks = self._dirty_blocks()
+        files = [e for e in self.workspace.files() if e.dirty]
+        if not blocks and not files:
+            self.statusBar().showMessage("Nothing to write", 3000)
+            return True
+        return self._write_blocks(blocks, files=files)
+
+    def _write_blocks(
+        self, blocks: list[Entry], files: list[Entry] | None = None
+    ) -> bool:
+        """Lay every block out over its file and write the files that changed."""
+        by_file: dict[int, tuple[Entry, list[Entry]]] = {}
+        for b in blocks:
+            if b.parent is None:
+                continue
+            by_file.setdefault(id(b.parent), (b.parent, []))[1].append(b)
+        for f in files or []:
+            by_file.setdefault(id(f), (f, []))
+        tables = self.workspace.tables()
+        ok = True
+        for file_entry, file_blocks in by_file.values():
+            parent_doc = self._load_document(file_entry)
+            if parent_doc is None:
+                ok = False
+                continue
+            new_data = parent_doc.data
+            problems: list[str] = []
+            written_blocks = []
+            for block in file_blocks:
+                doc = self._load_document(block)
+                if doc is None or block.config is None:
+                    continue
+                if block.config.table_id not in tables:
+                    problems.append(
+                        f"{block.name}: table @{block.config.table_id} is not loaded"
+                    )
+                    continue
+                ts = TableSet.build(tables[block.config.table_id], tables)
+                self._extract_current(block, doc, ts)
+                res = layout_block(new_data, block.config, ts, doc.strings)
+                if not res.ok:
+                    for p in res.problems:
+                        problems.append(f"{block.name} #{p.index}: {p.message}")
+                    continue
+                new_data = apply_splices(new_data, res.splices)
+                written_blocks.append(block)
+            if problems:
+                TextDialog("Cannot write", "\n".join(problems), self).exec()
+                ok = False
+                continue
+            if not parent_doc.writable:
+                self._error(
+                    f"{file_entry.name} is view-only (a stage cannot write back)."
+                )
+                ok = False
+                continue
+            cfg = PathwayConfig(
+                FileRef(file_entry.paths),
+                file_entry.container_id,
+                file_entry.reshape_id,
+                file_entry.compression_id,
+            )
+            try:
+                out = encode_for_save(
+                    new_data, cfg, self.registry, parent_doc.raw, parent_doc.ctx
+                )
+                deposit(out, cfg)
+            except (OSError, MapcharError) as exc:
+                self._error(f"Cannot write {file_entry.name}: {exc}")
+                ok = False
+                continue
+            parent_doc.data = new_data
+            parent_doc.raw = out
+            self.workspace.mark_saved(file_entry)
+            for block in written_blocks:
+                doc = block.doc
+                if doc is not None:
+                    doc.data = new_data
+                    doc.extraction_key = None
+                    for rec in doc.strings:
+                        if rec.translation is not None:
+                            rec.translation = None
+                            rec.status = Status.UNTOUCHED
+                self.workspace.mark_saved(block)
+            for child in self.workspace.children(file_entry):
+                if child.doc is not None:
+                    child.doc.data = new_data
+                    child.doc.extraction_key = None
+            self.statusBar().showMessage(
+                f"Wrote {file_entry.name} ({len(written_blocks)} block(s))", 5000
+            )
+        self.files_panel.refresh_labels()
+        self._refresh_view()
+        return ok
+
+    def apply_bytes(self, entry: Entry, offset: int, data: bytes) -> None:
+        doc = self._load_document(entry)
+        if doc is None:
+            return
+        buf = bytearray(doc.data)
+        buf[offset : offset + len(data)] = data
+        doc.data = bytes(buf)
+        self.workspace.stamp(entry)
+        for child in self.workspace.children(entry):
+            if child.doc is not None:
+                child.doc.data = doc.data
+                child.doc.extraction_key = None
+        if self._entry is not entry and self._entry not in self.workspace.children(
+            entry
+        ):
+            self._activate_entry(entry)
+        self._refresh_view()
+
+    def overtype_bytes(self, offset: int, data: bytes) -> None:
+        file_entry = self._current_file()
+        doc = self._doc
+        if file_entry is None or doc is None or not data:
+            return
+        if offset + len(data) > doc.size:
+            self._error("The bytes would run past the end of the file.")
+            return
+        before = doc.data[offset : offset + len(data)]
+        if before == data:
+            return
+        self.undo_stack.push(BytesCommand(self, file_entry, offset, before, data))
 
     def _update_nav_status(self) -> None:
         doc = self._doc
@@ -918,20 +1281,15 @@ class MainWindow(QMainWindow):
             self.text.select_bytes(*self._selection)
         if self._selection and self._doc is not None:
             s, e = self._selection
-            for row, rec in enumerate(self._doc.strings):
+            for rec in self._doc.strings:
                 if rec.start <= s < rec.end:
-                    self.strings.blockSignals(True)
-                    self.strings.selectRow(row)
-                    self.strings.blockSignals(False)
+                    self.strings.select_index(rec.index)
                     break
 
-    def _on_string_row(self) -> None:
-        if self._doc is None:
+    def _on_string_row(self, index: int) -> None:
+        rec = self._string(self._entry, index)
+        if rec is None:
             return
-        rows = self.strings.selectionModel().selectedRows()
-        if not rows:
-            return
-        rec = self._doc.strings[rows[0].row()]
         if not (self._offset <= rec.start < self._offset + self.raw.visible_bytes()):
             self._go_to(max(0, rec.start - BYTES_PER_ROW))
         self.raw.set_selection(rec.start, rec.end)
@@ -1359,6 +1717,19 @@ class MainWindow(QMainWindow):
         return json.dumps(d, sort_keys=True)
 
     def _confirm_discard(self, what: str) -> bool:
+        if self._dirty_blocks() or any(e.dirty for e in self.workspace.files()):
+            answer = QMessageBox.question(
+                self,
+                "Unsaved edits",
+                f"Write unsaved edits to disk before you {what}?",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                return False
+            if answer == QMessageBox.StandardButton.Save and not self._write_all():
+                return False
         if not self._project_dirty():
             return True
         answer = QMessageBox.question(

@@ -75,3 +75,61 @@ class OffsetCommand(QUndoCommand):
             w.apply_offset(self.entry, offset)
         finally:
             w._applying_undo = False
+
+
+FIELD_ID = 2
+
+
+class StringFieldCommand(QUndoCommand):
+    """One field of one string: translation, notes or status.
+
+    Consecutive edits of the same field of the same string merge into one
+    step, so a run of typing in a cell is undone at once.
+    """
+
+    def __init__(self, window, entry: Entry, index: int, field: str, before, after):
+        super().__init__(f"Edit {field}")
+        self.window = window
+        self.entry = entry
+        self.index = index
+        self.field = field
+        self.before = before
+        self.after = after
+
+    def id(self) -> int:
+        return FIELD_ID
+
+    def mergeWith(self, other) -> bool:
+        if (
+            not isinstance(other, StringFieldCommand)
+            or other.entry is not self.entry
+            or other.index != self.index
+            or other.field != self.field
+        ):
+            return False
+        self.after = other.after
+        return True
+
+    def redo(self) -> None:
+        self.window.apply_string_field(self.entry, self.index, self.field, self.after)
+
+    def undo(self) -> None:
+        self.window.apply_string_field(self.entry, self.index, self.field, self.before)
+
+
+class BytesCommand(QUndoCommand):
+    """A splice of bytes into a file entry's buffer (hex overtype)."""
+
+    def __init__(self, window, entry: Entry, offset: int, before: bytes, after: bytes):
+        super().__init__(f"Edit bytes at {offset:X}")
+        self.window = window
+        self.entry = entry
+        self.offset = offset
+        self.before = before
+        self.after = after
+
+    def redo(self) -> None:
+        self.window.apply_bytes(self.entry, self.offset, self.after)
+
+    def undo(self) -> None:
+        self.window.apply_bytes(self.entry, self.offset, self.before)
