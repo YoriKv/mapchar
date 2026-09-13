@@ -178,3 +178,69 @@ def test_example_project(game, tmp_path):
         res = layout_block(payload, cfg, ts, ex.strings, registry)
         assert res.ok, (block.name, res.problems)
         assert apply_splices(payload, res.splices) == payload, block.name
+
+
+SMW = "Super Mario World"
+SMW_ROM = "Super Mario World (USA).sfc"
+SAMPLES = os.path.join(ROOT, "tools", "samples")
+
+
+def test_super_mario_world():
+    """The in-repo SMW sample: the message boxes and the level-name parts."""
+    rom = os.path.join(ROOT, "sample-projects", SMW, SMW_ROM)
+    if not os.path.exists(rom):
+        pytest.skip(f"{SMW_ROM} not present")
+    folder = os.path.join(SAMPLES, SMW)
+    with open(rom, "rb") as f:
+        data = f.read()
+    registry = default_registry()
+    assert registry.detect_container(data, rom).info.id == "snes"  # no header
+    with open(os.path.join(folder, "Cartographer.txt"), encoding="utf-8") as f:
+        cf = parse_command_file(f.read())
+    tables = {}
+    for name in sorted(os.listdir(folder)):
+        if name.endswith(".tbl"):
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                tf = load_table_text(f.read(), name, "abcde")
+            assert not tf.notices, (name, tf.notices)
+            for t in tf.tables:
+                apply_charset(t, registry)
+                tables[t.id] = t
+    blocks = {}
+    for block in cf.blocks:
+        ts = TableSet.build(tables[block.table_file.removesuffix(".tbl")], tables)
+        ex = extract(data, block.config, ts, registry)
+        assert not ex.notices, (block.name, ex.notices)
+        res = layout_block(data, block.config, ts, ex.strings, registry)
+        assert res.ok, (block.name, res.problems)
+        assert apply_splices(data, res.splices) == data, block.name
+        blocks[block.name] = (block.config, ts, ex)
+
+    config, ts, ex = blocks["Message boxes"]
+    texts = [s.original_text() for s in ex.strings]
+    assert len(texts) == 22
+    assert texts[0].startswith("Welcome!   This is[line]\nDinosaur Land.  In[line]\n")
+    assert all(t.count("[line]") == 8 for t in texts)
+    assert len(ex.strings[1].pointers) == 4  # the four switch palaces
+    assert "[$" not in "".join(texts)
+    # An edit shorter than the original re-inserts and reads back.
+    ex.strings[0].translation = texts[0].replace("Welcome!   ", "Hi!   ", 1)
+    res = layout_block(data, config, ts, ex.strings, registry)
+    assert res.ok, res.problems
+    again = extract(apply_splices(data, res.splices), config, ts, registry)
+    assert again.strings[0].original_text().startswith("Hi!   This is[line]\n")
+    assert [s.original_text() for s in again.strings[1:]] == texts[1:]
+
+    config, ts, ex = blocks["Level names"]
+    texts = [s.original_text() for s in ex.strings]
+    assert len(texts) == 57
+    assert texts[:2] == ["YOSHI'S [end]", "STAR [end]"]
+    assert texts[-1] == " [end]"  # the empty part, named by three tables
+    assert len(ex.strings[-1].pointers) == 3
+    assert all(t.endswith("[end]") and t.count("[end]") == 1 for t in texts)
+    assert "[$" not in "".join(texts)
+    ex.strings[1].translation = "SUN [end]"
+    res = layout_block(data, config, ts, ex.strings, registry)
+    assert res.ok, res.problems
+    again = extract(apply_splices(data, res.splices), config, ts, registry)
+    assert [s.original_text() for s in again.strings[1:3]] == ["SUN [end]", texts[2]]

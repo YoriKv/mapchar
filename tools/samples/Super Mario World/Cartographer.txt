@@ -1,0 +1,46 @@
+#GAME NAME:		Super Mario World (USA).sfc
+
+// Addresses are file offsets into the unheadered 512 KiB ROM (LoROM: SNES
+// $05A5D9 is file $2A5D9). Both runs come from the SMW disassembly:
+// Banks/Bank05.asm (DisplayMessage) and Banks/Bank04.asm (UpdateLevelName).
+
+// The 22 message-box messages, back to back from $2A5D9 to $2B0FF. Each is
+// eight lines of up to 18 tiles; the last tile of a line carries bit 7, which
+// the table writes as the character plus [line], and the game reads eight of
+// them per message. The 25 slot pointers at $2A5A7 are offsets from the start
+// of the text; several name one message.
+#BLOCK NAME:		Message boxes
+#TYPE:			NORMAL
+#METHOD:		POINTER_RELATIVE
+#POINTER ENDIAN:	LITTLE
+#POINTER TABLE START:	$2A5A7
+#POINTER TABLE STOP:	$2A5D9
+#POINTER SIZE:		$02
+#POINTER SPACE:		$00
+#SCRIPT STOP:		$2B0FF
+#STRINGS PER POINTER:	8
+#ATLAS PTRS:		Yes
+#BASE POINTER:		$2A5D9
+#TABLE:			messages.tbl
+#COMMENTS:		Both
+#END BLOCK
+
+// The 57 parts a level's name is assembled from ("YOSHI'S" + "ISLAND" + "2"),
+// $21AC5 to $21C91. The last tile of a part carries bit 7 and ends it. The
+// three offset tables that pick a part by the level's name word follow the
+// text at $21C91; the first entry of each is the empty part, the terminated
+// space at the very end of the run.
+#BLOCK NAME:		Level names
+#TYPE:			NORMAL
+#METHOD:		POINTER_RELATIVE
+#POINTER ENDIAN:	LITTLE
+#POINTER TABLE START:	$21C91
+#POINTER TABLE STOP:	$21D07
+#POINTER SIZE:		$02
+#POINTER SPACE:		$00
+#SCRIPT STOP:		$21C91
+#ATLAS PTRS:		Yes
+#BASE POINTER:		$21AC5
+#TABLE:			level-names.tbl
+#COMMENTS:		Both
+#END BLOCK

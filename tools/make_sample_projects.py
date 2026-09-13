@@ -1,9 +1,10 @@
-"""Build the sample projects from abcde's example command files.
+"""Build the sample projects from their Cartographer command files.
 
 For each game with its ROM under ``sample-projects/<game>/``, copies the
-example's tables and command file beside it, imports the command file into a
-fresh project and saves ``<game>.mapchar`` there. Headless; needs the
-offscreen Qt platform, which it sets itself.
+game's tables and command file beside it -- from abcde's examples, or from
+``tools/samples/<game>/`` for the games abcde has none for -- imports the
+command file into a fresh project and saves ``<game>.mapchar`` there.
+Headless; needs the offscreen Qt platform, which it sets itself.
 """
 
 from __future__ import annotations
@@ -16,9 +17,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLES = os.path.join(os.path.dirname(ROOT), "abcde", "eg", "NES")
-GAMES = {
-    "Dragon Quest IV": "Dragon Quest IV - Michibikareshi Monotachi (J) (PRG1) [!].nes",
-    "Dragon Warrior II": "Dragon Warrior II (U) [!].nes",
+SAMPLES = os.path.join(ROOT, "tools", "samples")
+GAMES: dict[str, tuple[str, str]] = {
+    # game: (ROM file name, folder holding its tables and Cartographer.txt)
+    "Dragon Quest IV": (
+        "Dragon Quest IV - Michibikareshi Monotachi (J) (PRG1) [!].nes",
+        os.path.join(EXAMPLES, "Dragon Quest IV"),
+    ),
+    "Dragon Warrior II": (
+        "Dragon Warrior II (U) [!].nes",
+        os.path.join(EXAMPLES, "Dragon Warrior II"),
+    ),
+    "Super Mario World": (
+        "Super Mario World (USA).sfc",
+        os.path.join(SAMPLES, "Super Mario World"),
+    ),
 }
 
 
@@ -36,13 +49,12 @@ def main() -> int:
         ).toPlainText()
     )
     made = 0
-    for game, rom_name in GAMES.items():
+    for game, (rom_name, source) in GAMES.items():
         folder = os.path.join(ROOT, "sample-projects", game)
         rom = os.path.join(folder, rom_name)
         if not os.path.exists(rom):
             print(f"{game}: ROM not present, skipped")
             continue
-        source = os.path.join(EXAMPLES, game)
         for name in os.listdir(source):
             if name.endswith(".tbl") or name == "Cartographer.txt":
                 shutil.copy(os.path.join(source, name), os.path.join(folder, name))
@@ -51,8 +63,8 @@ def main() -> int:
         blocks = window.import_cartographer(os.path.join(folder, "Cartographer.txt"))
         total = 0
         for block in blocks:
+            window._activate_entry(block)  # extracts the block's strings
             doc = window._load_document(block)
-            window._activate_entry(block)
             total += len(doc.strings) if doc else 0
         project = os.path.join(folder, f"{game}.mapchar")
         window._write_project(project)
