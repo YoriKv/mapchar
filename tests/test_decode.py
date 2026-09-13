@@ -127,3 +127,29 @@ def test_unmatched_bytes_do_not_disturb_a_count():
     ts = table_set("@table main\n!AB=[n] @names:2\n@table names\n01=x\n", "main")
     r = decode(Bits(bytes.fromhex("AB 01 FF 01 01")), ts, 0)
     assert render(r.tokens) == "[n]x[$FF]x[$01]"
+
+
+def test_skip_inside_a_token():
+    # 4-bit entries; a skip starting mid-byte splices the window.
+    ts = table_set("@table main\n%0001=a\n%0010=b\n%0011=c\n", "main")
+    data = bytes.fromhex("12 FF FF 3F")
+    # Reading bit 8 (start of FF FF) continues at bit 24 (the 3F byte).
+    r = decode(Bits(data), ts, 0, DecodeRules(skips=((8, 24),)))
+    assert render(r.tokens) == "abc[%1111]"
+    # A skip in the middle of a token: bits 4..6 then from 26.
+    r = decode(Bits(bytes.fromhex("10 00 00 30")), ts, 0, DecodeRules(skips=((6, 26),)))
+    assert render(r.tokens).startswith("a")
+
+
+def test_labelled_return_with_raw_bytes():
+    ts = table_set(
+        "@table main\n41=A\n!F0=[sub] @names:*\n@table names\n01=x\n"
+        "!FE=[pal] @raw:2 return\n!FF=[back] return\n",
+        "main",
+    )
+    r = decode(Bits(bytes.fromhex("F0 01 FE AA BB 41 F0 01 FF 41")), ts, 0)
+    assert render(r.tokens) == "[sub]x[pal][$AA][$BB]A[sub]x[back]A"
+    # At the top level a return ends the string.
+    ts = table_set("@table main\n41=A\n!FF=[bye] @raw:1 return\n", "main")
+    r = decode(Bits(bytes.fromhex("41 FF 01 41")), ts, 0)
+    assert render(r.tokens) == "A[bye][$01]" and r.ended_by is EndedBy.RETURN

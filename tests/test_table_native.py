@@ -67,6 +67,25 @@ def test_parse_sample():
     assert main.labels["line"] is main.entries["11111110"]
 
 
+def test_switch_text_forms():
+    silent = parse_entry("!F1=@t:1")
+    assert silent.kind is EntryKind.SWITCH and silent.text == "" and silent.silent
+    assert silent.label is None
+    plain = parse_entry("!F2=Name: @t:1 @u:*")
+    assert plain.text == "Name:" and [p.spec() for p in plain.params] == [
+        "@t:1",
+        "@u:*",
+    ]
+    nl = parse_entry("!F3=\\n @t:*")
+    assert nl.text == "\\n" and nl.label is None
+    coded = parse_entry("!F4=[item] @t:1")
+    assert coded.label == "item"
+    from mapchar.project.formats.table_native import format_entry
+
+    for e in (silent, plain, nl, coded):
+        assert parse_entry(format_entry(e)) == e
+
+
 def test_param_forms():
     e = parse_entry("!03=[str] @upper:3+ @raw:2 @bits:1 @t:$FF @u:%101")
     specs = [p.spec() for p in e.params]
@@ -82,8 +101,8 @@ def test_param_forms():
         "$F0=[c]",
         "!F1=[s]",
         "!F1=return now",
-        "!F1=@t:1",
         "!F1=[s] @t:x",
+        "!F1=[unclosed @t:1",
         "$F0=[c],u7",
         "ZZ=A",
     ],

@@ -16,6 +16,7 @@ from mapchar.core.notices import Notice
 from mapchar.core.table import (
     BITS,
     RAW,
+    RETURN,
     Entry,
     EntryKind,
     Stop,
@@ -61,6 +62,8 @@ class _Frame:
     stop: Stop
     shared: bool
     counter: int | None
+    owner: str | None = None
+    """For a return frame: the table whose innermost frame it leaves."""
 
 
 DEFAULT_RULES = DecodeRules()
@@ -80,10 +83,32 @@ def decode(
     pos = _follow_skips(start_bit, skips)
 
     def window(at: int, n: int) -> str:
-        return bits.window(at, min(n, max(limit - at, 0)))
+        """``n`` bits from ``at``, spliced across skip ranges, cut at the limit."""
+        out = ""
+        cur = at
+        while len(out) < n and cur < limit:
+            want = n - len(out)
+            nxt = next((s for s, e in skips if cur <= s < cur + want and e != s), None)
+            take = min(want, limit - cur, (nxt - cur) if nxt is not None else want)
+            if take > 0:
+                out += bits.window(cur, take)
+                cur += take
+            if nxt is not None and cur == nxt:
+                cur = next(e for s, e in skips if s == nxt)
+            elif take <= 0:
+                break
+        return out
 
     while pos < limit:
         frame = stack[-1]
+
+        # 0. A return frame at the top leaves the frame the switch was matched in.
+        if frame.table_id == RETURN:
+            stack.pop()
+            owner = tables.tables.get(frame.owner or "")
+            if owner is None or not _pop_table(stack, owner):
+                return DecodeResult(tokens, pos, EndedBy.RETURN, notices)
+            continue
 
         # 1. Fallback bits close the frame and print nothing.
         fb = frame.stop.fallback
@@ -143,7 +168,7 @@ def decode(
             _pop_finished(stack)
             # Innermost last, so the first parameter runs first.
             for param in reversed(entry.params):
-                stack.append(_frame_for(param, tables))
+                stack.append(_frame_for(param, tables, frame.table_id))
             continue
         _pop_finished(stack)
 
@@ -151,7 +176,9 @@ def decode(
     return DecodeResult(tokens, pos, ended, notices)
 
 
-def _frame_for(param: SwitchParam, tables: TableSet) -> _Frame:
+def _frame_for(param: SwitchParam, tables: TableSet, owner: str) -> _Frame:
+    if param.table_id == RETURN:
+        return _Frame(RETURN, None, Stop(), False, None, owner)
     table = None if param.table_id in (RAW, BITS) else tables.table(param.table_id)
     return _Frame(param.table_id, table, param.stop, param.shared, param.stop.count)
 
@@ -184,7 +211,16 @@ def _pop_table(stack: list[_Frame], table: Table) -> bool:
 
 
 def _advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
-    return _follow_skips(pos + n, skips)
+    """``n`` bits past ``pos``, jumping over any skip range on the way."""
+    cur = _follow_skips(pos, skips)
+    remaining = n
+    while remaining > 0:
+        nxt = next((s for s, e in skips if cur < s < cur + remaining and e != s), None)
+        if nxt is None:
+            break
+        remaining -= nxt - cur
+        cur = next(e for s, e in skips if s == nxt)
+    return _follow_skips(cur + remaining, skips)
 
 
 def _follow_skips(pos: int, skips: list[tuple[int, int]]) -> int:

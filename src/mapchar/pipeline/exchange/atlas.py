@@ -69,6 +69,9 @@ def write_abcde_tables(tables: list[Table]) -> str:
             else:
                 params = []
                 for p in e.params:
+                    if p.table_id == "return":
+                        params.append("-1")
+                        continue
                     stop = p.stop
                     if stop.count is not None:
                         m = str(stop.count)
@@ -85,7 +88,8 @@ def write_abcde_tables(tables: list[Table]) -> str:
                         params.append(
                             f"<@{p.table_id}>:{m}" + ("+" if p.shared else "")
                         )
-                lines.append(f"!{key}{weight}=<[{e.text}]>," + ",".join(params))
+                label = f"<{_abcde_text(e.text)}>" if e.text else ""
+                lines.append(f"!{key}{weight}={label}," + ",".join(params))
         lines.append("")
     return "\n".join(lines)
 

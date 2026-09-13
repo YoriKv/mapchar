@@ -49,7 +49,9 @@ def normalise(text: str) -> str:
     """abcde's dump in mapchar's notation: raw bytes and labels without spaces."""
     text = re.sub(r"<\$([0-9A-Fa-f]{2})>", r"[$\1]", text)
     text = re.sub(
-        r"\[([^\]$%]*)\]", lambda m: "[" + re.sub(r"\s+", "_", m.group(1)) + "]", text
+        r"\[([^\]$%][^\]]*)\]",
+        lambda m: "[" + re.sub(r"\s+", "_", m.group(1)) + "]",
+        text,
     )
     return text.rstrip("\n")
 

@@ -186,13 +186,19 @@ def layout_block(
 
     if mode is WriteMode.SLOTTED:
         out = bytearray()
-        first = strings[0].start
-        last = strings[-1].end
+        first = min(s.start for s in strings)
+        last = max(s.end for s in strings)
         out[:] = data[first:last]
         used = 0
         for rec in strings:
             enc = result.encoded[rec.index]
             if enc.problem is not None:
+                continue
+            if _crosses_skip(rec, config):
+                if rec.translation is not None:
+                    result.problems.append(
+                        Problem(rec.index, "spans a skip range and cannot be rewritten")
+                    )
                 continue
             room = fixed_len if fixed_len is not None else rec.end - rec.start
             room = min(room, rec.end - rec.start) if fixed_len is None else room
@@ -291,6 +297,13 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
                 Splice(ref.address, pointer_bytes(value, ref.size, ref.endian))
             )
     return splices
+
+
+def _crosses_skip(rec: StringRecord, config: BlockConfig) -> bool:
+    """A string read across a skip range has no single byte extent."""
+    if rec.end_bit < rec.start_bit:
+        return True
+    return any(rec.start <= a < rec.end for a, _ in config.skips)
 
 
 def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:

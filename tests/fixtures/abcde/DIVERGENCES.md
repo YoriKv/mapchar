@@ -7,6 +7,7 @@ behaviour is documented under `docs/`.
 | Divergence | mapchar | Exercised by |
 |---|---|---|
 | Counter sharing between `0`/fallback frames and their parent | Every frame has its own counter; only `+` propagates | `tests/test_decode.py::test_shared_counter_counts_towards_parent` |
+| Auto-jump ranges only splice the match window | The same, plus the decoder's advance follows a jump mid-token (`test_decode.py::test_skip_inside_a_token`) | `test_examples.py` (Dragon Warrior II) |
 | A `+` child finishing ends its parent | The parent keeps going until its own counter is used up | `test_decode.py::test_weight_two_finishes_a_count_of_two` |
 | A raw count of `0` reads one bit; a raw switch overrides the string limit | `@raw:*` reads to the string limit | `test_decode.py::test_star_runs_to_end_of_data` |
 | A read window past end of data is fatal | The string ends with `ended_by = DATA` | `test_decode.py::test_limit_and_partial_bits` |

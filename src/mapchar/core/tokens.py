@@ -73,7 +73,7 @@ def render_token(token: Token) -> str:
                 f"[${int(token.bits[i : i + 8], 2):02X}]" for i in range(0, n, 8)
             )
         return f"[%{token.bits}]"
-    if entry.kind in (EntryKind.TEXT, EntryKind.END):
+    if entry.kind in (EntryKind.TEXT, EntryKind.END, EntryKind.SWITCH):
         # Table text is already in script form; ``\n`` becomes a line break
         # on dump and is ignored on insert, so dumps re-insert unchanged.
         return entry.text.replace("\\n", "\n")

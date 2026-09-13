@@ -119,3 +119,13 @@ def test_error_context():
     with pytest.raises(EncodeError) as info:
         roundtrip("@table main\n41=A\n", "AAZAA", end_terminated=False)
     assert info.value.position == 2 and "Z" in info.value.context
+
+
+def test_labelled_return_encodes():
+    body = (
+        "@table main\n41=A\n!F0=[sub] @names:*\n/00=[end]\n@table names\n01=x\n"
+        "!FE=[pal] @raw:2 return\n!FF=[back] return\n"
+    )
+    packed = roundtrip(body, "[sub]x[pal][$AA][$BB]A[end]")
+    assert packed == bytes.fromhex("F0 01 FE AA BB 41 00")
+    assert roundtrip(body, "[sub]x[back]A[end]") == bytes.fromhex("F0 01 FF 41 00")

@@ -17,6 +17,7 @@ from mapchar.core.table import (
     ID_PATTERN,
     LABEL_PATTERN,
     RAW,
+    RETURN,
     Entry,
     EntryKind,
     OperandSpec,
@@ -33,6 +34,7 @@ _ENTRY = re.compile(
 _LABEL_HEAD = re.compile(r"^\[(" + LABEL_PATTERN.pattern + r")\]")
 _PARAM = re.compile(
     r"^@(?P<table>[A-Za-z0-9_.-]+):(?P<stop>\*|\d+|\$[0-9A-Fa-f]+|%[01]+)(?P<shared>\+?)$"
+    r"|^return$"
 )
 
 
@@ -152,13 +154,29 @@ def parse_entry(line: str) -> Entry:
         return Entry(bits, EntryKind.RETURN, "", w)
     if rhs.strip().startswith("return"):
         raise ValueError("'return' takes no label or parameters")
-    label, rest = _take_label(rhs, "!")
-    words = rest.split()
-    if not words:
-        raise ValueError(f"switch [{label}] needs at least one parameter")
+    text, params = _split_switch(rhs)
+    if not params:
+        raise ValueError("switch entry needs at least one parameter")
+    if RETURN in params[:-1]:
+        raise ValueError("'return' must be the last parameter")
+    _check_text(text)
     return Entry(
-        bits, EntryKind.SWITCH, label, w, params=tuple(map(parse_param, words))
+        bits, EntryKind.SWITCH, text, w, params=tuple(map(parse_param, params))
     )
+
+
+def _split_switch(rhs: str) -> tuple[str, list[str]]:
+    """The text of a switch entry and its trailing parameters.
+
+    Parameters are the whitespace-separated words at the end that parse as
+    parameters; whatever precedes them, minus one separating space, is the
+    text, which may be empty.
+    """
+    words = rhs.split(" ")
+    params: list[str] = []
+    while words and words[-1] and _PARAM.match(words[-1]):
+        params.insert(0, words.pop())
+    return " ".join(words), params
 
 
 def _check_text(rhs: str) -> None:
@@ -190,6 +208,8 @@ def _take_label(rhs: str, prefix: str) -> tuple[str, str]:
 
 
 def parse_param(word: str) -> SwitchParam:
+    if word == RETURN:
+        return SwitchParam(RETURN)
     m = _PARAM.match(word)
     if not m:
         raise ValueError(f"bad switch parameter {word!r}")
@@ -227,7 +247,7 @@ def format_entry(entry: Entry) -> str:
     if entry.kind is EntryKind.RETURN:
         return f"!{key}=return"
     params = " ".join(p.spec() for p in entry.params)
-    return f"!{key}=[{entry.text}] {params}"
+    return f"!{key}={entry.text} {params}"
 
 
 def write_native(tables: list[Table]) -> str:

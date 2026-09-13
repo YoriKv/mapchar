@@ -18,6 +18,10 @@ RAW = "raw"
 """Pseudo table id: one unmatched byte per match, shown ``[$XX]``."""
 BITS = "bits"
 """Pseudo table id: one unmatched bit per match, shown ``[%b]``."""
+RETURN = "return"
+"""Pseudo destination: once the parameters before it are done, leave the
+frame of the table the switch was matched in (at the top level, end the
+string). Always the last parameter."""
 
 ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
 LABEL_PATTERN = re.compile(r"[^\[\]\s$%][^\[\]\s]*")
@@ -157,6 +161,8 @@ class SwitchParam:
     shared: bool = False
 
     def spec(self) -> str:
+        if self.table_id == RETURN:
+            return RETURN
         return f"@{self.table_id}:{self.stop.spec()}{'+' if self.shared else ''}"
 
 
@@ -165,8 +171,9 @@ class Entry:
     bits: str
     kind: EntryKind
     text: str = ""
-    """TEXT and END: the text in script form (escapes intact, ``\\n`` as two
-    characters). CODE and SWITCH: the label. RETURN: empty."""
+    """TEXT, END and SWITCH: the text in script form (escapes intact, ``\\n``
+    as two characters); a SWITCH with empty text is silent. CODE: the label.
+    RETURN: empty."""
     weight: int = 1
     operands: tuple[OperandSpec, ...] = ()
     params: tuple[SwitchParam, ...] = ()
@@ -179,13 +186,18 @@ class Entry:
         text is exactly ``[label]`` is a labelled code too, so ``/FF=[end]``
         dumps and re-inserts as ``[end]``.
         """
-        if self.kind in (EntryKind.CODE, EntryKind.SWITCH):
+        if self.kind is EntryKind.CODE:
             return self.text
-        if self.kind in (EntryKind.TEXT, EntryKind.END):
+        if self.kind in (EntryKind.TEXT, EntryKind.END, EntryKind.SWITCH):
             m = BRACKETED.fullmatch(self.text)
             if m:
                 return m.group(1)
         return None
+
+    @property
+    def silent(self) -> bool:
+        """A switch that prints nothing; the encoder inserts it where needed."""
+        return self.kind is EntryKind.SWITCH and self.text == ""
 
     @property
     def is_end(self) -> bool:
@@ -267,7 +279,7 @@ class Table:
         ids: set[str] = set()
         for entry in self.entries.values():
             for param in entry.params:
-                if param.table_id not in (RAW, BITS):
+                if param.table_id not in (RAW, BITS, RETURN):
                     ids.add(param.table_id)
         return ids
 

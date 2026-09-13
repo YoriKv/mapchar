@@ -110,13 +110,16 @@ def test_abcde():
     main = tables["main"]
     assert main.entries["0011"].text == "bits"
     sw = main.entries["10101011"]
-    assert sw.text == "Item_Name:"
+    assert sw.text == "[Item_Name:]" and sw.label == "Item_Name:"
     assert [p.spec() for p in sw.params] == ["@ItemNames:1", "@bits:2", "@raw:3"]
     assert (
-        main.entries["10101100"].text == "sw_AC"
+        main.entries["10101100"].text == ""
+        and main.entries["10101100"].silent
         and main.entries["10101100"].params[0].stop.any
     )
-    assert main.entries["10101101"].kind is EntryKind.RETURN
+    ret = main.entries["10101101"]
+    assert ret.kind is EntryKind.SWITCH and ret.text == "[x]"
+    assert [p.spec() for p in ret.params] == ["return"]
     assert main.entries["10101110"].params[0].stop.fallback == "10101011"
     pascal = main.entries["00000011"]
     assert pascal.kind is EntryKind.SWITCH and pascal.params[0].shared
@@ -124,7 +127,7 @@ def test_abcde():
     assert tables["upper"].entries["01000001"].text == "A"
     out = write_native(tf.tables)
     assert "!AB=[Item_Name:] @ItemNames:1 @bits:2 @raw:3" in out
-    assert "!AD=return" in out
+    assert "!AD=[x] return" in out and "!AC= @raw:*" in out
 
 
 def test_load_table_text_dispatch(tmp_path):

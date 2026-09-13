@@ -43,8 +43,9 @@ def _rom(game: str) -> str | None:
     return None
 
 
-def _expected_blocks(text: str) -> dict[str, set[str]]:
-    blocks: dict[str, set[str]] = {}
+def _expected_blocks(text: str) -> list[tuple[str, set[str]]]:
+    """``(block name, its strings)`` in command-file order."""
+    blocks: list[tuple[str, set[str]]] = []
     name = None
     body: list[str] = []
 
@@ -56,7 +57,7 @@ def _expected_blocks(text: str) -> dict[str, set[str]]:
                 for s in re.split(r"(?<=\n)(?=//POINTER|//Block Range)", joined)
                 if s.strip()
             }
-            blocks[name] = strings
+            blocks.append((name, strings))
 
     for line in text.split("\n"):
         m = re.match(r"^//BLOCK #\d+ NAME:\t\t(.*)$", line)
@@ -83,7 +84,9 @@ def _normalise(text: str) -> str:
     text = re.sub(r"//POINTER[^\n]*\n|//Block Range[^\n]*\n", "", text)
     text = re.sub(r"<\$([0-9A-Fa-f]{2})>", r"[$\1]", text)
     text = re.sub(
-        r"\[([^\]$%]*)\]", lambda m: "[" + re.sub(r"\s+", "_", m.group(1)) + "]", text
+        r"\[([^\]$%][^\]]*)\]",
+        lambda m: "[" + re.sub(r"\s+", "_", m.group(1)) + "]",
+        text,
     )
     return text.replace("\n", "")
 
@@ -140,7 +143,8 @@ def test_example_project(game, tmp_path):
                 tables[t.id] = t
     from dataclasses import replace
 
-    for block in cf.blocks:
+    assert len(expected) == len(cf.blocks)
+    for (_, want_strings), block in zip(expected, cf.blocks, strict=True):
         start_id = (
             block.table_id
             or next(
@@ -162,11 +166,14 @@ def test_example_project(game, tmp_path):
         if hasattr(src, "offset") and src.mapping_id == "linear":
             src = replace(src, offset=src.offset - header)
         cfg = replace(
-            cfg, source=src, bound=(cfg.bound - header) if cfg.bound else None
+            cfg,
+            source=src,
+            bound=(cfg.bound - header) if cfg.bound else None,
+            skips=tuple((a - header, b - header) for a, b in cfg.skips),
         )
         ex = extract(payload, cfg, ts, registry)
         got = {_normalise(s.original_text()) for s in ex.strings}
-        want = {_normalise(s) for s in expected[block.name]}
+        want = {_normalise(s) for s in want_strings}
         assert got == want, block.name
         res = layout_block(payload, cfg, ts, ex.strings, registry)
         assert res.ok, (block.name, res.problems)

@@ -124,7 +124,8 @@ class BlockConfig:
     def effective_write_mode(self) -> WriteMode:
         if self.write_mode is not None:
             return self.write_mode
-        if isinstance(self.source, FixedSource):
+        if isinstance(self.source, FixedSource) or self.skips:
+            # Skip ranges make the text non-contiguous; packing cannot lay it out.
             return WriteMode.SLOTTED
         return WriteMode.PACKED if self.has_pointers else WriteMode.SLOTTED
 

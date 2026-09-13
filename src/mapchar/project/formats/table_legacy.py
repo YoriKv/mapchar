@@ -14,8 +14,8 @@ from mapchar.core.bits import hex_to_bits
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Level, Notice
 from mapchar.core.table import (
-    BRACKETED,
     LABEL_PATTERN,
+    RETURN,
     Entry,
     EntryKind,
     OperandSpec,
@@ -93,17 +93,29 @@ def _id_from_path(path: str | None) -> str:
     return name or "table"
 
 
+_CODE_IN_TEXT = re.compile(r"\[([^\[\]]+)\]")
+
+
 def legacy_text(raw: str) -> str:
     """Native script form of legacy text whose line breaks are real characters.
 
-    Bracketed code notation such as ``[END]`` is kept as a code; any other
+    Bracketed code notation such as ``[END]`` or ``[cardinal #]`` is kept as
+    a code (whitespace inside becoming ``_``), inside text too; any other
     bracket is escaped so it stays literal text.
     """
     body = raw.replace("\\", "\\\\")
     body = body.replace("\n", "\\n")
-    if BRACKETED.fullmatch(body):
-        return body
-    return body.replace("[", "\\[").replace("]", "\\]")
+    out = []
+    pos = 0
+    for m in _CODE_IN_TEXT.finditer(body):
+        inner = m.group(1)
+        if inner[0] in "$%" or "\\" in inner:
+            continue
+        out.append(body[pos : m.start()].replace("[", "\\[").replace("]", "\\]"))
+        out.append(f"[{sanitize_label(inner)}]")
+        pos = m.end()
+    out.append(body[pos:].replace("[", "\\[").replace("]", "\\]"))
+    return "".join(out)
 
 
 def sanitize_label(label: str) -> str:
@@ -192,7 +204,7 @@ def read_romjuice(
                 note(n, "swap entry dropped: no second table given")
                 continue
             entry = Entry(
-                bits, EntryKind.SWITCH, "swap", params=(SwitchParam(swap_table),)
+                bits, EntryKind.SWITCH, "[swap]", params=(SwitchParam(swap_table),)
             )
             pending.append((n, entry))
             continue
@@ -220,7 +232,7 @@ def read_romjuice(
             entry = Entry(
                 bits,
                 EntryKind.SWITCH,
-                tid,
+                f"[{tid}]",
                 params=(SwitchParam(tid, Stop(count=count)),),
             )
             pending.append((n, entry))
@@ -484,16 +496,14 @@ def _abcde_switch(
         if match == "-1":
             if tid is not None or i != len(raw_params) - 1:
                 raise TableError(
-                    "'-1' must be the last parameter and cannot name a table", path, n
-                )
-            if label:
-                note(n, f"label <{label}> dropped from a return entry")
-            if params:
-                note(
+                    "'-1' must be the last parameter and cannot name a table",
+                    path,
                     n,
-                    "'-1' after other parameters: only the return is kept",
                 )
-            return Entry(bits, EntryKind.RETURN, "", weight)
+            if not label and not params:
+                return Entry(bits, EntryKind.RETURN, "", weight)
+            params.append(SwitchParam(RETURN))
+            break
         target = tid if tid is not None else ("bits" if binary else "raw")
         if tid is not None:
             target = re.sub(r"[^A-Za-z0-9_.-]", "_", tid)
@@ -510,9 +520,17 @@ def _abcde_switch(
         params.append(SwitchParam(target, stop, bool(plus)))
     if is_end:
         note(n, "'/' on a switch entry dropped: the string does not end on return")
-    if not label:
-        label = f"sw_{int(bits, 2):0{max(2, -(-len(bits) // 4))}X}"
-        note(n, f"unlabelled switch given the label [{label}]")
     return Entry(
-        bits, EntryKind.SWITCH, sanitize_label(label), weight, params=tuple(params)
+        bits, EntryKind.SWITCH, _switch_text(label), weight, params=tuple(params)
     )
+
+
+def _switch_text(label: str) -> str:
+    """A switch's text from an abcde label.
+
+    ``[X Y]`` becomes the code ``[X_Y]``; anything else is printed text,
+    possibly empty (a silent switch).
+    """
+    if len(label) >= 2 and label[0] == "[" and label[-1] == "]" and "\n" not in label:
+        return f"[{sanitize_label(label)}]"
+    return legacy_text(label.replace("\\n", "\n"))

@@ -16,13 +16,21 @@ from itertools import count
 
 from mapchar.core.bits import Bits, bits_to_bytes
 from mapchar.core.errors import EncodeError
-from mapchar.core.table import BITS, RAW, Entry, EntryKind, SwitchParam, Table, TableSet
+from mapchar.core.table import (
+    BITS,
+    RAW,
+    RETURN,
+    Entry,
+    EntryKind,
+    SwitchParam,
+    Table,
+    TableSet,
+)
 from mapchar.core.tokens import (
     CodeRef,
     TextRun,
     operand_values,
     parse_text,
-    plain_text,
     render,
 )
 from mapchar.engines.decode import DecodeRules, EndedBy, decode
@@ -46,12 +54,25 @@ class EncodeResult:
 class _Index:
     """Per-table lookups for encoding, built once per search."""
 
-    by_first_char: dict[str, list[tuple[str, Entry]]] = field(default_factory=dict)
-    by_label: dict[str, Entry] = field(default_factory=dict)
+    by_first: dict[str, list[tuple[tuple, Entry]]] = field(default_factory=dict)
+    """First atom (a character or ``[label]``) to ``(atoms, entry)`` matches."""
+    codes: dict[str, Entry] = field(default_factory=dict)
+    """Label to CODE entry (operands come from the text)."""
+    silent: list[Entry] = field(default_factory=list)
     returns: list[Entry] = field(default_factory=list)
     longer: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """Entry bits to the suffixes that would complete a longer entry."""
     min_bits_per_atom: float = 1.0
+
+
+def _atom_key(atom) -> str:
+    return atom if isinstance(atom, str) else f"[{atom.label}]"
+
+
+def _atoms_equal(a, b) -> bool:
+    if isinstance(a, str) or isinstance(b, str):
+        return a == b
+    return a.label == b.label and a.words == b.words
 
 
 def _index(table: Table) -> _Index:
@@ -62,20 +83,24 @@ def _index(table: Table) -> _Index:
         if entry.kind is EntryKind.RETURN:
             idx.returns.append(entry)
             continue
-        label = entry.label
-        if label is not None:
-            idx.by_label[label] = entry
-            atoms = 1
+        if entry.kind is EntryKind.CODE:
+            idx.codes[entry.text] = entry
+            atoms_n = 1
         else:
-            plain = plain_text(entry.text)
-            if not plain:
+            try:
+                atoms = tuple(_atoms(entry.text))
+            except ValueError:
                 continue
-            idx.by_first_char.setdefault(plain[0], []).append((plain, entry))
-            atoms = len(plain)
-        ratio = len(entry.bits) / atoms
+            if not atoms:
+                if entry.kind is EntryKind.SWITCH:
+                    idx.silent.append(entry)
+                continue
+            idx.by_first.setdefault(_atom_key(atoms[0]), []).append((atoms, entry))
+            atoms_n = len(atoms)
+        ratio = len(entry.bits) / atoms_n
         best = ratio if best is None else min(best, ratio)
-    for lst in idx.by_first_char.values():
-        lst.sort(key=lambda pe: (-len(pe[0]), len(pe[1].bits)))
+    for lst in idx.by_first.values():
+        lst.sort(key=lambda ae: (-len(ae[0]), len(ae[1].bits)))
     for bits in bits_list:
         suffixes = tuple(
             other[len(bits) :]
@@ -130,10 +155,14 @@ def _count(stack: list[_Frame], weight: int) -> list[_Frame]:
     return stack
 
 
-def _frames_for(params: tuple[SwitchParam, ...]) -> list[_Frame]:
-    return [
-        (p.table_id, p.stop.count, p.shared, p.stop.fallback) for p in reversed(params)
-    ]
+def _frames_for(params: tuple[SwitchParam, ...], owner: str = "") -> list[_Frame]:
+    frames: list[_Frame] = []
+    for p in reversed(params):
+        if p.table_id == RETURN:
+            frames.append((f"{RETURN}@{owner}", None, False, None))
+        else:
+            frames.append((p.table_id, p.stop.count, p.shared, p.stop.fallback))
+    return frames
 
 
 def encode(
@@ -152,7 +181,8 @@ def encode(
     heuristic = min((i.min_bits_per_atom for i in indexes.values()), default=1.0)
     n = len(atoms)
     root: _Frame = (tables.start.id, None, False, None)
-    start_state = (0, (root,), ())
+    start_state = (0, (root,), (), 0)
+    max_chain = len(tables.tables)
     tie = count()
     heap: list[tuple[float, int, int, tuple, str, bool]] = []
     heapq.heappush(heap, (heuristic * n, next(tie), 0, start_state, "", False))
@@ -164,7 +194,7 @@ def encode(
         if state in closed:
             continue
         closed.add(state)
-        pos, stack, forbidden = state
+        pos, stack, forbidden, chain = state
         farthest = max(farthest, pos)
         if pos == n and not any(f[3] is not None for f in stack) and not forbidden:
             result = EncodeResult(bits, last_end)
@@ -172,9 +202,18 @@ def encode(
                 _verify(result, atoms, text, tables, end_terminated)
             return result
         for npos, nstack, nforbidden, emitted, is_end in _successors(
-            atoms, pos, stack, forbidden, tables, indexes, end_terminated
+            atoms,
+            pos,
+            stack,
+            forbidden,
+            tables,
+            indexes,
+            end_terminated,
+            chain,
+            max_chain,
         ):
-            nstate = (npos, tuple(nstack), nforbidden)
+            nchain = 0 if npos > pos else chain + 1
+            nstate = (npos, tuple(nstack), nforbidden, nchain)
             if nstate in closed:
                 continue
             ncost = cost + len(emitted)
@@ -195,7 +234,15 @@ def encode(
 
 
 def _successors(
-    atoms, pos, stack, forbidden, tables: TableSet, indexes, end_terminated
+    atoms,
+    pos,
+    stack,
+    forbidden,
+    tables: TableSet,
+    indexes,
+    end_terminated,
+    chain,
+    max_chain,
 ):
     n = len(atoms)
     tid, counter, shared, fallback = stack[-1]
@@ -215,6 +262,19 @@ def _successors(
         return (pos + advance, base, nf, bits, is_end)
 
     out = []
+    # A return frame at the top: leave it and the frame it was matched in.
+    if tid.startswith(f"{RETURN}@"):
+        owner = tid.split("@", 1)[1]
+        new_stack = list(stack[:-1])
+        for i in range(len(new_stack) - 1, 0, -1):
+            if new_stack[i][0] == owner:
+                del new_stack[i:]
+                break
+        else:
+            if pos < n:
+                return out  # the string would end before its text does
+            new_stack = new_stack[:1]
+        return [(pos, new_stack, forbidden, "", False)]
     # Closing a fallback frame: its bits, at any position (always emitted).
     if fallback is not None and len(stack) > 1:
         nf = _forbid(forbidden, fallback)
@@ -244,30 +304,19 @@ def _successors(
                 # The return counts its weight in the frame it was matched in
                 # before popping; charge it to the popped frame is moot.
                 out.append(s)
+    # Silent switches: zero-width, bounded so chains cannot loop.
+    if chain < max_chain:
+        for entry in idx.silent:
+            s = emit(
+                entry.bits, entry.weight, push=_frames_for(entry.params, tid), advance=0
+            )
+            if s:
+                out.append(_with_longer(s, idx, entry))
     if pos >= n:
         return out
     atom = atoms[pos]
-    if isinstance(atom, str):
-        for plain, entry in idx.by_first_char.get(atom, ()):
-            k = len(plain)
-            if pos + k <= n and all(
-                isinstance(atoms[pos + i], str) and atoms[pos + i] == plain[i]
-                for i in range(k)
-            ):
-                if entry.kind is EntryKind.END and end_terminated and pos + k != n:
-                    continue
-                s = emit(
-                    entry.bits,
-                    entry.weight,
-                    is_end=entry.kind is EntryKind.END,
-                    advance=k,
-                )
-                if s:
-                    out.append(_with_longer(s, idx, entry))
-        return out
-    ref: CodeRef = atom
-    if ref.is_raw_byte or ref.is_raw_bits:
-        raw = ref.raw_bits()
+    if isinstance(atom, CodeRef) and (atom.is_raw_byte or atom.is_raw_bits):
+        raw = atom.raw_bits()
         # Unmatched data in a table frame: the decoder must find no entry here.
         if not any(
             other.startswith(raw) or raw.startswith(other) for other in table.entries
@@ -276,34 +325,38 @@ def _successors(
             if s:
                 out.append(s)
         return out
-    entry = idx.by_label.get(ref.label)
-    if entry is None:
-        return out
-    if entry.kind is EntryKind.CODE:
-        try:
-            values = operand_values(entry, ref.words)
-        except ValueError:
-            return out
-        bits = entry.bits + "".join(
-            spec.bits_of(v) for spec, v in zip(entry.operands, values, strict=True)
+    key = _atom_key(atom)
+    for entry_atoms, entry in idx.by_first.get(key, ()):
+        k = len(entry_atoms)
+        if pos + k > n or not all(
+            _atoms_equal(entry_atoms[i], atoms[pos + i]) for i in range(k)
+        ):
+            continue
+        if entry.kind is EntryKind.END and end_terminated and pos + k != n:
+            continue
+        push = _frames_for(entry.params, tid) if entry.kind is EntryKind.SWITCH else ()
+        s = emit(
+            entry.bits,
+            entry.weight,
+            push=push,
+            is_end=entry.kind is EntryKind.END,
+            advance=k,
         )
-        s = emit(bits, entry.weight)
         if s:
             out.append(_with_longer(s, idx, entry))
-    elif entry.kind is EntryKind.SWITCH:
-        if ref.words:
-            return out
-        s = emit(entry.bits, entry.weight, push=_frames_for(entry.params))
-        if s:
-            out.append(_with_longer(s, idx, entry))
-    else:
-        if ref.words:
-            return out
-        if entry.kind is EntryKind.END and end_terminated and pos + 1 != n:
-            return out
-        s = emit(entry.bits, entry.weight, is_end=entry.kind is EntryKind.END)
-        if s:
-            out.append(_with_longer(s, idx, entry))
+    if isinstance(atom, CodeRef):
+        entry = idx.codes.get(atom.label)
+        if entry is not None:
+            try:
+                values = operand_values(entry, atom.words)
+            except ValueError:
+                return out
+            bits = entry.bits + "".join(
+                spec.bits_of(v) for spec, v in zip(entry.operands, values, strict=True)
+            )
+            s = emit(bits, entry.weight)
+            if s:
+                out.append(_with_longer(s, idx, entry))
     return out
 
 
