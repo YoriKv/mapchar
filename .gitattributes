@@ -1,0 +1,7 @@
+# Enforce LF everywhere in the repo. This project is edited from both Windows
+# and WSL; without this, Windows tooling can rewrite files to CRLF and produce
+# noisy, cross-platform diffs. Text files are normalized to LF on commit.
+* text=auto eol=lf
+
+# Lockfile is managed by uv; keep it as-is.
+uv.lock linguist-generated=true

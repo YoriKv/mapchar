@@ -1,0 +1,61 @@
+/CLAUDE.md
+/docs/
+/tmp/
+# Worked .mapchar projects over real carts, plus the scratch that produced them.
+# Local by nature: every one addresses a ROM in a sibling checkout by relative
+# path, so the settings are only meaningful on a machine laid out the same way.
+/sample-projects/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# --- Virtual environments / uv ---
+# Virtualenvs hold platform-specific binaries and cannot be shared between
+# Windows and WSL, so this checkout keeps one per OS side by side:
+#   .venv        -> Windows (default name, so PyCharm auto-detects it)
+#   .venv-linux  -> WSL/Linux (selected via UV_PROJECT_ENVIRONMENT=.venv-linux)
+# Never commit either — recreate with `uv sync`. (uv.lock IS committed.)
+.venv/
+.venv-linux/
+venv/
+.uv/
+.envrc
+
+# --- Tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+
+# --- Coverage ---
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# --- Packaging / release build outputs ---
+*.spec
+*.dmg
+*.app/
+*.msi
+*.exe
+
+# --- Qt ---
+# Generated resource/UI modules, if/when we use pyside6-rcc / pyside6-uic.
+*_rc.py
+ui_*.py
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,70 @@
+[project]
+name = "mapchar"
+description = "A text viewer and editor for retro-game ROMs."
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Epi" }]
+# Version is single-sourced from src/mapchar/__init__.py (__version__), so the
+# release script bumps exactly one file. See [tool.hatch.version] below.
+dynamic = ["version"]
+dependencies = [
+    "PySide6>=6.8",
+    # TOML reader for data-only plugin presets. Stdlib `tomllib` covers 3.11+;
+    # `tomli` (its backport) covers 3.10. Read-only — the app never writes TOML.
+    "tomli>=1.1.0; python_version < '3.11'",
+]
+
+[project.scripts]
+# Lets the app be launched as `mapchar` once installed (`uv run mapchar`), in
+# addition to `python -m mapchar`.
+mapchar = "mapchar.app:main"
+
+[dependency-groups]
+# uv-native dev dependencies (PEP 735). Not shipped in the built wheel.
+dev = [
+    "pytest>=8",
+    "pytest-qt>=4.4",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+# Hardlinking fails when uv's cache (WSL/ext4) and the project's .venv (on a
+# mounted Windows drive under /mnt) sit on different filesystems — the normal
+# setup here — so uv warns and falls back to copying. Ask for copy up front to
+# silence that; the cost is a one-time per-install copy.
+link-mode = "copy"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# Read __version__ straight from the package so pyproject and the runtime agree.
+path = "src/mapchar/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mapchar"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+# One line per finding, no echoed source. The full form re-prints whole import
+# blocks for a single sorting complaint, which is noise in a terminal and costly
+# to read back through tooling.
+output-format = "concise"
+
+[tool.ruff.lint]
+# A pragmatic modern default: pyflakes/pycodestyle errors, import sorting,
+# pyupgrade, and bugbear. Expand as the codebase grows.
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Applied by tests/conftest.py from each module's own source, not written on the
+# tests by hand — so `-m "not qt"` cannot fall behind a suite being added or split.
+markers = ["qt: needs a QApplication (run the model layer alone with -m 'not qt')"]
+# Qt tests must never try to open a real window in CI. `offscreen` is forced
+# via tests/conftest.py before Qt is imported; this is a belt-and-suspenders.
+addopts = "-ra"
