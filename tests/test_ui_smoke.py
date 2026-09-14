@@ -121,6 +121,17 @@ def test_text_display_mode(window, tmp_path):
     assert window.display.currentWidget() is window.raw
 
 
+def test_text_display_mode_restored(qtbot):
+    from mapchar.ui import settings
+    from mapchar.ui.main_window.refresh import DISPLAY_MODE_KEY
+
+    settings().setValue(DISPLAY_MODE_KEY, "text")
+    w = MainWindow()
+    qtbot.addWidget(w)
+    assert w.mode_button.isChecked() and w.mode_button.text() == "Text"
+    assert w.display.currentWidget() is w.text
+
+
 def test_edit_and_write(window, tmp_path):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
     file_entry = open_rom_and_table(window, tmp_path, data)

@@ -122,9 +122,12 @@ class RefreshMixin:
         if self._selection:
             self.text.select_bytes(*self._selection)
 
-    def _on_mode_toggled(self, text_mode: bool) -> None:
+    def _show_display_mode(self, text_mode: bool) -> None:
         self.display.setCurrentWidget(self.text if text_mode else self.raw)
         self.mode_button.setText("Text" if text_mode else "Aligned")
+
+    def _on_mode_toggled(self, text_mode: bool) -> None:
+        self._show_display_mode(text_mode)
         self.settings.setValue(DISPLAY_MODE_KEY, "text" if text_mode else "aligned")
         self._refresh_view()
 

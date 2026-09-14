@@ -396,10 +396,13 @@ class MainWindow(
         self.block_dump.clicked.connect(self._dump)
         self.raw.offset_requested.connect(self._go_to)
         self.text.selection_changed.connect(self._on_text_selection)
-        self.mode_button.toggled.connect(self._on_mode_toggled)
+        # Restored before the toggle is connected: a refresh from here would run
+        # before _build_menus has made the actions the capability gate names.
         self.mode_button.setChecked(
             str(self.settings.value(DISPLAY_MODE_KEY, "aligned")) == "text"
         )
+        self._show_display_mode(self.mode_button.isChecked())
+        self.mode_button.toggled.connect(self._on_mode_toggled)
         self.raw.selection_changed.connect(self._on_selection)
         self.raw.context_menu_requested.connect(self._raw_menu)
         self.offset_box.returnPressed.connect(self._on_offset_typed)
