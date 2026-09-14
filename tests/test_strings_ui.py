@@ -473,10 +473,9 @@ def test_every_hex_pair_is_drawn_in_its_own_cell(qtbot):
         assert cells[f"{rel:02X}"] == widget._hex_cell(rel)
 
 
-def test_bit_packed_tokens_sit_in_the_byte_holding_most_of_their_bits(qtbot):
-    """Four 6-bit codes fill three bytes: each sits inside the cell of the byte
-    holding most of its bits, so the second code shares the second byte with
-    the third rather than straddling the first two."""
+def test_bit_packed_tokens_each_get_a_place_of_their_own(qtbot):
+    """Four 6-bit codes fill three bytes: each is placed by its bits, three
+    quarters of a byte cell, and none shares another's place."""
     from PySide6.QtCore import QRectF
 
     from mapchar.core.tokens import Token
@@ -489,33 +488,12 @@ def test_bit_packed_tokens_sit_in_the_byte_holding_most_of_their_bits(qtbot):
     places = [widget._text_segments(t, 3) for t in tokens]
     assert all(len(p) == 1 for p in places)
     rects = [p[0] for p in places]
-    cells = [QRectF(widget._text_cell(rel)) for rel in range(3)]
-    half = cells[1].width() / 2
-    assert rects[0] == cells[0]
-    assert rects[1] == cells[1].adjusted(0, 0, -half, 0)
-    assert rects[2] == cells[1].adjusted(half, 0, 0, 0)
-    assert rects[3] == cells[2]
-
-
-def test_a_token_that_shows_nothing_takes_no_share_of_its_byte(qtbot):
-    """A table switch between two codes is a zero-width place at the boundary,
-    and the codes split the byte between themselves."""
-    from PySide6.QtCore import QRectF
-
-    from mapchar.core.table import TokenKind
-    from mapchar.core.tokens import Token
-
-    tokens = [
-        Token("0000", 0, 4, _text_entry("0000", "か")),
-        Token("", 4, 4, _text_entry("", "", TokenKind.SWITCH)),
-        Token("0001", 4, 8, _text_entry("0001", "き")),
-    ]
-    widget = _raw_widget(qtbot, tokens, bytes(1))
-    cell = QRectF(widget._text_cell(0))
-    first, switch, second = (widget._text_segments(t, 1) for t in tokens)
-    assert first == [cell.adjusted(0, 0, -cell.width() / 2, 0)]
-    assert switch == [QRectF(cell.center().x(), cell.top(), 0, cell.height())]
-    assert second == [cell.adjusted(cell.width() / 2, 0, 0, 0)]
+    for rect in rects:
+        assert rect.width() == widget._text_width * 6 / 8
+    for left, right in zip(rects, rects[1:], strict=False):
+        assert left.right() == right.left()
+    assert rects[0].left() == QRectF(widget._text_cell(0)).left()
+    assert rects[-1].right() == QRectF(widget._text_cell(2)).right()
 
 
 def test_a_token_over_a_row_end_is_placed_on_both_rows(qtbot):
@@ -528,6 +506,100 @@ def test_a_token_over_a_row_end_is_placed_on_both_rows(qtbot):
     first, second = widget._text_segments(token, BYTES_PER_ROW * 2)
     assert first == widget._text_cell(last)
     assert second == widget._text_cell(BYTES_PER_ROW)
+
+
+def _six_bit_codes(qtbot, count=4):
+    """``count`` 6-bit codes over a widget, and the widget."""
+    from mapchar.core.tokens import Token
+
+    tokens = [
+        Token(f"{i:06b}", 6 * i, 6 * i + 6, _text_entry(f"{i:06b}", "かきくけ"[i % 4]))
+        for i in range(count)
+    ]
+    return tokens, _raw_widget(qtbot, tokens, bytes(-(-6 * count // 8)))
+
+
+def _click(widget, point):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    QTest.mouseClick(widget.viewport(), Qt.MouseButton.LeftButton, pos=point.toPoint())
+
+
+def test_a_click_on_a_character_selects_its_bits_in_both_columns(qtbot):
+    """The second 6-bit code straddles bytes 0 and 1: clicked, it is selected by
+    its bits, the window is told the two bytes it touches, and the hex column
+    covers the last two bits of the first pair and exactly the first digit of
+    the second."""
+    from PySide6.QtCore import QRectF
+
+    tokens, widget = _six_bit_codes(qtbot)
+    told = []
+    widget.selection_changed.connect(lambda s, e: told.append((s, e)))
+    _click(widget, widget._text_segments(tokens[1], 3)[0].center())
+    assert widget.selection_bits() == (6, 12)
+    assert told == [(0, 2)]
+    (text,) = widget._text_span(6, 12)
+    assert text == widget._text_segments(tokens[1], 3)[0]
+    (hex_span,) = widget._hex_span(6, 12)
+    first, second = QRectF(widget._hex_cell(0)), QRectF(widget._hex_cell(1))
+    assert first.center().x() < hex_span.left() < first.right()
+    assert hex_span.right() == second.center().x()
+
+
+def test_a_click_on_a_hex_pair_selects_the_whole_byte(qtbot):
+    from PySide6.QtCore import QRectF
+
+    tokens, widget = _six_bit_codes(qtbot)
+    _click(widget, widget._text_segments(tokens[1], 3)[0].center())
+    _click(widget, QRectF(widget._hex_cell(1)).center())
+    assert widget.selection() == (1, 2)
+    assert widget.selection_bits() is None
+
+
+def test_dragging_over_characters_selects_every_code_it_crosses(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    tokens, widget = _six_bit_codes(qtbot)
+    start = widget._text_segments(tokens[1], 3)[0].center().toPoint()
+    end = widget._text_segments(tokens[2], 3)[0].center().toPoint()
+    viewport = widget.viewport()
+    QTest.mousePress(viewport, Qt.MouseButton.LeftButton, pos=start)
+    # QTest's move carries no held button, so the drag is sent as Qt sends it.
+    widget.mouseMoveEvent(_move_event(viewport, end))
+    assert widget.selection_bits() == (6, 18)
+    assert widget.selection() == (0, 3)
+
+
+def test_a_byte_aligned_bit_span_covers_its_cells_exactly(qtbot):
+    from PySide6.QtCore import QRectF
+
+    _, widget = _six_bit_codes(qtbot)
+    assert widget._hex_span(8, 24) == [QRectF(widget._hex_cell(1, 2))]
+    assert widget._text_span(8, 24) == [QRectF(widget._text_cell(1, 2))]
+
+
+def test_a_selection_set_from_outside_is_whole_bytes(qtbot):
+    tokens, widget = _six_bit_codes(qtbot)
+    _click(widget, widget._text_segments(tokens[1], 3)[0].center())
+    widget.set_selection(0, 2)
+    assert widget.selection_bits() is None
+
+
+def _move_event(viewport, point):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    local = QPointF(point)
+    return QMouseEvent(
+        QEvent.Type.MouseMove,
+        local,
+        QPointF(viewport.mapToGlobal(point)),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
 
 
 def test_the_text_column_shows_names_as_labels_and_marks_inside_text():

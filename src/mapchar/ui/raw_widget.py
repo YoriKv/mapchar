@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import QAbstractScrollArea, QToolTip, QWidget
 
 from mapchar.core.table import TokenKind
@@ -20,10 +20,9 @@ if TYPE_CHECKING:
 
 HEX_CELL = 3
 """Character widths a byte owns in the hex column: its pair and a space."""
-TEXT_CELL = 3
-"""Character widths a byte owns in the text column: a full-width glyph, or two
-of them condensed no further than :data:`MIN_SQUEEZE` when two codes share the
-byte, or a short code name."""
+TEXT_CELL = 2.5
+"""Character widths a byte owns in the text column: a full-width glyph, with
+room for two of them squeezed, or a short code name."""
 HEX_GROUP = 4
 """Bytes between the small gaps that make a hex row countable."""
 MIN_SQUEEZE = 0.7
@@ -96,57 +95,6 @@ def display_text(token: Token) -> tuple[str, bool]:
     return _EMBEDDED_CODE.sub(CODE_MARK, text), False
 
 
-def home_byte(token: Token) -> int:
-    """The relative byte holding most of a token's bits, the first on a tie."""
-    start = max(token.bit_start, 0)
-    end = max(token.bit_end, start + 1)
-    first = start // 8
-    return max(
-        range(first, (end - 1) // 8 + 1),
-        key=lambda b: (min(end, (b + 1) * 8) - max(start, b * 8), -b),
-    )
-
-
-def token_places(tokens: Iterable[Token]) -> dict[int, tuple[float, float]]:
-    """Where each token sits in the text column, as ``(left, right)`` in
-    relative bytes, keyed by ``id(token)``.
-
-    Placed by **byte**, so a character is always inside the cells of the byte
-    it came from: a token belongs to its :func:`home_byte`, tokens sharing one
-    split its cell evenly, and a token also takes the bytes around its home that
-    it covers and no other token calls home. A token that shows nothing takes
-    no share; it is a zero-width place between its neighbours.
-    """
-    homes: dict[int, list[Token]] = {}
-    for token in tokens:
-        homes.setdefault(home_byte(token), []).append(token)
-    places: dict[int, tuple[float, float]] = {}
-    for home, group in homes.items():
-        shown = sum(bool(display_text(t)[0]) for t in group)
-        edge, index = float(home), 0
-        for token in group:
-            if not display_text(token)[0]:
-                places[id(token)] = (edge, edge)
-                continue
-            left = home + index / shown
-            right = home + (index + 1) / shown
-            covered = token_bytes(token)
-            if index == 0:
-                byte = home
-                while byte - 1 >= covered.start and byte - 1 not in homes:
-                    byte -= 1
-                left = float(byte)
-            index += 1
-            if index == shown:
-                byte = home + 1
-                while byte < covered.stop and byte not in homes:
-                    byte += 1
-                right = float(byte)
-            places[id(token)] = (left, right)
-            edge = right
-    return places
-
-
 class RawWidget(QAbstractScrollArea):
     offset_requested = Signal(int)
     """The user scrolled: show this byte offset at the top."""
@@ -166,12 +114,16 @@ class RawWidget(QAbstractScrollArea):
         self._label_font.setPointSize(8)
         self._metrics = QFontMetrics(self._font, self.viewport())
         self._sel: tuple[int, int] | None = None
+        self._bits: tuple[int, int] | None = None
+        """The absolute bit range selected when the selection is tokens picked in
+        the text column, ``_sel`` then being the bytes it touches; ``None`` when
+        the selection is whole bytes."""
         self._anchor: int | None = None
+        self._anchor_bits: tuple[int, int] | None = None
         self._address_digits = 6
         self._base = 0
         """The byte the scrollbar's first row starts at: the bounds' start."""
         self._token_of: list[Token | None] = []
-        self._places: dict[int, tuple[float, float]] = {}
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         # The rows are a fixed width; a view narrower than them scrolls sideways
@@ -277,36 +229,72 @@ class RawWidget(QAbstractScrollArea):
     def _text_segments(self, token: Token, limit: int) -> list[QRectF]:
         """Where a token sits in the text column, one rect per row it touches.
 
-        Its :func:`token_places` place, so a byte-aligned token is exactly its
-        byte cells and a 6-bit code shares a cell with the code beside it rather
-        than straddling two. A token that shows nothing is one zero-width rect.
-        ``limit`` is the byte count painted; nothing past it is placed.
+        Placed by **bit**, not by byte: a table of 6-bit codes starts several
+        tokens inside one byte, and each still gets a place of its own — three
+        quarters of a byte cell — rather than all of them sharing the cell.
+        A byte-aligned token is exactly its byte cells. ``limit`` is the byte
+        count painted; nothing past it is placed.
         """
-        start, end = self._places[id(token)]
-        end = min(end, limit)
-        text_x, width = self._columns()[1], self._text_width
-        if start == end and start < limit:
-            row = int(start // BYTES_PER_ROW)
-            left = text_x + (start - row * BYTES_PER_ROW) * width
-            return [QRectF(left, row * self.row_height, 0, self.row_height)]
-        segments = []
+        start = max(token.bit_start, 0)
+        end = token.bit_end if token.bit_end > start else start + 8
+        return self._text_span(start, min(end, limit * 8))
+
+    def _row_spans(self, start: int, end: int) -> Iterator[tuple[int, int, int]]:
+        """A relative bit range as ``(row, first, stop)`` pieces, one per row,
+        with ``first`` and ``stop`` counted from the row's first bit."""
+        row_bits = BYTES_PER_ROW * 8
         while start < end:
-            row = int(start // BYTES_PER_ROW)
-            stop = min(end, (row + 1) * BYTES_PER_ROW)
-            left = text_x + (start - row * BYTES_PER_ROW) * width
-            right = text_x + (stop - row * BYTES_PER_ROW) * width
-            segments.append(
+            row = start // row_bits
+            stop = min(end, (row + 1) * row_bits)
+            yield row, start - row * row_bits, stop - row * row_bits
+            start = stop
+
+    def _text_span(self, start: int, end: int) -> list[QRectF]:
+        """The text column over a relative bit range, one rect per row."""
+        text_x, width = self._columns()[1], self._text_width
+        return [
+            QRectF(
+                text_x + first / 8 * width,
+                row * self.row_height,
+                (stop - first) / 8 * width,
+                self.row_height,
+            )
+            for row, first, stop in self._row_spans(start, end)
+        ]
+
+    def _hex_span(self, start: int, end: int) -> list[QRectF]:
+        """The hex column over a relative bit range, one rect per row.
+
+        An edge on a byte boundary is its cell's own edge, so whole bytes read
+        as the byte selection does. An edge inside a byte falls inside the pair
+        at the bit it splits: each digit is a nibble, so a code over the last
+        two bits of one byte and the first four of the next covers half a digit
+        and then a whole one.
+        """
+        pair = QFontMetricsF(self._font, self.viewport()).horizontalAdvance("00")
+
+        def edge(bit: int, closing: bool) -> float:
+            byte, inner = divmod(bit, 8)
+            if inner == 0:
+                cell = self._hex_cell(byte - 1 if closing else byte)
+                return cell.left() + (cell.width() if closing else 0)
+            cell = self._hex_cell(byte)
+            return cell.left() + (cell.width() - pair) / 2 + inner / 8 * pair
+
+        spans = []
+        for row, first, stop in self._row_spans(start, end):
+            bit = row * BYTES_PER_ROW * 8
+            left, right = edge(bit + first, False), edge(bit + stop, True)
+            spans.append(
                 QRectF(left, row * self.row_height, right - left, self.row_height)
             )
-            start = stop
-        return segments
+        return spans
 
     # --- model ---------------------------------------------------------
 
     def set_model(self, model: RowModel | None) -> None:
         self._model = model
         self._token_of = []
-        self._places = token_places(model.tokens) if model is not None else {}
         if model is not None:
             self._token_of = [None] * len(model.data)
             for token in model.tokens:
@@ -329,10 +317,15 @@ class RawWidget(QAbstractScrollArea):
 
     def set_selection(self, start: int, end: int) -> None:
         self._sel = (start, end) if end > start else None
+        self._bits = None
         self.viewport().update()
 
     def selection(self) -> tuple[int, int] | None:
         return self._sel
+
+    def selection_bits(self) -> tuple[int, int] | None:
+        """The absolute bit range of a selection of tokens; ``None`` for bytes."""
+        return self._bits
 
     def _on_scroll(self, value: int) -> None:
         if not self._syncing:
@@ -408,8 +401,15 @@ class RawWidget(QAbstractScrollArea):
             )
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
-        # Selection, as whole runs of cells.
-        if self._sel is not None:
+        # Selection: tokens by their bits, straddling bytes as they do, or
+        # whole runs of cells.
+        if self._bits is not None:
+            base = model.offset * 8
+            lo = max(self._bits[0] - base, 0)
+            hi = min(self._bits[1] - base, limit * 8)
+            for rect in self._hex_span(lo, hi) + self._text_span(lo, hi):
+                painter.fillRect(rect, theme.TINT_SELECTION)
+        elif self._sel is not None:
             s, e = self._sel
             lo, hi = max(s - model.offset, 0), min(e - model.offset, len(model.data))
             for first, last in row_runs(range(lo, min(hi, shown))):
@@ -575,8 +575,8 @@ class RawWidget(QAbstractScrollArea):
         return super().viewportEvent(event)
 
     def _token_at(self, pos: QPoint) -> Token | None:
-        """The token under a point: by its place in the text column, where
-        tokens share cells, and the first over the byte in the hex column."""
+        """The token under a point: by bit in the text column, where tokens are
+        placed by bit, and the first over the byte in the hex column."""
         b = self._byte_at(pos)
         model = self._model
         if b is None or model is None:
@@ -585,12 +585,12 @@ class RawWidget(QAbstractScrollArea):
         if pos.x() < text_x:
             return self._token_of[b - model.offset]
         row = pos.y() // self.row_height
-        at = row * BYTES_PER_ROW + (pos.x() - text_x) / self._text_width
+        bit = row * BYTES_PER_ROW * 8 + int((pos.x() - text_x) * 8 / self._text_width)
         return next(
             (
                 t
                 for t in model.tokens
-                if self._places[id(t)][0] <= at < self._places[id(t)][1]
+                if t.bit_start <= bit < max(t.bit_end, t.bit_start + 1)
             ),
             self._token_of[b - model.offset],
         )
@@ -611,37 +611,74 @@ class RawWidget(QAbstractScrollArea):
         where = f" · @{token.table_id}" if token.table_id else ""
         QToolTip.showText(event.globalPos(), f"{text}\n{spelled}{where}", self)
 
+    def _token_bits_at(self, pos: QPoint) -> tuple[int, int] | None:
+        """The absolute bits of the token under a point in the text column."""
+        model = self._model
+        if model is None or pos.x() < self._columns()[1]:
+            return None
+        token = self._token_at(pos)
+        if token is None:
+            return None
+        start = model.offset * 8 + token.bit_start
+        return start, start + max(token.bit_end - token.bit_start, 1)
+
     def mousePressEvent(self, event) -> None:
+        pos = self._content_pos(event.position().toPoint())
+        b = self._byte_at(pos)
+        bits = self._token_bits_at(pos)
         if event.button() == Qt.MouseButton.RightButton:
-            b = self._byte_at(self._content_pos(event.position().toPoint()))
             if b is not None and not (self._sel and self._sel[0] <= b < self._sel[1]):
-                self._select(b, b + 1)
+                self._pick(b, bits)
             self.context_menu_requested.emit(event.globalPosition().toPoint())
             return
-        b = self._byte_at(self._content_pos(event.position().toPoint()))
         if b is None:
-            self._anchor = None
+            self._anchor = self._anchor_bits = None
             self._select(-1, -1)
             return
-        self._anchor = b
-        self._select(b, b + 1)
+        self._pick(b, bits)
+
+    def _pick(self, byte: int, bits: tuple[int, int] | None) -> None:
+        """Select what a click lands on: the token under it in the text column,
+        by its bits, or the byte under it in the hex column."""
+        self._anchor, self._anchor_bits = byte, bits
+        if bits is None:
+            self._select(byte, byte + 1)
+        else:
+            self._select_bits(*bits)
 
     def mouseMoveEvent(self, event) -> None:
         if self._anchor is None or not (event.buttons() & Qt.MouseButton.LeftButton):
             return
-        b = self._byte_at(self._content_pos(event.position().toPoint()))
+        pos = self._content_pos(event.position().toPoint())
+        if self._anchor_bits is not None:
+            bits = self._token_bits_at(pos)
+            if bits is not None:
+                lo = min(self._anchor_bits[0], bits[0])
+                self._select_bits(lo, max(self._anchor_bits[1], bits[1]))
+            return
+        b = self._byte_at(pos)
         if b is None:
             return
         lo, hi = min(self._anchor, b), max(self._anchor, b)
         self._select(lo, hi + 1)
 
     def _select(self, start: int, end: int) -> None:
+        self._bits = None
         self._sel = (start, end) if end > start else None
         self.viewport().update()
         if self._sel is None:
             self.selection_changed.emit(-1, -1)
         else:
             self.selection_changed.emit(start, end)
+
+    def _select_bits(self, start: int, end: int) -> None:
+        """Select an absolute bit range; the bytes it touches are what the rest
+        of the window is told."""
+        first, stop = start // 8, -(-end // 8)
+        self._sel = (first, stop)
+        self._bits = (start, end)
+        self.viewport().update()
+        self.selection_changed.emit(first, stop)
 
     def wheelEvent(self, event) -> None:
         delta = event.angleDelta()

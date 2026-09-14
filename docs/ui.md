@@ -69,7 +69,7 @@ tooltip the control has of its own.
   for hex and Latin text, then faces that draw kana and kanji.
 - **One selection tint**: the Hex tab and the Hex panel tint the selected
   bytes with `theme.TINT_SELECTION` in both columns, whether or not they have
-  focus.
+  focus; characters picked in the Hex tab's text are tinted by their bits.
 
 ## Keys
 
