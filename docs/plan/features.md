@@ -502,7 +502,8 @@ in the game. It is described in [preview.md](preview.md).
 ## Hex panel
 
 - **Panels ▸ Hex** — a dump (address · hex · ASCII) of the decoded
-  buffer from the current offset, following the raw view's selection.
+  buffer from the current offset, following the raw view's selection and
+  tinting it in both columns.
 - **Overtype** — typing a hex digit over a byte in the dump changes that
   nibble in place, one undo step per digit, the caret moving on to the next
   nibble; the bytes line below writes a run of hex bytes at an offset. Both make

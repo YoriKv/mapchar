@@ -435,13 +435,13 @@ def test_a_byte_is_the_same_byte_under_either_column(qtbot):
     """Every hex cell, group gaps included, and every text cell names its own
     byte, whatever the font's fractional width."""
     from mapchar.ui import BYTES_PER_ROW
-    from mapchar.ui.raw_widget import TEXT_FAMILIES
+    from mapchar.ui.widgets import MONO_FAMILIES
 
     widget = _raw_widget(qtbot, [], bytes(BYTES_PER_ROW * 2))
     # The fallback list is what keeps a Japanese decode from being boxes; the
     # face that answers depends on the machine, so only the list is asserted.
-    assert "Noto Sans CJK JP" in TEXT_FAMILIES
-    assert widget._font.families() == list(TEXT_FAMILIES)
+    assert "Noto Sans CJK JP" in MONO_FAMILIES
+    assert widget._font.families() == list(MONO_FAMILIES)
     for rel in range(BYTES_PER_ROW * 2):
         for cell in (widget._hex_cell(rel), widget._text_cell(rel)):
             assert widget._byte_at(cell.center()) == rel

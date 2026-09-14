@@ -13,23 +13,10 @@ from PySide6.QtWidgets import QAbstractScrollArea, QToolTip, QWidget
 from mapchar.core.table import TokenKind
 from mapchar.core.tokens import Token
 from mapchar.ui import BYTES_PER_ROW, theme
+from mapchar.ui.widgets import mono_font
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
-
-TEXT_FAMILIES = (
-    "Monospace",
-    "DejaVu Sans Mono",
-    "Noto Sans Mono CJK JP",
-    "Noto Sans CJK JP",
-    "MS Gothic",
-    "Yu Gothic",
-    "Meiryo",
-    "Hiragino Sans",
-    "monospace",
-)
-"""Families in fallback order: a monospaced face for the hex, then faces that
-draw kana and kanji, so a Japanese decode is not a row of boxes."""
 
 HEX_CELL = 3
 """Character widths a byte owns in the hex column: its pair and a space."""
@@ -119,10 +106,7 @@ class RawWidget(QAbstractScrollArea):
         super().__init__(parent)
         self._model: RowModel | None = None
         self._rows_shown = 0
-        self._font = QFont()
-        self._font.setFamilies(TEXT_FAMILIES)
-        self._font.setStyleHint(QFont.StyleHint.TypeWriter)
-        self._font.setPointSize(10)
+        self._font = mono_font()
         self._label_font = QFont(self._font)
         self._label_font.setPointSize(8)
         self._metrics = QFontMetrics(self._font, self.viewport())

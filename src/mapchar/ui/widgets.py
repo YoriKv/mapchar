@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, TypeVar
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -36,6 +37,32 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
 
 T = TypeVar("T")
+
+MONO_FAMILIES = (
+    "Cascadia Mono",
+    "Consolas",
+    "DejaVu Sans Mono",
+    "Menlo",
+    "Noto Sans Mono CJK JP",
+    "Noto Sans CJK JP",
+    "Meiryo",
+    "Yu Gothic",
+    "MS Gothic",
+    "Hiragino Sans",
+    "monospace",
+)
+"""Families in fallback order, tried per character: a monospaced face for hex
+and Latin text, then faces that draw kana and kanji, so a Japanese decode is
+not a row of boxes and the hex is not drawn in a Japanese face's digits."""
+
+
+def mono_font(point_size: int = 10) -> QFont:
+    """The face every byte and decoded-text view draws in: :data:`MONO_FAMILIES`."""
+    font = QFont()
+    font.setFamilies(MONO_FAMILIES)
+    font.setStyleHint(QFont.StyleHint.TypeWriter)
+    font.setPointSize(point_size)
+    return font
 
 
 PICKER_WIDTH = 160
@@ -511,11 +538,13 @@ __all__ = [
     "ElidedLabel",
     "EscapeCloses",
     "FlowLayout",
+    "MONO_FAMILIES",
     "ModalProgress",
     "ResultsTable",
     "fill_pick",
     "fit_chars",
     "hint_field",
+    "mono_font",
     "select_data",
     "show_elided_tooltips",
 ]

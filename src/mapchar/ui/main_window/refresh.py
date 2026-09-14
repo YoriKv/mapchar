@@ -155,6 +155,8 @@ class RefreshMixin:
         several — so the window starts at the box's room in characters and
         doubles until the text overflows, the file ends or
         :data:`TEXT_WINDOW_LIMIT` is reached, and is then cut to whole lines.
+        Unwrapped, a last line cut at the box's edge with room under it has not
+        overflowed: the text ran out inside it, and more may follow.
         The first token is always kept, so the window is never empty.
         """
         offset = self._offset
@@ -168,11 +170,8 @@ class RefreshMixin:
             model = text_model(tokens, offset, len(data))
             self.text.set_model(model)
             fitted = self.text.fitted_chars()
-            if (
-                fitted < len(model.body)
-                or len(data) < length
-                or length >= TEXT_WINDOW_LIMIT
-            ):
+            overflows = fitted < len(model.body) and not self.text.room_below()
+            if overflows or len(data) < length or length >= TEXT_WINDOW_LIMIT:
                 break
             length *= 2
         kept = 0

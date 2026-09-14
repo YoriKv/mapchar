@@ -61,6 +61,15 @@ tooltip the control has of its own.
   typed over.
 - A path in a list is cut in its middle (`ElideMiddle`), keeping the file name.
 
+## Byte and text views
+
+- **One face**: the Hex and Text tabs and the Hex panel draw in
+  `widgets.mono_font()`, a family list tried per character — a monospaced face
+  for hex and Latin text, then faces that draw kana and kanji.
+- **One selection tint**: the Hex tab and the Hex panel tint the selected
+  bytes with `theme.TINT_SELECTION` in both columns, whether or not they have
+  focus.
+
 ## Keys
 
 - **Esc closes a tool window** (`EscapeCloses`), as it closes a dialog; an

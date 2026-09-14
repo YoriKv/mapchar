@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
-from PySide6.QtGui import QFontDatabase, QTextCursor, QTextOption
+from PySide6.QtGui import QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.tokens import Token
 from mapchar.ui import settings
+from mapchar.ui.widgets import mono_font
 
 WORD_WRAP_KEY = "view/text_word_wrap"
 
@@ -86,7 +87,7 @@ class TextWidget(QWidget):
         self._syncing = False
         self.edit = QPlainTextEdit()
         self.edit.setReadOnly(True)
-        self.edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.edit.setFont(mono_font())
         self.edit.setUndoRedoEnabled(False)
         self.edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.edit.installEventFilter(self)
@@ -259,6 +260,21 @@ class TextWidget(QWidget):
                 fitted = min(block.position() + block.length(), len(model.body))
             block = block.next()
         return fitted
+
+    def room_below(self) -> bool:
+        """Whether the box has room for another line under the body's last.
+
+        What tells a body that overflows the box from one that only ran out:
+        unwrapped, a last line wider than the box is cut at its edge either
+        way, and only a body with room under it may go on to more lines.
+        """
+        edit = self.edit
+        block = edit.document().lastBlock()
+        edit.document().documentLayout().blockBoundingRect(block)
+        bottom = edit.blockBoundingGeometry(block).translated(edit.contentOffset())
+        margin = edit.document().documentMargin()
+        spacing = edit.fontMetrics().lineSpacing()
+        return bottom.bottom() + spacing <= edit.viewport().height() - margin
 
     def line_starts(self) -> list[int]:
         """Where each line of the body begins, as laid out in the box: a wrapped

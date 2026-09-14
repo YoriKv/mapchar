@@ -54,6 +54,30 @@ def test_the_dump_follows_the_selection(window, tmp_path):
     assert window.hex_panel.view.toPlainText().startswith("000020  20 21 22")
 
 
+def test_the_selection_is_tinted_in_both_columns(window, tmp_path):
+    """Two rows' worth from mid-row: each row's hex cells and ASCII cells, and
+    the tint stays when the caret moves."""
+    _dock(window, tmp_path)
+    window._on_selection(0x1E, 0x22)
+    panel = window.hex_panel
+    spans = [
+        (h.cursor.selectionStart(), h.cursor.selectionEnd())
+        for h in panel.view.extraSelections()
+    ]
+    line, hex_at, ascii_at = panel._line_len, panel._hex_start, panel._ascii_start
+    row = (0x10 - panel._offset) // BYTES_PER_ROW
+    assert spans == [
+        (row * line + hex_at + 14 * 3, row * line + hex_at + 16 * 3 - 1),
+        (row * line + ascii_at + 14, row * line + ascii_at + 16),
+        ((row + 1) * line + hex_at, (row + 1) * line + hex_at + 2 * 3 - 1),
+        ((row + 1) * line + ascii_at, (row + 1) * line + ascii_at + 2),
+    ]
+    _caret_to(panel, 0)
+    assert len(panel.view.extraSelections()) == 4
+    window._on_selection(-1, -1)
+    assert panel.view.extraSelections() == []
+
+
 def test_follow_off_leaves_the_dump_where_it_was(window, tmp_path):
     _dock(window, tmp_path)
     window.hex_panel.follow.setChecked(False)

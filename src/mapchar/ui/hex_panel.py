@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QFontDatabase, QPalette, QTextCursor
+from PySide6.QtGui import QPalette, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -13,15 +13,16 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from mapchar.core.bits import parse_hex
-from mapchar.ui import BYTES_PER_ROW, DUMP_WINDOW_BYTES, settings
+from mapchar.ui import BYTES_PER_ROW, DUMP_WINDOW_BYTES, settings, theme
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
-from mapchar.ui.widgets import fit_chars, hint_field
+from mapchar.ui.widgets import fit_chars, hint_field, mono_font
 
 FOLLOW_SELECTION_KEY = "hex/follow_selection"
 """QSettings key for the Follow selection switch.
@@ -103,7 +104,7 @@ class HexPanel(ThemedIcons, QWidget):
         self._addr_width = 6
         self.view = _HexView(self)
         self.view.setReadOnly(True)
-        self.view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.view.setFont(mono_font())
         self.view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         top = QHBoxLayout()
         # Every field keeps room to show what it holds however narrow the dock
@@ -198,9 +199,14 @@ class HexPanel(ThemedIcons, QWidget):
         return self._addr_width + _ADDRESS_GAP
 
     @property
+    def _ascii_start(self) -> int:
+        """Column the ASCII cells begin at: past the hex cells and their gap."""
+        return self._hex_start + BYTES_PER_ROW * 3 - 1 + 2
+
+    @property
     def _line_len(self) -> int:
         """Characters per dump line, newline included."""
-        return self._hex_start + BYTES_PER_ROW * 3 - 1 + 2 + BYTES_PER_ROW + 1
+        return self._ascii_start + BYTES_PER_ROW + 1
 
     def _pin_caret(self, position: int) -> None:
         self._pinned_caret = position
@@ -256,30 +262,56 @@ class HexPanel(ThemedIcons, QWidget):
         if pinned is not None:
             self._place_caret(pinned)
         elif self._selection is not None and self._selection != self._shown_selection:
-            self._select_range(*self._selection, end)
+            self._caret_to_byte(self._selection[0], end)
         else:
             self._place_caret(caret)
         self._shown_selection = self._selection
+        self._highlight_selection(end)
 
     def _place_caret(self, position: int) -> None:
         cursor = self.view.textCursor()
         cursor.setPosition(min(max(position, 0), len(self.view.toPlainText())))
         self.view.setTextCursor(cursor)
 
-    def _select_range(self, start_byte: int, end_byte: int, end: int) -> None:
-        """Highlight the dump cells of ``[start_byte, end_byte)``, when on screen."""
-        if not (self._offset <= start_byte < end):
-            return
-        row = (start_byte - self._offset) // BYTES_PER_ROW
-        col = (start_byte - self._offset) % BYTES_PER_ROW
-        start = row * self._line_len + self._hex_start + col * 3
-        n = min(end_byte, end) - start_byte
-        rows_span = (col + n - 1) // BYTES_PER_ROW
-        length = n * 3 - 1 + rows_span * (self._line_len - BYTES_PER_ROW * 3)
-        cursor = self.view.textCursor()
-        cursor.setPosition(start)
-        cursor.setPosition(start + max(length, 2), QTextCursor.MoveMode.KeepAnchor)
-        self.view.setTextCursor(cursor)
+    def _caret_to_byte(self, byte: int, end: int) -> None:
+        """Put the caret on a byte's hex cell, when on screen."""
+        if self._offset <= byte < end:
+            row, col = divmod(byte - self._offset, BYTES_PER_ROW)
+            self._place_caret(row * self._line_len + self._hex_start + col * 3)
+
+    def _highlight_selection(self, end: int) -> None:
+        """Tint the selected bytes' hex and ASCII cells, as the central view's tabs
+        tint theirs.
+
+        A tint rather than the box's own selection, which the caret would clear
+        and an unfocused box draws faintly or not at all; the part of the
+        selection inside the window is tinted, wherever it starts.
+        """
+        highlights = []
+        if self._selection is not None:
+            tint = QTextCharFormat()
+            tint.setBackground(theme.TINT_SELECTION)
+            at, stop = (
+                max(self._selection[0], self._offset),
+                min(self._selection[1], end),
+            )
+            while at < stop:
+                row, col = divmod(at - self._offset, BYTES_PER_ROW)
+                count = min(stop - at, BYTES_PER_ROW - col)
+                line = row * self._line_len
+                for start, length in (
+                    (line + self._hex_start + col * 3, count * 3 - 1),
+                    (line + self._ascii_start + col, count),
+                ):
+                    cursor = QTextCursor(self.view.document())
+                    cursor.setPosition(start)
+                    cursor.setPosition(start + length, QTextCursor.MoveMode.KeepAnchor)
+                    highlight = QTextEdit.ExtraSelection()
+                    highlight.cursor = cursor
+                    highlight.format = tint
+                    highlights.append(highlight)
+                at += count
+        self.view.setExtraSelections(highlights)
 
     def _do_find(self, backwards: bool) -> None:
         text = self.find.text()
