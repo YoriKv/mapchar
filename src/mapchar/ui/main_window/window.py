@@ -333,7 +333,7 @@ class MainWindow(
             if delta in ("page-up", "page-down"):
                 d = -1 if delta == "page-up" else 1
                 b.clicked.connect(
-                    lambda _=False, d=d: self._move(d * self.raw.visible_bytes())
+                    lambda _=False, d=d: self._move(d * self._view_bytes())
                 )
             elif isinstance(delta, int):
                 b.clicked.connect(lambda _=False, d=delta: self._move(d))
@@ -385,7 +385,10 @@ class MainWindow(
         self.block_edit.clicked.connect(self._edit_block)
         self.block_dump.clicked.connect(self._dump)
         self.raw.offset_requested.connect(self._go_to)
+        self.raw.rows_changed.connect(self._on_raw_rows_changed)
         self.text.selection_changed.connect(self._on_text_selection)
+        self.text.fit_changed.connect(self._on_text_fit_changed)
+        self.text.scroll_requested.connect(self._on_text_scroll)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.raw.selection_changed.connect(self._on_selection)
         self.raw.context_menu_requested.connect(self._raw_menu)
@@ -752,7 +755,7 @@ class MainWindow(
             # already see would move the view for nothing. Inside the guard this
             # pushes no command of its own.
             if where is not None and not (
-                self._offset <= where < self._offset + self.raw.visible_bytes()
+                self._offset <= where < self._offset + self._view_bytes()
             ):
                 self._go_to(where)
         return True

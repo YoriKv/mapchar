@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.bits import parse_hex
-from mapchar.ui import BYTES_PER_ROW, TEXT_WINDOW_BYTES, settings
+from mapchar.ui import BYTES_PER_ROW, DUMP_WINDOW_BYTES, settings
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.widgets import fit_chars, hint_field
@@ -233,7 +233,7 @@ class HexPanel(ThemedIcons, QWidget):
     def _render(self) -> None:
         caret = self.view.textCursor().position()
         lines = []
-        end = min(self._offset + TEXT_WINDOW_BYTES, len(self._data))
+        end = min(self._offset + DUMP_WINDOW_BYTES, len(self._data))
         for at in range(self._offset, end, BYTES_PER_ROW):
             chunk = self._data[at : at + BYTES_PER_ROW]
             hexes = " ".join(f"{b:02X}" for b in chunk)

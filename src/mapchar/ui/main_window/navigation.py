@@ -150,9 +150,16 @@ class NavigationMixin:
     def _move(self, delta: int) -> None:
         self._go_to(self._offset + delta)
 
+    def _view_bytes(self) -> int:
+        """How many bytes the open tab shows: the Text tab's window, sized to
+        its box, or the raw view's rows. What a page step moves by."""
+        if self.tabs.currentWidget() is self.text and self.text.shown_bytes():
+            return self.text.shown_bytes()
+        return self.raw.visible_bytes()
+
     def _go_end(self) -> None:
         if self._doc is not None:
-            self._go_to(max(0, self._doc.size - self.raw.visible_bytes()))
+            self._go_to(max(0, self._doc.size - self._view_bytes()))
 
     def _on_offset_typed(self) -> None:
         offset = self._parse_address(self.offset_box.text())
@@ -253,7 +260,7 @@ class NavigationMixin:
             return False  # Alt+arrows are the visit trail's; Ctrl is the menus'
         if self._doc is None:
             return False
-        page = self.raw.visible_bytes()
+        page = self._view_bytes()
         moves = {
             Qt.Key.Key_PageUp: -page,
             Qt.Key.Key_PageDown: page,

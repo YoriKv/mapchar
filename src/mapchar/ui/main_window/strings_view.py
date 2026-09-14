@@ -300,7 +300,7 @@ class StringsViewMixin:
         if not self._applying_undo:
             self._edit_run += 1
         self._sync_preview()
-        if not (self._offset <= rec.start < self._offset + self.raw.visible_bytes()):
+        if not (self._offset <= rec.start < self._offset + self._view_bytes()):
             self._go_to(rec.start)
         self.raw.set_selection(rec.start, rec.end)
         self._selection = (rec.start, rec.end)

@@ -111,10 +111,14 @@ class RawWidget(QAbstractScrollArea):
     selection_changed = Signal(int, int)
     """Absolute byte range [start, end) selected, end exclusive; (-1, -1) none."""
     context_menu_requested = Signal(QPoint)
+    rows_changed = Signal()
+    """The view has room for a different number of rows than it had: whoever
+    feeds it a model may want to hand it a window of the new size."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._model: RowModel | None = None
+        self._rows_shown = 0
         self._font = QFont()
         self._font.setFamilies(TEXT_FAMILIES)
         self._font.setStyleHint(QFont.StyleHint.TypeWriter)
@@ -294,6 +298,9 @@ class RawWidget(QAbstractScrollArea):
             self.set_model(self._model)
         else:
             self._sync_horizontal()
+        if self.visible_rows != self._rows_shown:
+            self._rows_shown = self.visible_rows
+            self.rows_changed.emit()
 
     # --- painting ------------------------------------------------------
 

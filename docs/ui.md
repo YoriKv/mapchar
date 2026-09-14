@@ -34,7 +34,9 @@ No layout's minimum size may be set by text or a count that varies.
   what it holds; pickers in a bar are `CompactComboBox`es of one fixed width.
 - **Content that grows** scrolls: the Preview canvas, the Font tab's fields,
   the glyph sheet, and the raw view, which scrolls sideways when narrower than
-  its rows.
+  its rows. The Hex and Text tabs are the exception: each holds the window its
+  box has room for, and what does not fit is reached by moving the view, never
+  by a scrollbar of its own.
 - **Dialogs fit a 768-pixel-high screen**: a long form is grouped into titled
   boxes in columns (the Block dialog).
 - **Docks**: a tree's name column stretches and gives way first; count columns

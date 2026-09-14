@@ -586,7 +586,7 @@ widens to its longest item),
 dock's workspace subscription and its row-to-entry lookup), `ui/window_layout.py`
 (`WindowLayout` and `remember_layout`), `ui/help_dialogs.py` (the live shortcut
 list) and `ui/__init__.py` (the `settings()` accessor and the view constants
-`BYTES_PER_ROW` and `TEXT_WINDOW_BYTES`).
+`BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
 
 ### 7.2 Where UI state lives
 

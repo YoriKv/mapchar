@@ -217,10 +217,18 @@ The exploration surface, the equivalent of celPix's tile canvas.
   nothing (a table switch) is a tick. Unmatched bytes are chipped in the hex
   column only. The current block's pointer bytes are chipped in the hex column,
   and the string boundaries it would produce are ruled in both.
-- **Two tabs** — **Hex** shows the columns above; **Text** shows the same
-  window decoded into an ordinary read-only text box, with a **Wrap** switch
-  remembered per machine. Selections follow each other between the two, and
-  the open tab is part of an entry's session.
+- **Two tabs** — **Hex** shows the columns above; **Text** shows the decode
+  from the same offset in an ordinary read-only text box, with a **Wrap**
+  switch remembered per machine. Selections follow each other between the two,
+  and the open tab is part of an entry's session.
+- **A window the size of the box** — each tab shows what its box has room
+  for, re-fitted whenever the box changes: Hex as many rows as fit and one
+  more, cut off at the bottom edge; Text the whole lines that fit, decoding
+  from the offset until the text overflows the box and cutting back to the
+  tokens in view (with Wrap off, the last line ends at the box's right edge,
+  and a wider line above it scrolls sideways). Neither tab scrolls within
+  itself: the wheel moves the view by three rows or three lines' worth of
+  bytes, and a page step by exactly what was shown.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
   bank fields), an address box, Home, page and row steps, **−B / +B** byte
   steps, and End. A view narrower than its rows scrolls sideways. The format is remembered per machine and drives the address

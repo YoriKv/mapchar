@@ -9,7 +9,7 @@ from mapchar.core.capabilities import Capability
 from mapchar.core.document import Document
 from mapchar.pipeline.pipeline import decompress_at, find_next_structure
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui import TEXT_WINDOW_BYTES
+from mapchar.ui import DUMP_WINDOW_BYTES
 from mapchar.ui.dialogs import BlockDialog
 from mapchar.ui.raw_widget import RowModel
 
@@ -68,7 +68,7 @@ class CompressionMixin:
             self.decompress_window.hide()
             return
         data, consumed, complete = found.data, found.consumed, found.complete
-        window = data[:TEXT_WINDOW_BYTES]
+        window = data[:DUMP_WINDOW_BYTES]
         tokens = self._decode_window(window, tables).tokens
         model = RowModel(0, window, tokens, set(), len(data))
         status = (
