@@ -42,7 +42,7 @@ _KIND_NAMES = {
     PointerListSource: "Pointer list",
     EndToken: "End token",
     FixedLength: "Fixed length",
-    LengthPrefix: "Length prefix",
+    LengthPrefix: "Length prefix (Pascal)",
     NextPointer: "Next pointer",
 }
 """What the block bar calls a source or string type: the Block dialog's words

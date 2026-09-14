@@ -141,7 +141,7 @@ class BlockDialog(QDialog):
         strings_box, form = _form_group("Strings")
         self.string_type = QComboBox()
         self.string_type.addItems(
-            ["End token", "Fixed length", "Length prefix", "Next pointer"]
+            ["End token", "Fixed length", "Length prefix (Pascal)", "Next pointer"]
         )
         form.addRow("String type", self.string_type)
         self.fixed_length = QSpinBox()
