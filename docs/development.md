@@ -22,6 +22,17 @@ the editor, and the checks a change has to pass.
   `uv run pytest`, `uv run ruff check .` and `uv run ruff format --check .`
   are the checks.
 
+## Git
+
+- **Every git command runs through `git.exe`**, the Windows install, from WSL
+  as well. It is the one carrying the committer identity; WSL's own `git` has
+  none and stops at `empty ident name` instead of committing.
+- **Its paths are repository-relative.** A Windows process cannot read a
+  `/mnt/d` path: `git.exe log -- docs/ui.md` works where the absolute one
+  fails with `Invalid path '/mnt'`.
+- **`core.autocrlf` is `false`** there, so it leaves alone the LF that
+  `.gitattributes` asks for.
+
 ## PyCharm
 
 - `.idea/` is gitignored and holds the machine-specific module and

@@ -30,8 +30,8 @@ Every doc in this folder gets a line here: its link and what it covers.
 - [table-dialects.md](table-dialects.md): the table-file syntaxes of romjuice,
   Cartographer, Atlas and abcde side by side, and where they collide.
 - [development.md](development.md): the Python/uv environment, the two
-  virtualenvs, PyCharm files, the source layout and the checks a change must
-  pass.
+  virtualenvs, the Windows git install, PyCharm files, the source layout and
+  the checks a change must pass.
 - [ui.md](ui.md): the UI conventions — label capitalisation, what a surface
   does when its room runs out, tooltips over cut-short text, shared keys — and
   the screenshot tool for reviewing the UI.
