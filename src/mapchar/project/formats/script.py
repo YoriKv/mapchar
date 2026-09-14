@@ -15,8 +15,8 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     FixedSource,
+    LengthPrefix,
     NextPointer,
-    Pascal,
     PointerListSource,
     PointerTableSource,
     RangeSource,
@@ -112,9 +112,9 @@ def format_config(config: BlockConfig) -> str:
         parts.append("type=end")
     elif isinstance(st, FixedLength):
         parts.append(f"type=fixed:{st.length}" + (":stop" if st.stop_at_end else ""))
-    elif isinstance(st, Pascal):
+    elif isinstance(st, LengthPrefix):
         parts.append(
-            f"type=pascal:{st.width}"
+            f"type=length-prefix:{st.width}"
             + (":tokens" if st.counts_tokens else "")
             + (":big" if st.endian == "big" else "")
         )
@@ -238,8 +238,8 @@ def parse_config(spec: str) -> BlockConfig:
         string_type = EndToken()
     elif type_spec[0] == "fixed":
         string_type = FixedLength(int(type_spec[1]), "stop" in type_spec[2:])
-    elif type_spec[0] == "pascal":
-        string_type = Pascal(
+    elif type_spec[0] == "length-prefix":
+        string_type = LengthPrefix(
             int(type_spec[1]),
             "tokens" in type_spec[2:],
             "big" if "big" in type_spec[2:] else "little",

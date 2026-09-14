@@ -6,7 +6,7 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     FixedSource,
-    Pascal,
+    LengthPrefix,
     PointerListSource,
     RangeSource,
 )
@@ -65,13 +65,13 @@ def test_fixed_source_with_lines():
     assert len(ex.strings) == 2 and ex.notices
 
 
-def test_pascal_bytes_and_tokens():
+def test_length_prefix_bytes_and_tokens():
     data = bytes.fromhex("02 41 42 01 43")
-    cfg = BlockConfig(RangeSource(0, 5), Pascal(1), "main")
+    cfg = BlockConfig(RangeSource(0, 5), LengthPrefix(1), "main")
     ex = extract(data, cfg, TS)
     assert texts(ex) == ["AB", "C"]
     assert [(s.start, s.end) for s in ex.strings] == [(0, 3), (3, 5)]
-    cfg = BlockConfig(RangeSource(0, 5), Pascal(1, counts_tokens=True), "main")
+    cfg = BlockConfig(RangeSource(0, 5), LengthPrefix(1, counts_tokens=True), "main")
     assert texts(extract(data, cfg, TS)) == ["AB", "C"]
 
 

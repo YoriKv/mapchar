@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from mapchar.core.bits import format_key
 from mapchar.core.block import (
     BlockConfig,
-    Pascal,
+    LengthPrefix,
     StringRecord,
     WriteMode,
 )
@@ -177,7 +177,7 @@ def write_atlas(
         if offset:
             out.append(f"#HDR({format_num(offset)})")
     st = config.string_type
-    if isinstance(st, Pascal):
+    if isinstance(st, LengthPrefix):
         out.append('#STRTYPE("PASCAL")')
         out.append(f"#PASCALLEN({st.width})")
         if st.counts_tokens:

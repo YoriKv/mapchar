@@ -46,7 +46,7 @@ Edit strings beside the original and write them back in place.
 
 - Mappings: LINEAR, LoROM, HiROM, GB, GBA, banked.
 - Block sources *pointer table* and *pointer list*; string types *next
-  pointer* and *Pascal*; strings per pointer; pointer rewriting on packed
+  pointer* and *length prefix*; strings per pointer; pointer rewriting on packed
   writes.
 - Pointer discovery and its result grouping; pointer overlays in the raw
   view.

@@ -49,8 +49,8 @@ class Token:
         return 0 if self.entry is None else self.entry.weight
 
     @property
-    def pascal_weight(self) -> int:
-        """Weight for a Pascal length count, where unmatched data counts as one."""
+    def prefix_weight(self) -> int:
+        """Weight for a length-prefix count, where unmatched data counts as one."""
         return 1 if self.entry is None else self.weight
 
     def text(self) -> str:

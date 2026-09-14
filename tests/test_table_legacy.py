@@ -125,8 +125,8 @@ def test_abcde():
     assert ret.kind is TokenKind.SWITCH and ret.text == "[x]"
     assert [p.spec() for p in ret.params] == ["return"]
     assert main.entries["10101110"].params[0].stop.fallback == "10101011"
-    pascal = main.entries["00000011"]
-    assert pascal.kind is TokenKind.SWITCH and pascal.params[0].shared
+    counted = main.entries["00000011"]
+    assert counted.kind is TokenKind.SWITCH and counted.params[0].shared
     assert main.entries["00000100"].weight == 2
     assert tables["upper"].entries["01000001"].text == "A"
     out = write_native(tf.tables)

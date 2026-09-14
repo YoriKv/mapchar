@@ -294,7 +294,12 @@ def write_command_file(
     table_id: str | None = None,
 ) -> tuple[str, list[str]]:
     """A Cartographer command file for a block, and what it could not express."""
-    from mapchar.core.block import FixedSource, Pascal, PointerListSource, WriteMode
+    from mapchar.core.block import (
+        FixedSource,
+        LengthPrefix,
+        PointerListSource,
+        WriteMode,
+    )
 
     lines: list[str] = []
     notes: list[str] = []
@@ -308,8 +313,10 @@ def write_command_file(
     fixed_len = config.fixed_length
     if isinstance(src, FixedSource) and not isinstance(st, FixedLength):
         notes.append("fixed-string source written as a RAW range of one string")
-    if isinstance(st, Pascal):
-        notes.append("Pascal strings have no Cartographer form; written as NORMAL")
+    if isinstance(st, LengthPrefix):
+        notes.append(
+            "length-prefix strings have no Cartographer form; written as NORMAL"
+        )
     if fixed_len is not None:
         kind = "FIXED_STRING && FIXED_LINE" if config.line_length else "FIXED_STRING"
         lines.append(f"#TYPE: {kind}")

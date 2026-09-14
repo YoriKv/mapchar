@@ -111,7 +111,7 @@ in bytes, which is the unit their results are reported and selected in.
 
 - **`BlockConfig`** — frozen: `source` (`RangeSource`, `PointerTableSource`,
   `PointerListSource`, `FixedSource`), `string_type` (`EndToken`,
-  `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens)`,
+  `FixedLength(length, stop_at_end)`, `LengthPrefix(width, counts_tokens)`,
   `NextPointer`), `strings_per_pointer`, `realign`, `skips`, `line_length`,
   `start_table_id`, `bound`, `write_mode` (`PACKED`, `SLOTTED`), `fill`.
 - **`StringRecord`** — one string: `index`, `start`, `end` (byte offsets in

@@ -195,7 +195,7 @@ Semantics, in the stack machine of [architecture.md](architecture.md#31-decode):
 ```
 !F1=[item] @items:1          one item name, then back
 !F3=[menu] @items:$FF        item names until FF, which is consumed
-!03=[str] @upper:3+          three tokens from upper that also count here (Pascal strings)
+!03=[str] @upper:3+          three tokens from upper that also count here (length-prefix strings)
 !F4=[font2] @font2:*         switch until [end] or a return entry in font2
 ```
 

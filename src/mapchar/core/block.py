@@ -89,7 +89,7 @@ class FixedLength:
 
 
 @dataclass(frozen=True)
-class Pascal:
+class LengthPrefix:
     width: int = 1
     counts_tokens: bool = False
     endian: str = "little"
@@ -100,7 +100,7 @@ class NextPointer:
     """The string ends at the next pointer's target."""
 
 
-StringType = EndToken | FixedLength | Pascal | NextPointer
+StringType = EndToken | FixedLength | LengthPrefix | NextPointer
 
 
 class WriteMode(Enum):
