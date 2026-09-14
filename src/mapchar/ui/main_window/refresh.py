@@ -15,6 +15,7 @@ from mapchar.core.block import (
 )
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
+from mapchar.core.tokens import Token
 from mapchar.engines.decode import DecodeRules, RunResult, decode_run
 from mapchar.project.workspace import EntryKind
 from mapchar.ui import BYTES_PER_ROW
@@ -27,6 +28,12 @@ VIEWS = ("raw", "text", "strings")
 TEXT_WINDOW_LIMIT = 1 << 15
 """The most bytes the Text tab decodes to fill its box. Past this, a stretch of
 the file that decodes to next to nothing is shown as far as it goes."""
+
+_ALIGN_TRIES = 8
+"""How many bytes back the Text tab tries decoding the text above its view
+from, to find one in step."""
+_ALIGN_LOOKAHEAD = 16
+"""Bytes past the offset decoded to see whether a token starts there."""
 
 _KIND_NAMES = {
     RangeSource: "Range",
@@ -184,12 +191,106 @@ class RefreshMixin:
             self._refresh_text_mode(self._doc, self._table_set())
 
     def _on_text_scroll(self, lines: int) -> None:
-        """The wheel turned over the Text tab: move by that many lines' worth
-        of bytes, taking the window's own bytes per line as the measure."""
-        shown = self.text.shown_bytes()
-        per_line = shown / self.text.lines_in_view() if shown else BYTES_PER_ROW
-        step = max(1, round(abs(lines) * per_line))
-        self._move(step if lines > 0 else -step)
+        """The wheel turned over the Text tab: move the view by that many lines.
+
+        Always to where a line starts, on a token the text in view already
+        decodes: a byte count would start the view inside a line, re-wrapping
+        everything, or inside a token, decoding the rest out of step — and
+        either way the same bytes read and highlight differently.
+
+        Down is the start of a line in view. Up is a line of the text decoded
+        before the offset, laid out in the box; that text has no known line
+        start of its own, so up retraces the steps down that led here when
+        they did, and only measures when they did not.
+        """
+        doc = self._doc
+        if doc is None or not lines:
+            return
+        trail = self._text_trail
+        if trail and trail[-1][1] != self._offset:
+            trail.clear()
+        before = self._offset
+        if lines > 0:
+            target = self._text_lines_down(lines, doc)
+        elif trail and trail[-1][2] == -lines:
+            target = trail.pop()[0]
+        else:
+            target = self._text_lines_up(-lines, doc, self._table_set())
+        self._go_to(target)
+        if self._offset == before:
+            # Measuring up leaves its text in the box; put the window back.
+            self._refresh_text_mode(doc, self._table_set())
+        elif lines > 0:
+            trail.append((before, self._offset, lines))
+
+    def _text_lines_down(self, lines: int, doc: Document) -> int:
+        """The byte the view starts at ``lines`` lines down: the start of that
+        line in view, or the end of the window. No further once the window
+        reaches the end of the file, as the Hex tab stops at its last page."""
+        text, offset = self.text, self._offset
+        end = offset + text.shown_bytes()
+        if end >= doc.size:
+            return offset
+        for start in text.line_starts()[lines:]:
+            byte = text.byte_at_char(start)
+            # A token as long as the lines above it starts at the offset itself.
+            if byte is not None and offset < byte < end:
+                return byte
+        return end
+
+    def _text_lines_up(self, lines: int, doc: Document, tables: TableSet | None) -> int:
+        """The byte the view starts at ``lines`` lines up.
+
+        The text before the offset is laid out in the box followed by the
+        view's first line, so a line the offset falls inside counts as the
+        view's own; it is decoded from further back each time until there are
+        that many lines above, so the first — which starts wherever the decode
+        did — is never the one landed on.
+        """
+        offset, text = self._offset, self.text
+        if offset == 0 or tables is None:
+            return max(0, offset - lines * BYTES_PER_ROW)
+        shown = text.shown_bytes()
+        per_line = shown / text.lines_in_view() if shown else BYTES_PER_ROW
+        body, starts = text.edit.toPlainText(), text.line_starts()
+        first_line = body[: starts[1]] if len(starts) > 1 else body
+        budget = max(BYTES_PER_ROW, round((lines + 1) * per_line * 2))
+        while True:
+            start, tokens = self._decode_up_to(doc, tables, offset - budget, offset)
+            above = text_model(tokens, start, offset - start)
+            text.set_model(
+                TextModel(above.body + first_line, above.spans, start, offset - start)
+            )
+            starts = text.line_starts()
+            here = max(i for i, s in enumerate(starts) if s <= len(above.body))
+            if here > lines or start == 0 or budget >= TEXT_WINDOW_LIMIT:
+                break
+            budget *= 2
+        byte = text.byte_at_char(starts[max(0, here - lines)])
+        return start if byte is None else byte
+
+    def _decode_up_to(
+        self, doc: Document, tables: TableSet, start: int, offset: int
+    ) -> tuple[int, list[Token]]:
+        """The tokens from about ``start`` up to ``offset``, decoded from
+        whichever of the few bytes back from ``start`` reads best.
+
+        Best is the fewest tokens left unmatched — a start inside a character
+        leaves a trail of them — and then a token starting at ``offset`` itself,
+        so the text above is in step with the text in view whenever that is in
+        step with the file.
+        """
+        best: tuple[tuple[int, bool], int, list[Token]] | None = None
+        for at in range(max(0, start), max(-1, start - _ALIGN_TRIES), -1):
+            rel = (offset - at) * 8
+            data = doc.data[at : offset + _ALIGN_LOOKAHEAD]
+            tokens = self._decode_window(data, tables).tokens
+            before = [t for t in tokens if t.bit_start < rel]
+            unmatched = sum(t.entry is None and not t.fallback for t in before)
+            score = (unmatched, not any(t.bit_start == rel for t in tokens))
+            if best is None or score < best[0]:
+                best = (score, at, before)
+        return best[1], best[2]
 
     def _current_view(self) -> str:
         """The open tab, as a session names it."""

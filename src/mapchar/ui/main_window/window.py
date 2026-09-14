@@ -166,6 +166,9 @@ class MainWindow(
         self._doc: Document | None = None
         self._entry: Entry | None = None
         self._offset = 0
+        self._text_trail: list[tuple[int, int, int]] = []
+        """The Text tab's wheel steps down, as ``(from, to, lines)``, so a step
+        up retraces one exactly (:mod:`mapchar.ui.main_window.refresh`)."""
         self._scan_stop = False
         """Set by :meth:`request_scan_stop` to abandon a running structure scan."""
         self._selection: tuple[int, int] | None = None

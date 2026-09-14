@@ -227,8 +227,10 @@ The exploration surface, the equivalent of celPix's tile canvas.
   from the offset until the text overflows the box and cutting back to the
   tokens in view (with Wrap off, the last line ends at the box's right edge,
   and a wider line above it scrolls sideways). Neither tab scrolls within
-  itself: the wheel moves the view by three rows or three lines' worth of
-  bytes, and a page step by exactly what was shown.
+  itself: the wheel moves the view by three rows, or in Text to the start of
+  the line three lines away — a line of the text in view, or of the text
+  decoded before it laid out in the box, so the view never starts inside a
+  line or a character — and a page step by exactly what was shown.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
   bank fields), an address box, Home, page and row steps, **−B / +B** byte
   steps, and End. A view narrower than its rows scrolls sideways. The format is remembered per machine and drives the address

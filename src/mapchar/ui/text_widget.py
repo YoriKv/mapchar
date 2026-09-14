@@ -8,7 +8,8 @@ follow. Read-only until the Strings view's editor exists.
 The box holds a window sized to itself, like the raw view's rows: it says how
 much of a body is in view (:meth:`TextWidget.fitted_chars`), and whoever feeds
 it cuts the window to that. So it never scrolls on its own — the wheel and the
-page keys move the view instead — and its scrollbars are fixed, since one that
+page keys move the view instead, the wheel to where a line of it starts
+(:meth:`TextWidget.line_starts`) — and its scrollbars are fixed, since one that
 came and went with the content would change the room, and with it the window,
 and with it the content.
 """
@@ -200,6 +201,25 @@ class TextWidget(QWidget):
             block = block.next()
         return fitted
 
+    def line_starts(self) -> list[int]:
+        """Where each line of the body begins, as laid out in the box: a wrapped
+        line as much as one a line break starts. Every line, not only those in
+        view."""
+        document = self.edit.document()
+        layout = document.documentLayout()
+        starts: list[int] = []
+        block = document.firstBlock()
+        while block.isValid():
+            # Asking for a block's rect lays it out; the box lays out lazily.
+            layout.blockBoundingRect(block)
+            lines = block.layout()
+            if lines.lineCount() == 0:
+                starts.append(block.position())
+            for i in range(lines.lineCount()):
+                starts.append(block.position() + lines.lineAt(i).textStart())
+            block = block.next()
+        return starts
+
     def shown_bytes(self) -> int:
         """How many bytes the text in view covers; none without a model."""
         return self._model.length if self._model is not None else 0
@@ -223,7 +243,10 @@ class TextWidget(QWidget):
 
     # --- selection sync ---------------------------------------------------
 
-    def _char_to_byte(self, pos: int) -> int | None:
+    def byte_at_char(self, pos: int) -> int | None:
+        """The byte the token at character ``pos`` starts at: the first token
+        there, so one that shows nothing — a table switch — is not stepped
+        over. Past the body, the byte after it."""
         model = self._model
         if model is None:
             return None
@@ -241,7 +264,7 @@ class TextWidget(QWidget):
         a, b = sorted((cursor.anchor(), cursor.position()))
         if a == b:
             return
-        start = self._char_to_byte(a)
+        start = self.byte_at_char(a)
         end = None
         for cs, ce, _bs, be in self._model.spans:
             if cs < b <= ce:

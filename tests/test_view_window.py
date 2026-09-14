@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
+from PySide6.QtGui import QTextCursor, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
+from mapchar.project.formats.table_native import HEADER
 from mapchar.ui import BYTES_PER_ROW
 from window_helpers import ASCII_TABLE, make_window, open_rom_and_table
 
@@ -118,3 +119,81 @@ def test_the_whole_file_fits_a_short_one(window, tmp_path):
     QApplication.processEvents()
     assert window.text.shown_bytes() == len(data)
     assert window.text.edit.toPlainText() == "Hello[end]"
+
+
+WIDE_TABLE = f"{HEADER}\n@table main\n/00=[end]\n8020= \n81FF=[line]\\n\n" + "".join(
+    f"80{ord(c):02X}={c}\n" for c in "abcdefghijklmnopqrstuvwxyz"
+)
+"""Two bytes a character, so a view started a byte late decodes out of step."""
+
+
+def _wide(text: str) -> bytes:
+    return b"".join(b"\x81\xff" if c == "\n" else bytes([0x80, ord(c)]) for c in text)
+
+
+WIDE_TEXT = "the quick brown fox jumps over the lazy dog\n" + (
+    "pack my box with five dozen liquor jugs " * 3 + "\n"
+)
+WIDE_PROSE = _wide(WIDE_TEXT * 60)
+
+
+def _text_tab(window, tmp_path, data, table, wrap=True):
+    open_rom_and_table(window, tmp_path, data, table=table)
+    window.text.wrap.setChecked(wrap)
+    _shown(window, 900, 500)
+    window.text_tab_action.trigger()
+    QApplication.processEvents()
+    return window.text
+
+
+@pytest.mark.parametrize("wrap", [True, False])
+def test_the_wheel_moves_to_where_a_line_starts(window, tmp_path, wrap):
+    text = _text_tab(window, tmp_path, WIDE_PROSE, WIDE_TABLE, wrap)
+    first = text.edit.toPlainText()
+    for _ in range(5):
+        body, starts = text.edit.toPlainText(), text.line_starts()
+        _wheel(window, 1)
+        # The view starts on the fourth line, and decodes in step with it.
+        assert text.edit.toPlainText().startswith(body[starts[3] :])
+    for _ in range(5):
+        _wheel(window, -1)
+    assert window._offset == 0
+    assert text.edit.toPlainText() == first
+
+
+def test_the_wheel_keeps_a_selection_on_its_text(window, tmp_path):
+    text = _text_tab(window, tmp_path, WIDE_PROSE, WIDE_TABLE)
+    starts = text.line_starts()
+    cursor = text.edit.textCursor()
+    cursor.setPosition(starts[4])
+    cursor.setPosition(starts[6] + 5, QTextCursor.MoveMode.KeepAnchor)
+    text.edit.setTextCursor(cursor)
+    selected = window._selection
+    chosen = text.edit.textCursor().selectedText()
+    _wheel(window, 1)
+    assert window._selection == selected
+    assert text.edit.textCursor().selectedText() == chosen
+
+
+@pytest.mark.parametrize("late", [0, 1])
+def test_the_wheel_up_measures_the_lines_above(window, tmp_path, late):
+    text = _text_tab(window, tmp_path, WIDE_PROSE, WIDE_TABLE)
+    # A line start well into the file, reached without the wheel — or a byte
+    # past it, inside a character, which the view decodes out of step.
+    line = len(_wide(WIDE_TEXT * 10))
+    window._go_to(line + late)
+    body = text.edit.toPlainText()
+    _wheel(window, -1)
+    above = text.edit.toPlainText()
+    # Three lines up, in step with the file: the line is a line again.
+    starts = text.line_starts()
+    assert text.byte_at_char(starts[3]) == line
+    assert above.startswith("the quick")
+    if not late:
+        assert above[starts[3] :].startswith(body[: len(above) - starts[3]])
+
+
+def test_the_wheel_stops_at_the_last_window(window, tmp_path):
+    _text_tab(window, tmp_path, b"Hello\x00", ASCII_TABLE)
+    _wheel(window, 1)
+    assert window._offset == 0
