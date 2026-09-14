@@ -40,7 +40,7 @@ from mapchar.project.workspace import (
     Entry,
     Workspace,
 )
-from mapchar.ui import BYTES_PER_ROW, settings
+from mapchar.ui import settings
 from mapchar.ui.decompress_window import DecompressWindow
 from mapchar.ui.dialogs import (
     TextDialog,
@@ -320,10 +320,10 @@ class MainWindow(
         for text, glyph, delta, tip in (
             ("Home", None, "home", "Start of file (Home)"),
             ("Pg Up", None, "page-up", "Page up (PgUp)"),
-            ("", Glyph.ARROW_UP, -BYTES_PER_ROW, "Row up (Up)"),
+            ("", Glyph.ARROW_UP, "row-up", "Row up, or a line in Text (Up)"),
             ("−B", None, -1, "Byte back (Left or −)"),
             ("+B", None, 1, "Byte forward (Right or +)"),
-            ("", Glyph.ARROW_DOWN, BYTES_PER_ROW, "Row down (Down)"),
+            ("", Glyph.ARROW_DOWN, "row-down", "Row down, or a line in Text (Down)"),
             ("Pg Dn", None, "page-down", "Page down (PgDn)"),
             ("End", None, "end", "End of file (End)"),
         ):
@@ -335,9 +335,10 @@ class MainWindow(
                 self._step_icons.append((b, glyph))
             if delta in ("page-up", "page-down"):
                 d = -1 if delta == "page-up" else 1
-                b.clicked.connect(
-                    lambda _=False, d=d: self._move(d * self._view_bytes())
-                )
+                b.clicked.connect(lambda _=False, d=d: self._step_pages(d))
+            elif delta in ("row-up", "row-down"):
+                d = -1 if delta == "row-up" else 1
+                b.clicked.connect(lambda _=False, d=d: self._step_rows(d))
             elif isinstance(delta, int):
                 b.clicked.connect(lambda _=False, d=delta: self._move(d))
             elif delta == "home":
@@ -392,6 +393,8 @@ class MainWindow(
         self.text.selection_changed.connect(self._on_text_selection)
         self.text.fit_changed.connect(self._on_text_fit_changed)
         self.text.scroll_requested.connect(self._on_text_scroll)
+        self.text.page_requested.connect(self._step_pages)
+        self.text.offset_requested.connect(self._go_to)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.raw.selection_changed.connect(self._on_selection)
         self.raw.context_menu_requested.connect(self._raw_menu)

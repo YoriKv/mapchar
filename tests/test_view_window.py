@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QTextCursor, QWheelEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from mapchar.project.formats.table_native import HEADER
@@ -197,3 +198,82 @@ def test_the_wheel_stops_at_the_last_window(window, tmp_path):
     _text_tab(window, tmp_path, b"Hello\x00", ASCII_TABLE)
     _wheel(window, 1)
     assert window._offset == 0
+
+
+def test_a_selection_cleared_stays_cleared_as_the_view_moves(window, tmp_path):
+    text = _text_tab(window, tmp_path, WIDE_PROSE, WIDE_TABLE)
+    starts = text.line_starts()
+    cursor = text.edit.textCursor()
+    cursor.setPosition(starts[4])
+    cursor.setPosition(starts[6] + 5, QTextCursor.MoveMode.KeepAnchor)
+    text.edit.setTextCursor(cursor)
+    assert window._selection is not None
+    # A click in the text selects nothing, even where the cursor already was.
+    cursor.setPosition(0)
+    text.edit.setTextCursor(cursor)
+    cursor.setPosition(starts[6] + 5, QTextCursor.MoveMode.KeepAnchor)
+    text.edit.setTextCursor(cursor)
+    QTest.mouseClick(text.edit.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(2, 2))
+    assert text.edit.textCursor().position() == 0
+    assert window._selection is None
+    assert window.raw.selection() is None
+    _wheel(window, 1)
+    assert not text.edit.textCursor().hasSelection()
+    _wheel(window, -1)
+    assert not text.edit.textCursor().hasSelection()
+
+
+def test_a_selection_cleared_in_hex_is_cleared_in_text(window, tmp_path):
+    text = _text_tab(window, tmp_path, WIDE_PROSE, WIDE_TABLE)
+    window._select_bytes(0, 8)
+    assert text.edit.textCursor().hasSelection()
+    window.raw._select(-1, -1)
+    assert not text.edit.textCursor().hasSelection()
+
+
+def _key(window, key) -> None:
+    """Press ``key`` in the Text tab's box, which has no cursor keys of its own."""
+    window.text.edit.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(window.text.edit, key)
+
+
+def test_the_keys_move_the_text_view_by_lines_and_pages(window, tmp_path):
+    text = _text_tab(window, tmp_path, WIDE_PROSE, WIDE_TABLE)
+    second = text.byte_at_char(text.line_starts()[1])
+    shown = text.shown_bytes()
+    _key(window, Qt.Key.Key_Down)
+    assert window._offset == second
+    _key(window, Qt.Key.Key_Up)
+    assert window._offset == 0
+    _key(window, Qt.Key.Key_PageDown)
+    assert window._offset == shown
+    _key(window, Qt.Key.Key_PageUp)
+    assert window._offset == 0
+    _key(window, Qt.Key.Key_End)
+    assert window._offset > 0
+    _key(window, Qt.Key.Key_Home)
+    assert window._offset == 0
+
+
+def test_the_text_scrollbar_is_the_files(window, tmp_path):
+    text = _text_tab(window, tmp_path, WIDE_PROSE, WIDE_TABLE)
+    bar = text.bar
+    shown = text.shown_bytes()
+    assert (bar.value(), bar.pageStep()) == (0, shown)
+    assert bar.maximum() == len(WIDE_PROSE) - shown
+    # The arrow steps a line, the trough a page.
+    bar.triggerAction(bar.SliderAction.SliderSingleStepAdd)
+    assert 0 < window._offset < shown
+    assert bar.value() == window._offset
+    bar.triggerAction(bar.SliderAction.SliderSingleStepSub)
+    assert window._offset == 0
+    bar.triggerAction(bar.SliderAction.SliderPageStepAdd)
+    assert window._offset == shown
+    bar.triggerAction(bar.SliderAction.SliderPageStepSub)
+    assert window._offset == 0
+    # A drag goes to the byte under the handle.
+    bar.setValue(1000)
+    assert window._offset == 1000
+    window._go_to(2000)
+    assert bar.value() == 2000

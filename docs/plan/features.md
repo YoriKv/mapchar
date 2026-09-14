@@ -230,7 +230,11 @@ The exploration surface, the equivalent of celPix's tile canvas.
   itself: the wheel moves the view by three rows, or in Text to the start of
   the line three lines away — a line of the text in view, or of the text
   decoded before it laid out in the box, so the view never starts inside a
-  line or a character — and a page step by exactly what was shown.
+  line or a character. A row step (Up / Down) is a row, or in Text a line; a
+  page step is what was shown, or in Text as many lines as the box holds, so
+  down is exactly what was shown. Each tab has a scrollbar over the whole file:
+  its handle is the window, its arrows a row or line step, its trough a page
+  step, and a drag goes to the row or byte under it.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
   bank fields), an address box, Home, page and row steps, **−B / +B** byte
   steps, and End. A view narrower than its rows scrolls sideways. The format is remembered per machine and drives the address
@@ -239,8 +243,10 @@ The exploration surface, the equivalent of celPix's tile canvas.
   trail of the entries visited.
 - **The keys work wherever the focus is** — a picked table or a clicked row
   does not take the navigation keys away — except inside a text field or a list,
-  which spend the arrows themselves.
-- **Selection** — drag over hex or text; both columns follow. The status bar
+  which spend the arrows themselves. The Text tab's box is not one: read-only,
+  it has no cursor for them to move.
+- **Selection** — drag over hex or text; both columns follow, and a click in
+  the text that selects nothing clears the selection in both. The status bar
   shows offset, length and the selected bytes' decode.
 - **Context menu** — New Block from Selection, New Bookmark, Add to Table
   (opens the Table Editor with the bytes as a key), Search for Selection

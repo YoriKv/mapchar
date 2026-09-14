@@ -47,7 +47,7 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Hex and Text Views",
         (
             ("Page up / down", "PgUp / PgDn"),
-            ("Row up / down", "Up / Down"),
+            ("Row up / down, or a line in Text", "Up / Down"),
             ("Byte back / forward", "Left / Right, or − / +"),
             ("Start / end of file", "Home / End"),
             ("Back / forward through visited entries", "Mouse 4 / Mouse 5"),

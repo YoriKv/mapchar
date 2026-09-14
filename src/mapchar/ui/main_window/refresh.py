@@ -143,8 +143,8 @@ class RefreshMixin:
         if self.tabs.currentWidget() is not self.text:
             return
         self.text.set_model(self._fit_text_window(doc, tables))
-        if self._selection:
-            self.text.select_bytes(*self._selection)
+        self.text.set_position(self._offset, doc.size)
+        self.text.select_bytes(*(self._selection or (-1, -1)))
 
     def _fit_text_window(self, doc: Document, tables: TableSet | None) -> TextModel:
         """The Text tab's window: decoded from the offset until the text
@@ -191,7 +191,8 @@ class RefreshMixin:
             self._refresh_text_mode(self._doc, self._table_set())
 
     def _on_text_scroll(self, lines: int) -> None:
-        """The wheel turned over the Text tab: move the view by that many lines.
+        """Move the Text tab's view by that many lines: the wheel, the keys,
+        the row and page steps and the scrollbar's arrows and trough all do.
 
         Always to where a line starts, on a token the text in view already
         decodes: a byte count would start the view inside a line, re-wrapping

@@ -150,6 +150,21 @@ class NavigationMixin:
     def _move(self, delta: int) -> None:
         self._go_to(self._offset + delta)
 
+    def _step_rows(self, rows: int) -> None:
+        """Move the view by rows: the Hex tab's, or the Text tab's lines."""
+        if self.tabs.currentWidget() is self.text:
+            self._on_text_scroll(rows)
+        else:
+            self._move(rows * BYTES_PER_ROW)
+
+    def _step_pages(self, pages: int) -> None:
+        """Move the view by pages: the Hex tab's rows shown, or as many of the
+        Text tab's lines as its box holds — down, exactly what was shown."""
+        if self.tabs.currentWidget() is self.text:
+            self._on_text_scroll(pages * self.text.lines_in_view())
+        else:
+            self._move(pages * self._view_bytes())
+
     def _view_bytes(self) -> int:
         """How many bytes the open tab shows: the Text tab's window, sized to
         its box, or the raw view's rows. What a page step moves by."""
@@ -196,8 +211,8 @@ class NavigationMixin:
         self._sync_hex_panel()
         # Not back into the text view it came from: rewriting its cursor mid-drag
         # moves the drag's anchor, so a selection dragged upward never grows.
-        if self._selection and not from_text and self.tabs.currentWidget() is self.text:
-            self.text.select_bytes(*self._selection)
+        if not from_text and self.tabs.currentWidget() is self.text:
+            self.text.select_bytes(*(self._selection or (-1, -1)))
         if self._selection and self._doc is not None:
             s, e = self._selection
             for rec in self._doc.strings:
@@ -209,7 +224,8 @@ class NavigationMixin:
     # Inputs that spend the arrow keys themselves; while one has focus the
     # navigation keys are left alone so it can cycle its options, move its
     # cursor or walk its rows. The Files tree is one: its arrows walk the open
-    # entries, and selection there is activation.
+    # entries, and selection there is activation. The Text tab's box is not:
+    # read-only, it has no cursor to move.
     _ARROW_INPUT_TYPES = (
         QComboBox,
         QAbstractSpinBox,
@@ -252,7 +268,8 @@ class NavigationMixin:
             return True  # a running scan owns the view position; swallow keys
         if QApplication.activePopupWidget() is not None:
             return False
-        if isinstance(QApplication.focusWidget(), self._ARROW_INPUT_TYPES):
+        focus = QApplication.focusWidget()
+        if isinstance(focus, self._ARROW_INPUT_TYPES) and focus is not self.text.edit:
             return False
         mods = event.modifiers()
         blocked = Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier
@@ -260,19 +277,24 @@ class NavigationMixin:
             return False  # Alt+arrows are the visit trail's; Ctrl is the menus'
         if self._doc is None:
             return False
-        page = self._view_bytes()
+        key = event.key()
+        steps = {
+            Qt.Key.Key_PageUp: (self._step_pages, -1),
+            Qt.Key.Key_PageDown: (self._step_pages, 1),
+            Qt.Key.Key_Up: (self._step_rows, -1),
+            Qt.Key.Key_Down: (self._step_rows, 1),
+        }
+        if key in steps:
+            step, direction = steps[key]
+            step(direction)
+            return True
         moves = {
-            Qt.Key.Key_PageUp: -page,
-            Qt.Key.Key_PageDown: page,
-            Qt.Key.Key_Up: -BYTES_PER_ROW,
-            Qt.Key.Key_Down: BYTES_PER_ROW,
             Qt.Key.Key_Left: -1,
             Qt.Key.Key_Right: 1,
             Qt.Key.Key_Minus: -1,
             Qt.Key.Key_Plus: 1,
             Qt.Key.Key_Equal: 1,
         }
-        key = event.key()
         if key in moves:
             self._move(moves[key])
             return True

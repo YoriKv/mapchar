@@ -2,16 +2,19 @@
 
 Presentation only, on the pattern of celPix's text window: it holds a body
 and a map from characters to bytes, never decodes anything itself, and
-reports selections as byte ranges so the aligned view and the status bar can
-follow. Read-only until the Strings view's editor exists.
+reports selections as byte ranges — and a click that selects nothing as none —
+so the aligned view and the status bar can follow. Read-only until the Strings
+view's editor exists.
 
 The box holds a window sized to itself, like the raw view's rows: it says how
 much of a body is in view (:meth:`TextWidget.fitted_chars`), and whoever feeds
-it cuts the window to that. So it never scrolls on its own — the wheel and the
-page keys move the view instead, the wheel to where a line of it starts
-(:meth:`TextWidget.line_starts`) — and its scrollbars are fixed, since one that
-came and went with the content would change the room, and with it the window,
-and with it the content.
+it cuts the window to that. So it never scrolls on its own — the wheel, the keys
+and the scrollbar beside it move the view instead, by lines to where a line of
+it starts (:meth:`TextWidget.line_starts`) — and the box's own scrollbars are
+fixed, since one that came and went with the content would change the room, and
+with it the window, and with it the content. The bar beside the box is the
+file's, as the Hex tab's is: its handle is the window, its arrows step a line,
+its trough a page, and a drag goes to the byte under the handle.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QScrollBar,
     QVBoxLayout,
     QWidget,
 )
@@ -68,8 +72,13 @@ class TextWidget(QWidget):
     """The room for text changed — the box was resized, its font changed or
     Wrap was switched — so a different window fits it now."""
     scroll_requested = Signal(int)
-    """The wheel turned over the box: move the view by this many lines, down
-    for positive."""
+    """The wheel turned over the box, or the scrollbar's arrow was clicked:
+    move the view by this many lines, down for positive."""
+    page_requested = Signal(int)
+    """The scrollbar's trough was clicked: move the view a page, down for
+    positive."""
+    offset_requested = Signal(int)
+    """The scrollbar was dragged: start the view at this byte."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -82,6 +91,11 @@ class TextWidget(QWidget):
         self.edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.edit.installEventFilter(self)
         self.edit.viewport().installEventFilter(self)
+        self.bar = QScrollBar(Qt.Orientation.Vertical)
+        self.bar.setSingleStep(1)
+        self.bar.actionTriggered.connect(self._on_bar_action)
+        self.bar.valueChanged.connect(self._on_bar_value)
+        self._placing = False
         self.wrap = QCheckBox("Wrap")
         self.wrap.setToolTip(
             "Fold long lines to the window's width.\n"
@@ -93,9 +107,14 @@ class TextWidget(QWidget):
         bar.setContentsMargins(0, 0, 0, 0)
         bar.addWidget(self.note, 1)
         bar.addWidget(self.wrap)
+        box = QHBoxLayout()
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(0)
+        box.addWidget(self.edit, 1)
+        box.addWidget(self.bar)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.edit, 1)
+        layout.addLayout(box, 1)
         layout.addLayout(bar)
         stored = settings().value(WORD_WRAP_KEY, "true")
         self.wrap.setChecked(str(stored).lower() == "true")
@@ -136,9 +155,49 @@ class TextWidget(QWidget):
                 if delta and not zooming:
                     self.scroll_requested.emit(-delta // 120 * 3)
                     return True
+            elif kind == QEvent.Type.MouseButtonRelease:
+                # A click where the cursor already was moves nothing, so no
+                # signal says it selected nothing.
+                self._on_selection()
         elif watched is self.edit and kind == QEvent.Type.FontChange:
             self.fit_changed.emit()
         return super().eventFilter(watched, event)
+
+    # --- the scrollbar ------------------------------------------------------
+
+    def set_position(self, offset: int, total: int) -> None:
+        """Place the scrollbar: the window starts at ``offset`` of a file of
+        ``total`` bytes. Mid-drag only the handle's place is kept, since a
+        handle that changed its length under the mouse would jump."""
+        bar = self.bar
+        self._placing = True
+        try:
+            if not bar.isSliderDown():
+                shown = max(1, self.shown_bytes())
+                bar.setRange(0, max(0, total - shown, offset))
+                bar.setPageStep(shown)
+            bar.setValue(offset)
+        finally:
+            self._placing = False
+
+    def _on_bar_action(self, action: int) -> None:
+        """The arrows and the trough step by lines and pages, which only the
+        text knows, not by bytes: the handle stays until the view has moved."""
+        slider = QScrollBar.SliderAction
+        steps = {
+            slider.SliderSingleStepSub.value: (self.scroll_requested, -1),
+            slider.SliderSingleStepAdd.value: (self.scroll_requested, 1),
+            slider.SliderPageStepSub.value: (self.page_requested, -1),
+            slider.SliderPageStepAdd.value: (self.page_requested, 1),
+        }
+        if action in steps:
+            self.bar.setSliderPosition(self.bar.value())
+            signal, direction = steps[action]
+            signal.emit(direction)
+
+    def _on_bar_value(self, value: int) -> None:
+        if not self._placing:
+            self.offset_requested.emit(value)
 
     # --- the room for text ------------------------------------------------
 
@@ -263,6 +322,9 @@ class TextWidget(QWidget):
         cursor = self.edit.textCursor()
         a, b = sorted((cursor.anchor(), cursor.position()))
         if a == b:
+            if self._reported is not None:
+                self._reported = None
+                self.selection_changed.emit(-1, -1)
             return
         start = self.byte_at_char(a)
         end = None
@@ -278,7 +340,8 @@ class TextWidget(QWidget):
         self.selection_changed.emit(start, end)
 
     def select_bytes(self, start: int, end: int) -> None:
-        """Highlight the characters whose bytes fall in ``[start, end)``."""
+        """Highlight the characters whose bytes fall in ``[start, end)``; an
+        empty range highlights none."""
         model = self._model
         if model is None:
             return
@@ -292,6 +355,6 @@ class TextWidget(QWidget):
                 cursor.setPosition(chars[0][0])
                 cursor.setPosition(chars[-1][1], QTextCursor.MoveMode.KeepAnchor)
             self.edit.setTextCursor(cursor)
-            self._reported = (start, end)
+            self._reported = (start, end) if end > start else None
         finally:
             self._syncing = False
