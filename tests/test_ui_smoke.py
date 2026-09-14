@@ -121,6 +121,35 @@ def test_text_display_mode(window, tmp_path):
     assert window.display.currentWidget() is window.raw
 
 
+def test_text_display_mode_drag_upward(window, tmp_path):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    open_rom_and_table(window, tmp_path, bytes.fromhex("41 42 42 42 42 00") * 20)
+    window.mode_button.setChecked(True)
+    edit = window.text.edit
+    viewport = edit.viewport()
+    left = Qt.MouseButton.LeftButton
+
+    def send(kind, char, button):
+        cursor = edit.textCursor()
+        cursor.setPosition(char)
+        at = QPointF(edit.cursorRect(cursor).center())
+        global_at = QPointF(viewport.mapToGlobal(at.toPoint()))
+        event = QMouseEvent(
+            kind, at, global_at, button, left, Qt.KeyboardModifier.NoModifier
+        )
+        QApplication.sendEvent(viewport, event)
+
+    # Each "ABBBB[end]" is ten characters over six bytes.
+    send(QEvent.Type.MouseButtonPress, 60, left)
+    for char in (57, 50, 40, 30):
+        send(QEvent.Type.MouseMove, char, Qt.MouseButton.NoButton)
+    assert edit.textCursor().anchor() == 60
+    assert window._selection == (18, 36)
+
+
 def test_text_display_mode_restored(qtbot):
     from mapchar.ui import settings
     from mapchar.ui.main_window.refresh import DISPLAY_MODE_KEY

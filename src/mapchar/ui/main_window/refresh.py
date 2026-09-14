@@ -133,7 +133,7 @@ class RefreshMixin:
 
     def _on_text_selection(self, start: int, end: int) -> None:
         self.raw.set_selection(start, end)
-        self._on_selection(start, end)
+        self._on_selection(start, end, from_text=True)
 
     def _update_nav_status(self) -> None:
         doc = self._doc

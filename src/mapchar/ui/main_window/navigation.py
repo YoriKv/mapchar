@@ -183,11 +183,17 @@ class NavigationMixin:
         self.raw.set_selection(offset, offset + length)
         self._on_selection(offset, offset + length)
 
-    def _on_selection(self, start: int, end: int) -> None:
+    def _on_selection(self, start: int, end: int, from_text: bool = False) -> None:
         self._selection = (start, end) if end > start else None
         self._update_nav_status()
         self._sync_hex_panel()
-        if self._selection and self.display.currentWidget() is self.text:
+        # Not back into the text view it came from: rewriting its cursor mid-drag
+        # moves the drag's anchor, so a selection dragged upward never grows.
+        if (
+            self._selection
+            and not from_text
+            and self.display.currentWidget() is self.text
+        ):
             self.text.select_bytes(*self._selection)
         if self._selection and self._doc is not None:
             s, e = self._selection
