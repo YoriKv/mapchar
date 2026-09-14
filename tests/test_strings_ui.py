@@ -534,9 +534,43 @@ def test_text_wider_than_its_cells_never_leaves_them(qtbot):
     cell = QRectF(widget._text_cell(0))
     image = QImage(400, 100, QImage.Format.Format_ARGB32)
     painter = QPainter(image)
+    painter.setFont(widget._font)
     try:
-        assert not widget._fit(painter, cell, "A", widget._metrics)
-        assert widget._fit(painter, cell, "ちからのたね", widget._metrics)
+        assert not widget._fit(painter, cell, "A")
+        assert widget._fit(painter, cell, "ちからのたね")
         assert painter.clipBoundingRect() == QRectF()  # the clip was restored
     finally:
         painter.end()
+
+
+def test_one_character_too_wide_is_condensed_rather_than_sliced(qtbot):
+    """A single glyph wider than its cell even at MIN_SQUEEZE has nothing left
+    to drop, so it is condensed the rest of the way and says it was cut —
+    rather than drawn over the cell's edge and sliced there by the clip."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+
+    from mapchar.ui.raw_widget import MIN_SQUEEZE
+
+    widget = _raw_widget(qtbot, [], bytes(1))
+    image = QImage(400, 100, QImage.Format.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    painter.setFont(widget._font)
+    try:
+        # A cell far too narrow for one character, wherever the faces come from.
+        wide = painter.fontMetrics().horizontalAdvance("W")
+        cell = QRectF(40, 0, wide * MIN_SQUEEZE / 2, widget.row_height)
+        assert widget._fit(painter, cell, "W")
+    finally:
+        painter.end()
+    painted = [
+        x
+        for x in range(image.width())
+        for y in range(image.height())
+        if image.pixelColor(x, y).alpha() > 8
+    ]
+    # Ink inside the cell, and none of it touching either edge: a glyph that
+    # was condensed to fit, not one the clip cut off at the boundary.
+    assert painted, "the character was drawn"
+    assert cell.left() < min(painted) and max(painted) < cell.right()

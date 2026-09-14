@@ -199,7 +199,11 @@ The exploration surface, the equivalent of celPix's tile canvas.
   tokens that start inside one byte never share a place. A token over a row end
   is written on the row holding most of it.
 - **Text in its cells** — text never leaves its token's cells: wider text is
-  condensed, then cut short with a corner notch. A token whose whole text is
+  condensed, then cut short with a corner notch, and one character with nothing
+  left to drop is condensed the rest of the way rather than sliced at the
+  cell's edge. What is measured is what draws — the painter's own face on its
+  own surface, and the ink rather than the advance — so text is never called
+  narrow enough to fit and then drawn wider. A token whose whole text is
   one bracketed name shows the name as a smaller label; a name inside text
   shows as `↵` when it ends a line and `▪` otherwise, so `s[line]` reads `s↵`.
   Unmatched data is a dot. Hovering a token shows its whole text, its bytes and

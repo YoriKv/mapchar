@@ -39,7 +39,8 @@ room for two of them squeezed, or a short code name."""
 HEX_GROUP = 4
 """Bytes between the small gaps that make a hex row countable."""
 MIN_SQUEEZE = 0.7
-"""How far text wider than its cells is condensed before it is cut short."""
+"""How far text wider than its cells is condensed before it is cut short, and
+how far one character with nothing left to drop goes before the notch says so."""
 
 
 @dataclass
@@ -118,10 +119,9 @@ class RawWidget(QAbstractScrollArea):
         self._font.setFamilies(TEXT_FAMILIES)
         self._font.setStyleHint(QFont.StyleHint.TypeWriter)
         self._font.setPointSize(10)
-        self._metrics = QFontMetrics(self._font)
         self._label_font = QFont(self._font)
         self._label_font.setPointSize(8)
-        self._label_metrics = QFontMetrics(self._label_font)
+        self._metrics = QFontMetrics(self._font, self.viewport())
         self._sel: tuple[int, int] | None = None
         self._anchor: int | None = None
         self._address_digits = 6
@@ -136,6 +136,16 @@ class RawWidget(QAbstractScrollArea):
         self._syncing = False
 
     # --- geometry ------------------------------------------------------
+
+    def _sync_metrics(self) -> None:
+        """Re-measure the face against the surface it will be drawn on.
+
+        A ``QFontMetrics`` made without a paint device answers for the primary
+        screen, so a window on a differently scaled monitor lays its cells out
+        to one width and draws them at another — and text measured as fitting
+        is then sliced at the cell's edge.
+        """
+        self._metrics = QFontMetrics(self._font, self.viewport())
 
     @property
     def row_height(self) -> int:
@@ -279,6 +289,7 @@ class RawWidget(QAbstractScrollArea):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._sync_metrics()
         if self._model is not None:
             self.set_model(self._model)
         else:
@@ -287,6 +298,7 @@ class RawWidget(QAbstractScrollArea):
     # --- painting ------------------------------------------------------
 
     def paintEvent(self, event) -> None:
+        self._sync_metrics()
         painter = QPainter(self.viewport())
         pal = self.palette()
         painter.fillRect(self.viewport().rect(), pal.base())
@@ -389,11 +401,11 @@ class RawWidget(QAbstractScrollArea):
             if is_label:
                 painter.setFont(self._label_font)
                 painter.setPen(QPen(label_ink))
-                cut = self._fit(painter, cell, text, self._label_metrics)
+                cut = self._fit(painter, cell, text)
             else:
                 painter.setFont(self._font)
                 painter.setPen(QPen(dim if token.entry is None else ink))
-                cut = self._fit(painter, cell, text, self._metrics)
+                cut = self._fit(painter, cell, text)
             if cut:
                 cut_marks.append(cell)
 
@@ -416,26 +428,37 @@ class RawWidget(QAbstractScrollArea):
         painter.drawRoundedRect(QRectF(cell).adjusted(1, 1, -1, -1), 3, 3)
 
     @staticmethod
-    def _fit(painter: QPainter, cell: QRectF, text: str, metrics: QFontMetrics) -> bool:
+    def _fit(painter: QPainter, cell: QRectF, text: str) -> bool:
         """Draw ``text`` centred in ``cell``, never past it; ``True`` if cut short.
 
         Text wider than the cell — a dictionary word on one byte, a long code
         name — is condensed down to :data:`MIN_SQUEEZE`, and past that only as
         many characters as fit are drawn, so it never covers the token beside
-        it.
+        it. One character that is wider than its cell even condensed that far
+        is condensed the rest of the way instead: a glyph narrower than it
+        should be still reads, and one sliced down the middle by the cell's
+        edge does not.
+
+        What is measured is what will be drawn: the painter's own metrics, which
+        answer for the face and the surface actually drawing, and the ink rather
+        than the advance, since a glyph's bearings can carry it past the width
+        the advance claims. Measured anywhere else, or by the advance alone,
+        text is called narrow enough to fit and then drawn wider than its cell.
         """
+        metrics = painter.fontMetrics()
         room = cell.width() - 2
         advance = metrics.horizontalAdvance(text)
-        if advance <= room:
+        drawn = max(advance, metrics.boundingRect(text).width())
+        if drawn <= room:
             painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, text)
             return False
-        squeeze = max(room / advance, MIN_SQUEEZE)
         cut = False
-        while len(text) > 1 and advance * squeeze > room:
+        while len(text) > 1 and drawn * MIN_SQUEEZE > room:
             text = text[:-1]
             advance = metrics.horizontalAdvance(text)
+            drawn = max(advance, metrics.boundingRect(text).width())
             cut = True
-        squeeze = min(1.0, max(room / advance, MIN_SQUEEZE))
+        squeeze = min(1.0, room / drawn) if drawn > 0 else 1.0
         painter.save()
         painter.setClipRect(cell)
         painter.translate(cell.left() + cell.width() / 2, cell.top())
@@ -446,7 +469,9 @@ class RawWidget(QAbstractScrollArea):
             text,
         )
         painter.restore()
-        return cut
+        # Condensed past what is meant to be legible is as much a warning that
+        # the tooltip has more as a character dropped is.
+        return cut or squeeze < MIN_SQUEEZE
 
     @staticmethod
     def _tint(token: Token) -> QColor | None:
