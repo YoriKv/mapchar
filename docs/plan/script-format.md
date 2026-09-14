@@ -121,7 +121,7 @@ and creates one block per `#BLOCK`:
 | `COMMENTS`, `SHOW END ADDRESS`, `TRIM TRAILING NEWLINES`, `ATLAS PTRS`, `GAME NAME` | recorded for export, no effect on the block |
 
 The block is then extracted. The exporter writes the reverse mapping for a
-block, and reports fields Cartographer has no command for (length-prefix strings,
+block, and reports fields Cartographer has no command for (Pascal strings,
 banked mappings other than a constant base, slotted mode, a bound narrower
 than the source).
 

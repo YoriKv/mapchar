@@ -7,8 +7,8 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     FixedSource,
-    LengthPrefix,
     NextPointer,
+    Pascal,
     PointerListSource,
     PointerTableSource,
     RangeSource,
@@ -42,7 +42,7 @@ _KIND_NAMES = {
     PointerListSource: "Pointer list",
     EndToken: "End token",
     FixedLength: "Fixed length",
-    LengthPrefix: "Length prefix (Pascal)",
+    Pascal: "Pascal (length prefix)",
     NextPointer: "Next pointer",
 }
 """What the block bar calls a source or string type: the Block dialog's words

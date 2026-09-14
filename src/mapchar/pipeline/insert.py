@@ -14,7 +14,7 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
-    LengthPrefix,
+    Pascal,
     StringRecord,
     WriteMode,
     block_bound,
@@ -48,7 +48,7 @@ class Problem:
 class Encoded:
     index: int
     data: bytes
-    """The string's bytes, length prefix included, before padding."""
+    """The string's bytes, Pascal prefix included, before padding."""
     problem: Problem | None = None
     new_start: int | None = None
     """Where the layout put these bytes; ``None`` until one has.
@@ -92,9 +92,9 @@ def encode_string(
     try:
         if fixed:
             body = _encode_fixed(text, config, tables)
-        elif isinstance(st, LengthPrefix):
+        elif isinstance(st, Pascal):
             payload = encode(text, tables, end_terminated=False)
-            body = _length_prefix(payload.data, st, payload, text, tables)
+            body = _pascal(payload.data, st, payload, text, tables)
         else:
             result = encode(
                 text, tables, end_terminated=True, ends=config.strings_per_pointer
@@ -119,12 +119,10 @@ def _encode_fixed(text: str, config: BlockConfig, tables: TableSet) -> bytes:
     return r.data
 
 
-def _length_prefix(
-    payload: bytes, st: LengthPrefix, result, text: str, tables: TableSet
-) -> bytes:
+def _pascal(payload: bytes, st: Pascal, result, text: str, tables: TableSet) -> bytes:
     if st.counts_tokens:
         r = decode(Bits(payload), tables, 0, DecodeRules(end_terminated=False))
-        n = sum(t.prefix_weight for t in r.tokens)
+        n = sum(t.pascal_weight for t in r.tokens)
     else:
         n = len(payload)
     if n >= 1 << (st.width * 8):

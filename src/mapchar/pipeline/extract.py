@@ -8,8 +8,8 @@ from mapchar.core.block import (
     Extraction,
     FixedLength,
     FixedSource,
-    LengthPrefix,
     NextPointer,
+    Pascal,
     PointerListSource,
     PointerRef,
     PointerTableSource,
@@ -172,14 +172,14 @@ def _extract_pointers(
     return Extraction(strings, notices)
 
 
-def _decode_length_prefix(bits, config, tables, start, stop_bit, st: LengthPrefix):
+def _decode_pascal(bits, config, tables, start, stop_bit, st: Pascal):
     length_bits = st.width * 8
     chunk = bits.window(start, length_bits)
     if len(chunk) < length_bits:
         return (
             [],
             start,
-            [Notice("Length prefix past the end of the data", offset=start // 8)],
+            [Notice("Pascal length past the end of the data", offset=start // 8)],
         )
     raw = int(chunk, 2).to_bytes(st.width, "big")
     n = int.from_bytes(raw, "big" if st.endian == "big" else "little")
@@ -252,8 +252,8 @@ def _decode_one(
     if isinstance(st, FixedLength):
         limit = min(start + st.length * 8, stop_bit)
         return _decode_fixed(bits, config, tables, start, limit)
-    if isinstance(st, LengthPrefix):
-        return _decode_length_prefix(bits, config, tables, start, stop_bit, st)
+    if isinstance(st, Pascal):
+        return _decode_pascal(bits, config, tables, start, stop_bit, st)
     return _decode_terminated(bits, config, tables, start, stop_bit)
 
 
@@ -317,7 +317,7 @@ def _decode_counted(
     stop_bit: int,
     count: int,
 ) -> tuple[list[Token], int, list[Notice]]:
-    """Decode until ``count`` token weights are used up (token-counted prefixes)."""
+    """Decode until ``count`` token weights are used up (Pascal token strings)."""
     r: DecodeResult = decode(bits, tables, start, _rules(config, stop_bit, False))
     used = 0
     tokens: list[Token] = []
@@ -326,6 +326,6 @@ def _decode_counted(
         if used >= count:
             break
         tokens.append(token)
-        used += token.prefix_weight
+        used += token.pascal_weight
         end = token.bit_end
     return tokens, end, r.notices

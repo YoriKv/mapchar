@@ -308,7 +308,7 @@ the block's **Edit…** open the block dialog.
   - **End token** — at the first end token of the table set;
   - **Fixed length** — after `length` bytes, or earlier at an end token when
     **Stop at end token** is on;
-  - **Length prefix (Pascal)** — a `1–4`-byte length prefix counting bytes or token weights;
+  - **Pascal (length prefix)** — a `1–4`-byte length prefix counting bytes or token weights;
   - **Next pointer** — at the next pointer's target (pointer sources only;
     the last string ends at an end token or `stop`).
 - **Strings per pointer** — how many end tokens one pointer's string spans.

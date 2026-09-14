@@ -6,7 +6,7 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     FixedSource,
-    LengthPrefix,
+    Pascal,
     PointerListSource,
     RangeSource,
     WriteMode,
@@ -74,11 +74,11 @@ def test_fixed_strings_and_lines():
     assert res.ok and out == bytes.fromhex("41 42 43 41 00 EE")
 
 
-def test_length_prefix():
+def test_pascal():
     data = bytes.fromhex("02 41 42 01 43")
     cfg = BlockConfig(
         RangeSource(0, 5),
-        LengthPrefix(1),
+        Pascal(1),
         "main",
         write_mode=WriteMode.PACKED,
         bound=5,

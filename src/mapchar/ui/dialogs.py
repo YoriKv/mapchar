@@ -29,8 +29,8 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     FixedSource,
-    LengthPrefix,
     NextPointer,
+    Pascal,
     PointerListSource,
     PointerTableSource,
     RangeSource,
@@ -141,7 +141,7 @@ class BlockDialog(QDialog):
         strings_box, form = _form_group("Strings")
         self.string_type = QComboBox()
         self.string_type.addItems(
-            ["End token", "Fixed length", "Length prefix (Pascal)", "Next pointer"]
+            ["End token", "Fixed length", "Pascal (length prefix)", "Next pointer"]
         )
         form.addRow("String type", self.string_type)
         self.fixed_length = QSpinBox()
@@ -149,11 +149,11 @@ class BlockDialog(QDialog):
         form.addRow("Fixed length", self.fixed_length)
         self.stop_at_end = QCheckBox("Stop at end token")
         form.addRow("", self.stop_at_end)
-        self.prefix_width = QSpinBox()
-        self.prefix_width.setRange(1, 4)
-        form.addRow("Prefix width", self.prefix_width)
-        self.prefix_tokens = QCheckBox("Length counts token weights")
-        form.addRow("", self.prefix_tokens)
+        self.pascal_width = QSpinBox()
+        self.pascal_width.setRange(1, 4)
+        form.addRow("Pascal width", self.pascal_width)
+        self.pascal_tokens = QCheckBox("Length counts token weights")
+        form.addRow("", self.pascal_tokens)
         self.table = QComboBox()
         self.table.addItems(table_ids)
         form.addRow("Start table", self.table)
@@ -268,10 +268,10 @@ class BlockDialog(QDialog):
             self.string_type.setCurrentIndex(1)
             self.fixed_length.setValue(st.length)
             self.stop_at_end.setChecked(st.stop_at_end)
-        elif isinstance(st, LengthPrefix):
+        elif isinstance(st, Pascal):
             self.string_type.setCurrentIndex(2)
-            self.prefix_width.setValue(st.width)
-            self.prefix_tokens.setChecked(st.counts_tokens)
+            self.pascal_width.setValue(st.width)
+            self.pascal_tokens.setChecked(st.counts_tokens)
         elif isinstance(st, NextPointer):
             self.string_type.setCurrentIndex(3)
         i = self.table.findText(c.table_id)
@@ -314,8 +314,8 @@ class BlockDialog(QDialog):
             st = 0
         self.fixed_length.setEnabled(st == 1 and not fixed_source)
         self.stop_at_end.setEnabled(st == 1 or fixed_source)
-        self.prefix_width.setEnabled(st == 2 and not fixed_source)
-        self.prefix_tokens.setEnabled(st == 2 and not fixed_source)
+        self.pascal_width.setEnabled(st == 2 and not fixed_source)
+        self.pascal_tokens.setEnabled(st == 2 and not fixed_source)
         self.spp.setEnabled(st == 0 and not fixed_source)
         # Spare room is what a re-compression that came out short leaves behind,
         # so it says nothing at all about a block read straight from the file.
@@ -397,8 +397,8 @@ class BlockDialog(QDialog):
                     self.fixed_length.value(), self.stop_at_end.isChecked()
                 )
             elif st == 2:
-                string_type = LengthPrefix(
-                    self.prefix_width.value(), self.prefix_tokens.isChecked()
+                string_type = Pascal(
+                    self.pascal_width.value(), self.pascal_tokens.isChecked()
                 )
             elif st == 3:
                 string_type = NextPointer()
