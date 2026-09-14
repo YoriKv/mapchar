@@ -774,7 +774,7 @@ class MainWindow(
             if where is not None and not (
                 self._offset <= where < self._offset + self.raw.visible_bytes()
             ):
-                self._go_to(max(0, where - BYTES_PER_ROW))
+                self._go_to(where)
         return True
 
     def _last_dir(self) -> str:

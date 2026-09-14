@@ -16,7 +16,6 @@ from mapchar.engines.layout import layout as layout_glyphs
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import block_bound, layout_block
 from mapchar.project.workspace import Entry, StringState
-from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.strings_view import CodeInfo, RowData
 from mapchar.ui.undo_commands import StringFieldCommand
 
@@ -302,7 +301,7 @@ class StringsViewMixin:
             self._edit_run += 1
         self._sync_preview()
         if not (self._offset <= rec.start < self._offset + self.raw.visible_bytes()):
-            self._go_to(max(0, rec.start - BYTES_PER_ROW))
+            self._go_to(rec.start)
         self.raw.set_selection(rec.start, rec.end)
         self._selection = (rec.start, rec.end)
         self._update_nav_status()

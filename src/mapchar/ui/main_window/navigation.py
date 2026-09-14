@@ -179,7 +179,7 @@ class NavigationMixin:
     def _select_bytes(self, offset: int, length: int) -> None:
         if self._doc is None:
             return
-        self._go_to(max(0, offset - BYTES_PER_ROW))
+        self._go_to(offset)
         self.raw.set_selection(offset, offset + length)
         self._on_selection(offset, offset + length)
 
