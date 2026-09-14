@@ -10,12 +10,22 @@ works in this repository; they are terse, unpolished and change without
 notice.
 
 This tree is indexed as the **`mapchar` qmd collection**. Search it rather than
-grepping:
+grepping, and search it through the **qmd plugin's tools** rather than its CLI:
+
+- **`query`** — scope it with `collections: ["mapchar"]`, give it an `intent`
+  and typed sub-queries: `lex` for exact terms (`"quoted phrase"`, `-negation`),
+  `vec` for a paraphrase, `hyde` for a sketch of the answer itself. The first
+  sub-query carries twice the weight. `rerank: false` when only the keywords
+  matter and the wait does not.
+- **`get`** and **`multi_get`** — the whole of a hit, by the path or `#docid`
+  the query returned; `get` takes a line range, `multi_get` a glob.
+
+The CLI covers only what has no tool — re-indexing, and the collection itself:
 
 ```bash
-qmd query -c mapchar $'intent: <what you are looking for>\nlex: <exact terms>\nvec: <paraphrase>'
-qmd search -c mapchar "<exact terms>" -n 10
-qmd update && qmd embed        # re-index after adding or editing docs
+qmd update && qmd embed -c mapchar    # after adding or editing a doc
+qmd collection show mapchar           # where the collection points
+qmd context list mapchar              # the summaries attached to it
 ```
 
 ## Topic index
