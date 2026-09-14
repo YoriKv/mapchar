@@ -47,6 +47,9 @@ class RowModel:
     """Total bytes in the buffer, for the scrollbar."""
     pointer_bytes: set[int] = field(default_factory=set)
     """Relative byte offsets that hold the current block's pointers."""
+    bounds: tuple[int, int] | None = None
+    """The absolute byte range the view is confined to, which is what the
+    scrollbar spans; the whole buffer when ``None``."""
 
 
 def token_bytes(token: Token) -> range:
@@ -165,6 +168,8 @@ class RawWidget(QAbstractScrollArea):
         self._sel: tuple[int, int] | None = None
         self._anchor: int | None = None
         self._address_digits = 6
+        self._base = 0
+        """The byte the scrollbar's first row starts at: the bounds' start."""
         self._token_of: list[Token | None] = []
         self._places: dict[int, tuple[float, float]] = {}
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -309,12 +314,15 @@ class RawWidget(QAbstractScrollArea):
                     if rel < len(model.data) and self._token_of[rel] is None:
                         self._token_of[rel] = token
             self._address_digits = max(4, len(f"{max(model.total - 1, 0):X}"))
-            total_rows = -(-model.total // BYTES_PER_ROW)
+            # The bar's rows are counted from the bounds' start, so a view
+            # confined to one string scrolls over that string and no further.
+            self._base, end = model.bounds or (0, model.total)
+            total_rows = -(-(end - self._base) // BYTES_PER_ROW)
             self._syncing = True
             sb = self.verticalScrollBar()
             sb.setRange(0, max(0, total_rows - self.visible_rows))
             sb.setPageStep(self.visible_rows)
-            sb.setValue(model.offset // BYTES_PER_ROW)
+            sb.setValue((model.offset - self._base) // BYTES_PER_ROW)
             self._syncing = False
         self._sync_horizontal()
         self.viewport().update()
@@ -328,7 +336,7 @@ class RawWidget(QAbstractScrollArea):
 
     def _on_scroll(self, value: int) -> None:
         if not self._syncing:
-            self.offset_requested.emit(value * BYTES_PER_ROW)
+            self.offset_requested.emit(self._base + value * BYTES_PER_ROW)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

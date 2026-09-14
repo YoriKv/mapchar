@@ -129,6 +129,50 @@ class NavigationMixin:
             self.address_pick.blockSignals(False)
         self.custom_bank_row.setVisible(self.address_pick.currentData() == CUSTOM_ID)
 
+    # -- the view's bounds ----------------------------------------------------
+    def _view_range(self) -> tuple[int, int]:
+        """The bytes the view moves over: its bounds, else the whole document."""
+        if self._bounds is not None:
+            return self._bounds
+        return (0, self._doc.size if self._doc is not None else 0)
+
+    def _view_end(self) -> int:
+        """The exclusive end of what the view may show."""
+        return self._view_range()[1]
+
+    def _set_bounds(self, bounds: tuple[int, int] | None) -> None:
+        """Confine the Hex and Text tabs to ``bounds`` — a block's source, one
+        string's bytes — or, with ``None``, show the whole document again.
+
+        The position moves to the bounds' start unless it is already inside
+        them: what is being asked for is that stretch, and a view left pointing
+        elsewhere would widen itself straight back (:meth:`_refresh_view`).
+        """
+        doc = self._doc
+        if doc is None:
+            return
+        if bounds is not None:
+            start, end = max(0, bounds[0]), min(bounds[1], doc.size)
+            bounds = (start, end) if end > start else None
+        inside = bounds is None or bounds[0] <= self._offset < bounds[1]
+        if bounds == self._bounds and inside:
+            return
+        self._bounds = bounds
+        if inside:
+            self._refresh_view()
+        else:
+            self._go_to(bounds[0])
+
+    def _show_whole_file(self) -> None:
+        """Navigate ▸ Show Whole File: lift the bounds, staying where the view is."""
+        self._set_bounds(None)
+
+    def _clamped(self, offset: int) -> int:
+        """``offset`` held inside the view's bounds — what a step does, so
+        walking off the end of a string cannot widen the view to the file."""
+        start, end = self._view_range()
+        return max(start, min(offset, max(end - 1, start)))
+
     # -- moving ---------------------------------------------------------------
     def _go_to(self, offset: int) -> None:
         if self._doc is None:
@@ -148,7 +192,11 @@ class NavigationMixin:
         self._refresh_view()
 
     def _move(self, delta: int) -> None:
-        self._go_to(self._offset + delta)
+        self._go_to(self._clamped(self._offset + delta))
+
+    def _go_home(self) -> None:
+        """Home: the start of the file, or of the view's bounds."""
+        self._go_to(self._view_range()[0])
 
     def _step_rows(self, rows: int) -> None:
         """Move the view by rows: the Hex tab's, or the Text tab's lines."""
@@ -173,8 +221,9 @@ class NavigationMixin:
         return self.raw.visible_bytes()
 
     def _go_end(self) -> None:
+        """End: the last window of the file, or of the view's bounds."""
         if self._doc is not None:
-            self._go_to(max(0, self._doc.size - self._view_bytes()))
+            self._go_to(self._clamped(self._view_end() - self._view_bytes()))
 
     def _on_offset_typed(self) -> None:
         offset = self._parse_address(self.offset_box.text())
@@ -299,7 +348,7 @@ class NavigationMixin:
             self._move(moves[key])
             return True
         if key == Qt.Key.Key_Home:
-            self._go_to(0)
+            self._go_home()
             return True
         if key == Qt.Key.Key_End:
             self._go_end()

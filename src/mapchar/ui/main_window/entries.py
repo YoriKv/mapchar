@@ -201,6 +201,14 @@ class EntriesMixin:
             name, (e.name for e in self.workspace.entries if e is not entry)
         )
 
+    def _show_entry(self, entry: Entry) -> None:
+        """A Files row clicked: the entry on screen, and a block confined to its
+        source — again when it already was, which is how a view drilled into
+        one string comes back out."""
+        self._activate_entry(entry)
+        if entry.kind is EntryKind.BLOCK:
+            self._view_source(entry)
+
     def _on_entry_double(self, entry: Entry) -> None:
         if entry.kind is EntryKind.BOOKMARK:
             self._jump_to_bookmark(entry)

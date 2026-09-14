@@ -124,6 +124,10 @@ in bytes, which is the unit their results are reported and selected in.
 - **`source_start(source)`** — where a source begins, or `None` when it does
   not say (an empty pointer list, no source): the one answer the Files panel's
   sort, the block bar and a restored view position all read.
+- **`source_span(source)`** — the bytes a source itself occupies, `(start,
+  stop)`, or `None`: the range, the fixed strings, the pointer table, or the
+  stretch from a pointer list's lowest pointer to the end of its highest. What
+  a block's view is confined to.
 - **`Extraction`** — the result of running a block: the string records plus
   notices (end of data reached, operand cut short, pointer out of range).
 
@@ -593,6 +597,7 @@ list) and `ui/__init__.py` (the `settings()` accessor and the view constants
 | State | Home |
 |---|---|
 | View offset, selection, current view tab | the window, live, and re-read from its widgets on every refresh |
+| View bounds (the stretch the Hex and Text tabs are confined to) | the window, live; re-derived from a block's source on every activation, so never saved |
 | View offset, view tab and start table, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
 | Container, compression, block configuration, font, box | the `Entry` |
 | Bytes, table set, strings, notices | the `Document` |

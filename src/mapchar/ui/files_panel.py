@@ -1,6 +1,9 @@
-"""The Files panel: ROMs with their blocks and bookmarks, tables, fonts."""
+"""The Files panel: ROMs with their blocks and bookmarks, tables, fonts — and
+under each block, its strings."""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QKeySequence, QPalette
@@ -30,6 +33,9 @@ from mapchar.ui.panel import WorkspaceTreePanel
 from mapchar.ui.theme import NOTICE_WASH, WARNING_INK
 from mapchar.ui.widgets import show_elided_tooltips
 
+if TYPE_CHECKING:
+    from mapchar.core.block import StringRecord
+
 GROUPS = {EntryKind.FILE: "ROMs", EntryKind.TABLE: "Tables", EntryKind.FONT: "Fonts"}
 # The row markers: a glyph in a palette role. ROMs and fonts sit under their
 # own group headings and carry no mark; a bookmark wears the accent.
@@ -45,6 +51,29 @@ DUPLICATE_KEY = QKeySequence("Ctrl+D")
 
 SORT_KEYS = ("Name", "Type", "Offset")
 """What **Sort by** offers; Offset only makes sense among a file's children."""
+
+STRING_ROLE = Qt.ItemDataRole.UserRole + 1
+"""On a string row: ``(block entry id, string index)``. The entry role stays
+empty there, so nothing that acts on entries mistakes a string for one."""
+PREVIEW_CHARS = 48
+"""How much of a string a row shows before cutting it short."""
+_UNBUILT = object()
+"""The stub under a block whose strings are not built: it keeps the expander,
+and opening the block replaces it."""
+
+
+def string_preview(text: str) -> str:
+    """One line of a string's text, cut short with an ellipsis.
+
+    Line breaks and runs of spaces fold to one space — a row is a line — and
+    a string that shows nothing says so, rather than being a bare number.
+    """
+    flat = " ".join(text.split())
+    if not flat:
+        return "(empty)"
+    if len(flat) <= PREVIEW_CHARS:
+        return flat
+    return flat[: PREVIEW_CHARS - 1] + "…"
 
 
 def entry_offset(entry: Entry) -> int:
@@ -198,6 +227,11 @@ class EntryTree(QTreeWidget):
 class FilesPanel(ThemedIcons, WorkspaceTreePanel):
     entry_activated = Signal(object)
     """Clicked: show this entry."""
+    string_activated = Signal(object, int)
+    """A string row clicked: show this block, confined to the string at index."""
+    strings_requested = Signal(object)
+    """A block the session has not read was opened: read it, so its strings
+    can be listed."""
     entry_double_clicked = Signal(object)
     context_menu_requested = Signal(object, QPoint)
     remove_requested = Signal(list)
@@ -237,9 +271,17 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self._items: dict[int, QTreeWidgetItem] = {}
         self._groups: dict[EntryKind, QTreeWidgetItem] = {}
         self._editing: Entry | None = None
+        self._expanded: set[int] = set()
+        """The blocks open to their strings, by entry id, so a rebuild — a row
+        added, removed or reordered — puts them back open."""
+        self._string_keys: dict[int, object] = {}
+        """What each block's string rows were built from, so a refresh that
+        changed nothing about the strings leaves the rows alone."""
         self.filter.textChanged.connect(self._apply_filter)
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.itemDoubleClicked.connect(self._on_double)
+        self.tree.itemExpanded.connect(self._on_expanded)
+        self.tree.itemCollapsed.connect(self._on_collapsed)
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.customContextMenuRequested.connect(self._on_menu)
         self.tree.delete_pressed.connect(
@@ -267,6 +309,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.tree.clear()
         self._items.clear()
         self._groups.clear()
+        self._string_keys.clear()
         self._editing = None
         for kind, title in GROUPS.items():
             group = QTreeWidgetItem([title])
@@ -285,6 +328,12 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
             for child in self.workspace.children(entry):
                 item.addChild(self._make_item(child))
             item.setExpanded(True)
+        # Blocks open before the rebuild open again, which builds their rows.
+        self._expanded &= set(self._items)
+        for key in list(self._expanded):
+            item = self._items.get(key)
+            if item is not None:
+                item.setExpanded(True)
         self._apply_filter(self.filter.text())
         self._on_current(self.workspace.current)
 
@@ -307,6 +356,86 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         tip = self._tooltip(entry, why)
         item.setToolTip(0, tip)
         item.setToolTip(STATUS_COL, tip)
+        if entry.kind is EntryKind.BLOCK:
+            self._sync_strings(entry, item)
+
+    # -- a block's strings ----------------------------------------------
+
+    def _sync_strings(self, entry: Entry, item: QTreeWidgetItem) -> None:
+        """The rows under a block: its strings while it is open, else one stub
+        that keeps the expander.
+
+        Built only while the block is open, since a project's blocks can hold
+        tens of thousands of strings between them and a rebuild is frequent.
+        A block the session has not read keeps its stub when opened, and the
+        opening asks for the read (:attr:`strings_requested`); a block that
+        cannot be read at all has nothing to open.
+        """
+        if entry.missing or entry.config is None:
+            self._string_keys.pop(id(entry), None)
+            item.takeChildren()
+            return
+        doc = entry.doc
+        if id(entry) not in self._expanded or doc is None:
+            self._string_keys.pop(id(entry), None)
+            if not (item.childCount() == 1 and self._is_stub(item.child(0))):
+                item.takeChildren()
+                item.addChild(self._stub())
+            return
+        key = (id(doc), id(doc.strings), len(doc.strings))
+        if self._string_keys.get(id(entry)) == key:
+            return
+        self._string_keys[id(entry)] = key
+        item.takeChildren()
+        item.addChildren([self._string_item(entry, rec) for rec in doc.strings])
+        if self.filter.text():
+            self._apply_filter(self.filter.text())
+
+    @staticmethod
+    def _stub() -> QTreeWidgetItem:
+        stub = QTreeWidgetItem(["…"])
+        stub.setData(0, STRING_ROLE, _UNBUILT)
+        stub.setFlags(Qt.ItemFlag.NoItemFlags)
+        return stub
+
+    @staticmethod
+    def _is_stub(item: QTreeWidgetItem) -> bool:
+        return item.data(0, STRING_ROLE) is _UNBUILT
+
+    def _string_item(self, entry: Entry, rec: StringRecord) -> QTreeWidgetItem:
+        text = rec.original_text()
+        item = QTreeWidgetItem([f"{rec.index}  {string_preview(text)}"])
+        item.setData(0, STRING_ROLE, (id(entry), rec.index))
+        # Selectable and nothing more: not dragged, not dropped on, not renamed.
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        where = f"{rec.start:X}–{rec.end - 1:X} ({rec.length} bytes)"
+        item.setToolTip(0, f"{where}\n{text}")
+        return item
+
+    def string_of(self, item: QTreeWidgetItem | None) -> tuple[Entry, int] | None:
+        """The block and string index a string row stands for, else ``None``."""
+        data = item.data(0, STRING_ROLE) if item is not None else None
+        if not isinstance(data, tuple):
+            return None
+        entry = self.workspace.entry_by_id(data[0])
+        return None if entry is None else (entry, data[1])
+
+    def _on_expanded(self, item: QTreeWidgetItem) -> None:
+        entry = self.entry_of(item)
+        if entry is None or entry.kind is not EntryKind.BLOCK:
+            return
+        self._expanded.add(id(entry))
+        if entry.doc is None:
+            self.strings_requested.emit(entry)
+        self._update_item(entry)
+
+    def _on_collapsed(self, item: QTreeWidgetItem) -> None:
+        entry = self.entry_of(item)
+        if entry is not None and entry.kind is EntryKind.BLOCK:
+            self._expanded.discard(id(entry))
+            # The rows go with it, so a block with thousands of strings costs
+            # nothing while it is closed — and nothing at the next rebuild.
+            self._update_item(entry)
 
     def _marker(self, entry: Entry) -> QIcon:
         """The row's icon: its kind's mark, or a warning when its file is gone."""
@@ -494,9 +623,27 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.filter.selectAll()
 
     def _on_clicked(self, item, column) -> None:
+        if len(self.tree.selectedItems()) > 1:
+            return
         entry = self.entry_of(item)
-        if entry is not None and len(self.tree.selectedItems()) <= 1:
+        if entry is not None:
             self.entry_activated.emit(entry)
+            return
+        string = self.string_of(item)
+        if string is not None:
+            self.string_activated.emit(*string)
+            # Showing the block made it current, which selected its own row;
+            # the row clicked is the string's, and it stays selected.
+            self._select_item(item)
+
+    def _select_item(self, item: QTreeWidgetItem) -> None:
+        self.tree.blockSignals(True)
+        try:
+            self.tree.clearSelection()
+            item.setSelected(True)
+            self.tree.setCurrentItem(item)
+        finally:
+            self.tree.blockSignals(False)
 
     def _on_double(self, item, column) -> None:
         entry = self.entry_of(item)
@@ -508,7 +655,12 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.entry_double_clicked.emit(entry)
 
     def _on_menu(self, pos: QPoint) -> None:
-        entry = self.entry_of(self.tree.itemAt(pos))
+        item = self.tree.itemAt(pos)
+        entry = self.entry_of(item)
+        if entry is None:
+            # A string row's menu is its block's.
+            string = self.string_of(item)
+            entry = string[0] if string is not None else None
         self.context_menu_requested.emit(entry, self.tree.viewport().mapToGlobal(pos))
 
     def _on_current(self, entry: Entry | None) -> None:
@@ -616,6 +768,12 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
     # -- filtering ------------------------------------------------------
 
     def _apply_filter(self, text: str) -> None:
+        """Hide every row the words do not match, down to a block's strings.
+
+        A matching row keeps its parents visible, and a block one of whose
+        strings matches opens to show it. A block's stub is not a row that
+        can match: it follows its block.
+        """
         words = fold(text).split()
 
         def matches(item: QTreeWidgetItem) -> bool:
@@ -629,6 +787,17 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
                 for j in range(item.childCount()):
                     c = item.child(j)
                     hit = matches(c)
-                    c.setHidden(bool(words) and not hit)
-                    child_hit = child_hit or hit
+                    string_hit = False
+                    for k in range(c.childCount()):
+                        s = c.child(k)
+                        if self._is_stub(s):
+                            s.setHidden(bool(words) and not hit)
+                            continue
+                        found = matches(s)
+                        s.setHidden(bool(words) and not found)
+                        string_hit = string_hit or found
+                    c.setHidden(bool(words) and not (hit or string_hit))
+                    if words and string_hit:
+                        c.setExpanded(True)
+                    child_hit = child_hit or not c.isHidden()
                 item.setHidden(bool(words) and not (matches(item) or child_hit))

@@ -36,7 +36,8 @@ No layout's minimum size may be set by text or a count that varies.
   the glyph sheet, and the raw view, which scrolls sideways when narrower than
   its rows. The Hex and Text tabs are the exception: each holds the window its
   box has room for, and what does not fit is reached by moving the view — its
-  scrollbar is the file's, never the box's.
+  scrollbar is the file's (or the stretch of it the view is confined to),
+  never the box's.
 - **Dialogs fit a 768-pixel-high screen**: a long form is grouped into titled
   boxes in columns (the Block dialog).
 - **Docks**: a tree's name column stretches and gives way first; count columns

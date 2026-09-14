@@ -77,6 +77,27 @@ def source_start(source: Source | None) -> int | None:
     return source.start
 
 
+def source_span(source: Source | None) -> tuple[int, int] | None:
+    """The bytes a source itself occupies, as ``(start, stop)``, or ``None``.
+
+    The range read for a range or fixed source, the table for a pointer table,
+    and for a pointer list the stretch from its lowest pointer to the end of its
+    highest — the pointers, never the strings they reach. An empty source says
+    nothing.
+    """
+    if source is None:
+        return None
+    if isinstance(source, PointerListSource):
+        if not source.addresses:
+            return None
+        span = (min(source.addresses), max(source.addresses) + source.size)
+    elif isinstance(source, FixedSource):
+        span = (source.start, source.start + source.count * source.length)
+    else:
+        span = (source.start, source.stop)
+    return span if span[1] > span[0] else None
+
+
 @dataclass(frozen=True)
 class EndToken:
     """The string ends at the first end token."""

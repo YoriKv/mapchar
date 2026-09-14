@@ -13,8 +13,9 @@ and the scrollbar beside it move the view instead, by lines to where a line of
 it starts (:meth:`TextWidget.line_starts`) — and the box's own scrollbars are
 fixed, since one that came and went with the content would change the room, and
 with it the window, and with it the content. The bar beside the box is the
-file's, as the Hex tab's is: its handle is the window, its arrows step a line,
-its trough a page, and a drag goes to the byte under the handle.
+file's — or the stretch of it the view is confined to — as the Hex tab's is:
+its handle is the window, its arrows step a line, its trough a page, and a drag
+goes to the byte under the handle.
 """
 
 from __future__ import annotations
@@ -166,16 +167,18 @@ class TextWidget(QWidget):
 
     # --- the scrollbar ------------------------------------------------------
 
-    def set_position(self, offset: int, total: int) -> None:
-        """Place the scrollbar: the window starts at ``offset`` of a file of
-        ``total`` bytes. Mid-drag only the handle's place is kept, since a
-        handle that changed its length under the mouse would jump."""
+    def set_position(self, offset: int, bounds: tuple[int, int]) -> None:
+        """Place the scrollbar: the window starts at ``offset`` of the bytes
+        ``bounds`` — the whole file, or the stretch the view is confined to.
+        Mid-drag only the handle's place is kept, since a handle that changed
+        its length under the mouse would jump."""
         bar = self.bar
+        start, end = bounds
         self._placing = True
         try:
             if not bar.isSliderDown():
                 shown = max(1, self.shown_bytes())
-                bar.setRange(0, max(0, total - shown, offset))
+                bar.setRange(start, max(start, end - shown, offset))
                 bar.setPageStep(shown)
             bar.setValue(offset)
         finally:

@@ -60,6 +60,8 @@ class RefreshMixin:
         doc, entry = self._doc, self._entry
         is_block = entry is not None and entry.kind is EntryKind.BLOCK
         if doc is None:
+            self._bounds = None
+            self.whole_action.setEnabled(False)
             self.raw.set_model(None)
             self.strings.set_rows([])
             self.nav_status.setText("")
@@ -69,6 +71,14 @@ class RefreshMixin:
             return
         total = doc.size
         self._offset = max(0, min(self._offset, max(total - 1, 0)))
+        # A position outside the view's bounds widens them to the whole file:
+        # whatever asked for it — a typed address, a search hit, an undo
+        # reaching its edit — meant to be shown there, not clamped away from it.
+        if self._bounds is not None and not (
+            self._bounds[0] <= self._offset < self._bounds[1]
+        ):
+            self._bounds = None
+        self.whole_action.setEnabled(self._bounds is not None)
         self.offset_box.setText(self._format_address(self._offset))
         tables = self._table_set()
         if is_block:
@@ -102,7 +112,7 @@ class RefreshMixin:
         the row cut off at its bottom edge."""
         entry = self._entry
         window = self.raw.visible_bytes() + BYTES_PER_ROW
-        data = doc.data[self._offset : self._offset + window]
+        data = doc.data[self._offset : min(self._offset + window, self._view_end())]
         run = self._decode_window(data, tables)
         string_starts = {bit // 8 for bit in run.starts}
         pointer_bytes: set[int] = set()
@@ -116,7 +126,13 @@ class RefreshMixin:
                             pointer_bytes.add(rel)
         self.raw.set_model(
             RowModel(
-                self._offset, data, run.tokens, string_starts, doc.size, pointer_bytes
+                self._offset,
+                data,
+                run.tokens,
+                string_starts,
+                doc.size,
+                pointer_bytes,
+                self._bounds,
             )
         )
 
@@ -143,7 +159,7 @@ class RefreshMixin:
         if self.tabs.currentWidget() is not self.text:
             return
         self.text.set_model(self._fit_text_window(doc, tables))
-        self.text.set_position(self._offset, doc.size)
+        self.text.set_position(self._offset, self._view_range())
         self.text.select_bytes(*(self._selection or (-1, -1)))
 
     def _fit_text_window(self, doc: Document, tables: TableSet | None) -> TextModel:
@@ -159,13 +175,13 @@ class RefreshMixin:
         overflowed: the text ran out inside it, and more may follow.
         The first token is always kept, so the window is never empty.
         """
-        offset = self._offset
+        offset, end = self._offset, self._view_end()
         length = max(BYTES_PER_ROW, self.text.room())
         if tables is None:
-            data = doc.data[offset : offset + length]
+            data = doc.data[offset : min(offset + length, end)]
             return text_model([], offset, len(data))
         while True:
-            data = doc.data[offset : offset + length]
+            data = doc.data[offset : min(offset + length, end)]
             tokens = self._decode_window(data, tables).tokens
             model = text_model(tokens, offset, len(data))
             self.text.set_model(model)
@@ -226,10 +242,11 @@ class RefreshMixin:
     def _text_lines_down(self, lines: int, doc: Document) -> int:
         """The byte the view starts at ``lines`` lines down: the start of that
         line in view, or the end of the window. No further once the window
-        reaches the end of the file, as the Hex tab stops at its last page."""
+        reaches the end of the file — or of the view's bounds — as the Hex tab
+        stops at its last page."""
         text, offset = self.text, self._offset
         end = offset + text.shown_bytes()
-        if end >= doc.size:
+        if end >= self._view_end():
             return offset
         for start in text.line_starts()[lines:]:
             byte = text.byte_at_char(start)
@@ -248,8 +265,9 @@ class RefreshMixin:
         did — is never the one landed on.
         """
         offset, text = self._offset, self.text
-        if offset == 0 or tables is None:
-            return max(0, offset - lines * BYTES_PER_ROW)
+        first = self._view_range()[0]
+        if offset <= first or tables is None:
+            return max(first, offset - lines * BYTES_PER_ROW)
         shown = text.shown_bytes()
         per_line = shown / text.lines_in_view() if shown else BYTES_PER_ROW
         body, starts = text.edit.toPlainText(), text.line_starts()
@@ -263,7 +281,7 @@ class RefreshMixin:
             )
             starts = text.line_starts()
             here = max(i for i, s in enumerate(starts) if s <= len(above.body))
-            if here > lines or start == 0 or budget >= TEXT_WINDOW_LIMIT:
+            if here > lines or start <= first or budget >= TEXT_WINDOW_LIMIT:
                 break
             budget *= 2
         byte = text.byte_at_char(starts[max(0, here - lines)])
@@ -281,7 +299,9 @@ class RefreshMixin:
         step with the file.
         """
         best: tuple[tuple[int, bool], int, list[Token]] | None = None
-        for at in range(max(0, start), max(-1, start - _ALIGN_TRIES), -1):
+        first = self._view_range()[0]
+        start = max(first, start)
+        for at in range(start, max(first - 1, start - _ALIGN_TRIES), -1):
             rel = (offset - at) * 8
             data = doc.data[at : offset + _ALIGN_LOOKAHEAD]
             tokens = self._decode_window(data, tables).tokens
@@ -314,6 +334,12 @@ class RefreshMixin:
         if doc is None:
             return
         parts = [f"{doc.size:,} bytes"]
+        if self._bounds is not None:
+            start, end = self._bounds
+            parts.append(
+                f"viewing {self._format_address(start)}–"
+                f"{self._format_address(end - 1)} ({end - start:,} bytes)"
+            )
         if self._selection:
             s, e = self._selection
             parts.append(f"selected {s:X}–{e - 1:X} ({e - s} bytes)")

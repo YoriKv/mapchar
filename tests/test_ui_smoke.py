@@ -766,8 +766,9 @@ def test_the_table_editor_shows_a_table_file_s_notices(window, tmp_path):
 
 # The rows that apply whatever is on screen, so no capability gates them: the
 # project and plugin rows, the panels, the themes, the help, the visit trail
-# (armed by the trail), the undo pair (armed by the stack) and the entry
-# clipboard (scoped to the Files panel, which has a selection of its own).
+# (armed by the trail), the undo pair (armed by the stack), the entry clipboard
+# (scoped to the Files panel, which has a selection of its own) and Show Whole
+# File (armed by the refresh, while the view is confined).
 ALWAYS_ON = frozenset(
     {
         "Open ROM…",
@@ -800,6 +801,7 @@ ALWAYS_ON = frozenset(
         "Dark Theme",
         "Back",
         "Forward",
+        "Show Whole File",
         "Files",
         "Tables",
         "Fonts",

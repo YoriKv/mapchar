@@ -70,7 +70,8 @@ the preview system in [preview.md](preview.md).
   - the navigation bar under Hex and Text; the string status bar under Strings.
 - **Hex** dock — optional, at the bottom, hidden by default.
 - **Navigate** menu — **Back / Forward** through the entries visited, **Go to
-  Address**, and the ends of the file.
+  Address**, the ends of the file, and **Show Whole File**, live while the
+  view is confined to a stretch of it.
 - **Panels** menu — toggles each dock. **Reset Panel Layout** puts the docks
   back where a fresh install has them, leaving the window's own size alone.
 - **Tool windows** — separate top-level windows that remember their
@@ -111,7 +112,11 @@ the preview system in [preview.md](preview.md).
 ## The Files panel
 
 - **Grouping** — rows are grouped under **ROMs**, **Tables** and **Fonts**.
-  Blocks and bookmarks nest under their file.
+  Blocks and bookmarks nest under their file, and a block opens to its
+  strings: one row each, `index  text`, the text on one line and cut short
+  with `…`; the tooltip has the string's address and its whole text. The rows
+  are built while the block is open, and opening a block the session has not
+  read reads it without showing it.
 - **Row markers:**
   - icons for the kind on blocks, bookmarks and tables, from the bundled
     icon font; files and fonts sit under their group heading and carry
@@ -126,9 +131,14 @@ the preview system in [preview.md](preview.md).
 - **Selecting** — click opens an entry; a table opens the Table Editor and a
   font the Preview window's Font tab, neither becoming the view; Shift/Ctrl
   extend the selection; with several rows selected only Remove and Move
-  Up/Down apply.
+  Up/Down apply. A block's row confines the view to its source, from its
+  start — the range, the fixed strings, the pointer table, or the stretch a
+  pointer list's pointers lie in — and a string's row confines it to that
+  string's bytes, selected in every view (see [Raw view](#raw-view)). A
+  string row's context menu is its block's.
 - **Filter box** (Ctrl+F) matches every typed word in any order. A matching
-  child keeps its parent visible.
+  child keeps its parent visible, and a block one of whose strings matches
+  opens to show it.
 - **Double-click** — bookmark jumps; table opens the Table Editor; file or
   block renames inline. **F2** renames any row inline.
 - **Names** — no two blocks or bookmarks share one: a new row, a rename, an
@@ -237,6 +247,16 @@ The exploration surface, the equivalent of celPix's tile canvas.
   down is exactly what was shown. Each tab has a scrollbar over the whole file:
   its handle is the window, its arrows a row or line step, its trough a page
   step, and a drag goes to the row or byte under it.
+- **Bounds** — the view can be confined to a stretch of the file: a block
+  opens on its source, and a string's row in the Files panel confines it to
+  that string. Inside them the tabs show those bytes and no more, the
+  scrollbar spans them, Home and End are their ends, and no step leaves them;
+  the status bar says what is in view. Addresses stay the file's. Any position
+  asked for outside them — a typed address, a search hit, a Strings row, an
+  undo reaching its edit — widens the view to the whole file, as **Navigate ▸
+  Show Whole File** does in place. A file is never confined, and a block
+  returning to the screen is confined to its source again, keeping its
+  position if that is inside it.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
   bank fields), an address box, Home, page and row steps, **−B / +B** byte
   steps, and End. A view narrower than its rows scrolls sideways. The format is remembered per machine and drives the address

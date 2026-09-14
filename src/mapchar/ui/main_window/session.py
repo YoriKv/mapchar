@@ -153,6 +153,7 @@ class SessionMixin:
             self._refresh_table_picks()
             if entry is None:
                 self._offset = 0
+                self._bounds = None
                 return
             file_entry = entry.parent if entry.kind is EntryKind.BLOCK else entry
             if file_entry is not None and not select_data(
@@ -168,13 +169,17 @@ class SessionMixin:
             if not select_data(self.table_pick, table_id):
                 self.table_pick.setCurrentIndex(0)
             self._offset = entry.session.offset
-            if (
-                entry.kind is EntryKind.BLOCK
-                and entry.config is not None
-                and not entry.session.offset
-            ):
+            # A block opens on its source: the view is confined to it, and the
+            # position it was left at is kept only while it is inside.
+            self._bounds = None
+            if entry.kind is EntryKind.BLOCK and entry.config is not None:
+                self._bounds = self._source_bounds(entry)
                 start = source_start(entry.config.source)
-                self._offset = 0 if start is None else start
+                inside = self._bounds is None or (
+                    self._bounds[0] <= self._offset < self._bounds[1]
+                )
+                if not entry.session.offset or not inside:
+                    self._offset = 0 if start is None else start
             self._show_view(entry.session.view)
         finally:
             for w in widgets:

@@ -6,6 +6,7 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     RangeSource,
+    source_span,
     source_start,
 )
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
@@ -230,6 +231,46 @@ class BlockBarMixin:
             return start
         strings = entry.doc.strings if entry.doc is not None else []
         return strings[0].start if strings else 0
+
+    def _source_bounds(self, entry: Entry) -> tuple[int, int] | None:
+        """The bytes a block's view is confined to: its source, held inside
+        its document — a range or fixed source's bytes, a pointer table, the
+        stretch a pointer list's pointers lie in — or ``None`` when the source
+        names none, which leaves the whole document in view."""
+        span = source_span(entry.config.source if entry.config is not None else None)
+        doc = self._doc if entry is self._entry else entry.doc
+        if span is not None and doc is not None:
+            span = (max(0, span[0]), min(span[1], doc.size))
+        return span if span is not None and span[1] > span[0] else None
+
+    def _view_source(self, entry: Entry) -> None:
+        """Confine the view to the block's source, from its start — what a
+        click on its Files row does, whether or not it was already on screen."""
+        if entry is not self._entry:
+            return
+        bounds = self._source_bounds(entry)
+        self._set_bounds(bounds)
+        if bounds is not None:
+            self._go_to(bounds[0])
+
+    def _show_string(self, entry: Entry, index: int) -> None:
+        """A string clicked under its block in the Files panel: the block on
+        screen, the view confined to that string's bytes, and the string
+        selected everywhere a string can be."""
+        self._activate_entry(entry)
+        rec = self._string(entry, index)
+        if entry is not self._entry or rec is None:
+            return
+        self._set_bounds((rec.start, rec.end))
+        self.strings.select_index(index)
+        self._on_string_row(index)
+        self._on_selection(rec.start, rec.end)
+
+    def _read_block_strings(self, entry: Entry) -> None:
+        """The Files panel opened a block the session has not read: read it, so
+        its strings can be listed without making it the view."""
+        if entry.doc is None and entry.config is not None:
+            self._block_strings(entry)
 
     def _jump_to_source(self, entry: Entry) -> None:
         """Files panel ▸ Jump to Source: the parent file at the block's offset,

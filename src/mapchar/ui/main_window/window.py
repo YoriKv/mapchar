@@ -166,6 +166,10 @@ class MainWindow(
         self._doc: Document | None = None
         self._entry: Entry | None = None
         self._offset = 0
+        self._bounds: tuple[int, int] | None = None
+        """The bytes the Hex and Text tabs are confined to — a block's source, one
+        string — or ``None`` for the whole document
+        (:mod:`mapchar.ui.main_window.navigation`)."""
         self._text_trail: list[tuple[int, int, int]] = []
         """The Text tab's wheel steps down, as ``(from, to, lines)``, so a step
         up retraces one exactly (:mod:`mapchar.ui.main_window.refresh`)."""
@@ -342,7 +346,7 @@ class MainWindow(
             elif isinstance(delta, int):
                 b.clicked.connect(lambda _=False, d=delta: self._move(d))
             elif delta == "home":
-                b.clicked.connect(lambda: self._go_to(0))
+                b.clicked.connect(self._go_home)
             else:
                 b.clicked.connect(self._go_end)
             nl.addWidget(b)
@@ -370,7 +374,9 @@ class MainWindow(
         self.find_replace = FindReplaceDialog(self)
 
         # Signals.
-        self.files_panel.entry_activated.connect(self._activate_entry)
+        self.files_panel.entry_activated.connect(self._show_entry)
+        self.files_panel.string_activated.connect(self._show_string)
+        self.files_panel.strings_requested.connect(self._read_block_strings)
         self.files_panel.entry_double_clicked.connect(self._on_entry_double)
         self.files_panel.context_menu_requested.connect(self._files_menu)
         self.files_panel.remove_requested.connect(self._remove_entries)
@@ -594,9 +600,15 @@ class MainWindow(
         # Gated with the offset box and the steps: they move the same view, and a
         # row that jumps a document there is not open is a row that does nothing.
         self.ends_actions = (
-            act(navigate_menu, "&Start of File", lambda: self._go_to(0), None),
+            act(navigate_menu, "&Start of File", self._go_home, None),
             act(navigate_menu, "&End of File", self._go_end, None),
         )
+        # Armed by the refresh rather than the capability table: it is live only
+        # while the view is confined, which is a state and not a kind of entry.
+        self.whole_action = act(
+            navigate_menu, "Show &Whole File", self._show_whole_file, None
+        )
+        self.whole_action.setEnabled(False)
 
         search_menu = bar.addMenu("&Search")
         self.search_actions = (
