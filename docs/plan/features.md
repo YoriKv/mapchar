@@ -194,10 +194,12 @@ The exploration surface, the equivalent of celPix's tile canvas.
 - **Columns** — address, hex bytes, and the decode of those same bytes through
   the start table. Rows are aligned and banded: every byte owns a fixed cell in
   both columns — three characters in the hex, with a small gap every four
-  bytes, and two and a half in the text — and each token sits in the text
-  column at its **bits**, so a 6-bit code takes three quarters of a cell and
-  tokens that start inside one byte never share a place. A token over a row end
-  is written on the row holding most of it.
+  bytes, and three in the text — and each token sits in the text column inside
+  the cell of the byte holding most of its **bits**, so a character is never
+  drawn over a byte it did not come from. Tokens with the same byte split its
+  cell, a token also takes the bytes it covers that no other token holds, and
+  one that shows nothing takes no share. A token over a row end is written on
+  the row holding most of it.
 - **Text in its cells** — text never leaves its token's cells: wider text is
   condensed, then cut short with a corner notch, and one character with nothing
   left to drop is condensed the rest of the way rather than sliced at the

@@ -473,9 +473,10 @@ def test_every_hex_pair_is_drawn_in_its_own_cell(qtbot):
         assert cells[f"{rel:02X}"] == widget._hex_cell(rel)
 
 
-def test_bit_packed_tokens_each_get_a_place_of_their_own(qtbot):
-    """Four 6-bit codes fill three bytes: each is placed by its bits, three
-    quarters of a byte cell, and none shares another's place."""
+def test_bit_packed_tokens_sit_in_the_byte_holding_most_of_their_bits(qtbot):
+    """Four 6-bit codes fill three bytes: each sits inside the cell of the byte
+    holding most of its bits, so the second code shares the second byte with
+    the third rather than straddling the first two."""
     from PySide6.QtCore import QRectF
 
     from mapchar.core.tokens import Token
@@ -488,12 +489,33 @@ def test_bit_packed_tokens_each_get_a_place_of_their_own(qtbot):
     places = [widget._text_segments(t, 3) for t in tokens]
     assert all(len(p) == 1 for p in places)
     rects = [p[0] for p in places]
-    for rect in rects:
-        assert rect.width() == widget._text_width * 6 / 8
-    for left, right in zip(rects, rects[1:], strict=False):
-        assert left.right() == right.left()
-    assert rects[0].left() == QRectF(widget._text_cell(0)).left()
-    assert rects[-1].right() == QRectF(widget._text_cell(2)).right()
+    cells = [QRectF(widget._text_cell(rel)) for rel in range(3)]
+    half = cells[1].width() / 2
+    assert rects[0] == cells[0]
+    assert rects[1] == cells[1].adjusted(0, 0, -half, 0)
+    assert rects[2] == cells[1].adjusted(half, 0, 0, 0)
+    assert rects[3] == cells[2]
+
+
+def test_a_token_that_shows_nothing_takes_no_share_of_its_byte(qtbot):
+    """A table switch between two codes is a zero-width place at the boundary,
+    and the codes split the byte between themselves."""
+    from PySide6.QtCore import QRectF
+
+    from mapchar.core.table import TokenKind
+    from mapchar.core.tokens import Token
+
+    tokens = [
+        Token("0000", 0, 4, _text_entry("0000", "か")),
+        Token("", 4, 4, _text_entry("", "", TokenKind.SWITCH)),
+        Token("0001", 4, 8, _text_entry("0001", "き")),
+    ]
+    widget = _raw_widget(qtbot, tokens, bytes(1))
+    cell = QRectF(widget._text_cell(0))
+    first, switch, second = (widget._text_segments(t, 1) for t in tokens)
+    assert first == [cell.adjusted(0, 0, -cell.width() / 2, 0)]
+    assert switch == [QRectF(cell.center().x(), cell.top(), 0, cell.height())]
+    assert second == [cell.adjusted(cell.width() / 2, 0, 0, 0)]
 
 
 def test_a_token_over_a_row_end_is_placed_on_both_rows(qtbot):
