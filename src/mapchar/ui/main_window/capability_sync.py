@@ -47,7 +47,7 @@ _GATES: dict[Capability, tuple[str, ...]] = {
         "goto_action",
         "ends_actions",
     ),
-    Capability.RAW_VIEW: ("mode_button", "raw_tab_action", "display_mode_action"),
+    Capability.RAW_VIEW: ("raw_tab_action", "text_tab_action"),
     Capability.HEX_VIEW: ("hex_panel",),
     Capability.CODECS: ("codecs_bar",),
     Capability.SEARCH: ("search_actions",),
@@ -110,7 +110,11 @@ class CapabilitySyncMixin:
                     if name in _HIDDEN:
                         control.setVisible(allowed)
                     control.setEnabled(allowed)
-        # The two view tabs have no widget of their own to disable: a tab's
-        # enabled state lives on the tab bar, keyed by index.
-        self.tabs.setTabEnabled(0, self._can(Capability.RAW_VIEW))
-        self.tabs.setTabEnabled(1, self._can(Capability.STRINGS))
+        # The view tabs have no widget of their own to disable: a tab's enabled
+        # state lives on the tab bar, keyed by index.
+        for widget, capability in (
+            (self.raw, Capability.RAW_VIEW),
+            (self.text, Capability.RAW_VIEW),
+            (self.strings, Capability.STRINGS),
+        ):
+            self.tabs.setTabEnabled(self.tabs.indexOf(widget), self._can(capability))

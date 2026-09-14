@@ -127,7 +127,7 @@ class BlockBarMixin:
         )
         self._push_add(entry)
         self._activate_entry(entry)
-        self.tabs.setCurrentIndex(1)
+        self._show_view("strings")
 
     def _edit_block(self) -> None:
         """A block's Edit…: re-point it, as one undo step, keeping its work.
@@ -202,7 +202,7 @@ class BlockBarMixin:
         )
         entry.session.table_id = self.table_pick.currentData()
         entry.session.offset = self._offset
-        entry.session.view = "strings" if self.tabs.currentIndex() == 1 else "raw"
+        entry.session.view = self._current_view()
         self._push_add(entry)
 
     def _jump_to_bookmark(self, entry: Entry) -> None:
@@ -214,7 +214,7 @@ class BlockBarMixin:
             self._choose_table(entry.session.table_id)
         select_data(self.compression_pick, entry.compression_id)
         self._go_to(entry.bookmark_offset)
-        self.tabs.setCurrentIndex(1 if entry.session.view == "strings" else 0)
+        self._show_view(entry.session.view)
 
     def _block_file_offset(self, entry: Entry) -> int:
         """Where a block's bytes sit in its parent file.

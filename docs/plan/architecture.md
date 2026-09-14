@@ -537,8 +537,8 @@ and aliases for renamed plugin ids.
 
 A block's configuration is the `@block` line of the script grammar, so one
 spelling covers the project file, a script and the block dialog. `parent` is an
-index into `entries`; a `session` holds only what is not at its default, and a
-`view` of `strings` means the strings tab was the open one.
+index into `entries`; a `session` holds only what is not at its default, and its
+`view` names the open tab: `raw` (Hex, the default), `text` or `strings`.
 
 Only strings with a translation, a non-default status or notes are written, and
 a block that was loaded but never opened keeps its own in
@@ -596,7 +596,7 @@ list) and `ui/__init__.py` (the `settings()` accessor and the view constants
 | View offset, view tab and start table, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
 | Container, compression, block configuration, font, box | the `Entry` |
 | Bytes, table set, strings, notices | the `Document` |
-| Address format, display mode, Follow selection, theme, window layouts, recent projects | `QSettings` |
+| Address format, Follow selection, theme, window layouts, recent projects | `QSettings` |
 | Undo history, visit trail | the window, for the session |
 
 `SessionMixin._activate_entry` is the single funnel for switching entries:
@@ -614,8 +614,9 @@ never claim `workspace.current`.
 1. **Settle** — clamp the offset; resolve the table set from the start
    table; re-extract the block when its config, table set or buffer
    revision changed (extraction is memoised on those three).
-2. **Render** — Raw: decode the visible window and build the aligned
-   hex/text rows; Strings: refresh the rows whose records changed.
+2. **Render** — Hex: decode the visible window and build the aligned
+   hex/text rows; Text: the same decode as plain text, while its tab is open;
+   Strings: refresh the rows whose records changed.
 3. **Push** to the widgets.
 4. **Sync dependent surfaces** — Tables dock, Block bar, Hex panel, Preview,
    Search results, the window title.

@@ -17,7 +17,7 @@ are what :class:`_StateCommand` exists to state once:
 - **Reach.** A command scoped to an entry has to get back to that entry before it
   can land (:class:`_CurrentEntryCommand`), and an *edit* has to get back to the
   view it was made in as well (:class:`_EditContextCommand`) — reverting a
-  translation while the Raw tab is up would happen somewhere the user cannot see
+  translation while the Hex tab is up would happen somewhere the user cannot see
   it. A change that shows wherever you are — a rename, a reorder — reaches
   nothing (:class:`_InPlaceCommand`), because yanking the view to it would be a
   surprise rather than context.
@@ -113,7 +113,7 @@ class _InPlaceCommand(_StateCommand):
 class _EditContextCommand(_StateCommand):
     """A change made *in* a view, reverted where it was made.
 
-    The same entry is edited from the Strings tab and from the Raw tab plus the
+    The same entry is edited from the Strings tab and from the Hex tab plus the
     Hex dock, so a step that came back in the other one would revert something
     off screen. The view — and the row or offset within it — therefore travels
     with the command alongside the entry.

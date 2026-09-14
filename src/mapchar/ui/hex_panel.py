@@ -26,7 +26,7 @@ from mapchar.ui.widgets import fit_chars, hint_field
 FOLLOW_SELECTION_KEY = "hex/follow_selection"
 """QSettings key for the Follow selection switch.
 
-A local preference like the display mode: whether picking bytes in the raw view
+A local preference like the address format: whether picking bytes in the raw view
 should drag the dump along says how you are reading the file right now, not
 anything about the file, so it belongs beside the theme and never in the project.
 """

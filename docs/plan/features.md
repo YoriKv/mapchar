@@ -66,8 +66,8 @@ the preview system in [preview.md](preview.md).
   - the **Codecs** bar (container, compression, start table);
   - the **Block** bar, shown on a block: source, string type, mapping, and a
     string counter;
-  - the central view, a tab pair: **Raw** and **Strings**;
-  - the navigation bar under Raw; the string status bar under Strings.
+  - the central view, three tabs: **Hex**, **Text** and **Strings**;
+  - the navigation bar under Hex and Text; the string status bar under Strings.
 - **Hex** dock — optional, at the bottom, hidden by default.
 - **Navigate** menu — **Back / Forward** through the entries visited, **Go to
   Address**, and the ends of the file.
@@ -213,11 +213,10 @@ The exploration surface, the equivalent of celPix's tile canvas.
   nothing (a table switch) is a tick. Unmatched bytes are chipped in the hex
   column only. The current block's pointer bytes are chipped in the hex column,
   and the string boundaries it would produce are ruled in both.
-- **Display modes** — **Aligned** (the columns above) or **Text**: the same
-  window decoded into an ordinary read-only text box, with a **Wrap**
-  switch remembered per machine. The toggle is a button on the navigation
-  bar (Ctrl+Shift+A) and is remembered per machine. Selections follow each
-  other between the two modes.
+- **Two tabs** — **Hex** shows the columns above; **Text** shows the same
+  window decoded into an ordinary read-only text box, with a **Wrap** switch
+  remembered per machine. Selections follow each other between the two, and
+  the open tab is part of an entry's session.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
   bank fields), an address box, Home, page and row steps, **−B / +B** byte
   steps, and End. A view narrower than its rows scrolls sideways. The format is remembered per machine and drives the address
@@ -550,7 +549,7 @@ in the game. It is described in [preview.md](preview.md).
   changes; hex overtypes; font and box edits.
 - **Ctrl+Z / Ctrl+Shift+Z** undo the latest action from any surface. Undoing
   a change made elsewhere switches back to that entry **and** the view it was
-  made in — the Strings tab on its row, the Raw tab at its offset.
+  made in — the Strings tab on its row, the Hex tab at its offset.
 - **Unsaved state follows undo** — undoing back to the saved state reads
   clean again, and redoing marks it unsaved once more.
 - **A run of edits on one string is one step**, and a run that ends back where
@@ -562,7 +561,7 @@ in the game. It is described in [preview.md](preview.md).
 
 **Help ▸ Shortcuts… (F1)** shows the live list in two balanced columns, one
 section per menu, built from the menu bar plus the keys and mouse gestures no
-menu row can carry (the raw and Strings views, the Files and Hex panels, the
+menu row can carry (the Hex and Text views, the Strings view, the Files and Hex panels, the
 tool windows). **Help ▸ About** gives the version, author, homepage and
 licenses.
 
@@ -570,7 +569,7 @@ licenses.
 |---|---|
 | File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh Plugins · Ctrl+Q Quit |
 | Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Return commit cell |
-| View | Ctrl+1 Raw · Ctrl+2 Strings · Ctrl+Shift+A Aligned / Text Display · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
+| View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
 | Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F find bytes · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
 | Files panel | Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |

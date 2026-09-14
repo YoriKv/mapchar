@@ -45,7 +45,7 @@ class Capability(Enum):
 
     # -- reading bytes
     NAVIGATION = auto()  # the offset box, the steps, Go to Address, the address row
-    RAW_VIEW = auto()  # the Raw tab and its Aligned/Text display
+    RAW_VIEW = auto()  # the Hex and Text tabs
     HEX_VIEW = auto()  # the Hex dock's dump and its overtype line
     CODECS = auto()  # the Codecs bar: container, compression, start table
     SEARCH = auto()  # Find bytes, the Search window, the text scan

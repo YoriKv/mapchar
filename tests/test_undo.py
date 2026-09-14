@@ -165,20 +165,20 @@ def test_undoing_a_change_made_elsewhere_switches_back_to_it(window, tmp_path):
     assert window._entry is first
     assert window.workspace.current is first
     # And in the view the edit was made in, not whichever tab happened to be up.
-    assert window.tabs.currentIndex() == 1
+    assert window.tabs.currentWidget() is window.strings
     assert first.doc.strings[0].translation is None
 
 
-def test_undoing_an_overtype_returns_to_the_raw_view(window, tmp_path):
+def test_undoing_an_overtype_returns_to_the_hex_tab(window, tmp_path):
     file_entry, _ = _block(window, tmp_path)
     window._activate_entry(file_entry)
     window.overtype_bytes(1, b"\x43")
-    window.tabs.setCurrentIndex(0)
+    window._show_view("raw")
     window._go_to(9)
-    window.tabs.setCurrentIndex(1)
+    window._show_view("strings")
     window.undo_stack.undo()  # the view move
     window.undo_stack.undo()  # the overtype
-    assert window.tabs.currentIndex() == 0
+    assert window.tabs.currentWidget() is window.raw
     assert file_entry.doc.data[1] == 0x42
 
 

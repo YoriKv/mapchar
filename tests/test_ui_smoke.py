@@ -103,11 +103,13 @@ def test_navigation_and_selection(window, tmp_path):
     assert "selected" in window.nav_status.text()
 
 
-def test_text_display_mode(window, tmp_path):
+def test_text_tab(window, tmp_path):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
     open_rom_and_table(window, tmp_path, data)
-    window.mode_button.setChecked(True)
-    assert window.display.currentWidget() is window.text
+    assert window.tabs.currentWidget() is window.raw
+    assert [window.tabs.tabText(i) for i in range(3)] == ["Hex", "Text", "Strings"]
+    window.text_tab_action.trigger()
+    assert window.tabs.currentWidget() is window.text
     assert window.text.edit.toPlainText() == "AB[end]BA[end][$FF][$FF][$FF][$FF]"
     window.raw.set_selection(3, 5)
     window._on_selection(3, 5)
@@ -117,17 +119,17 @@ def test_text_display_mode(window, tmp_path):
     cursor.setPosition(7, cursor.MoveMode.KeepAnchor)
     window.text.edit.setTextCursor(cursor)
     assert window.raw.selection() == (0, 3)
-    window.mode_button.setChecked(False)
-    assert window.display.currentWidget() is window.raw
+    window.raw_tab_action.trigger()
+    assert window.tabs.currentWidget() is window.raw
 
 
-def test_text_display_mode_drag_upward(window, tmp_path):
+def test_text_tab_drag_upward(window, tmp_path):
     from PySide6.QtCore import QEvent, QPointF, Qt
     from PySide6.QtGui import QMouseEvent
     from PySide6.QtWidgets import QApplication
 
     open_rom_and_table(window, tmp_path, bytes.fromhex("41 42 42 42 42 00") * 20)
-    window.mode_button.setChecked(True)
+    window.text_tab_action.trigger()
     edit = window.text.edit
     viewport = edit.viewport()
     left = Qt.MouseButton.LeftButton
@@ -150,15 +152,15 @@ def test_text_display_mode_drag_upward(window, tmp_path):
     assert window._selection == (18, 36)
 
 
-def test_text_display_mode_restored(qtbot):
-    from mapchar.ui import settings
-    from mapchar.ui.main_window.refresh import DISPLAY_MODE_KEY
-
-    settings().setValue(DISPLAY_MODE_KEY, "text")
-    w = MainWindow()
-    qtbot.addWidget(w)
-    assert w.mode_button.isChecked() and w.mode_button.text() == "Text"
-    assert w.display.currentWidget() is w.text
+def test_the_text_tab_is_a_session_view(window, tmp_path):
+    file_entry = open_rom_and_table(window, tmp_path, bytes.fromhex("41 42 00"))
+    window.text_tab_action.trigger()
+    window._capture_session()
+    assert file_entry.session.view == "text"
+    window.raw_tab_action.trigger()
+    window._show_view(file_entry.session.view)
+    assert window.tabs.currentWidget() is window.text
+    assert window.text.edit.toPlainText().startswith("AB[end]")
 
 
 def test_edit_and_write(window, tmp_path):
@@ -663,7 +665,7 @@ def test_a_file_gates_the_string_surfaces_off(window, tmp_path):
     assert window.container_action.isEnabled()
     assert not window.strings_tab_action.isEnabled()
     assert not window.find_replace_action.isEnabled()
-    assert not window.tabs.isTabEnabled(1)
+    assert not window.tabs.isTabEnabled(window.tabs.indexOf(window.strings))
     assert not window.block_bar.isVisibleTo(window)
 
 
@@ -675,7 +677,7 @@ def test_a_block_gates_the_string_surfaces_on(window, tmp_path):
     assert window.strings_tab_action.isEnabled()
     assert window.find_replace_action.isEnabled()
     assert window.preview_action.isEnabled()
-    assert window.tabs.isTabEnabled(1)
+    assert window.tabs.isTabEnabled(window.tabs.indexOf(window.strings))
     assert window.block_bar.isVisibleTo(window)
     assert window.block_edit.isEnabled() and window.block_dump.isEnabled()
     # A block reads its container through its parent, so the row is not its own.
@@ -998,7 +1000,7 @@ def test_the_shortcut_guide_is_built_from_the_window(window):
     # A submenu's rows are flattened into its parent's section.
     assert ("Script…", "") not in sections["File"]
     # And the keys no menu can carry are declared beside them.
-    assert ("Page up / down", "PgUp / PgDn") in sections["Raw View"]
+    assert ("Page up / down", "PgUp / PgDn") in sections["Hex and Text Views"]
     columns = balanced_columns(shortcut_sections(window))
     assert sum(len(c) for c in columns) == len(sections) and all(columns)
     guide = ShortcutGuide(shortcut_sections(window), window)

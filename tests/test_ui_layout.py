@@ -33,7 +33,7 @@ def test_many_code_buttons_wrap_rather_than_widen_the_window(window, tmp_path):
     data = bytes(range(0x80, 0x98)) + b"\x00" + DATA
     file_entry = open_rom_and_table(window, tmp_path, data, table=_codes_table(24))
     add_block(window, file_entry, "codes", RangeSource(0, len(data)))
-    window.tabs.setCurrentIndex(1)
+    window._show_view("strings")
     assert window.strings.codes_layout.count() == 24
     # One row of two dozen buttons asked for well over a thousand pixels.
     assert window.strings.codes.minimumSizeHint().width() < 200

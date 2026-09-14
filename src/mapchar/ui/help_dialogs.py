@@ -44,7 +44,7 @@ HOMEPAGE = "https://github.com/YoriKv/mapchar"
 
 DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
-        "Raw View",
+        "Hex and Text Views",
         (
             ("Page up / down", "PgUp / PgDn"),
             ("Row up / down", "Up / Down"),

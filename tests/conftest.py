@@ -137,7 +137,7 @@ def isolated_settings(settings_root, tmp_path, monkeypatch):
     """Hand each test an empty settings store, and the same one to nothing else.
 
     The store is emptied either side of the test, so a preference one test
-    picks — an address format, a display mode, a dock layout — is not what the
+    picks — an address format, a dock layout — is not what the
     next test's window comes up in. The two environment variables stay for the
     paths Qt reads live rather than caching: the plugin folder and the trust
     store under ``AppData``.

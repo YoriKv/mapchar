@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QStackedWidget,
     QTabWidget,
     QToolBar,
     QVBoxLayout,
@@ -73,7 +72,7 @@ from mapchar.ui.main_window.pointers import PointerDiscoveryMixin
 from mapchar.ui.main_window.preview import PreviewMixin
 from mapchar.ui.main_window.projects import ProjectMixin
 from mapchar.ui.main_window.raw_view import RawViewMixin
-from mapchar.ui.main_window.refresh import DISPLAY_MODE_KEY, RefreshMixin
+from mapchar.ui.main_window.refresh import RefreshMixin
 from mapchar.ui.main_window.relative_search import RelativeSearchMixin
 from mapchar.ui.main_window.search import SearchMixin
 from mapchar.ui.main_window.session import SessionMixin
@@ -266,11 +265,9 @@ class MainWindow(
         self.tabs = QTabWidget()
         self.raw = RawWidget()
         self.text = TextWidget()
-        self.display = QStackedWidget()
-        self.display.addWidget(self.raw)
-        self.display.addWidget(self.text)
         self.strings = StringsView()
-        self.tabs.addTab(self.display, "Raw")
+        self.tabs.addTab(self.raw, "Hex")
+        self.tabs.addTab(self.text, "Text")
         self.tabs.addTab(self.strings, "Strings")
         layout.addWidget(self.tabs, 1)
 
@@ -311,13 +308,6 @@ class MainWindow(
             box.setToolTip(tip)
             cb.addWidget(QLabel(label))
             cb.addWidget(box)
-        self.mode_button = QPushButton("Aligned")
-        self.mode_button.setCheckable(True)
-        self.mode_button.setToolTip(
-            "Switch between the aligned hex/text view and a text box (Ctrl+Shift+A)"
-        )
-        self.mode_button.setMaximumWidth(80)
-        nl.addWidget(self.mode_button)
         nl.addWidget(self.address_pick)
         nl.addWidget(self.custom_bank_row)
         nl.addWidget(self.offset_box)
@@ -396,13 +386,7 @@ class MainWindow(
         self.block_dump.clicked.connect(self._dump)
         self.raw.offset_requested.connect(self._go_to)
         self.text.selection_changed.connect(self._on_text_selection)
-        # Restored before the toggle is connected: a refresh from here would run
-        # before _build_menus has made the actions the capability gate names.
-        self.mode_button.setChecked(
-            str(self.settings.value(DISPLAY_MODE_KEY, "aligned")) == "text"
-        )
-        self._show_display_mode(self.mode_button.isChecked())
-        self.mode_button.toggled.connect(self._on_mode_toggled)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self.raw.selection_changed.connect(self._on_selection)
         self.raw.context_menu_requested.connect(self._raw_menu)
         self.offset_box.returnPressed.connect(self._on_offset_typed)
@@ -567,16 +551,13 @@ class MainWindow(
 
         view_menu = bar.addMenu("&View")
         self.raw_tab_action = act(
-            view_menu, "&Raw", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1"
+            view_menu, "&Hex", lambda: self._show_view("raw"), "Ctrl+1"
+        )
+        self.text_tab_action = act(
+            view_menu, "Te&xt", lambda: self._show_view("text"), "Ctrl+2"
         )
         self.strings_tab_action = act(
-            view_menu, "&Strings", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2"
-        )
-        self.display_mode_action = act(
-            view_menu,
-            "&Aligned / Text Display",
-            self.mode_button.toggle,
-            "Ctrl+Shift+A",
+            view_menu, "&Strings", lambda: self._show_view("strings"), "Ctrl+3"
         )
         view_menu.addSeparator()
         act(view_menu, "&Table Editor…", self._show_table_editor, "Ctrl+Shift+T")
@@ -762,12 +743,11 @@ class MainWindow(
         """
         if not self._ensure_current(entry):
             return False
+        self._show_view(view)
         if view == "strings":
-            self.tabs.setCurrentIndex(1)
             if where is not None:
                 self.strings.select_index(where)
         else:
-            self.tabs.setCurrentIndex(0)
             # Only when it is off screen: a nudge for an edit the user can
             # already see would move the view for nothing. Inside the guard this
             # pushes no command of its own.

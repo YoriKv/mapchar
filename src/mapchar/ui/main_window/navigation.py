@@ -189,11 +189,7 @@ class NavigationMixin:
         self._sync_hex_panel()
         # Not back into the text view it came from: rewriting its cursor mid-drag
         # moves the drag's anchor, so a selection dragged upward never grows.
-        if (
-            self._selection
-            and not from_text
-            and self.display.currentWidget() is self.text
-        ):
+        if self._selection and not from_text and self.tabs.currentWidget() is self.text:
             self.text.select_bytes(*self._selection)
         if self._selection and self._doc is not None:
             s, e = self._selection

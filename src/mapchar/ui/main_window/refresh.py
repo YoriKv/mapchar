@@ -21,7 +21,8 @@ from mapchar.ui import BYTES_PER_ROW, TEXT_WINDOW_BYTES
 from mapchar.ui.raw_widget import RowModel
 from mapchar.ui.text_widget import text_model
 
-DISPLAY_MODE_KEY = "view/display_mode"
+VIEWS = ("raw", "text", "strings")
+"""A session's name for each central tab, in tab order: Hex, Text, Strings."""
 
 _KIND_NAMES = {
     RangeSource: "Range",
@@ -114,7 +115,7 @@ class RefreshMixin:
         )
 
     def _refresh_text_mode(self, doc: Document, tables: TableSet | None) -> None:
-        if self.display.currentWidget() is not self.text:
+        if self.tabs.currentWidget() is not self.text:
             return
         data = doc.data[self._offset : self._offset + TEXT_WINDOW_BYTES]
         tokens = self._decode_window(data, tables).tokens
@@ -122,14 +123,18 @@ class RefreshMixin:
         if self._selection:
             self.text.select_bytes(*self._selection)
 
-    def _show_display_mode(self, text_mode: bool) -> None:
-        self.display.setCurrentWidget(self.text if text_mode else self.raw)
-        self.mode_button.setText("Text" if text_mode else "Aligned")
+    def _current_view(self) -> str:
+        """The open tab, as a session names it."""
+        return VIEWS[max(self.tabs.currentIndex(), 0)]
 
-    def _on_mode_toggled(self, text_mode: bool) -> None:
-        self._show_display_mode(text_mode)
-        self.settings.setValue(DISPLAY_MODE_KEY, "text" if text_mode else "aligned")
-        self._refresh_view()
+    def _show_view(self, view: str) -> None:
+        """Open the tab a session names; an unknown name opens Hex."""
+        self.tabs.setCurrentIndex(VIEWS.index(view) if view in VIEWS else 0)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        # Only the Text tab renders on arrival: it is skipped while hidden.
+        if self._doc is not None and self.tabs.currentWidget() is self.text:
+            self._refresh_text_mode(self._doc, self._table_set())
 
     def _on_text_selection(self, start: int, end: int) -> None:
         self.raw.set_selection(start, end)

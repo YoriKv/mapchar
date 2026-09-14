@@ -175,7 +175,7 @@ class SessionMixin:
             ):
                 start = source_start(entry.config.source)
                 self._offset = 0 if start is None else start
-            self.tabs.setCurrentIndex(1 if entry.session.view == "strings" else 0)
+            self._show_view(entry.session.view)
         finally:
             for w in widgets:
                 w.blockSignals(False)
@@ -191,4 +191,4 @@ class SessionMixin:
         if entry is None:
             return
         entry.session.offset = self._offset
-        entry.session.view = "strings" if self.tabs.currentIndex() == 1 else "raw"
+        entry.session.view = self._current_view()
