@@ -84,8 +84,6 @@ or used from these projects directly.
 - **Atlas**
 - **abcde**
 - **romjuice**
-- **Thingy32**
-- **WindHex32**
 
 ## AI Use Disclaimer
 
