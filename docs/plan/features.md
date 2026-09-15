@@ -63,7 +63,7 @@ the preview system in [preview.md](preview.md).
 - **Left column:** the **Files** dock on top. Below it, **Tables** and
   **Fonts** share one tabbed dock.
 - **Right column:** the editing surface, top to bottom:
-  - the **Codecs** bar (container, compression, start table — each table
+  - the **Codecs** bar (container, compression, table — each table
     listed with its entry count, and the last row, **New Table…**, making a
     new table and picking it);
   - the **Block** bar, shown on a block: source, string type, mapping, and a
@@ -104,8 +104,8 @@ the preview system in [preview.md](preview.md).
 - **File ▸ New Table…** writes an empty native table file where the user
   picks, registers it and opens it in the Table Editor. The table is named
   after the file, numbered up (`main_2`) past a loaded table of that name. The
-  Codecs bar's start table list and the Files panel's context menu offer it
-  too; from the start table list the new table becomes the start table.
+  Codecs bar's Table list and the Files panel's context menu offer it too;
+  from the Table list the new table becomes the start table.
 - **File ▸ Open Font…** registers a glyph sheet.
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
@@ -355,8 +355,8 @@ the block's **Edit…** open the block dialog.
   `M` plus `O`.
 - **Skip ranges** — `from → to` pairs: reading `from` continues at `to`
   (Cartographer's auto-jump).
-- **Start table** — one of the registered tables; the table set follows from
-  it.
+- **Table** — the start table, one of the registered tables; the table set
+  follows from it.
 - **Fixed-line layout** — for fixed strings, an optional `line length` that
   splits each string into lines marked with a `[line]` code.
 - **Bound** — the exclusive end address strings may not cross on write;

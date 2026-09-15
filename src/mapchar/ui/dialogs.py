@@ -156,7 +156,7 @@ class BlockDialog(QDialog):
         form.addRow("", self.pascal_tokens)
         self.table = QComboBox()
         self.table.addItems(table_ids)
-        form.addRow("Start table", self.table)
+        form.addRow("Table", self.table)
         self.spp = QSpinBox()
         self.spp.setRange(1, 64)
         form.addRow("End tokens per string", self.spp)

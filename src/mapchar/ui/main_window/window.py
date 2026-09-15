@@ -265,7 +265,7 @@ class MainWindow(
         codecs.addWidget(self.container_pick)
         codecs.addWidget(QLabel("  Compression "))
         codecs.addWidget(self.compression_pick)
-        codecs.addWidget(QLabel("  Start table "))
+        codecs.addWidget(QLabel("  Table "))
         codecs.addWidget(self.table_pick)
         self.addToolBar(codecs)
         self.codecs_bar = codecs
