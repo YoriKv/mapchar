@@ -423,8 +423,7 @@ celPix's system, with these stages:
   Documents holding unsaved edits are kept rather than re-read from disk.
 - **Examples**: `resources/data/plugin-examples/` is copied into the user
   folder at startup — a README and `_`-prefixed examples per folder, rewritten
-  when a shipped one changes and removed when one is retired, never touching a
-  user's own files. Code examples ship as `.py.txt` because frozen builds
+  when a shipped one changes, never touching a user's own files. Code examples ship as `.py.txt` because frozen builds
   exclude `.py` data.
 - Folder → stage: `containers/` (`.py`), `compression/` (`.py`, TOML presets),
   `charsets/` (`.py` and `.tbl` files, which register as a charset named

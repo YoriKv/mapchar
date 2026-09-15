@@ -40,12 +40,7 @@ from mapchar.core.block import BlockConfig
 # old id -> the id that behaviour has now. Grouped by the change that retired
 # the old name, newest last, because the reason is the only thing that makes a
 # row reviewable. Empty while no shipped id has been renamed.
-RENAMED: dict[str, str] = {
-    # "lzss_u16" was an LZSS preset whose little-endian size prefix and
-    # unbiased distance matched no shipped format; SLZ16 is the format it was
-    # reaching for, and the one a project naming it wants now.
-    "lzss_u16": "slz16",
-}
+RENAMED: dict[str, str] = {}
 
 
 def current_id(plugin_id: str) -> str:

@@ -462,12 +462,3 @@ def test_fixed_length_strings_on_a_range_have_a_count_that_sets_stop(window, tmp
     assert block.config.source == RangeSource(0x10, 0x19)
     assert block.config.string_type == FixedLength(3)
     assert [s.start for s in block.doc.strings] == [0x10, 0x13, 0x16]
-
-
-def test_a_script_s_fixed_source_reads_as_a_range_of_fixed_strings():
-    from mapchar.project.formats.script import format_config, parse_config
-
-    cfg = parse_config("source=fixed start=$10 count=3 length=8 table=main")
-    assert cfg.source == RangeSource(0x10, 0x28)
-    assert cfg.string_type == FixedLength(8)
-    assert "source=range" in format_config(cfg)

@@ -198,12 +198,6 @@ def parse_config(spec: str) -> BlockConfig:
     source: Source
     if kind == "range":
         source = RangeSource(parse_num(fields["start"]), parse_num(fields["stop"]))
-    elif kind == "fixed":
-        # Written by builds that had a fixed-string source: that many strings
-        # of that length from start, which a range of fixed-length strings is.
-        start, length = parse_num(fields["start"]), int(fields["length"])
-        source = RangeSource(start, start + int(fields["count"]) * length)
-        fields.setdefault("type", f"fixed:{length}")
     elif kind == "pointers":
         source = PointerTableSource(
             parse_num(fields["start"]),

@@ -374,22 +374,6 @@ def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
 # inertly.
 PLUGIN_README = "README.md"
 
-# Reference files mapchar used to seed and no longer ships, by folder (``""``
-# being the root). Retiring an example is not the same as replacing one: a name
-# that stops being shipped stops being *rewritten*, so without this it sits in
-# every upgraded folder for ever, teaching whatever it taught the day it was
-# written.
-#
-# **Names only, and only names mapchar itself minted.** The ``_`` prefix and the
-# README are the reserved namespace this function already writes into without
-# asking; removing one of its own retired names is the same promise as
-# overwriting a live one. A user's own work never starts with ``_`` — that is
-# what activating an example means — so nothing here can reach it.
-RETIRED_EXAMPLES: dict[str, tuple[str, ...]] = {
-    "": ("README.txt",),
-    "mappings": ("_example_banked.toml",),
-}
-
 
 def seed_examples(user_dir: str) -> None:
     """Refresh the shipped reference material in the plugin root.
@@ -400,9 +384,8 @@ def seed_examples(user_dir: str) -> None:
 
     **A stale copy is replaced**, matched by filename, so the examples describe
     the version actually running rather than whichever one first created the
-    folder, and a **retired** one is removed on the same rule
-    (:data:`RETIRED_EXAMPLES`). Neither can take a user's work with it: what
-    they edit is the activated copy under a different name. Files whose contents
+    folder. That cannot take a user's work with it: what they edit is the
+    activated copy under a different name. Files whose contents
     already match are left alone, so an unchanged folder is not rewritten on
     every launch.
 
@@ -417,12 +400,6 @@ def seed_examples(user_dir: str) -> None:
         os.makedirs(root, exist_ok=True)
     except OSError:
         return
-    for folder, retired in RETIRED_EXAMPLES.items():
-        for name in retired:
-            try:
-                os.remove(os.path.join(root, folder, name))
-            except OSError:
-                pass
     _seed_file(resources.resource("data", "plugin-examples", PLUGIN_README), root)
     for folder in FOLDERS:
         dest = os.path.join(root, folder)

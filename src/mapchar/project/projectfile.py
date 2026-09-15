@@ -436,9 +436,8 @@ def _entry_from(
         entry.config = current_config_ids(entry.config)
     if kind is EntryKind.BLOCK:
         entry.slice_offset = int(raw.get("slice_offset", 0))
-        # A stored 0 reads as unknown: it is what an older file wrote for a
-        # length nobody had measured, and a slot with no room in it is not a
-        # thing anyone means.
+        # A slot with no room in it is not a thing anyone means: a stored 0
+        # reads as unknown.
         stored = raw.get("slice_length")
         entry.slice_length = int(stored) if stored else None
         entry.spare_room = str(raw.get("spare_room", "fill"))

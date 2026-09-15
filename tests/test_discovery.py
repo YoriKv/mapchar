@@ -6,7 +6,6 @@ from mapchar.plugins.base import Stage
 from mapchar.plugins.discovery import (
     ENV_VAR,
     PLUGIN_README,
-    RETIRED_EXAMPLES,
     TrustStore,
     discover,
     plugin_roots,
@@ -32,26 +31,22 @@ def test_roots_and_seed(tmp_path, monkeypatch):
     ]
 
 
-def test_seeding_refreshes_and_retires_its_own_files(tmp_path):
-    """Seeding tracks the running build: a stale example is rewritten, a retired
-    one is removed, and the user's own work is never either."""
+def test_seeding_refreshes_its_own_files(tmp_path):
+    """Seeding tracks the running build: a stale example is rewritten, and the
+    user's own work never is."""
     user = tmp_path / "user"
     seed_examples(str(user))
     example = user / "mappings" / "_banked.toml"
     shipped = example.read_text(encoding="utf-8")
     example.write_text("stale\n", encoding="utf-8")
-    # An activated copy and a retired name mapchar itself used to seed.
+    # An activated copy.
     mine = user / "mappings" / "banked.toml"
     mine.write_text("mine\n", encoding="utf-8")
-    retired = user / "mappings" / RETIRED_EXAMPLES["mappings"][0]
-    retired.write_text("old example\n", encoding="utf-8")
-    (user / "README.txt").write_text("old readme\n", encoding="utf-8")
 
     seed_examples(str(user))
 
     assert example.read_text(encoding="utf-8") == shipped
     assert mine.read_text(encoding="utf-8") == "mine\n"
-    assert not retired.exists() and not (user / "README.txt").exists()
 
 
 def test_the_shipped_examples_all_load(tmp_path, registry):
