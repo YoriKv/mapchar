@@ -8,17 +8,33 @@ materialising the whole buffer as one.
 
 from __future__ import annotations
 
+_CHUNK_BITS = 4096 * 8
+"""How much of the buffer one cached bit string spells."""
+
 
 class Bits:
-    __slots__ = ("_data", "length")
+    """The buffer is spelled as bits a chunk at a time, on first use, and each
+    chunk kept: a decode asks for a window at nearly every bit, and spelling
+    the bytes under each ask over again costs more than the ask."""
+
+    __slots__ = ("_chunks", "_data", "length")
 
     def __init__(self, data: bytes):
         self._data = bytes(data)
         self.length = len(self._data) * 8
+        self._chunks: dict[int, str] = {}
 
     @property
     def data(self) -> bytes:
         return self._data
+
+    def _chunk(self, index: int) -> str:
+        text = self._chunks.get(index)
+        if text is None:
+            chunk = self._data[index * 4096 : (index + 1) * 4096]
+            text = format(int.from_bytes(chunk, "big"), f"0{len(chunk) * 8}b")
+            self._chunks[index] = text
+        return text
 
     def window(self, pos: int, n: int) -> str:
         """Up to ``n`` bits starting at bit ``pos``, clipped to the buffer."""
@@ -27,12 +43,15 @@ class Bits:
         end = min(pos + n, self.length)
         if end <= pos:
             return ""
-        first, last = pos // 8, (end - 1) // 8
-        chunk = self._data[first : last + 1]
-        value = int.from_bytes(chunk, "big")
-        text = format(value, f"0{len(chunk) * 8}b")
-        start = pos - first * 8
-        return text[start : start + (end - pos)]
+        index, at = divmod(pos, _CHUNK_BITS)
+        if at + (end - pos) <= _CHUNK_BITS:
+            return self._chunk(index)[at : at + (end - pos)]
+        parts = [self._chunk(index)[at:]]
+        pos = (index + 1) * _CHUNK_BITS
+        while pos < end:
+            parts.append(self._chunk(pos // _CHUNK_BITS)[: end - pos])
+            pos += _CHUNK_BITS
+        return "".join(parts)
 
 
 def bits_to_bytes(bits: str) -> bytes:

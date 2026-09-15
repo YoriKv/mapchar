@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
+
 from mapchar.core.bits import Bits
 from mapchar.core.block import (
     EndToken,
@@ -20,7 +22,7 @@ from mapchar.engines.decode import DecodeRules, RunResult, decode_run
 from mapchar.project.workspace import EntryKind
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.raw_widget import RowModel
-from mapchar.ui.text_widget import TextModel, text_model
+from mapchar.ui.text_widget import TextDecode, TextModel, text_model
 
 VIEWS = ("raw", "text", "strings")
 """A session's name for each central tab, in tab order: Hex, Text, Strings."""
@@ -56,11 +58,19 @@ class RefreshMixin:
     rest of the window only through ``self``.
     """
 
-    def _refresh_view(self) -> None:
+    def _refresh_view(self, *, moved: bool = False) -> None:
+        """Re-render everything from the document as it stands.
+
+        ``moved`` says the view only moved — its offset or its bounds — so the
+        Strings grid, which shows the same strings wherever the view is, is
+        left as it is unless the move re-read them. Filling it is the one part
+        of a refresh that costs by the string, and a move must cost nothing.
+        """
         doc, entry = self._doc, self._entry
         is_block = entry is not None and entry.kind is EntryKind.BLOCK
         if doc is None:
             self._bounds = None
+            self._text_decode = None
             self.whole_action.setEnabled(False)
             self.raw.set_model(None)
             self.strings.set_rows([])
@@ -81,12 +91,13 @@ class RefreshMixin:
         self.whole_action.setEnabled(self._bounds is not None)
         self.offset_box.setText(self._format_address(self._offset))
         tables = self._table_set()
-        if is_block:
-            self._extract_current(entry, doc, tables)
+        if not moved:
+            self._text_decode = None
+        reread = is_block and self._extract_current(entry, doc, tables)
         self._refresh_raw(doc, tables)
         self._refresh_text_mode(doc, tables)
         self._refresh_decompress_preview(doc, tables)
-        if is_block:
+        if is_block and (reread or not moved):
             self._fill_strings(doc)
             cfg = entry.config
             count = len(doc.strings)
@@ -176,29 +187,48 @@ class RefreshMixin:
         The first token is always kept, so the window is never empty.
         """
         offset, end = self._offset, self._view_end()
-        length = max(BYTES_PER_ROW, self.text.room())
+        room = max(BYTES_PER_ROW, self.text.room())
         if tables is None:
-            data = doc.data[offset : min(offset + length, end)]
-            return text_model([], offset, len(data))
+            return text_model([], offset, min(offset + room, end) - offset)
+        # The last window is the best guess at this one: as many bytes as
+        # overflowed then, or, where the first try overflowed, twice what was
+        # kept, so a guess grown over a stretch that decodes to little shrinks
+        # back once the text is dense again.
+        length = max(room, self._text_guess)
+        tries = 0
         while True:
-            data = doc.data[offset : min(offset + length, end)]
-            tokens = self._decode_window(data, tables).tokens
-            model = text_model(tokens, offset, len(data))
+            tries += 1
+            stop = min(offset + length, end)
+            model = self._text_tokens(doc, tables, offset, stop)
             self.text.set_model(model)
             fitted = self.text.fitted_chars()
             overflows = fitted < len(model.body) and not self.text.room_below()
-            if overflows or len(data) < length or length >= TEXT_WINDOW_LIMIT:
+            if overflows or stop >= end or length >= TEXT_WINDOW_LIMIT:
                 break
             length *= 2
-        kept = 0
-        for _start, end, _byte_start, _byte_end in model.spans:
-            if end > fitted:
-                break
-            kept += 1
-        kept = max(kept, 1) if tokens else 0
-        if kept == len(tokens):
-            return model
-        return text_model(tokens[:kept], offset, model.spans[kept - 1][3] - offset)
+        model = model.cut(bisect_right(model.columns()[1], fitted))
+        self._text_guess = 2 * model.length if overflows and tries == 1 else length
+        return model
+
+    def _text_tokens(
+        self, doc: Document, tables: TableSet, offset: int, stop: int
+    ) -> TextModel:
+        """The text from ``offset`` to ``stop``, from the tokens kept since the
+        last window where they serve, decoding only what they do not reach
+        (:class:`~mapchar.ui.text_widget.TextDecode`)."""
+        cache = self._text_decode
+        if cache is None or not cache.serves(doc.data, tables):
+            cache = None
+        else:
+            cache.extend(stop, self._decode_window)
+            model = cache.model(offset, stop)
+            if model is not None:
+                return model
+        cache = self._text_decode = TextDecode(doc.data, tables, offset)
+        cache.extend(stop, self._decode_window)
+        model = cache.model(offset, stop)
+        assert model is not None
+        return model
 
     def _on_text_fit_changed(self) -> None:
         """The Text tab's box has room for a different window: fit one to it."""

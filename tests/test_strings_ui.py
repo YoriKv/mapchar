@@ -457,20 +457,24 @@ def test_every_hex_pair_is_drawn_in_its_own_cell(qtbot):
 
     widget = _raw_widget(qtbot, [], bytes(range(BYTES_PER_ROW)))
     placed = []
-    original = QPainter.drawText
+    original = QPainter.drawStaticText
 
-    def spy(painter, *args):
-        placed.append(args)
-        return original(painter, *args)
+    def spy(painter, point, laid):
+        placed.append((point, laid))
+        return original(painter, point, laid)
 
-    QPainter.drawText = spy
+    QPainter.drawStaticText = spy
     try:
         widget.viewport().grab()
     finally:
-        QPainter.drawText = original
-    cells = {args[2]: args[0] for args in placed if len(args) == 3}
+        QPainter.drawStaticText = original
+    pairs = {laid.text(): (point, laid.size()) for point, laid in placed}
     for rel in range(BYTES_PER_ROW):
-        assert cells[f"{rel:02X}"] == widget._hex_cell(rel)
+        cell = widget._hex_cell(rel)
+        point, size = pairs[f"{rel:02X}"]
+        assert point.x() == cell.left() + (cell.width() - size.width()) / 2
+        assert cell.top() <= point.y()
+        assert point.y() + size.height() <= cell.bottom() + 1
 
 
 def test_bit_packed_tokens_each_get_a_place_of_their_own(qtbot):

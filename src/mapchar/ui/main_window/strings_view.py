@@ -64,12 +64,15 @@ class StringsViewMixin:
 
     def _extract_current(
         self, entry: Entry, doc: Document, tables: TableSet | None
-    ) -> None:
+    ) -> bool:
+        """Read the block's strings, unless what they are read from is as it was
+        the last time; ``True`` when the strings changed."""
         cfg = entry.config
         if cfg is None:
+            changed = bool(doc.strings) or doc.extraction_key is not None
             doc.strings = []
             doc.extraction_key = None
-            return
+            return changed
         if tables is None:
             # The table set is gone: removed, failed to reload, or never picked.
             # The string records stay exactly as they are and are stashed where
@@ -84,7 +87,7 @@ class StringsViewMixin:
                 6000,
             )
             self.files_panel.refresh_labels()
-            return
+            return True
         key = (
             cfg,
             tables.start.id,
@@ -92,7 +95,7 @@ class StringsViewMixin:
             sum(len(t.entries) for t in tables.tables.values()),
         )
         if doc.extraction_key == key:
-            return
+            return False
         try:
             ex = extract(doc.data, cfg, tables, self.registry)
         except NotImplementedError as exc:
@@ -101,7 +104,7 @@ class StringsViewMixin:
             # lose work the user cannot get back.
             self.statusBar().showMessage(str(exc), 5000)
             self._stash_strings(entry, doc)
-            return
+            return True
         old = {s.index: s for s in doc.strings}
         for rec in ex.strings:
             prev = old.get(rec.index)
@@ -126,6 +129,7 @@ class StringsViewMixin:
         doc.notices = ex.notices
         doc.extraction_key = key
         self.files_panel.refresh_labels()
+        return True
 
     def _fill_strings(self, doc: Document) -> None:
         entry = self._entry

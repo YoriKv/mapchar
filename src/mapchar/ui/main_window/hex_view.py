@@ -27,7 +27,6 @@ class HexViewMixin:
             self.hex_panel.set_data(
                 doc.data, self._offset, self._selection, self._format_address
             )
-        self.hex_panel.refresh()
 
     def _find_text_or_bytes(self, text: str, backwards: bool = False) -> None:
         """The Hex dock's find field: hex bytes, or quoted text through the start

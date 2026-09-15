@@ -86,6 +86,8 @@ def decode(
 
     def window(at: int, n: int) -> str:
         """``n`` bits from ``at``, spliced across skip ranges, cut at the limit."""
+        if not skips:
+            return bits.window(at, min(n, limit - at))
         out = ""
         cur = at
         while len(out) < n and cur < limit:
@@ -255,6 +257,8 @@ def _frame_for(param: SwitchParam, tables: TableSet, owner: str) -> _Frame:
 
 def _count(stack: list[_Frame], weight: int) -> None:
     i = len(stack) - 1
+    if i == 0:
+        return  # the root frame counts nothing
     while i >= 0:
         frame = stack[i]
         if frame.counter is not None:
@@ -282,6 +286,8 @@ def _pop_table(stack: list[_Frame], table: Table) -> bool:
 
 def _advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
     """``n`` bits past ``pos``, jumping over any skip range on the way."""
+    if not skips:
+        return pos + n
     cur = _follow_skips(pos, skips)
     remaining = n
     while remaining > 0:

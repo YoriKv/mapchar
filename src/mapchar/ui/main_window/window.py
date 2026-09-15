@@ -89,7 +89,7 @@ from mapchar.ui.search_window import SearchWindow
 from mapchar.ui.strings_view import StringsView
 from mapchar.ui.table_editor import TableEditor
 from mapchar.ui.tables_panel import TablesPanel
-from mapchar.ui.text_widget import TextWidget
+from mapchar.ui.text_widget import TextDecode, TextWidget
 from mapchar.ui.widgets import CompactComboBox, ElidedLabel, fit_chars
 from mapchar.ui.window_layout import WindowLayout
 
@@ -171,6 +171,10 @@ class MainWindow(
         string — or ``None`` for the whole document
         (:mod:`mapchar.ui.main_window.navigation`)."""
         self._text_trail: list[tuple[int, int, int]] = []
+        self._text_decode: TextDecode | None = None
+        """The Text tab's tokens, kept from one window to the next."""
+        self._text_guess = 0
+        """How many bytes the Text tab's last window took to fill its box."""
         """The Text tab's wheel steps down, as ``(from, to, lines)``, so a step
         up retraces one exactly (:mod:`mapchar.ui.main_window.refresh`)."""
         self._scan_stop = False

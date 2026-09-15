@@ -7,7 +7,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QFontMetricsF, QPainter, QPen
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QFontMetricsF,
+    QPainter,
+    QPen,
+    QStaticText,
+)
 from PySide6.QtWidgets import QAbstractScrollArea, QToolTip, QWidget
 
 from mapchar.core.table import TokenKind
@@ -112,7 +120,25 @@ class RawWidget(QAbstractScrollArea):
         self._font = mono_font()
         self._label_font = QFont(self._font)
         self._label_font.setPointSize(8)
+        self._metrics_key: tuple[str, float] | None = None
         self._metrics = QFontMetrics(self._font, self.viewport())
+        self._char_width = 1
+        self._pair_width = 2.0
+        self._hex_x = self._text_x = self._text_w = 0
+        self._lefts: list[int] = []
+        """The x of each hex cell in a row."""
+        self._pairs: list[QStaticText] = []
+        """Every byte's hex pair, laid out once for the face."""
+        self._measured: dict[tuple[bool, str], tuple[float, float]] = {}
+        """What a text's advance and ink measure in the face, by whether it is
+        a label — measured once, since a paint measures every token shown."""
+        self._laid: dict[tuple[bool, str], QStaticText] = {}
+        """Each text drawn whole, laid out once in its face."""
+        self._row_height = 1
+        self._display: list[tuple[str, bool]] = []
+        self._tints: list[QColor | None] = []
+        """Each token's text and tint, worked out as the model is set rather
+        than at every paint."""
         self._sel: tuple[int, int] | None = None
         self._bits: tuple[int, int] | None = None
         """The absolute bit range selected when the selection is tokens picked in
@@ -132,6 +158,7 @@ class RawWidget(QAbstractScrollArea):
             lambda _: self.viewport().update()
         )
         self._syncing = False
+        self._sync_metrics()
 
     # --- geometry ------------------------------------------------------
 
@@ -141,17 +168,51 @@ class RawWidget(QAbstractScrollArea):
         A ``QFontMetrics`` made without a paint device answers for the primary
         screen, so a window on a differently scaled monitor lays its cells out
         to one width and draws them at another — and text measured as fitting
-        is then sliced at the cell's edge.
+        is then sliced at the cell's edge. Measured once per face and scale:
+        everything a paint places is placed from these numbers, and asking the
+        face for them cell by cell is most of a paint.
         """
+        key = (self._font.key(), self.viewport().devicePixelRatioF())
+        if key == self._metrics_key:
+            return
+        self._metrics_key = key
         self._metrics = QFontMetrics(self._font, self.viewport())
+        self._row_height = self._metrics.height() + 4
+        self._char_width = self._metrics.horizontalAdvance("0")
+        self._pair_width = QFontMetricsF(self._font, self.viewport()).horizontalAdvance(
+            "00"
+        )
+        self._measured.clear()
+        self._laid.clear()
+        self._pairs = [self._lay_out(f"{byte:02X}", False) for byte in range(256)]
+        self._place_columns()
+
+    def _lay_out(self, text: str, label: bool) -> QStaticText:
+        """``text`` laid out in its face, ready to be placed."""
+        laid = QStaticText(text)
+        laid.setTextFormat(Qt.TextFormat.PlainText)
+        laid.prepare(font=self._label_font if label else self._font)
+        return laid
+
+    def _place_columns(self) -> None:
+        """Lay the columns out from the face and the address width."""
+        cw = self._char_width
+        self._hex_x = (self._address_digits + 2) * cw
+        width, gap = HEX_CELL * cw, self._group_gap
+        self._lefts = [
+            self._hex_x + c * width + c // HEX_GROUP * gap for c in range(BYTES_PER_ROW)
+        ]
+        hex_w = BYTES_PER_ROW * width + (BYTES_PER_ROW - 1) // HEX_GROUP * gap
+        self._text_x = self._hex_x + hex_w + 2 * cw
+        self._text_w = BYTES_PER_ROW * self._text_width
 
     @property
     def row_height(self) -> int:
-        return self._metrics.height() + 4
+        return self._row_height
 
     @property
     def char_width(self) -> int:
-        return self._metrics.horizontalAdvance("0")
+        return self._char_width
 
     @property
     def visible_rows(self) -> int:
@@ -170,12 +231,7 @@ class RawWidget(QAbstractScrollArea):
 
     def _columns(self) -> tuple[int, int, int]:
         """x of the hex column, x of the text column, text column width."""
-        cw = self.char_width
-        hex_x = (self._address_digits + 2) * cw
-        hex_w = BYTES_PER_ROW * HEX_CELL * cw
-        hex_w += (BYTES_PER_ROW - 1) // HEX_GROUP * self._group_gap
-        text_x = hex_x + hex_w + 2 * cw
-        return hex_x, text_x, BYTES_PER_ROW * self._text_width
+        return self._hex_x, self._text_x, self._text_w
 
     def content_width(self) -> int:
         """How wide the rows are drawn: address, hex, text and a margin."""
@@ -201,17 +257,12 @@ class RawWidget(QAbstractScrollArea):
         whose true character width is fractional.
         """
         row, col = divmod(rel, BYTES_PER_ROW)
-        width = HEX_CELL * self.char_width
-        hex_x = self._columns()[0]
-
-        def left(c: int) -> int:
-            return hex_x + c * width + c // HEX_GROUP * self._group_gap
-
-        last = col + span - 1
+        width = HEX_CELL * self._char_width
+        left = self._lefts[col]
         return QRect(
-            left(col),
+            left,
             row * self.row_height,
-            left(last) + width - left(col),
+            self._lefts[col + span - 1] + width - left,
             self.row_height,
         )
 
@@ -271,7 +322,7 @@ class RawWidget(QAbstractScrollArea):
         two bits of one byte and the first four of the next covers half a digit
         and then a whole one.
         """
-        pair = QFontMetricsF(self._font, self.viewport()).horizontalAdvance("00")
+        pair = self._pair_width
 
         def edge(bit: int, closing: bool) -> float:
             byte, inner = divmod(bit, 8)
@@ -295,13 +346,20 @@ class RawWidget(QAbstractScrollArea):
     def set_model(self, model: RowModel | None) -> None:
         self._model = model
         self._token_of = []
+        self._display = []
+        self._tints = []
         if model is not None:
             self._token_of = [None] * len(model.data)
             for token in model.tokens:
                 for rel in token_bytes(token):
                     if rel < len(model.data) and self._token_of[rel] is None:
                         self._token_of[rel] = token
-            self._address_digits = max(4, len(f"{max(model.total - 1, 0):X}"))
+            self._display = [display_text(t) for t in model.tokens]
+            self._tints = [self._tint(t) for t in model.tokens]
+            digits = max(4, len(f"{max(model.total - 1, 0):X}"))
+            if digits != self._address_digits:
+                self._address_digits = digits
+                self._place_columns()
             # The bar's rows are counted from the bounds' start, so a view
             # confined to one string scrolls over that string and no further.
             self._base, end = model.bounds or (0, model.total)
@@ -375,8 +433,9 @@ class RawWidget(QAbstractScrollArea):
         # Token tints: one chip per token per row, so where one ends reads.
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
-        for token in model.tokens:
-            color = self._tint(token)
+        for token, color, (face, _label) in zip(
+            model.tokens, self._tints, self._display, strict=True
+        ):
             if color is None:
                 continue
             covered = [r for r in token_bytes(token) if r < limit]
@@ -387,7 +446,7 @@ class RawWidget(QAbstractScrollArea):
             # A token that shows nothing — a table switch, a return — is a
             # tick where it sits rather than an empty chip.
             if token.entry is not None or token.fallback:
-                tick = not display_text(token)[0]
+                tick = not face
                 strong = QColor(color)
                 strong.setAlpha(220)
                 for segment in self._text_segments(token, limit):
@@ -426,9 +485,12 @@ class RawWidget(QAbstractScrollArea):
                         cell.left(), cell.top(), cell.left(), cell.bottom()
                     )
 
-        # Addresses and hex, each pair centred in its own cell.
+        # Addresses and hex, each pair centred in its own cell: the pairs are
+        # laid out once for the face, and only placed here.
         painter.setFont(self._font)
-        center = Qt.AlignmentFlag.AlignCenter
+        pair_size = self._pairs[0].size()
+        cell_w = HEX_CELL * cw
+        dx, dy = (cell_w - pair_size.width()) / 2, (rh - pair_size.height()) / 2
         for row in range(rows):
             start = row * BYTES_PER_ROW
             painter.setPen(QPen(dim))
@@ -438,15 +500,17 @@ class RawWidget(QAbstractScrollArea):
                 f"{model.offset + start:0{self._address_digits}X}",
             )
             painter.setPen(QPen(ink))
-            for rel in range(start, min(start + BYTES_PER_ROW, len(model.data))):
-                painter.drawText(self._hex_cell(rel), center, f"{model.data[rel]:02X}")
+            top = row * rh + dy
+            for col, byte in enumerate(model.data[start : start + BYTES_PER_ROW]):
+                painter.drawStaticText(
+                    QPointF(self._lefts[col] + dx, top), self._pairs[byte]
+                )
 
         # Decoded text, each token inside the cells of its own first row.
         label_ink = QColor(ink)
         label_ink.setAlpha(200)
         cut_marks: list[QRectF] = []
-        for token in model.tokens:
-            text, is_label = display_text(token)
+        for token, (text, is_label) in zip(model.tokens, self._display, strict=True):
             segments = self._text_segments(token, limit) if text else []
             if not segments:
                 continue
@@ -455,12 +519,10 @@ class RawWidget(QAbstractScrollArea):
             if is_label:
                 painter.setFont(self._label_font)
                 painter.setPen(QPen(label_ink))
-                cut = self._fit(painter, cell, text)
             else:
                 painter.setFont(self._font)
                 painter.setPen(QPen(dim if token.entry is None else ink))
-                cut = self._fit(painter, cell, text)
-            if cut:
+            if self._fit(painter, cell, text, is_label):
                 cut_marks.append(cell)
 
         # A corner notch on every token shown cut short; the tooltip has it all.
@@ -481,8 +543,22 @@ class RawWidget(QAbstractScrollArea):
         painter.setBrush(color)
         painter.drawRoundedRect(QRectF(cell).adjusted(1, 1, -1, -1), 3, 3)
 
-    @staticmethod
-    def _fit(painter: QPainter, cell: QRectF, text: str) -> bool:
+    def _measure(
+        self, painter: QPainter, text: str, label: bool
+    ) -> tuple[float, float]:
+        """``text``'s advance and its ink's width in the painter's face."""
+        key = (label, text)
+        measured = self._measured.get(key)
+        if measured is None:
+            metrics = painter.fontMetrics()
+            advance = metrics.horizontalAdvance(text)
+            measured = (advance, max(advance, metrics.boundingRect(text).width()))
+            self._measured[key] = measured
+        return measured
+
+    def _fit(
+        self, painter: QPainter, cell: QRectF, text: str, label: bool = False
+    ) -> bool:
         """Draw ``text`` centred in ``cell``, never past it; ``True`` if cut short.
 
         Text wider than the cell — a dictionary word on one byte, a long code
@@ -499,18 +575,26 @@ class RawWidget(QAbstractScrollArea):
         the advance claims. Measured anywhere else, or by the advance alone,
         text is called narrow enough to fit and then drawn wider than its cell.
         """
-        metrics = painter.fontMetrics()
         room = cell.width() - 2
-        advance = metrics.horizontalAdvance(text)
-        drawn = max(advance, metrics.boundingRect(text).width())
+        advance, drawn = self._measure(painter, text, label)
         if drawn <= room:
-            painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, text)
+            # Whole, it is drawn from its layout, centred as drawText would.
+            laid = self._laid.get((label, text))
+            if laid is None:
+                laid = self._laid[(label, text)] = self._lay_out(text, label)
+            size = laid.size()
+            painter.drawStaticText(
+                QPointF(
+                    cell.left() + (cell.width() - size.width()) / 2,
+                    cell.top() + (cell.height() - size.height()) / 2,
+                ),
+                laid,
+            )
             return False
         cut = False
         while len(text) > 1 and drawn * MIN_SQUEEZE > room:
             text = text[:-1]
-            advance = metrics.horizontalAdvance(text)
-            drawn = max(advance, metrics.boundingRect(text).width())
+            advance, drawn = self._measure(painter, text, label)
             cut = True
         squeeze = min(1.0, room / drawn) if drawn > 0 else 1.0
         painter.save()

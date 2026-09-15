@@ -159,7 +159,7 @@ class NavigationMixin:
             return
         self._bounds = bounds
         if inside:
-            self._refresh_view()
+            self._refresh_view(moved=True)
         else:
             self._go_to(bounds[0])
 
@@ -189,7 +189,7 @@ class NavigationMixin:
         if entry is not self._entry and entry is not None:
             self._activate_entry(entry)
         self._offset = offset
-        self._refresh_view()
+        self._refresh_view(moved=True)
 
     def _move(self, delta: int) -> None:
         self._go_to(self._clamped(self._offset + delta))

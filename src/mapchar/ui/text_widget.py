@@ -20,7 +20,8 @@ goes to the byte under the handle.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from bisect import bisect_left, bisect_right
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import QTextCursor, QTextOption
@@ -34,7 +35,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.tokens import Token
+from mapchar.engines.decode import RunResult
 from mapchar.ui import settings
 from mapchar.ui.widgets import mono_font
 
@@ -50,6 +53,34 @@ class TextModel:
     """The byte the text starts at."""
     length: int
     """How many bytes the text covers."""
+    _columns: tuple[list[int], ...] | None = field(default=None, repr=False)
+
+    def columns(self) -> tuple[list[int], list[int], list[int], list[int]]:
+        """The spans by column — char starts, char ends, byte starts, byte
+        ends — each in order, so a position is found by bisection rather than
+        by walking every token of a window."""
+        if self._columns is None:
+            self._columns = tuple(
+                list(column) for column in zip(*self.spans, strict=True)
+            ) or ([], [], [], [])
+        return self._columns
+
+    def cut(self, kept: int) -> TextModel:
+        """The first ``kept`` tokens, at least one, as a model of their own."""
+        if kept >= len(self.spans):
+            return self
+        kept = max(kept, 1)
+        last = self.spans[kept - 1]
+        return TextModel(
+            self.body[: last[1]], self.spans[:kept], self.offset, last[3] - self.offset
+        )
+
+
+def _byte_span(bit_start: int, bit_end: int) -> tuple[int, int]:
+    """The absolute bytes a token over absolute bits touches, at least the one
+    it starts in."""
+    byte_start = bit_start // 8
+    return byte_start, max(byte_start + 1, -(-bit_end // 8))
 
 
 def text_model(tokens: list[Token], offset: int, length: int) -> TextModel:
@@ -57,14 +88,134 @@ def text_model(tokens: list[Token], offset: int, length: int) -> TextModel:
     parts: list[str] = []
     spans: list[tuple[int, int, int, int]] = []
     at = 0
+    base = offset * 8
     for token in tokens:
         text = token.text()
-        byte_start = offset + token.bit_start // 8
-        byte_end = offset + max(byte_start - offset + 1, -(-token.bit_end // 8))
+        byte_start, byte_end = _byte_span(base + token.bit_start, base + token.bit_end)
         spans.append((at, at + len(text), byte_start, byte_end))
         parts.append(text)
         at += len(text)
     return TextModel("".join(parts), spans, offset, length)
+
+
+class TextDecode:
+    """The Text tab's decode, kept from one window to the next.
+
+    A window that has moved a line down is nearly the window before it: the
+    same tokens from a little further on, and a line's worth more at the end.
+    So the tokens are kept, by their absolute bits, and a window is served from
+    them wherever they reach; only what lies past them is decoded, from the
+    last token boundary they can be trusted to.
+
+    Decoding from a byte in the middle of the kept tokens gives the same tokens
+    only where the decoder carries no state across a token: a set with no
+    table switch, where every token boundary on a byte is a fresh start. With
+    switches, the kept tokens serve a window from the byte they were decoded
+    from and no other, as a fresh decode would.
+
+    Tokens near a cut end are not to be trusted: a key cut short by the end of
+    the data reads as unmatched bytes, and a code's operand as nothing. So a
+    decode that goes further starts from the last token boundary at least
+    ``margin`` bits — the longest key and operands of the set — before the cut.
+    """
+
+    def __init__(self, data: bytes, tables: TableSet, origin: int) -> None:
+        self.data = data
+        self.tables = tables
+        self.origin = origin
+        """The byte the first token starts at."""
+        self.end = origin
+        """The byte the decoded data ended at, exclusive."""
+        self.starts: list[int] = []
+        self.ends: list[int] = []
+        """Each token's absolute bits."""
+        self.byte_starts: list[int] = []
+        self.byte_ends: list[int] = []
+        """The absolute bytes each token touches, at least the one it starts in."""
+        self.texts: list[str] = []
+        self.chars: list[int] = [0]
+        """The character each token's text starts at, and after the last the
+        length of them all."""
+        entries = [e for t in tables.tables.values() for e in t.entries.values()]
+        self.resumable = all(e.kind is not TokenKind.SWITCH for e in entries)
+        self.margin = max(
+            (len(e.bits) + sum(o.bits for o in e.operands) for e in entries), default=8
+        )
+
+    def serves(self, data: bytes, tables: TableSet) -> bool:
+        """Whether these tokens are of ``data`` read through ``tables``."""
+        return (
+            data is self.data
+            and tables.start is self.tables.start
+            and tables.tables == self.tables.tables
+        )
+
+    def _first(self, offset: int) -> int | None:
+        """The index of the token a window from ``offset`` starts with, when
+        one can: the token starting there, if decoding afresh from there would
+        read the same."""
+        if offset == self.origin:
+            return 0
+        if not self.resumable:
+            return None
+        i = bisect_left(self.starts, offset * 8)
+        if i < len(self.starts) and self.starts[i] == offset * 8:
+            return i
+        return None
+
+    def _trusted(self) -> int:
+        """How many tokens from the start are read whole: every one that ends
+        on a byte at least ``margin`` bits before the cut, and the tokens
+        before it."""
+        cut = self.end * 8 - self.margin
+        i = bisect_right(self.ends, cut)
+        while i > 0 and self.ends[i - 1] % 8:
+            i -= 1
+        return i
+
+    def extend(self, stop: int, decode) -> None:
+        """Have the tokens reach ``stop``: decode the rest, from the last
+        trusted boundary — or, where no boundary is a fresh start, from the
+        origin."""
+        if stop <= self.end:
+            return
+        kept = self._trusted() if self.resumable else 0
+        resume = self.ends[kept - 1] // 8 if kept else self.origin
+        del self.starts[kept:], self.ends[kept:], self.texts[kept:]
+        del self.byte_starts[kept:], self.byte_ends[kept:], self.chars[kept + 1 :]
+        run: RunResult = decode(self.data[resume:stop], self.tables)
+        base = resume * 8
+        at = self.chars[-1]
+        for token in run.tokens:
+            start, end = base + token.bit_start, base + token.bit_end
+            text = token.text()
+            self.starts.append(start)
+            self.ends.append(end)
+            self.byte_starts.append(start // 8)
+            self.byte_ends.append(max(start // 8 + 1, -(-end // 8)))
+            self.texts.append(text)
+            at += len(text)
+            self.chars.append(at)
+        self.end = stop
+
+    def model(self, offset: int, stop: int) -> TextModel | None:
+        """The tokens from ``offset`` that end by ``stop``, as a model; ``None``
+        when they cannot be served from here."""
+        first = self._first(offset)
+        if first is None or stop > self.end:
+            return None
+        last = bisect_right(self.ends, stop * 8)
+        base = self.chars[first]
+        char_starts = [c - base for c in self.chars[first:last]]
+        char_ends = [c - base for c in self.chars[first + 1 : last + 1]]
+        byte_starts, byte_ends = (
+            self.byte_starts[first:last],
+            self.byte_ends[first:last],
+        )
+        spans = list(zip(char_starts, char_ends, byte_starts, byte_ends, strict=True))
+        columns = (char_starts, char_ends, byte_starts, byte_ends)
+        body = "".join(self.texts[first:last])
+        return TextModel(body, spans, offset, stop - offset, columns)
 
 
 class TextWidget(QWidget):
@@ -326,12 +477,15 @@ class TextWidget(QWidget):
         there, so one that shows nothing — a table switch — is not stepped
         over. Past the body, the byte after it."""
         model = self._model
-        if model is None:
+        if model is None or not model.spans:
             return None
-        for cs, ce, bs, _be in model.spans:
-            if cs <= pos < ce or (cs == ce == pos):
-                return bs
-        if model.spans and pos >= model.spans[-1][1]:
+        starts, ends, byte_starts, _ = model.columns()
+        i = bisect_left(starts, pos)
+        if i < len(starts) and starts[i] == pos:
+            return byte_starts[i]
+        if i > 0 and pos < ends[i - 1]:
+            return byte_starts[i - 1]
+        if pos >= model.spans[-1][1]:
             return model.spans[-1][3]
         return None
 
@@ -347,10 +501,11 @@ class TextWidget(QWidget):
             return
         start = self.byte_at_char(a)
         end = None
-        for cs, ce, _bs, be in self._model.spans:
-            if cs < b <= ce:
-                end = be
-                break
+        starts, ends, _, byte_ends = self._model.columns()
+        # The first token ending at or after b is the one that holds it.
+        i = bisect_left(ends, b)
+        if i < len(ends) and starts[i] < b:
+            end = byte_ends[i]
         if start is None or end is None or end <= start:
             return
         if self._reported == (start, end):
@@ -364,15 +519,18 @@ class TextWidget(QWidget):
         model = self._model
         if model is None:
             return
-        chars = [(cs, ce) for cs, ce, bs, be in model.spans if bs < end and be > start]
+        starts, ends, byte_starts, byte_ends = model.columns()
+        # The tokens whose bytes touch the range: the first ending past its
+        # start to the last starting before its end.
+        first, last = bisect_right(byte_ends, start), bisect_left(byte_starts, end)
         self._syncing = True
         try:
             cursor = self.edit.textCursor()
-            if not chars:
+            if first >= last:
                 cursor.clearSelection()
             else:
-                cursor.setPosition(chars[0][0])
-                cursor.setPosition(chars[-1][1], QTextCursor.MoveMode.KeepAnchor)
+                cursor.setPosition(starts[first])
+                cursor.setPosition(ends[last - 1], QTextCursor.MoveMode.KeepAnchor)
             self.edit.setTextCursor(cursor)
             self._reported = (start, end) if end > start else None
         finally:

@@ -102,6 +102,10 @@ class HexPanel(ThemedIcons, QWidget):
         nibble, which outranks both the selection and the caret before it."""
         self._addr_of: Callable[[int], str] = lambda at: f"{at:06X}"
         self._addr_width = 6
+        self._rendered: tuple[bytes, int, int, int, str] | None = None
+        """What the dump's text was last built from — the bytes, the window,
+        the address column's width and spelling — so a render that would build
+        the same text, as every move of the selection would, keeps it."""
         self.view = _HexView(self)
         self.view.setReadOnly(True)
         self.view.setFont(mono_font())
@@ -233,23 +237,31 @@ class HexPanel(ThemedIcons, QWidget):
             return
         self._render()
 
-    def refresh(self) -> None:
-        self._render()
-
     def _render(self) -> None:
         caret = self.view.textCursor().position()
-        lines = []
         end = min(self._offset + DUMP_WINDOW_BYTES, len(self._data))
-        for at in range(self._offset, end, BYTES_PER_ROW):
-            chunk = self._data[at : at + BYTES_PER_ROW]
-            hexes = " ".join(f"{b:02X}" for b in chunk)
-            ascii_ = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in chunk)
-            address = self._addr_of(at)
-            lines.append(
-                f"{address:<{self._addr_width}}{' ' * _ADDRESS_GAP}"
-                f"{hexes:<{BYTES_PER_ROW * 3 - 1}}  {ascii_}"
-            )
-        self.view.setPlainText("\n".join(lines))
+        built = (
+            self._data,
+            self._offset,
+            end,
+            self._addr_width,
+            self._addr_of(self._offset),
+        )
+        if self._rendered is None or any(
+            a is not b and a != b for a, b in zip(built, self._rendered, strict=True)
+        ):
+            self._rendered = built
+            lines = []
+            for at in range(self._offset, end, BYTES_PER_ROW):
+                chunk = self._data[at : at + BYTES_PER_ROW]
+                hexes = " ".join(f"{b:02X}" for b in chunk)
+                ascii_ = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in chunk)
+                address = self._addr_of(at)
+                lines.append(
+                    f"{address:<{self._addr_width}}{' ' * _ADDRESS_GAP}"
+                    f"{hexes:<{BYTES_PER_ROW * 3 - 1}}  {ascii_}"
+                )
+            self.view.setPlainText("\n".join(lines))
         if self._selection:
             self.at.setText(f"{self._selection[0]:X}")
         # The caret is placed on the selection **only when the selection moved**.
@@ -270,7 +282,8 @@ class HexPanel(ThemedIcons, QWidget):
 
     def _place_caret(self, position: int) -> None:
         cursor = self.view.textCursor()
-        cursor.setPosition(min(max(position, 0), len(self.view.toPlainText())))
+        last = self.view.document().characterCount() - 1
+        cursor.setPosition(min(max(position, 0), last))
         self.view.setTextCursor(cursor)
 
     def _caret_to_byte(self, byte: int, end: int) -> None:
