@@ -531,8 +531,9 @@ class ModeToggle(QWidget):
     """Buttons side by side, exactly one of them down: a choice of mode that
     changes which controls around it apply.
 
-    :attr:`chosen` fires with the datum of a button the user pressed;
-    :meth:`set_value` shows one without firing.
+    :attr:`chosen` fires with the datum of a button the user pressed, when
+    it was not the one already down; :meth:`set_value` shows one without
+    firing.
     """
 
     chosen = Signal(object)
@@ -553,7 +554,15 @@ class ModeToggle(QWidget):
             self._group.addButton(button, index)
             row.addWidget(button)
         self._group.button(0).setChecked(True)
-        self._group.idClicked.connect(lambda i: self.chosen.emit(self._data[i]))
+        self._current = 0
+        self._group.idClicked.connect(self._on_click)
+
+    def _on_click(self, index: int) -> None:
+        # Exclusive buttons report a click on the one already down too.
+        if index == self._current:
+            return
+        self._current = index
+        self.chosen.emit(self._data[index])
 
     def value(self) -> object:
         return self._data[self._group.checkedId()]
@@ -562,6 +571,7 @@ class ModeToggle(QWidget):
         return self._group.button(self._data.index(value))
 
     def set_value(self, value: object) -> None:
+        self._current = self._data.index(value)
         self.button(value).setChecked(True)
 
 

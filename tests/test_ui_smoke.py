@@ -1551,6 +1551,14 @@ def test_the_entry_form_spells_every_kind_both_ways(qtbot):
     assert form.key_mode.value() == "bits" and form.key_width.text() == "3 bits"
     form.key_mode.button("hex").click()
     assert form.key_mode.value() == "bits" and "not whole" in form.problem.text()
+    # Pressing the mode already down changes nothing.
+    form.line.setText("%1010=x")
+    for _ in range(2):
+        form.key_mode.button("bits").click()
+    assert form.key_mode.value() == "bits" and form.key.text() == "1010"
+    form.line.setText("41=A")
+    form.key_mode.button("hex").click()
+    assert form.key_mode.value() == "hex" and form.key.text() == "41"
     # What the form cannot spell is said, not silently dropped.
     form.line.setText("41=[unclosed")
     assert "unclosed" in form.problem.text()
