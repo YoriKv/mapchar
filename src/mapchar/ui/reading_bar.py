@@ -331,7 +331,7 @@ class ReadingBar(WrapBar):
         self.ptr_endian = QComboBox()
         self.ptr_endian.addItem("Little", "little")
         self.ptr_endian.addItem("Big", "big")
-        self.ptr_mapping = CompactComboBox(100)
+        self.ptr_mapping = CompactComboBox(150)
         self.ptr_mapping.setEditable(True)
         self.ptr_offset = OffsetEdit()
         self.ptr_bank = HexSpinBox(0, 0xFFF, 2)
@@ -570,6 +570,8 @@ class ReadingBar(WrapBar):
             self.ptr_mapping.setCurrentIndex(at)
         else:
             self.ptr_mapping.setCurrentText(mapping_id)
+        # An editable picker scrolls to the end of a long name; show its start.
+        self.ptr_mapping.lineEdit().setCursorPosition(0)
 
     def _needs_bank(self) -> bool:
         """Whether the mapping reads a bank: a listed one that says so, or an

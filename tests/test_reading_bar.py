@@ -11,6 +11,7 @@ from mapchar.core.block import (
     BlockConfig,
     FixedLength,
     NextPointer,
+    Pascal,
     PointerTableSource,
     RangeSource,
 )
@@ -395,3 +396,52 @@ def test_switching_a_file_to_strings_and_back_restores_its_pointers(window, tmp_
     assert isinstance(entry.session.config.source, RangeSource)
     window.mode_toggle.button(True).click()
     assert entry.session.config == config
+
+
+def test_the_mapping_is_listed_by_name_and_the_bank_only_where_it_reads(
+    window, tmp_path
+):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))
+    window.show()
+    bar = window.reading_bar
+    assert bar.ptr_mapping.currentText() == "Linear (file offset)"
+    assert not bar._groups["ptr_bank"].isVisibleTo(window)
+    select_data(bar.ptr_mapping, "lorom")
+    bar.ptr_mapping.activated.emit(bar.ptr_mapping.currentIndex())
+    assert block.config.source.mapping_id == "lorom"
+    assert bar._groups["ptr_bank"].isVisibleTo(window)
+    # An id the list does not know is still an id, and keeps its bank.
+    bar.ptr_mapping.setCurrentText("banked:8000:4000")
+    bar.ptr_mapping.lineEdit().editingFinished.emit()
+    assert block.config.source.mapping_id == "banked:8000:4000"
+    assert bar._groups["ptr_bank"].isVisibleTo(window)
+
+
+def test_a_length_prefix_wider_than_a_byte_has_a_byte_order(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", RangeSource(0x10, 0x15))
+    window.show()
+    bar = window.reading_bar
+    select_data(bar.string_type, "pascal")
+    assert not bar.pascal_endian.isVisibleTo(window)
+    bar.pascal_width.setValue(2)
+    assert bar.pascal_endian.isVisibleTo(window)
+    select_data(bar.pascal_endian, "big")
+    assert block.config.string_type == Pascal(2, False, "big")
+    bar.pascal_tokens.setChecked(True)
+    assert block.config.string_type == Pascal(2, True, "big")
+
+
+def test_the_writing_section_says_what_a_blank_bound_and_automatic_mean(
+    window, tmp_path
+):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    add_block(window, entry, "p", PointerTableSource(0, 4, 2, 2))
+    bar = window.reading_bar
+    assert bar.write_mode.itemText(0) == "Automatic (packed)"
+    # A pointer block's strings end at $15: the last string's end bounds it.
+    assert bar.bound.placeholderText() == window.address_spelling.format(0x15)
+    add_block(window, entry, "r", RangeSource(0x10, 0x15))
+    assert bar.write_mode.itemText(0) == "Automatic (slotted)"
+    assert bar.bound.placeholderText() == window.address_spelling.format(0x15)

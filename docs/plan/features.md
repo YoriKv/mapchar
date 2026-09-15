@@ -63,8 +63,8 @@ the preview system in [preview.md](preview.md).
 - **Left column:** the **Files** dock on top. Below it, **Tables** and
   **Fonts** share one tabbed dock.
 - **Right column:** the editing surface, top to bottom:
-  - the **Format** bar: **Format**, the **Strings** / **Pointers** mode and,
-    for pointers, **Resolve pointers** (see
+  - the **Format** bar: **Table**, the **Strings** / **Pointers** mode and,
+    for pointers, **Follow pointers** (see
     [Reading the bytes](#reading-the-bytes));
   - the **Reading** bar: every setting of how the bytes are cut into strings,
     in framed sections — **Source**, **Pointers**, **Strings**, **Writing**
@@ -107,8 +107,8 @@ the preview system in [preview.md](preview.md).
 - **File ▸ New Table…** writes an empty native table file where the user
   picks, registers it and opens it in the Table Editor. The table is named
   after the file, numbered up (`main_2`) past a loaded table of that name. The
-  Format list and the Files panel's context menu offer it too; from the
-  Format list the new table becomes the reading's table.
+  Table list and the Files panel's context menu offer it too; from the
+  Table list the new table becomes the reading's table.
 - **File ▸ Open Font…** registers a glyph sheet.
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
@@ -195,7 +195,7 @@ the preview system in [preview.md](preview.md).
 - **Charsets** — a table can sit on a built-in charset (ASCII, Latin-1,
   Windows-1252, JIS X 0201, Shift-JIS as CP932, EUC-JP as JIS X 0213, EUC-KR,
   Big5, GBK, UTF-8, UTF-16) and only list its overrides.
-- **Encodings as tables** — every charset is also offered in the Format list as
+- **Encodings as tables** — every charset is also offered in the Table list as
   a table of its own, under the loaded tables: that encoding with a NUL of its
   code unit's width (`00`, `0000` in UTF-16) as the end token. They are built
   the first time they are read, are never entries or saved, and a loaded table
@@ -270,7 +270,7 @@ and Strings tabs read again at once.
   a bookmark, and what **New Block** starts from. Anything else that changes a
   block's configuration — an import, **Use as Pointer Table**, an undo — shows
   in the bars at the next refresh.
-- **Format** — the table or encoding the text is read through, in either
+- **Table** — the table or encoding the text is read through, in either
   mode: the loaded tables with their entry counts, then the encodings, then
   **New Table…**. A file with no table of its own reads as the first loaded
   table, else as ASCII. A table the reading names that is not loaded shows as
@@ -288,11 +288,11 @@ and Strings tabs read again at once.
   it was left on, for as long as the session lasts. A block without pointers
   has **Pointers** disabled.
   The Reading bar shows only the sections and settings the mode uses — in
-  Pointers mode the **Strings** section too, since it shapes what Resolve
+  Pointers mode the **Strings** section too, since it shapes what Follow
   pointers shows.
 - **Pointers** — the bytes are pointers: the source becomes a pointer table (or
   list), the Reading bar adds its **Pointers** section, and beside the mode
-  comes **Resolve pointers**, remembered per entry. On a file the pointers are
+  comes **Follow pointers**, remembered per entry. On a file the pointers are
   read every stride from where the view starts; on a block, its own.
   - the **Hex** tab's text column shows each pointer where it points (`→1A3F0`,
     `→?` when it maps outside the data), or resolved, the string there on one
@@ -470,8 +470,9 @@ as a **Range** of end-token strings — rather than every control at once.
   pointer kinds, the Strings mode the other two:
   - **Range** — `start` to `stop` (exclusive), read as consecutive strings;
   - **Pointer table** — `start`, `stop`, pointer `size`, `stride` (size plus
-    space), `endian`, `mapping`, and an `offset` added to each value; strings
-    are read at each target;
+    space), `endian`, `mapping` (listed by name), an `offset` added to each
+    value, and a `bank`, shown only for a mapping that reads one; strings are
+    read at each target;
   - **Pointer list** — explicit pointer addresses, one per line, with the
     same pointer fields;
   - **Fixed strings** — `start`, `count`, `length`; each string is exactly
@@ -480,10 +481,12 @@ as a **Range** of end-token strings — rather than every control at once.
   - **End token** — at the first end token of the table set;
   - **Fixed length** — after `length` bytes, or earlier at an end token when
     **Stop at end token** is on;
-  - **Pascal (length prefix)** — a `1–4`-byte length prefix counting bytes or token weights;
+  - **Length prefix** — a `1–4`-byte prefix, little- or big-endian when wider
+    than one byte, counting bytes or token weights (**Counts tokens**);
   - **Next pointer** — at the next pointer's target (pointer sources only;
     the last string ends at an end token or `stop`).
-- **Strings per pointer** — how many end tokens one pointer's string spans.
+- **Ends per string** — how many end tokens one string runs through before
+  it ends (Cartographer's strings per pointer).
 - **Realign** — after each end token, round the position up to a multiple of
   `M` plus `O`.
 - **Skip ranges** — `from → to` pairs: reading a string's bytes reaches `from`
@@ -496,13 +499,15 @@ as a **Range** of end-token strings — rather than every control at once.
   list of `from` / `to` rows in hex, with Add and Remove, that applies as it is
   edited — a run of edits is one undo step — and the Hex tab's **Add Skip from
   Selection** adds one over the selected bytes.
-- **Format** — the start table: a loaded table or an encoding, picked in the
-  Format list; the table set follows from it.
+- **Table** — the start table: a loaded table or an encoding, picked in the
+  Table list; the table set follows from it.
 - **Fixed-line layout** — for fixed strings, an optional `line length` that
   splits each string into lines marked with a `[line]` code.
 - **Bound** — the exclusive end address strings may not cross on write;
-  defaults to `stop`, or to the last string's end for pointer sources.
-- **Write mode** — **Packed** or **Slotted**; see [Writing](#writing-back-to-disk).
+  defaults to `stop`, or to the last string's end for pointer sources, and
+  the field's placeholder shows which.
+- **Write mode** — **Packed**, **Slotted**, or **Automatic**, which says
+  which of the two it picks; see [Writing](#writing-back-to-disk).
 - **Fill byte** — what pads unused space on write.
 - **Compression** — a block inherits its parent file's container and
   compression and may override the compression — **To Block** in the

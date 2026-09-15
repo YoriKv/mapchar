@@ -63,7 +63,7 @@ Rules:
   (`path`, `extra_paths`, block `offset`/`length`); its chain
   (`container_id`, `compression_id`); its `BlockConfig`; its
   `EntrySession` (a file's reading — a `BlockConfig` whose source has no
-  addresses — its table, Resolve pointers, view position, and the reading its
+  addresses — its table, Follow pointers, view position, and the reading its
   last switch of mode set aside, which is not saved); kind-specific state (table
   edits, font map, box); the `notices` its file's last read produced; and
   session-only state (the lazily loaded `doc`, revision tokens).
@@ -629,7 +629,7 @@ list and the legend) and `ui/__init__.py` (the `settings()` accessor and the vie
 |---|---|
 | View offset, selection, current view tab | the window, live, and re-read from its widgets on every refresh |
 | View bounds (the stretch the Hex and Text tabs are confined to) | the window, live; re-derived from a block's source on every activation, so never saved |
-| View offset, view tab, a file's reading and Resolve pointers, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
+| View offset, view tab, a file's reading and Follow pointers, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
 | Container, compression, block configuration, font, box | the `Entry` |
 | Bytes, table set, strings, notices | the `Document` |
 | Address format, Follow selection, theme, window layouts, recent projects | `QSettings` |
