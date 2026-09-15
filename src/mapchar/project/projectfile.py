@@ -221,8 +221,9 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
             d["charset"] = entry.table_charset
         if entry.table_overlay:
             d["overlay"] = dict(entry.table_overlay)
-        # A table with no file is named nowhere else.
-        if not entry.path and entry.table is not None:
+        # A table with no file is named nowhere else; one renamed in the app
+        # is named here in place of its file's id.
+        if entry.table is not None and (not entry.path or entry.table_id):
             d["table"] = entry.table.id
     session: dict[str, Any] = {}
     if entry.session.table_id:
@@ -447,6 +448,8 @@ def _entry_from(
         entry.dialect = raw.get("dialect")
         charset = raw.get("charset")
         entry.table_charset = str(charset) if charset else None
+        if path and raw.get("table"):
+            entry.table_id = str(raw["table"])
         # Kept until the file has been read, which is what it is laid over
         # (:func:`~mapchar.project.tables.adopt_table`).
         overlay = raw.get("overlay")

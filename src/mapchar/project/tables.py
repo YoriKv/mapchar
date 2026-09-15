@@ -123,6 +123,8 @@ def adopt_table(
     if registry is not None and entry.table_charset not in (None, table.charset):
         rebase_charset(entry, entry.table_charset, registry)
         table.replace_with(entry.file_table)
+    if entry.table_id:
+        table.id = entry.table_id
     apply_overlay(table, entry.table_overlay)
 
 
@@ -167,8 +169,10 @@ def set_charset(entry: WorkspaceEntry, charset: str, registry: Registry) -> None
     if entry.table is None:
         return
     edits = overlay_of(entry.file_table, entry.table)
+    table_id = entry.table.id
     rebase_charset(entry, charset, registry)
     entry.table.replace_with(entry.file_table)
+    entry.table.id = table_id  # the file's id is not the table's when renamed
     apply_overlay(entry.table, edits)
     capture_overlay(entry)
 
@@ -181,6 +185,10 @@ def capture_overlay(entry: WorkspaceEntry) -> None:
     """
     if entry.table is not None:
         entry.table_overlay = overlay_of(entry.file_table, entry.table)
+        base = entry.file_table
+        entry.table_id = (
+            entry.table.id if base is not None and entry.table.id != base.id else None
+        )
 
 
 def fold_overlay(entry: WorkspaceEntry) -> None:

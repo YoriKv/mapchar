@@ -422,11 +422,12 @@ class TableEntryForm(QWidget):
             )
         head.add_group("Kind", self.kind, tip="What the entry does when its bits match")
         self.weight = number_spin(-99, 9999, 4, value=1)
-        head.add_group(
+        self.weight_group = head.add_group(
             "Weight",
             self.weight,
             tip="How much a match counts towards a switch's count; usually 1",
         )
+        self._weights_used = False
         box.addWidget(head)
 
         # -- text or label ----------------------------------------------------
@@ -480,11 +481,21 @@ class TableEntryForm(QWidget):
             "Typing or pasting a line here fills the form",
         )
         self.line.setFont(mono_font())
-        line_row.addWidget(QLabel("Line"))
+        # The line is for whoever knows the grammar: folded away until asked.
+        self.line_toggle = QToolButton()
+        self.line_toggle.setText("Line")
+        self.line_toggle.setCheckable(True)
+        self.line_toggle.setAutoRaise(True)
+        self.line_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.line_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.line_toggle.setToolTip("Show the entry as its line in the table file")
+        line_row.addWidget(self.line_toggle, 0, Qt.AlignmentFlag.AlignLeft)
         line_row.addWidget(self.line, 1)
         box.addLayout(line_row)
         self.problem = ElidedLabel("")
         box.addWidget(self.problem)
+        self.line_toggle.toggled.connect(self._show_line)
+        self._show_line(False)
 
         self.key.setValidator(QRegularExpressionValidator(_HEX, self.key))
         self.key.textChanged.connect(self._on_form_changed)
@@ -500,6 +511,52 @@ class TableEntryForm(QWidget):
         for field in (self.key, self.text, self.line):
             field.returnPressed.connect(self.submitted)
         self._on_kind()
+
+    # -- what shows -----------------------------------------------------------
+
+    def _show_line(self, shown: bool) -> None:
+        self.line.setVisible(shown)
+        self.line_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow
+        )
+
+    def set_line_shown(self, shown: bool) -> None:
+        self.line_toggle.setChecked(shown)
+
+    def line_shown(self) -> bool:
+        return self.line_toggle.isChecked()
+
+    def set_weights_used(self, used: bool) -> None:
+        """Whether the table weights any entry: Weight shows for every kind
+        then, else only for the kinds a count usually concerns."""
+        self._weights_used = used
+        self._show_weight()
+
+    def _show_weight(self) -> None:
+        kind = self.kind.currentData()
+        self.weight_group.setVisible(
+            self._weights_used
+            or self.weight.value() != 1
+            or kind in (TokenKind.CODE, TokenKind.SWITCH)
+        )
+
+    def focus_details(self) -> None:
+        """Put the cursor on what the kind takes: the first operand or
+        parameter, else the kind itself."""
+        kind = self.kind.currentData()
+        rows = (
+            self.operands.rows()
+            if kind is TokenKind.CODE
+            else self.params.rows()
+            if kind is TokenKind.SWITCH
+            else []
+        )
+        if rows:
+            rows[0].pick.setFocus() if kind is TokenKind.CODE else rows[
+                0
+            ].table.setFocus()
+        else:
+            self.kind.setFocus()
 
     # -- tables ---------------------------------------------------------------
 
@@ -568,6 +625,7 @@ class TableEntryForm(QWidget):
         self.text.setToolTip(tip)
         self.operands_box.setVisible(kind is TokenKind.CODE)
         self.params_box.setVisible(kind is TokenKind.SWITCH)
+        self._show_weight()
         if kind is TokenKind.CODE and not self.operands.rows():
             self.operands.add_row()
         if kind is TokenKind.SWITCH and not self.params.rows():
@@ -650,6 +708,7 @@ class TableEntryForm(QWidget):
     def _on_form_changed(self, *_) -> None:
         if self._syncing:
             return
+        self._show_weight()
         self._syncing = True
         try:
             self.key_width.setText(self._width_text())

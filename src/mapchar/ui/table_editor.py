@@ -10,10 +10,11 @@ window with the table as it was, which makes it one undo step
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -46,6 +48,7 @@ from mapchar.engines.relsearch import (
 )
 from mapchar.project.formats.table_native import format_entry, parse_entry
 from mapchar.project.workspace import Entry
+from mapchar.ui import settings
 from mapchar.ui.number_fields import OffsetEdit
 from mapchar.ui.table_entry_form import KIND_NAMES, TableEntryForm, describe
 from mapchar.ui.widgets import (
@@ -75,6 +78,14 @@ CUSTOM = "Custom…"
 
 KEY, KIND, TEXT, DETAILS, WEIGHT, COMMENT = range(6)
 """The grid's columns."""
+HEADERS = ("Key", "Kind", "Text", "Details", "Weight", "Comment")
+
+Sampler = Callable[[str, int | None], str]
+"""What the window answers a sample request with: the text the bytes of an
+entry's key decode to from where they are found (or from a given offset),
+or nothing when there is no file to look in."""
+Speller = Callable[[int], str]
+"""How the window spells a file offset."""
 
 
 class TableEditor(EscapeCloses, QWidget):
@@ -84,11 +95,14 @@ class TableEditor(EscapeCloses, QWidget):
     The window turns the pair into one undo step; the editor itself mutates
     the table in place.
     """
-    save_requested = Signal(object)
+    save_requested = Signal(object, bool)
+    """Save, or Save As File… (``True``) asking for the path."""
     table_requested = Signal(object)
     """The Table picker chose another table entry to edit."""
     charset_chosen = Signal(object, str)
     """The Charset picker put the table entry's table on a charset."""
+    rename_requested = Signal(object)
+    """Rename Table… on the table entry being edited."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
@@ -104,6 +118,16 @@ class TableEditor(EscapeCloses, QWidget):
         self._fills = 0
         """How many times the grid was rebuilt: a change the window took back
         through :meth:`set_entry` needs no second rebuild."""
+        self._tables: dict[int, Entry] = {}
+        self._queue: list[str] = []
+        """Keys still to add after the one in the form: the raw view's
+        selection, one entry per byte."""
+        self._sample_at: int | None = None
+        """Where the form's key was taken from, for the sample line."""
+        self.sampler: Sampler | None = None
+        self.speller: Speller = lambda offset: f"{offset:X}"
+        self._columns: dict[int, bool] = _stored_columns()
+        """The columns shown or hidden by choice; the rest follow the table."""
         layout = QVBoxLayout(self)
 
         # -- which table, on what ---------------------------------------------
@@ -117,6 +141,11 @@ class TableEditor(EscapeCloses, QWidget):
             "the encoding's code for code"
         )
         head.add_group("Charset", self.charset_pick)
+        self.rename = QPushButton("Rename Table…")
+        self.rename.setToolTip(
+            "Give the table another id; every switch that names it follows"
+        )
+        head.add_group("", self.rename)
         self.filter = hint_field(
             QLineEdit(),
             "Filter…",
@@ -130,12 +159,16 @@ class TableEditor(EscapeCloses, QWidget):
         layout.addWidget(self.title)
 
         # -- the entries ------------------------------------------------------
-        self.grid = _EntryGrid(0, 6)
-        self.grid.setHorizontalHeaderLabels(
-            ["Key", "Kind", "Text", "Details", "Weight", "Comment"]
-        )
+        self.grid = _EntryGrid(0, len(HEADERS))
+        self.grid.setHorizontalHeaderLabels(list(HEADERS))
         header = self.grid.horizontalHeader()
         header.setStretchLastSection(False)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(KEY, Qt.SortOrder.AscendingOrder)
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._on_header_menu)
+        header.setToolTip("Click a column to sort by it; right-click to choose columns")
         header.setSectionResizeMode(TEXT, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(DETAILS, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COMMENT, QHeaderView.ResizeMode.Stretch)
@@ -147,6 +180,12 @@ class TableEditor(EscapeCloses, QWidget):
         self.grid.verticalHeader().setVisible(False)
         show_elided_tooltips(self.grid)
         layout.addWidget(self.grid, 1)
+        self.sample = ElidedLabel("")
+        self.sample.setToolTip(
+            "What the bytes of the form's key decode to in the file on screen, "
+            "from where they are first found"
+        )
+        layout.addWidget(self.sample)
 
         # -- the entry ----------------------------------------------------------
         self.form = TableEntryForm()
@@ -163,11 +202,13 @@ class TableEditor(EscapeCloses, QWidget):
         self.fill = QPushButton("Fill…")
         self.fill.setToolTip("Lay a run of characters over consecutive keys")
         self.save = QPushButton("Save")
-        self.save.setToolTip("Write the table file, in the native grammar")
+        self.save.setToolTip("Write the table back to its file, in the native grammar")
+        self.save_as = QPushButton("Save As File…")
+        self.save_as.setToolTip("Write the table to a file of your choosing")
         for button in (self.add, self.new, self.remove):
             row.addWidget(button)
         row.addStretch(1)
-        for button in (self.shift, self.fill, self.save):
+        for button in (self.shift, self.fill, self.save, self.save_as):
             row.addWidget(button)
         layout.addLayout(row)
         self.status = ElidedLabel("")
@@ -184,7 +225,15 @@ class TableEditor(EscapeCloses, QWidget):
         )
         self.grid.itemSelectionChanged.connect(self._on_selection)
         self.grid.itemChanged.connect(self._edited)
+        self.grid.itemDoubleClicked.connect(self._on_double_click)
         self.grid.delete_pressed.connect(self._remove)
+        self.rename.clicked.connect(lambda: self.rename_requested.emit(self._entry))
+        self.form.line_toggle.toggled.connect(
+            lambda on: settings().setValue("table_editor/line_shown", on)
+        )
+        self.form.set_line_shown(
+            settings().value("table_editor/line_shown", False, type=bool)
+        )
         self.form.changed.connect(self._on_form_changed)
         self.form.submitted.connect(self._add)
         self.add.clicked.connect(self._add)
@@ -192,7 +241,10 @@ class TableEditor(EscapeCloses, QWidget):
         self.remove.clicked.connect(self._remove)
         self.shift.clicked.connect(self._shift)
         self.fill.clicked.connect(self._fill_dialog)
-        self.save.clicked.connect(lambda: self.save_requested.emit(self._entry))
+        self.save.clicked.connect(lambda: self.save_requested.emit(self._entry, False))
+        self.save_as.clicked.connect(
+            lambda: self.save_requested.emit(self._entry, True)
+        )
         self.set_charsets([])
         self.resize(720, 640)
 
@@ -270,13 +322,29 @@ class TableEditor(EscapeCloses, QWidget):
         if self._editing is None and not self.form.key.text():
             self.form.focus_key()
 
-    def prefill(self, key_bits: str) -> None:
-        """Start a new entry on ``key_bits``, the raw view's selection."""
+    def prefill(self, keys: list[str], at: int | None = None) -> None:
+        """Start new entries on ``keys`` in turn — the raw view's selection,
+        one per byte — the first in the form now and the rest as each is
+        added. ``at`` is the file offset the first came from."""
+        if not keys:
+            return
         self.grid.clearSelection()
         self._editing = None
-        self.form.set_entry(TableEntry(key_bits, TokenKind.TEXT, ""))
+        self._queue = list(keys[1:])
+        self._sample_at = at
+        self.form.set_entry(TableEntry(keys[0], TokenKind.TEXT, ""))
         self.form.text.setFocus()
+        self._say_where()
         self._sync_buttons()
+
+    def _say_where(self) -> None:
+        if self._sample_at is None:
+            return
+        more = len(self._queue)
+        self.status.setText(
+            f"Byte at {self.speller(self._sample_at)}"
+            + (f" · {more} more to add after this one" if more else "")
+        )
 
     def _snapshot(self) -> Table | None:
         """The entry's table as it is now, to undo back to."""
@@ -290,23 +358,33 @@ class TableEditor(EscapeCloses, QWidget):
         selected = self._editing
         # A rebuild of the same table keeps its place; a new one starts at the top.
         scroll = self.grid.verticalScrollBar().value() if same_table else 0
+        header = self.grid.horizontalHeader()
+        sort_column, sort_order = (
+            header.sortIndicatorSection(),
+            header.sortIndicatorOrder(),
+        )
+        self.grid.setSortingEnabled(False)
         self.grid.setRowCount(0)
-        selected_row = None
+        weights_used = False
         if self._table is not None:
             entries = self._table.sorted_entries()
             self.grid.setRowCount(len(entries))
             for row, e in enumerate(entries):
                 self._set_row(row, e)
-                if e.bits == selected:
-                    selected_row = row
+                weights_used = weights_used or e.weight != 1
+        self.grid.setSortingEnabled(True)
+        self.grid.sortItems(sort_column, sort_order)
         self.grid.resizeColumnToContents(KEY)
         self.grid.resizeColumnToContents(KIND)
         self.grid.resizeColumnToContents(WEIGHT)
+        self._show_columns(weights_used)
+        self.form.set_weights_used(weights_used)
         if self._entry is not None:
             select_data(self.table_pick, id(self._entry))
         self._show_charset()
         self._apply_filter(self.filter.text())
         self.grid.verticalScrollBar().setValue(scroll)
+        selected_row = self._row_of(selected) if selected is not None else None
         if selected_row is not None:
             self.grid.selectRow(selected_row)
             self.grid.scrollTo(self.grid.model().index(selected_row, KEY))
@@ -315,6 +393,44 @@ class TableEditor(EscapeCloses, QWidget):
             self._editing = None
             self.form.set_entry(None)
         self._sync_buttons()
+
+    def _row_of(self, bits: str) -> int | None:
+        for row in range(self.grid.rowCount()):
+            if self.grid.item(row, KEY).data(Qt.ItemDataRole.UserRole) == bits:
+                return row
+        return None
+
+    # -- the columns ------------------------------------------------------------
+
+    def _show_columns(self, weights_used: bool) -> None:
+        """Every column chosen shows; Weight, left to itself, only shows when
+        the table weights something."""
+        for column in range(len(HEADERS)):
+            chosen = self._columns.get(column)
+            shown = chosen if chosen is not None else (column != WEIGHT or weights_used)
+            self.grid.setColumnHidden(column, not shown)
+
+    def column_menu(self) -> QMenu:
+        """A checkable entry per column; Key stays, being what a row is."""
+        menu = QMenu(self)
+        for column, name in enumerate(HEADERS):
+            action = menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(not self.grid.isColumnHidden(column))
+            action.setEnabled(column != KEY)
+            action.toggled.connect(lambda on, c=column: self._choose_column(c, on))
+        return menu
+
+    def _choose_column(self, column: int, shown: bool) -> None:
+        self._columns[column] = shown
+        self.grid.setColumnHidden(column, not shown)
+        settings().setValue(
+            "table_editor/columns",
+            {str(c): on for c, on in self._columns.items()},
+        )
+
+    def _on_header_menu(self, pos: QPoint) -> None:
+        self.column_menu().exec(self.grid.horizontalHeader().mapToGlobal(pos))
 
     def _set_row(self, row: int, e: TableEntry) -> None:
         cells = [
@@ -327,7 +443,9 @@ class TableEditor(EscapeCloses, QWidget):
             e.comment.replace("\n", " ⏎ "),
         ]
         for column, text in enumerate(cells):
-            item = QTableWidgetItem(text)
+            item = _KeyItem(text) if column == KEY else QTableWidgetItem(text)
+            if column == WEIGHT:
+                item.setData(Qt.ItemDataRole.EditRole, e.weight)
             if column not in (TEXT, COMMENT) or e.kind is TokenKind.RETURN:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if column == KEY:
@@ -368,6 +486,32 @@ class TableEditor(EscapeCloses, QWidget):
 
     def _on_form_changed(self) -> None:
         self._sync_buttons()
+        self._show_sample()
+
+    def _show_sample(self) -> None:
+        """What the form's key decodes to where its bytes are found."""
+        if self.sampler is None or self._table is None:
+            self.sample.setText("")
+            return
+        try:
+            entry = self.form.entry()
+        except ValueError:
+            self.sample.setText("")
+            return
+        self.sample.setText(self.sampler(entry.bits, self._sample_at))
+
+    def _on_double_click(self, item: QTableWidgetItem) -> None:
+        """A cell that is not edited in place opens its control in the form."""
+        column = item.column()
+        if column == KEY:
+            self.form.focus_key()
+        elif column == KIND:
+            self.form.kind.setFocus()
+        elif column == WEIGHT:
+            self.form.weight.setFocus()
+            self.form.weight.selectAll()
+        elif column == DETAILS:
+            self.form.focus_details()
 
     def _sync_buttons(self) -> None:
         editing = self._editing is not None
@@ -384,6 +528,13 @@ class TableEditor(EscapeCloses, QWidget):
         self.form.setEnabled(not several)
         self.remove.setEnabled(bool(self._selected_bits()))
         self.shift.setEnabled(bool(self._selected_bits()))
+        entry = self._entry
+        # Save writes back only what came from a native file; anything else
+        # needs a file chosen, which is Save As File….
+        self.save.setEnabled(
+            entry is not None and bool(entry.path) and entry.dialect == "native"
+        )
+        self.rename.setEnabled(entry is not None and entry.table is not None)
 
     def _emit_change(self, before: Table) -> None:
         """Hand the change to the window as one undo step, and rebuild the
@@ -433,9 +584,18 @@ class TableEditor(EscapeCloses, QWidget):
             return
         editing = self._editing
         if self._commit(entry, editing) and editing is None:
-            # Entries are usually typed in key order: the form moves on to the
-            # next key of the same width, kind and weight, its text blank.
-            self.form.set_entry(replace(entry, bits=_next_key(entry.bits), text=""))
+            # The next of the raw view's bytes, else — entries are usually
+            # typed in key order — the next key of the same width, kind and
+            # weight, its text blank.
+            if self._queue:
+                bits = self._queue.pop(0)
+                if self._sample_at is not None:
+                    self._sample_at += 1
+                self._say_where()
+            else:
+                bits = _next_key(entry.bits)
+                self._sample_at = None
+            self.form.set_entry(replace(entry, bits=bits, text=""))
             self.form.text.setFocus()
 
     def _edited(self, item: QTableWidgetItem) -> None:
@@ -557,6 +717,26 @@ class TableEditor(EscapeCloses, QWidget):
         )
         self._emit_change(before)
         self.form.set_entry(None)
+
+
+class _KeyItem(QTableWidgetItem):
+    """A key cell: sorted by width and then bits, never by its spelling."""
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        mine = self.data(Qt.ItemDataRole.UserRole) or ""
+        theirs = other.data(Qt.ItemDataRole.UserRole) or ""
+        return (len(mine), mine) < (len(theirs), theirs)
+
+
+def _stored_columns() -> dict[int, bool]:
+    stored = settings().value("table_editor/columns", {}) or {}
+    out: dict[int, bool] = {}
+    for key, on in dict(stored).items():
+        try:
+            out[int(key)] = on in (True, "true", "True", 1, "1")
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 class _EntryGrid(QTableWidget):

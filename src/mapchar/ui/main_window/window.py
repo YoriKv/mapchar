@@ -498,9 +498,14 @@ class MainWindow(
         self.preview_window.box_changed.connect(self._on_box_changed)
         self.preview_window.wrap_requested.connect(self._wrap_selected)
         self.table_editor.changed.connect(self._on_table_edited)
-        self.table_editor.save_requested.connect(self._save_table_entry)
+        self.table_editor.save_requested.connect(
+            lambda entry, ask: self._save_table_entry(entry, ask=ask)
+        )
         self.table_editor.table_requested.connect(self._edit_table_entry)
         self.table_editor.charset_chosen.connect(self._on_charset_chosen)
+        self.table_editor.rename_requested.connect(self._rename_table)
+        self.table_editor.sampler = self._table_sample
+        self.table_editor.speller = self.address_spelling.format
         self.hex_panel.go_to_requested.connect(self._go_to)
         self.hex_panel.overtype_requested.connect(self.overtype_bytes)
         self.hex_panel.find_requested.connect(self._find_text_or_bytes)

@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
+from dataclasses import replace
 
+from PySide6.QtWidgets import QInputDialog
+
+from mapchar.core.bits import Bits, bits_to_bytes
 from mapchar.core.capabilities import Capability, supports
+from mapchar.core.errors import MapcharError
 from mapchar.core.notices import notice_lines
-from mapchar.core.table import Table
+from mapchar.core.table import ID_PATTERN, Table, TableSet, TokenKind
+from mapchar.core.tokens import render
+from mapchar.engines.decode import DecodeRules, decode
 from mapchar.project.formats.table_legacy import free_table_id, table_id_for
 from mapchar.project.formats.table_native import write_native
 from mapchar.project.tables import (
@@ -15,8 +23,11 @@ from mapchar.project.tables import (
     rebase_charset,
     set_charset,
 )
-from mapchar.project.workspace import Entry
-from mapchar.ui.undo_commands import TableCommand
+from mapchar.project.workspace import Entry, EntryKind
+from mapchar.ui.undo_commands import BlockEditCommand, TableCommand
+
+SAMPLE_BYTES = 24
+"""How far past an entry's key the sample line reads."""
 
 
 class TableEditorMixin:
@@ -36,9 +47,74 @@ class TableEditorMixin:
             table_entry = self._add_memory_table(table, "new.tbl")
             self._choose_table("main")
         self._edit_table_entry(table_entry)
-        from mapchar.core.bits import bytes_to_bits
+        # One entry per byte: a selection is usually a run of characters.
+        keys = [format(b, "08b") for b in self._doc.data[s:e]]
+        self.table_editor.prefill(keys, s)
 
-        self.table_editor.prefill(bytes_to_bits(self._doc.data[s : min(e, s + 4)]))
+    def _table_sample(self, bits: str, at: int | None) -> str:
+        """The Table Editor's sample line: what ``bits`` decode to in the
+        file on screen, read on from ``at`` or from where they are first
+        found, through the table being edited."""
+        doc = self._doc
+        entry = self.table_editor._entry
+        if doc is None or entry is None or entry.table is None or len(bits) % 8:
+            return ""
+        key = bits_to_bytes(bits)
+        if at is None:
+            at = doc.data.find(key)
+            if at < 0:
+                return f"{key.hex(' ').upper()} is not in {self._entry.name}"
+        tables = self.workspace.tables()
+        try:
+            ts = TableSet.build(entry.table, tables)
+        except MapcharError as exc:
+            return str(exc)
+        end = min(len(doc.data), at + len(key) + SAMPLE_BYTES)
+        result = decode(Bits(doc.data[at:end]), ts, 0, DecodeRules())
+        text = render(result.tokens).replace("\n", "⏎")
+        return f"at {self.address_spelling.format(at)}  {text}"
+
+    def _rename_table(self, entry: Entry | None) -> None:
+        """Give ``entry``'s table another id, and every switch, block and
+        reading that names it the new one, as one undo step."""
+        if entry is None or entry.table is None:
+            return
+        old = entry.table.id
+        new, ok = QInputDialog.getText(self, "Rename Table", "New id:", text=old)
+        new = new.strip()
+        if not ok or not new or new == old:
+            return
+        if not ID_PATTERN.fullmatch(new):
+            self._error(f"{new!r} is not a table id: letters, digits, _ . - only.")
+            return
+        if new in self.workspace.loaded_tables():
+            self._error(f"A table called {new!r} is already loaded.")
+            return
+        self.undo_stack.beginMacro(f"Rename table {old} to {new}")
+        self._push_command(
+            TableCommand(self, entry, deepcopy(entry.table), _renamed(entry.table, new))
+        )
+        for other in self.workspace.table_entries():
+            table = other.table
+            if table is None or other is entry or old not in table.switch_targets():
+                continue
+            self._push_command(
+                TableCommand(self, other, deepcopy(table), _retargeted(table, old, new))
+            )
+        for block in self.workspace.of_kind(EntryKind.BLOCK):
+            cfg = block.config
+            if cfg is None or cfg.table_id != old:
+                continue
+            before = (block.name, cfg, block.compression_id, block.spare_room)
+            after = (block.name, replace(cfg, table_id=new), *before[2:])
+            self._push_command(BlockEditCommand(self, block, before, after))
+        self.undo_stack.endMacro()
+        # Readings are session state, not project state: they just follow.
+        for e in self.workspace.entries:
+            if e.session.table_id == old:
+                e.session.table_id = new
+        self._refresh_table_picks()
+        self._refresh_view()
 
     def _show_table_editor(self) -> None:
         entry = self.workspace.entry_for_table(self._current_table_id() or "")
@@ -74,15 +150,11 @@ class TableEditorMixin:
         The editor has already mutated the table and hands over what it held
         before, so the command is a plain before/after pair.
         """
-        from copy import deepcopy
-
         self._push_command(TableCommand(self, entry, before, deepcopy(entry.table)))
 
     def _on_charset_chosen(self, entry: Entry, charset: str) -> None:
         """The Table Editor's Charset pick: the table moves onto ``charset``
         with its edits, as one undo step."""
-        from copy import deepcopy
-
         if entry.table is None or entry.table.charset == charset:
             return
         before = deepcopy(entry.table)
@@ -96,8 +168,6 @@ class TableEditorMixin:
         and the views hold the same ``Table`` object, and the command keeps
         holding the state it was handed, which must not be edited in place.
         """
-        from copy import deepcopy
-
         table = entry.table
         if table is None:
             entry.table = deepcopy(snapshot)
@@ -130,6 +200,7 @@ class TableEditorMixin:
         entry.dialect = "native"
         entry.name = os.path.basename(path)
         fold_overlay(entry)  # the file now says it; the project need not
+        entry.table_id = None  # ...nor its id
         self.workspace.mark_saved(entry)
         self.files_panel.refresh_labels()
         self.tables_panel.rebuild()
@@ -158,3 +229,23 @@ class TableEditorMixin:
             self._choose_table(table.id)
         self._edit_table_entry(entry)
         return entry
+
+
+def _renamed(table: Table, new_id: str) -> Table:
+    after = deepcopy(table)
+    after.id = new_id
+    return after
+
+
+def _retargeted(table: Table, old: str, new: str) -> Table:
+    """``table`` with every switch parameter naming ``old`` naming ``new``."""
+    after = deepcopy(table)
+    for entry in list(after.entries.values()):
+        if entry.kind is not TokenKind.SWITCH:
+            continue
+        params = tuple(
+            replace(p, table_id=new) if p.table_id == old else p for p in entry.params
+        )
+        if params != entry.params:
+            after.add(replace(entry, params=params), replace=True)
+    return after

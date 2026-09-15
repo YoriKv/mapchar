@@ -1663,3 +1663,138 @@ def test_the_editor_moves_on_to_the_next_key_and_removes_on_del(
     assert not table.entries and "Removed" in editor.status.text()
     window.undo_stack.undo()
     assert len(table.entries) == 4
+
+
+def test_the_editor_samples_the_file_and_adds_a_selection_byte_by_byte(
+    window, tmp_path
+):
+    data = b"\x41\x42\x43\x00" + b"\xff" * 8
+    open_rom_and_table(window, tmp_path, data)
+    table_entry = window.workspace.table_entries()[0]
+    window._edit_table_entry(table_entry)
+    editor = window.table_editor
+    # The sample reads the file from where the key's bytes are first found.
+    editor.form.line.setText("42=B")
+    assert editor.sample.text() == "at 000001  B[$43][end]"
+    editor.form.line.setText("!F1=[x] @main:1")
+    assert "not in" in editor.sample.text()
+    # Add to Table… queues the selected bytes one entry each, saying where.
+    window._selection = (0, 3)
+    window._add_selection_to_table()
+    assert editor.form.key.text() == "41" and "2 more" in editor.status.text()
+    assert editor.sample.text().startswith("at 000000")
+    editor.form.text.setText("a")
+    editor._add()
+    assert editor.form.key.text() == "42" and "1 more" in editor.status.text()
+    editor.form.text.setText("b")
+    editor._add()
+    assert editor.form.key.text() == "43" and "more" not in editor.status.text()
+    editor.form.text.setText("c")
+    editor._add()
+    # The queue spent, the form moves on by key as usual.
+    assert editor.form.key.text() == "44"
+    assert [
+        table_entry.table.entries[k].text for k in ("01000001", "01000010", "01000011")
+    ] == ["a", "b", "c"]
+
+
+def test_rename_table_follows_every_reference(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    from mapchar.core.table import Table
+
+    data = b"\x41\xf1\x01\x00" + b"\xff" * 8
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    main = window.workspace.table_entries()[0]
+    items = Table("items")
+    window._add_memory_table(items, "items.tbl")
+    items_entry = window.workspace.entry_for_table("items")
+    editor = window.table_editor
+    window._edit_table_entry(items_entry)
+    editor.form.line.setText("01=Herb")
+    editor._add()
+    window._edit_table_entry(main)
+    editor.form.line.setText("!F1=[item] @items:1")
+    editor._add()
+    block = add_block(window, file_entry, "b", RangeSource(0, 4))
+    assert block.config.table_id == "main"
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("stuff", True))
+    window._edit_table_entry(items_entry)
+    window._rename_table(items_entry)
+    assert items.id == "stuff" and "items" not in window.workspace.loaded_tables()
+    switch = main.table.entries["11110001"]
+    assert switch.params[0].table_id == "stuff"
+    assert (
+        editor.title.text().endswith("items.tbl")
+        and "@stuff" in editor.table_pick.currentText()
+    )
+    # The main table's rename reaches the block reading through it.
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("font", True))
+    window._rename_table(main)
+    assert main.table.id == "font" and block.config.table_id == "font"
+    assert window._current_table_id() == "font"
+    # One undo step each way, however many references followed.
+    window.undo_stack.undo()
+    assert main.table.id == "main" and block.config.table_id == "main"
+    window.undo_stack.undo()
+    assert (
+        items.id == "items"
+        and switch.params[0].table_id == "items"
+        or (main.table.entries["11110001"].params[0].table_id == "items")
+    )
+    window.undo_stack.redo()
+    window.undo_stack.redo()
+    assert main.table.id == "font" and items.id == "stuff"
+    # The project carries a renamed id in place of the file's.
+    assert main.table_id == "font"
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    window._new_project()
+    assert window.open_project(str(proj))
+    back = window.workspace.table_entries()
+    assert {e.table.id for e in back} == {"font", "stuff"}
+    # Saved as a file, the file says the new id and the project need not.
+    font = next(e for e in back if e.table.id == "font")
+    window._save_table_entry(font)
+    assert font.table_id is None and "@table font" in Path(str(font.path)).read_text()
+
+
+def test_the_editor_sorts_and_chooses_columns(window, tmp_path):
+    from PySide6.QtCore import Qt
+
+    from mapchar.ui.table_editor import KEY, TEXT, WEIGHT
+
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    table_entry = window.workspace.table_entries()[0]
+    window._edit_table_entry(table_entry)
+    editor = window.table_editor
+    editor.form.line.setText("0041=z")
+    editor._add()
+
+    def keys():
+        return [editor.grid.item(r, KEY).text() for r in range(editor.grid.rowCount())]
+
+    # By key: width first, then bits — not the spelling.
+    assert keys() == ["00", "41", "42", "0041"]
+    editor.grid.sortItems(TEXT, Qt.SortOrder.DescendingOrder)
+    assert keys()[0] == "0041"
+    editor.grid.sortItems(KEY, Qt.SortOrder.AscendingOrder)
+    # Weight hides itself until the table weights something.
+    assert editor.grid.isColumnHidden(WEIGHT)
+    editor.form.line.setText("44<2>=D")
+    editor._add()
+    assert not editor.grid.isColumnHidden(WEIGHT)
+    # A column chosen away stays away.
+    menu = editor.column_menu()
+    action = next(a for a in menu.actions() if a.text() == "Weight")
+    action.setChecked(False)
+    assert editor.grid.isColumnHidden(WEIGHT)
+    editor.set_entry(table_entry)
+    assert editor.grid.isColumnHidden(WEIGHT)
+    editor._columns.clear()  # back to following the table, for the tests after
+    # Save writes back a native file; a converted one needs Save As File….
+    assert editor.save.isEnabled() and editor.save_as.isEnabled()
+    table_entry.dialect = "abcde"
+    editor.set_entry(table_entry)
+    assert not editor.save.isEnabled()

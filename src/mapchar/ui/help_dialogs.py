@@ -105,6 +105,9 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("Put the entry in the table", "Enter in the form"),
             ("Edit a Text or Comment cell in place", "Double-click"),
+            ("Open any other cell's control in the form", "Double-click"),
+            ("Sort by a column", "Click its header"),
+            ("Choose the columns", "Right-click a header"),
             ("Remove the selected entries", "Del"),
             ("Filter the entries", "Ctrl+F"),
         ),
