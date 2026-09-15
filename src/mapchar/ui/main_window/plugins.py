@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from mapchar.plugins.base import Stage
 from mapchar.plugins.charsets import apply_charset
 from mapchar.plugins.discovery import PLUGIN_README
 from mapchar.project.workspace import Entry
@@ -82,6 +83,7 @@ class PluginsMixin:
         self._plugin_issues = list(issues)
         self._fill_container_pick()
         self._fill_compression_pick()
+        self._registry_changed()
         self._alert_plugin_issues()
 
     def _refresh_plugins(self) -> None:
@@ -96,6 +98,7 @@ class PluginsMixin:
         self._plugin_issues = list(issues)
         self._fill_container_pick()
         self._fill_compression_pick()
+        self._registry_changed()
         kept = self._drop_clean_documents()
         for e in self.workspace.table_entries():
             # The file's own table as well as the live one: it is the baseline
@@ -114,6 +117,13 @@ class PluginsMixin:
             message += f"; {kept} entry(ies) with unsaved edits kept as they are"
         self.statusBar().showMessage(message, 5000)
         self._alert_plugin_issues()
+
+    def _registry_changed(self) -> None:
+        """What lists the registry's plugins by name follows it: the charsets
+        offered as tables, the pointer mappings."""
+        self._reset_builtin_tables()
+        self.reading_bar.set_mappings(self.registry.ids(Stage.MAPPING))
+        self._refresh_table_picks()
 
     def _drop_clean_documents(self) -> int:
         """Forget every cached document so the new registry re-reads it — except

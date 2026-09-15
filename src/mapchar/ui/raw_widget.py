@@ -57,6 +57,14 @@ class RowModel:
     bounds: tuple[int, int] | None = None
     """The absolute byte range the view is confined to, which is what the
     scrollbar spans; the whole buffer when ``None``."""
+    tips: dict[int, str] = field(default_factory=dict)
+    """A token's hover text in place of its own, by its first bit: what a
+    pointer holds and reaches."""
+
+
+POINTER_TOKENS = "\x00pointer"
+"""The ``table_id`` of a token that is a pointer rather than text: tinted as
+one, and hovered for what :attr:`RowModel.tips` says of it."""
 
 
 def token_bytes(token: Token) -> range:
@@ -83,6 +91,12 @@ _EMBEDDED_BREAK = re.compile(r"\[[^\[\]]*\]\n|\n")
 _EMBEDDED_CODE = re.compile(r"\[[^\[\]]*\]")
 
 
+def compact_text(text: str) -> str:
+    """Rendered text on one line: a name ending a line as :data:`BREAK_MARK`,
+    any other as :data:`CODE_MARK`."""
+    return _EMBEDDED_CODE.sub(CODE_MARK, _EMBEDDED_BREAK.sub(BREAK_MARK, text))
+
+
 def display_text(token: Token) -> tuple[str, bool]:
     """What the text column shows for a token, and whether it is a label.
 
@@ -99,8 +113,7 @@ def display_text(token: Token) -> tuple[str, bool]:
     bare = text.strip("\n")
     if bare.startswith("[") and bare.endswith("]") and bare.count("[") == 1:
         return bare[1:-1], True
-    text = _EMBEDDED_BREAK.sub(BREAK_MARK, text)
-    return _EMBEDDED_CODE.sub(CODE_MARK, text), False
+    return compact_text(text), False
 
 
 class RawWidget(QAbstractScrollArea):
@@ -613,6 +626,8 @@ class RawWidget(QAbstractScrollArea):
 
     @staticmethod
     def _tint(token: Token) -> QColor | None:
+        if token.table_id == POINTER_TOKENS:
+            return theme.TINT_POINTER
         if token.fallback:
             return theme.TINT_SWITCH
         if token.entry is None:
@@ -689,6 +704,10 @@ class RawWidget(QAbstractScrollArea):
             return
         rels = [r for r in token_bytes(token) if r < len(model.data)]
         spelled = " ".join(f"{model.data[r]:02X}" for r in rels)
+        tip = model.tips.get(token.bit_start)
+        if tip is not None:
+            QToolTip.showText(event.globalPos(), f"{tip}\n{spelled}", self)
+            return
         text = token.text().replace("\n", "↵") or "(nothing)"
         if token.entry is None and not token.fallback:
             text = "no match"

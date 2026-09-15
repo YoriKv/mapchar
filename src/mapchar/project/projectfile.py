@@ -229,6 +229,10 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
         session["offset"] = entry.session.offset
     if entry.session.view != "raw":
         session["view"] = entry.session.view
+    if entry.session.config is not None and entry.kind is not EntryKind.BLOCK:
+        session["config"] = format_config(entry.session.config)
+    if entry.session.show_strings:
+        session["show_strings"] = True
     if session:
         d["session"] = session
     return d
@@ -399,7 +403,15 @@ def _entry_from(
         table_id=session_raw.get("table_id"),
         offset=int(session_raw.get("offset", 0)),
         view=session_raw.get("view", "raw"),
+        show_strings=bool(session_raw.get("show_strings", False)),
     )
+    if session_raw.get("config"):
+        # A view setting, so one that no longer reads costs the setting and
+        # never the entry.
+        try:
+            session.config = current_config_ids(parse_config(session_raw["config"]))
+        except (ValueError, KeyError):
+            session.config = None
     entry = Entry(
         kind,
         str(raw.get("name", os.path.basename(path or "") or kind.value)),

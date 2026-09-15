@@ -40,7 +40,7 @@ done well.[end]
   from, relative to the script. Import uses them to create missing entries
   and otherwise ignores them.
 - **`@block "name" key=value…`** — the block's configuration as `key=value`
-  pairs, one per field of the block dialog
+  pairs, one per setting of the Reading bar
   ([features.md](features.md#blocks)). Import creates the block when the
   project has none of that name, and otherwise leaves the project's
   configuration alone.

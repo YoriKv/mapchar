@@ -47,7 +47,7 @@ class Capability(Enum):
     NAVIGATION = auto()  # the offset box, the steps, Go to Address, the address row
     RAW_VIEW = auto()  # the Hex and Text tabs
     HEX_VIEW = auto()  # the Hex dock's dump and its overtype line
-    CODECS = auto()  # the Codecs bar: container, compression, start table
+    CODECS = auto()  # the Codecs and Reading bars: how the bytes are read
     SEARCH = auto()  # Find bytes, the Search window, the text scan
     COMPRESSION_SCAN = auto()  # the Decompressed view's structure scan
     POINTER_DISCOVERY = auto()  # Find Pointers to this entry's strings
@@ -59,7 +59,7 @@ class Capability(Enum):
 
     # -- strings
     STRINGS = auto()  # the Strings tab, its rows and their edits
-    BLOCK_CONFIG = auto()  # the Block bar: Edit… and Dump…
+    BLOCK_CONFIG = auto()  # the Block bar: its summary and Dump…
     FIND_REPLACE = auto()  # Find and Replace over translations
     WRAP = auto()  # wrapping a translation to the block's text box
     PREVIEW = auto()  # the Preview window's drawing of a string

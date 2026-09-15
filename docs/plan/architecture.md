@@ -62,7 +62,8 @@ Rules:
   `EntryKind` (file, block, bookmark, table, font); where its bytes are
   (`path`, `extra_paths`, block `offset`/`length`); its chain
   (`container_id`, `compression_id`); its `BlockConfig`; its
-  `EntrySession` (start table, view position); kind-specific state (table
+  `EntrySession` (a file's reading — a `BlockConfig` whose source has no
+  addresses — its table, Show strings, view position); kind-specific state (table
   edits, font map, box); the `notices` its file's last read produced; and
   session-only state (the lazily loaded `doc`, revision tokens).
 - **`core.document.Document`** — the interpreted, mutable model the UI binds
@@ -314,8 +315,11 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   decompressed buffer: it resolves the source into `(start, pointers)` pairs
   (reading and mapping pointer values, sorting numerically, merging
   duplicate targets into one string with several pointers), applies the
-  string rule, and calls the decode engine per string. The raw view uses the
-  same function with a `RangeSource` from the view offset and no bound.
+  string rule, and calls the decode engine per string.
+- **View reading** (`pipeline/view_read.py`) is what the Hex and Text tabs
+  show: the bytes in view cut by the reading's string type from the view's own
+  first byte, or read as pointers — each with its value and target — and the
+  string a target reaches, by the same `decode_one` extraction uses.
 - **Layout** (`pipeline/insert.py`) turns a block's strings into a byte
   splice: encode each translation (or reuse the original bits when
   untouched), lay the results out in *packed* or *slotted* mode, compute the
@@ -431,7 +435,11 @@ file to its blocks and bookmarks, revision-token dirty tracking per entry,
 `invalidate_extractions` when a table changes. It answers every question
 about what is open — `find_file` / `find_table` by path, `entry_by_id` for a
 tree row, `entry_for_table`, `dirty_entries`, `files` / `fonts` /
-`table_entries` / `tables` — so no widget walks `entries` itself.
+`table_entries` / `loaded_tables` / `tables` — so no widget walks `entries`
+itself. `tables` is every table a block can read through: the loaded ones over
+`builtin_tables`, the registry's charsets as tables
+(`plugins.charsets.CharsetTables`, each built on first read), which the window
+sets and resets with its registry.
 
 Two more jobs are the workspace's because both are questions about the whole
 list, not about one entry:
@@ -515,7 +523,9 @@ and aliases for renamed plugin ids.
     { "kind": "file", "name": "rom.nes", "path": "rom.nes",
       "extra_paths": ["…"],                          // opt
       "container_id": "ines", "compression_id": "…", // opt
-      "session": {"table_id": "main", "offset": 32768, "view": "strings"} }, // opt
+      "session": {"table_id": "main", "offset": 32768, "view": "strings",
+                  "config": "source=pointers start=$0 stop=$0 size=2 …",
+                  "show_strings": true} },           // opt
     { "kind": "block", "name": "Dialogue", "path": "rom.nes", "parent": 0,
       "compression_id": "lz", "slice_offset": 16, "slice_length": 32,     // opt
       "spare_room": "keep",                          // opt, "fill" by default
@@ -545,7 +555,7 @@ and aliases for renamed plugin ids.
 ```
 
 A block's configuration is the `@block` line of the script grammar, so one
-spelling covers the project file, a script and the block dialog. `parent` is an
+spelling covers the project file, a script and a file's session reading. `parent` is an
 index into `entries`; a `session` holds only what is not at its default, and its
 `view` names the open tab: `raw` (Hex, the default), `text` or `strings`.
 
@@ -571,7 +581,7 @@ other widget outside is handed values and knows nothing of a workspace.
 |---|---|
 | Shell | `window.py` (widgets, docks, menus, the undo stack and its guards, the title and dirty marker, file dialogs, alerts) |
 | Active entry and refresh | `session.py`, `refresh.py`, `capability_sync.py` |
-| Interpretation and position | `codecs_bar.py`, `navigation.py`, `history.py` |
+| Interpretation and position | `codecs_bar.py` (the Codecs and Reading bars, the reading of the entry on screen, the encodings as tables), `navigation.py`, `history.py` |
 | Entries and disk | `opening.py`, `entries.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `dumping.py`, `compression.py`, `plugins.py` |
 | Tables | `tables_dock.py`, `table_editor.py` |
 | Raw view | `raw_view.py`, `block_bar.py` |
@@ -581,7 +591,9 @@ other widget outside is handed values and knows nothing of a workspace.
 | Projects | `projects.py` |
 | Preview and fonts | `preview.py`, `fonts.py`, `hex_view.py` |
 
-Widgets outside the mixins: `raw_widget.py` (the two-column byte view),
+Widgets outside the mixins: `reading_bar.py` (the Reading bar, loaded from and
+read back as a `BlockConfig`), `pointer_tokens.py` (pointers in view as tokens
+the Hex and Text tabs place), `raw_widget.py` (the two-column byte view),
 `text_widget.py` (the plain-text display), `strings_view.py` (the string grid
 and its cell editor), the panels (`files_panel.py`, `tables_panel.py`,
 `fonts_panel.py`, `hex_panel.py`), the tool windows, and the dialogs.
@@ -589,8 +601,8 @@ and its cell editor), the panels (`files_panel.py`, `tables_panel.py`,
 What more than one of them needs lives in small modules: `ui/widgets.py`
 (`ResultsTable`, the `CancellableRun` run/stop/progress mixin for a tool window
 and `ModalProgress` for a menu row, `fill_pick` and `select_data` for combos,
-and `CompactComboBox`, the fixed-width picker of the bars whose open list
-widens to its longest item),
+`CompactComboBox`, the fixed-width picker of the bars whose open list
+widens to its longest item, and `WrapBar`, a wrapping bar of labelled controls),
 `ui/panel.py` (`WorkspaceTreePanel`, which owns a
 dock's workspace subscription and its row-to-entry lookup), `ui/window_layout.py`
 (`WindowLayout` and `remember_layout`), `ui/help_dialogs.py` (the live shortcut
@@ -603,7 +615,7 @@ list and the legend) and `ui/__init__.py` (the `settings()` accessor and the vie
 |---|---|
 | View offset, selection, current view tab | the window, live, and re-read from its widgets on every refresh |
 | View bounds (the stretch the Hex and Text tabs are confined to) | the window, live; re-derived from a block's source on every activation, so never saved |
-| View offset, view tab and start table, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
+| View offset, view tab, a file's reading and Show strings, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
 | Container, compression, block configuration, font, box | the `Entry` |
 | Bytes, table set, strings, notices | the `Document` |
 | Address format, Follow selection, theme, window layouts, recent projects | `QSettings` |

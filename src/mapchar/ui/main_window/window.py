@@ -17,6 +17,7 @@ from PySide6.QtCore import QFileSystemWatcher, Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QPalette, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
@@ -26,7 +27,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QTabWidget,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +35,7 @@ from mapchar import APP_NAME
 from mapchar.core.address import BANK_PRESETS, HEX_ID
 from mapchar.core.document import Document
 from mapchar.core.text import read_text_any
+from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import Registry, default_registry
 from mapchar.project.workspace import (
     Entry,
@@ -89,6 +90,7 @@ from mapchar.ui.main_window.wrap import WrapMixin
 from mapchar.ui.main_window.writing import WritingMixin
 from mapchar.ui.preview_window import PreviewWindow
 from mapchar.ui.raw_widget import RawWidget
+from mapchar.ui.reading_bar import ReadingBar
 from mapchar.ui.scan_window import ScanWindow
 from mapchar.ui.search_window import SearchWindow
 from mapchar.ui.strings_view import StringsView
@@ -99,6 +101,7 @@ from mapchar.ui.widgets import (
     CommandComboBox,
     CompactComboBox,
     ElidedLabel,
+    WrapBar,
     fit_chars,
 )
 from mapchar.ui.window_layout import WindowLayout
@@ -193,6 +196,11 @@ class MainWindow(
         self._scan_stop = False
         """Set by :meth:`request_scan_stop` to abandon a running structure scan."""
         self._selection: tuple[int, int] | None = None
+        self._pick_is_blocks = False
+        self._bars_show: tuple | None = None
+        """The entry and reading the bars were last loaded with."""
+        """Whether the Compression pick shows a block's own scheme rather than a
+        file's preview (:mod:`mapchar.ui.main_window.codecs_bar`)."""
         self._step_icons: list[tuple[QPushButton, Glyph]] = []
         # Before anything can make an entry current: the first visit arms the
         # trail's two actions, and _build_menus puts them in the Navigate menu.
@@ -211,6 +219,7 @@ class MainWindow(
         self._window_layout = WindowLayout(self, "window")
         self._window_layout.restore()
         self._update_title()
+        self._refresh_table_picks()
         self._refresh_view()
         # A plugin that failed the startup scan is a warning the user should
         # see, not a status line lost behind the next message.
@@ -256,33 +265,51 @@ class MainWindow(
         layout = QVBoxLayout(central)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        codecs = QToolBar("Codecs")
+        # In the editing column rather than the window's toolbar area, which
+        # would run across the top of the docks: the bars describe the view
+        # under them, as celPix's do.
+        codecs = WrapBar()
         codecs.setObjectName("codecs_bar")
-        codecs.setMovable(False)
         self.container_pick = CompactComboBox()
         self._fill_container_pick()
         self.table_pick = CommandComboBox("New Table…")
-        self.table_pick.addItem("(no table)", None)
-        self.table_pick.add_command_row()
+        self.strings_pick = CompactComboBox()
+        self.show_strings = QCheckBox("Show strings")
         self.compression_pick = CompactComboBox()
         self._fill_compression_pick()
-        codecs.addWidget(QLabel(" Container "))
-        codecs.addWidget(self.container_pick)
-        codecs.addWidget(QLabel("  Compression "))
-        codecs.addWidget(self.compression_pick)
-        codecs.addWidget(QLabel("  Table "))
-        codecs.addWidget(self.table_pick)
-        self.addToolBar(codecs)
+        codecs.add_group("Container", self.container_pick)
+        codecs.add_group("Compression", self.compression_pick)
+        codecs.add_group(
+            "Table",
+            self.table_pick,
+            tip="What the bytes are read as: Pointer, or the table or encoding "
+            "of their text",
+        )
+        self.pointer_groups = (
+            codecs.add_group(
+                "Strings",
+                self.strings_pick,
+                tip="The table the pointers' strings are read through",
+            ),
+            codecs.add_group(
+                "",
+                self.show_strings,
+                tip="Show the string each pointer reaches beside it",
+            ),
+        )
+        layout.addWidget(codecs)
         self.codecs_bar = codecs
+        self.reading_bar = ReadingBar()
+        self.reading_bar.set_mappings(self.registry.ids(Stage.MAPPING))
+        layout.addWidget(self.reading_bar)
+        self._reset_builtin_tables()
 
         block_bar = QWidget()
         bl = QHBoxLayout(block_bar)
         bl.setContentsMargins(0, 0, 0, 0)
         self.block_label = ElidedLabel("")
-        self.block_edit = QPushButton("Edit…")
         self.block_dump = QPushButton("Dump…")
         bl.addWidget(self.block_label, 1)
-        bl.addWidget(self.block_edit)
         bl.addWidget(self.block_dump)
         self.block_bar = block_bar
         layout.addWidget(block_bar)
@@ -410,7 +437,11 @@ class MainWindow(
         self.container_pick.currentIndexChanged.connect(self._on_chain_changed)
         self.table_pick.chosen.connect(self._on_table_pick)
         self.table_pick.command.connect(lambda: self._new_table_dialog(start=True))
-        self.block_edit.clicked.connect(self._edit_block)
+        self.strings_pick.currentIndexChanged.connect(
+            lambda: self._on_reading_edited("table")
+        )
+        self.show_strings.toggled.connect(self._on_show_strings)
+        self.reading_bar.edited.connect(self._on_reading_edited)
         self.block_dump.clicked.connect(self._dump)
         self.raw.offset_requested.connect(self._go_to)
         self.raw.rows_changed.connect(self._on_raw_rows_changed)
@@ -436,7 +467,7 @@ class MainWindow(
         self.search_window.build_table.connect(self._build_table_from_hit)
         self.scan_window.go_to.connect(self._select_bytes)
         self.scan_window.new_block.connect(self._block_from_region)
-        self.compression_pick.currentIndexChanged.connect(self._refresh_view)
+        self.compression_pick.currentIndexChanged.connect(self._on_compression_pick)
         self.decompress_window.jump_next.connect(self._jump_next_structure)
         self.decompress_window.scan_next.connect(self._scan_next_structure)
         self.decompress_window.scan_stop.connect(self.request_scan_stop)
@@ -501,7 +532,7 @@ class MainWindow(
         # Named where :mod:`mapchar.ui.main_window.capability_sync` gates them:
         # what each row applies to is declared in the capability table, not here.
         self.new_block_action = act(
-            file_menu, "New &Block…", self._new_block, "Ctrl+Shift+B"
+            file_menu, "New &Block", self._new_block, "Ctrl+Shift+B"
         )
         self.new_bookmark_action = act(
             file_menu, "New Boo&kmark", self._new_bookmark, "Ctrl+B"

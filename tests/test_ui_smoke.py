@@ -9,6 +9,8 @@ from helpers import pointer_rom, texts
 from mapchar.core.block import RangeSource, Status
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.main_window import MainWindow
+from mapchar.ui.main_window.codecs_bar import POINTER
+from mapchar.ui.raw_widget import POINTER_TOKENS
 from window_helpers import ASCII_TABLE, TABLE, add_block, open_rom_and_table
 
 
@@ -253,7 +255,15 @@ def test_pointer_block_in_window(window, tmp_path, monkeypatch):
     rows = window._row_data(block, block.doc, window._table_set())
     assert rows[0].pointers == "0" and rows[1].pointers == "2"
     window._go_to(0)
-    assert {0, 1, 2, 3} <= window.raw._model.pointer_bytes
+    # A pointer block reads as pointers: its table is Pointer, and each of its
+    # pointers is one token saying where it points.
+    assert window.table_pick.currentData() == POINTER
+    tokens = window.raw._model.tokens
+    assert [(t.bit_start, t.bit_end, t.text()) for t in tokens[:2]] == [
+        (0, 16, "→10"),
+        (16, 32, "→13"),
+    ]
+    assert all(t.table_id == POINTER_TOKENS for t in tokens[:2])
     window._on_translation_edited(0, "ABB[end]")
     assert window._write_blocks([block])
     written = Path(file_entry.path).read_bytes()
@@ -723,7 +733,8 @@ def test_a_block_gates_the_string_surfaces_on(window, tmp_path):
     assert window.preview_action.isEnabled()
     assert window.tabs.isTabEnabled(window.tabs.indexOf(window.strings))
     assert window.block_bar.isVisibleTo(window)
-    assert window.block_edit.isEnabled() and window.block_dump.isEnabled()
+    assert window.block_dump.isEnabled()
+    assert window.reading_bar.isEnabled()
     # A block reads its container through its parent, so the row is not its own.
     assert not window.container_action.isEnabled()
 

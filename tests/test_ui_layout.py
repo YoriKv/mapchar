@@ -56,11 +56,13 @@ def test_a_long_status_line_never_widens_its_window(window, tmp_path):
     assert label.toolTip() == "what it explains"
 
 
-def test_the_block_dialog_fits_a_laptop_screen(window):
-    from mapchar.ui.dialogs import BlockDialog
-
-    dialog = BlockDialog(["main"], None, "", window, ["linear"])
-    assert dialog.sizeHint().height() < 700
+def test_the_reading_bar_wraps_rather_than_widening_the_window(window):
+    """Every control a block's reading has is in the bar at once, and a narrow
+    window takes them on more rows instead of growing to fit them."""
+    bar = window.reading_bar
+    bar.load(bar.config(window._default_reading(), "main"), block=True)
+    assert bar.minimumSizeHint().width() < 400
+    assert bar.heightForWidth(400) > bar.heightForWidth(2000)
 
 
 def test_tool_windows_stay_usable_at_their_smallest(window):

@@ -64,7 +64,7 @@ class OpeningMixin:
         except (OSError, MapcharError) as exc:
             self._error(f"Cannot load table {path}: {exc}")
             return None
-        clash = set(self.workspace.tables()) & {t.id for t in tf.tables}
+        clash = set(self.workspace.loaded_tables()) & {t.id for t in tf.tables}
         if clash:
             self._error(f"Table id(s) already loaded: {', '.join(sorted(clash))}")
             return None
@@ -84,7 +84,8 @@ class OpeningMixin:
                 6000,
             )
         self._refresh_table_picks()
-        if self.table_pick.currentData() is None:
+        # A reading whose table is not there — none loaded yet — takes this one.
+        if self._current_table_id() not in self.workspace.tables():
             self._choose_table(tf.table.id)
         return entry
 

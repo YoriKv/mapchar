@@ -48,6 +48,7 @@ OFFSET_ID = 1
 FIELD_ID = 2
 FONT_ID = 3
 BOX_ID = 4
+BLOCK_ID = 5
 
 
 class _StateCommand(QUndoCommand):
@@ -291,10 +292,30 @@ class BlockEditCommand(_CurrentEntryCommand):
     The string records travel with it: the window stashes the translations before
     it drops the document, so an edit (and its undo) re-reads the region without
     losing what was typed into it.
+
+    ``field`` names the bar control the change came from, so a run on one — a
+    spin box stepped up several times — is one step; ``None`` never merges.
     """
 
-    def __init__(self, window, entry: Entry, before: tuple, after: tuple):
+    def __init__(self, window, entry: Entry, before: tuple, after: tuple, field=None):
         super().__init__(window, entry, f"Edit {entry.name}", before, after)
+        self.field = field
+
+    def id(self) -> int:
+        return BLOCK_ID
+
+    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
+        if (
+            not isinstance(other, BlockEditCommand)
+            or self.field is None
+            or other.entry is not self.entry
+            or other.field != self.field
+        ):
+            return False
+        self.after = other.after
+        if self.after == self.before:
+            self.setObsolete(True)
+        return True
 
     def _apply(self, state: tuple) -> None:
         self.window.apply_block_config(self.entry, *state)

@@ -146,7 +146,13 @@ class SessionMixin:
 
     def _restore_session(self) -> None:
         entry = self._entry
-        widgets = (self.container_pick, self.table_pick)
+        widgets = (
+            self.container_pick,
+            self.table_pick,
+            self.strings_pick,
+            self.compression_pick,
+            self.show_strings,
+        )
         for w in widgets:
             w.blockSignals(True)
         try:
@@ -160,14 +166,12 @@ class SessionMixin:
                 self.container_pick, file_entry.container_id
             ):
                 self.container_pick.setCurrentIndex(0)
-            table_id = entry.session.table_id
-            if entry.kind is EntryKind.BLOCK and entry.config is not None:
-                table_id = entry.config.table_id or table_id
-            if table_id is None:
-                tables = self.workspace.tables()
-                table_id = next(iter(tables), None)
-            if not select_data(self.table_pick, table_id):
-                self.table_pick.setCurrentIndex(0)
+            # A block's pick is the scheme it is read through, and a file's a
+            # preview: one left over from a block is not a preview anyone chose.
+            if entry.kind is not EntryKind.BLOCK and self._pick_is_blocks:
+                self.compression_pick.setCurrentIndex(0)
+            self._pick_is_blocks = entry.kind is EntryKind.BLOCK
+            self._load_reading_bar()
             self._offset = entry.session.offset
             # A block opens on its source: the view is confined to it, and the
             # position it was left at is kept only while it is inside.

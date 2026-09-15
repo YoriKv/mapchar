@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
     RangeSource,
     source_span,
     source_start,
+    with_region,
 )
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
 from mapchar.core.table import TokenKind
-from mapchar.plugins.base import Stage
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.dialogs import BlockDialog
-from mapchar.ui.undo_commands import BlockEditCommand
 from mapchar.ui.widgets import select_data
 
 
@@ -58,30 +58,31 @@ class BlockBarMixin:
             self._error(complain)
         return None
 
-    def _block_dialog(
-        self,
-        config: BlockConfig | None,
-        name: str,
-        entry: Entry | None = None,
-        title: str = "New Block",
-    ) -> BlockDialog:
-        """The block dialog over every list it needs, prefilled for ``entry``.
-
-        One builder for New Block…, Edit… and To Block, so none of the three can
-        quietly offer a shorter form of a block than the others.
-        """
-        return BlockDialog(
-            list(self.workspace.tables()),
-            config,
-            name,
-            self,
-            self.registry.ids(Stage.MAPPING),
-            compression_items=self._plugin_items(Stage.COMPRESSION),
-            compression_id=entry.compression_id if entry is not None else None,
-            spare_room=entry.spare_room if entry is not None else "fill",
-            suggested_mapping=self._suggested_mapping(),
-            title=title,
+    def _new_block(self, start: int | None = None, stop: int | None = None) -> None:
+        """A block over ``start`` to ``stop`` — the selection, else the view
+        onwards — read the way the bars read the view now."""
+        file_entry = self._current_file()
+        if file_entry is None or self._doc is None:
+            self._error("Open a ROM first.")
+            return
+        if start is None:
+            start, stop = (
+                self._selection if self._selection else (self._offset, self._doc.size)
+            )
+        cfg = with_region(self._reading() or self._default_reading(), start, stop)
+        if not cfg.table_id:
+            cfg = replace(cfg, table_id=self._default_table_id())
+        entry = Entry(
+            EntryKind.BLOCK,
+            f"Block {start:X}",
+            file_entry.path,
+            parent=file_entry,
+            config=cfg,
         )
+        entry.session.show_strings = self.show_strings.isChecked()
+        self._push_add(entry)
+        self._activate_entry(entry)
+        self._show_view("strings")
 
     def _suggested_mapping(self) -> str | None:
         """What the current file's container says the ROM is mapped as."""
@@ -92,79 +93,8 @@ class BlockBarMixin:
         value = doc.ctx.get(KEY_SUGGESTED_MAPPING)
         return str(value) if value else None
 
-    def _new_block(self, start: int | None = None, stop: int | None = None) -> None:
-        file_entry = self._current_file()
-        if file_entry is None or self._doc is None:
-            self._error("Open a ROM first.")
-            return
-        table_ids = list(self.workspace.tables())
-        if not table_ids:
-            self._error("Load a table first.")
-            return
-        if start is None:
-            start, stop = (
-                self._selection if self._selection else (self._offset, self._doc.size)
-            )
-        cfg = BlockConfig(
-            RangeSource(start, stop or self._doc.size),
-            EndToken(),
-            self.table_pick.currentData() or table_ids[0],
-        )
-        dialog = self._block_dialog(cfg, f"Block {start:X}")
-        if dialog.exec() != BlockDialog.DialogCode.Accepted:
-            return
-        compression_id = dialog.compression_id()
-        entry = Entry(
-            EntryKind.BLOCK,
-            dialog.name.text().strip() or f"Block {start:X}",
-            file_entry.path,
-            parent=file_entry,
-            config=dialog.config(),
-            compression_id=compression_id,
-            # A decompressed block is addressed by its compressed slot, which is
-            # where the region the dialog was seeded from starts.
-            slice_offset=start if compression_id else 0,
-            spare_room=dialog.spare_room_rule(),
-        )
-        self._push_add(entry)
-        self._activate_entry(entry)
-        self._show_view("strings")
-
-    def _edit_block(self) -> None:
-        """A block's Edit…: re-point it, as one undo step, keeping its work.
-
-        The translations are carried over by index rather than discarded: an
-        edit says "read these bytes differently", not "throw away what I typed",
-        and re-reading the region is how the edit takes effect.
-        """
-        entry = self._current_block()
-        if entry is None:
-            return
-        if entry.dirty and not self._ask(
-            "Edit Block",
-            f"{entry.name} has unsaved edits. Editing it re-reads the region; "
-            "the translations are matched back onto it by index, but any that "
-            "the new configuration has no string for are dropped. Continue?",
-        ):
-            return
-        dialog = self._block_dialog(entry.config, entry.name, entry, "Edit Block")
-        if dialog.exec() != BlockDialog.DialogCode.Accepted:
-            return
-        before = (
-            entry.name,
-            entry.config,
-            entry.compression_id,
-            entry.spare_room,
-        )
-        after = (
-            self._free_name(dialog.name.text().strip() or entry.name, entry),
-            dialog.config(),
-            dialog.compression_id(),
-            dialog.spare_room_rule(),
-        )
-        if after == before:
-            return  # OK'd unchanged: nothing happened, nothing to undo
-        self._push_command(BlockEditCommand(self, entry, before, after))
+    def _default_reading(self) -> BlockConfig:
+        return BlockConfig(RangeSource(0, 0), EndToken(), self._default_table_id())
 
     def apply_block_config(
         self, entry: Entry, name: str, config: BlockConfig, compression_id, spare_room
@@ -172,15 +102,19 @@ class BlockBarMixin:
         """Re-point a block and read the region again — the application path for
         a block edit and its undo."""
         entry.name = name
-        entry.config = config
         if compression_id != entry.compression_id:
             entry.slice_length = None  # a new scheme finds its own end
+            if entry.compression_id is None:
+                # Read from the file until now, so its slot is where it began.
+                entry.slice_offset = self._block_file_offset(entry)
+        entry.config = config
         entry.compression_id = compression_id
         entry.spare_room = spare_room
         # The one drop that keeps the translations, so the re-read matches them
         # back onto the new configuration by index.
         self.workspace.drop_document(entry)
         if entry is self._entry:
+            self._capture_session()
             self._doc = self._load_document(entry)
             self._restore_session()
         self.files_panel.refresh_labels()
@@ -201,7 +135,9 @@ class BlockBarMixin:
             bookmark_offset=self._offset,
             compression_id=self.compression_pick.currentData(),
         )
-        entry.session.table_id = self.table_pick.currentData()
+        entry.session.table_id = self._current_table_id()
+        entry.session.config = self._reading()
+        entry.session.show_strings = self.show_strings.isChecked()
         entry.session.offset = self._offset
         entry.session.view = self._current_view()
         self._push_add(entry)
@@ -210,12 +146,28 @@ class BlockBarMixin:
         """Re-apply a bookmark's snapshot to its file and land on its offset."""
         if entry.parent is None:
             return
-        self._activate_entry(entry.parent)
-        if entry.session.table_id:
-            self._choose_table(entry.session.table_id)
+        self._read_file_as(entry.parent, entry.session.config, entry.session)
         select_data(self.compression_pick, entry.compression_id)
         self._go_to(entry.bookmark_offset)
         self._show_view(entry.session.view)
+
+    def _read_file_as(self, file_entry: Entry, config, session) -> None:
+        """Put ``file_entry`` on screen read by ``config`` — a bookmark's
+        snapshot, a block's own reading — with ``session``'s strings switch."""
+        if config is not None:
+            file_entry.session.config = config
+            file_entry.session.table_id = config.table_id or None
+            file_entry.session.show_strings = session.show_strings
+        elif session.table_id:
+            file_entry.session.config = replace(
+                self._reading(file_entry), table_id=session.table_id
+            )
+            file_entry.session.table_id = session.table_id
+        if file_entry is self._entry:
+            self._restore_session()
+            self._refresh_view()
+        else:
+            self._activate_entry(file_entry)
 
     def _block_file_offset(self, entry: Entry) -> int:
         """Where a block's bytes sit in its parent file.
@@ -282,24 +234,24 @@ class BlockBarMixin:
         if entry.parent is None or entry.config is None:
             return
         offset = self._block_file_offset(entry)
-        self._activate_entry(entry.parent)
-        if entry.config.table_id:
-            self._choose_table(entry.config.table_id)
+        self._read_file_as(entry.parent, entry.config, entry.session)
         select_data(self.compression_pick, entry.compression_id)
         self._go_to(offset)
 
     def _block_from_region(self, region) -> None:
         """A block over a scanned region, with its guessed terminator as end token."""
         tables = self._table_set()
-        if tables is not None and region.terminator is not None:
+        # An encoding is nobody's to edit: its strings end where it says.
+        table_entry = (
+            self.workspace.entry_for_table(tables.start.id) if tables else None
+        )
+        if table_entry is not None and region.terminator is not None:
             bits = format(region.terminator, "08b")
             start = tables.start
             if bits not in start.entries:
                 from mapchar.core.table import Entry as TableEntry
 
                 start.add(TableEntry(bits, TokenKind.END, "[end]"))
-                table_entry = self.workspace.entry_for_table(start.id)
-                if table_entry is not None:
-                    self.workspace.stamp(table_entry)
+                self.workspace.stamp(table_entry)
                 self._tables_changed()
         self._new_block(region.start, region.end)

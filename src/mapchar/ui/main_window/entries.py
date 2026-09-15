@@ -243,11 +243,11 @@ class EntriesMixin:
         acting = selected if len(selected) > 1 and entry in selected else [entry]
         if entry.kind is EntryKind.FILE:
             menu.addAction(
-                "New &Block…",
+                "New &Block",
                 lambda: (self._activate_entry(entry), self._new_block()),
             )
             menu.addAction(
-                "New Block from &Selection…",
+                "New Block from &Selection",
                 lambda: (self._activate_entry(entry), self._new_block(*self._sel())),
             ).setEnabled(entry is self._current_file() and self._selection is not None)
             menu.addAction(
@@ -262,9 +262,6 @@ class EntriesMixin:
                 lambda: (self._activate_entry(entry), self._dump(all_blocks=True)),
             )
         if entry.kind is EntryKind.BLOCK:
-            menu.addAction(
-                "&Edit…", lambda: (self._activate_entry(entry), self._edit_block())
-            )
             menu.addAction(
                 "&Dump…", lambda: (self._activate_entry(entry), self._dump())
             )

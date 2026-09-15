@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections import ChainMap
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from itertools import count
 
@@ -36,6 +37,11 @@ class EntrySession:
     offset: int = 0
     view: str = "raw"
     """``raw`` or ``strings``."""
+    config: BlockConfig | None = None
+    """A file's reading, as the top bar sets it: what New Block starts from.
+    A block's own is :attr:`Entry.config`."""
+    show_strings: bool = False
+    """Read as pointers, show the strings they reach beside them."""
 
 
 @dataclass(eq=False)
@@ -155,6 +161,9 @@ class Workspace:
         self.on_reset: list[Callable[[], None]] = []
         self.on_current_changed: list[Callable[[Entry | None], None]] = []
         self.on_dirty_changed: list[Callable[[Entry], None]] = []
+        self.builtin_tables: Mapping[str, Table] = {}
+        """The standard encodings as tables, under the loaded ones: never entries,
+        never saved, and built by whoever holds the registry."""
 
     # --- revisions -----------------------------------------------------
 
@@ -218,13 +227,18 @@ class Workspace:
     def table_entries(self) -> list[Entry]:
         return self.of_kind(EntryKind.TABLE)
 
-    def tables(self) -> dict[str, Table]:
+    def loaded_tables(self) -> dict[str, Table]:
         """Every loaded table by id, across table entries."""
         return {
             e.table.id: e.table
             for e in self.of_kind(EntryKind.TABLE)
             if e.table is not None
         }
+
+    def tables(self) -> Mapping[str, Table]:
+        """Every table a block can read through: the loaded ones, then the
+        built-in encodings (:attr:`builtin_tables`) no loaded table shadows."""
+        return ChainMap(self.loaded_tables(), self.builtin_tables)
 
     # --- lifecycle -----------------------------------------------------
 

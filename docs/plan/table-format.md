@@ -218,20 +218,25 @@ the charset code for code; an entry with empty text removes a code.
 | `none`        | nothing (the default)                                      |
 | `ascii`       | `20`–`7E`                                                  |
 | `latin-1`     | `20`–`7E`, `A1`–`AC`, `AE`–`FF` (the blank `A0` and the soft hyphen `AD` are left out, as every unprintable code is) |
+| `windows-1252` | Latin-1 with the `80`–`9F` punctuation Windows puts there (`€`, `‘`, `’`, `…`) |
+| `jis-x-0201`  | single bytes only: `20`–`7E` and the half-width katakana `A1`–`DF` |
 | `shift-jis`   | every single- and double-byte **CP932** code: Shift-JIS plus the NEC and IBM extension rows Japanese games use |
 | `euc-jp`      | every **JIS X 0213** EUC-JP code (`euc_jis_2004`), a superset of plain EUC-JP |
+| `euc-kr`, `big5`, `gbk` | every code of the Korean, traditional and simplified Chinese double-byte encodings |
 | `utf-16le`, `utf-16be` | every plane as 16-bit keys, an astral code point as a surrogate pair (4 bytes) |
 | `utf-8`       | one entry per encoded code point, every plane, up to 4 bytes |
 
 A charset may also carry **aliases**: text the encoder accepts for a code whose
 own text is something else, so nothing is lost where an encoding folds several
-characters onto one code. `shift-jis` and `euc-jp` alias the JIS X 0201 yen
+characters onto one code. `jis-x-0201`, `shift-jis` and `euc-jp` alias the JIS X 0201 yen
 sign `¥` to `5C` and the overline `‾` to `7E` — typing either encodes to that
 byte, while the byte still decodes as plain ASCII `\` or `~` — and every
 character `cp932` folds (`¢`, `£`, `¬`, `‖`, `−`, `〜`) reaches its code the
 same way.
 
-Charsets are plugins; more can be added.
+Charsets are plugins; more can be added. Every charset is also offered as a
+table of its own, ending strings at its NUL
+([features.md](features.md#tables)).
 
 ## Validation
 

@@ -63,11 +63,12 @@ the preview system in [preview.md](preview.md).
 - **Left column:** the **Files** dock on top. Below it, **Tables** and
   **Fonts** share one tabbed dock.
 - **Right column:** the editing surface, top to bottom:
-  - the **Codecs** bar (container, compression, table — each table
-    listed with its entry count, and the last row, **New Table…**, making a
-    new table and picking it);
-  - the **Block** bar, shown on a block: source, string type, mapping, and a
-    string counter;
+  - the **Codecs** bar: container, compression and **Table** (see
+    [Reading the bytes](#reading-the-bytes));
+  - the **Reading** bar: every setting of how the bytes are cut into strings
+    (see [Blocks](#blocks));
+  - the **Block** bar, shown on a block: source, string type, table, a string
+    counter, and **Dump…**;
   - the central view, three tabs: **Hex**, **Text** and **Strings**;
   - the navigation bar under Hex and Text; the string status bar under Strings.
 - **Hex** dock — optional, at the bottom, hidden by default.
@@ -88,8 +89,9 @@ the preview system in [preview.md](preview.md).
 - **Messages** — errors appear as modal warnings; progress and results go to
   the status bar, whose right end shows the file's size, the selection (in
   the address format) and any view-only notice.
-- **Resizing** — no panel, window or dialog can be shrunk until its controls
-  stop working, and none needs more than a small screen; text cut short shows
+- **Resizing** — the two bars wrap onto more rows as the column narrows and
+  keep the height those rows need; no panel, window or dialog can be shrunk
+  until its controls stop working, and none needs more than a small screen; text cut short shows
   in full on hover (see [../ui.md](../ui.md)).
 - **Quitting** asks about an unsaved project first, then about unsaved file
   edits.
@@ -105,7 +107,7 @@ the preview system in [preview.md](preview.md).
   picks, registers it and opens it in the Table Editor. The table is named
   after the file, numbered up (`main_2`) past a loaded table of that name. The
   Codecs bar's Table list and the Files panel's context menu offer it too;
-  from the Table list the new table becomes the start table.
+  from the Table list the new table becomes the reading's table.
 - **File ▸ Open Font…** registers a glyph sheet.
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
@@ -156,8 +158,8 @@ the preview system in [preview.md](preview.md).
   string by its block.
 - **Reorder** by drag or Alt+Up/Down. **Sort by** Name, Type or (blocks)
   Offset.
-- **Context menu**, by kind: New Block… / from Selection, New Bookmark,
-  Rename, Edit…, Edit File Container…, Container Info…, Save As File…, New
+- **Context menu**, by kind: New Block / from Selection, New Bookmark,
+  Rename, Edit File Container…, Container Info…, Save As File…, New
   Table…, Write, Dump…, Export ▸, Show in File Manager, Remove. Empty space
   offers Open ROM…, Open Table…, New Table… and Paste.
 - **Cut / Copy / Paste / Duplicate** act on entries (references plus
@@ -173,8 +175,8 @@ the preview system in [preview.md](preview.md).
 - **One table per file** — a table file holds one table, named by its
   `@table` line or else after the file.
 - **Tables dock** lists one row per table, `@id` and its entry count, with the
-  file and dialect in the tooltip. The start table of the current entry is
-  marked; double-click makes a table the start table.
+  file and dialect in the tooltip. The table the current entry reads through is
+  marked; double-click makes it the reading's table.
 - **Dialects** — the native grammar loads directly. romjuice, Cartographer,
   Atlas and abcde files load through their dialect and are shown converted;
   **Save As File** writes the conversion out in the native grammar. A legacy
@@ -182,8 +184,13 @@ the preview system in [preview.md](preview.md).
   ones with no file. Conversion notices (dropped duplicates, renamed labels,
   generated kanji tables, split tables) are listed once per file.
 - **Charsets** — a table can sit on a built-in charset (ASCII, Latin-1,
-  Shift-JIS as CP932, EUC-JP as JIS X 0213, UTF-8, UTF-16) and only list its
-  overrides. A table file that is not UTF-8 is read as `cp932`, else
+  Windows-1252, JIS X 0201, Shift-JIS as CP932, EUC-JP as JIS X 0213, EUC-KR,
+  Big5, GBK, UTF-8, UTF-16) and only list its overrides.
+- **Encodings as tables** — every charset is also offered in the Table list as
+  a table of its own, under the loaded tables: that encoding with a NUL of its
+  code unit's width (`00`, `0000` in UTF-16) as the end token. They are built
+  the first time they are read, are never entries or saved, and a loaded table
+  of the same id takes the id's place. A table file that is not UTF-8 is read as `cp932`, else
   `latin-1`, and says which in a notice.
 - **Table Editor** (View ▸ Table Editor…) edits one table entry's table over
   a live view of the bytes, titled with its `@id` and file:
@@ -211,12 +218,48 @@ the preview system in [preview.md](preview.md).
   timestamp changes, with a prompt if the in-app copy has edits. The edits stay
   on top of what was re-read, and win where they overlap.
 
+## Reading the bytes
+
+The Codecs and Reading bars say how the entry on screen is read, and every
+change to them applies as it is made, as celPix's toolbar does: the Hex, Text
+and Strings tabs read again at once.
+
+- **Whose settings** — on a block, its own configuration: each change is an
+  undo step that re-reads the block, its translations matched back by index,
+  and a run of changes to one control (a spin box stepped several times) is
+  one step. On a file, the file's session: saved with the project, carried by
+  a bookmark, and what **New Block** starts from. Anything else that changes a
+  block's configuration — an import, **Use as Pointer Table**, an undo — shows
+  in the bars at the next refresh.
+- **Table** — **Pointer**, then the loaded tables with their entry counts,
+  then the encodings, then **New Table…**. A file with no table of its own
+  reads as the first loaded table, else as ASCII. A table the reading names
+  that is not loaded shows as `@id (not loaded)`.
+- **Pointer** — the bytes are pointers: the source becomes a pointer table (or
+  list), and beside the Table list come **Strings**, the table the strings they
+  reach are read through, and **Show strings**, remembered per entry. On a file
+  the pointers are read every stride from where the view starts; on a block,
+  its own.
+  - the **Hex** tab's text column shows each pointer where it points (`→1A3F0`,
+    `→?` when it maps outside the data), or with Show strings the string there
+    on one line; each is tinted as a pointer, and its hover says the value,
+    the target and the string;
+  - the **Text** tab shows a line per pointer: its address, its value, where it
+    points and, with Show strings, the string there;
+  - a line step in Text is a pointer.
+- **A table** — the bytes are text through it, cut into strings by the
+  reading's string type from the view's first byte: at end tokens, every
+  fixed length, or by a Pascal prefix. What only means something at a block's
+  own addresses — skip ranges, realignment, fixed lines — applies to its
+  strings, not to the view.
+
 ## Raw view
 
 The exploration surface, the equivalent of celPix's tile canvas.
 
 - **Columns** — address, hex bytes, and the decode of those same bytes through
-  the start table. Rows are aligned and banded: every byte owns a fixed cell in
+  the reading's table, or its pointers (see
+  [Reading the bytes](#reading-the-bytes)). Rows are aligned and banded: every byte owns a fixed cell in
   both columns — three characters in the hex, with a small gap every four
   bytes, and two and a half in the text — and each token sits in the text
   column at its **bits**, so a 6-bit code takes three quarters of a cell and
@@ -235,7 +278,7 @@ The exploration surface, the equivalent of celPix's tile canvas.
 - **Decoding** — starts at the view offset and runs the full decode engine
   (switches, counts, end tokens), so the raw view shows exactly what a block
   starting there would extract. Decoding restarts in the start table after
-  each end token.
+  each string.
 - **Marks** — end tokens, codes and switches are chips behind their token in
   both columns, one chip per token so where one ends reads; a token that shows
   nothing (a table switch) is a tick. Unmatched bytes are chipped in the hex
@@ -331,10 +374,16 @@ compression, and report offsets in the file's coordinates.
 
 ## Blocks
 
-A block is the unit of extraction and insertion. **File ▸ New Block…** and
-the block's **Edit…** open the block dialog.
+A block is the unit of extraction and insertion. **File ▸ New Block** makes one
+over the selection — else from the view's position to the end — read the way
+the bars read the view, and opens it on its strings; from then on the bars are
+its settings (see [Reading the bytes](#reading-the-bytes)). The Reading bar
+shows the settings below that the source kind and string type use; a file has
+no addresses of its own, so its bar leaves out start, stop, count, pointer
+addresses, skip ranges and the writing settings.
 
-- **Source** — where the strings come from:
+- **Source** — where the strings come from; Pointer in the Table list offers
+  the two pointer kinds, a table the other two:
   - **Range** — `start` to `stop` (exclusive), read as consecutive strings;
   - **Pointer table** — `start`, `stop`, pointer `size`, `stride` (size plus
     space), `endian`, `mapping`, and an `offset` added to each value; strings
@@ -355,8 +404,9 @@ the block's **Edit…** open the block dialog.
   `M` plus `O`.
 - **Skip ranges** — `from → to` pairs: reading `from` continues at `to`
   (Cartographer's auto-jump).
-- **Table** — the start table, one of the registered tables; the table set
-  follows from it.
+- **Table** — the start table: a loaded table or an encoding, picked in the
+  Table list, or in **Strings** while it says Pointer; the table set follows
+  from it.
 - **Fixed-line layout** — for fixed strings, an optional `line length` that
   splits each string into lines marked with a `[line]` code.
 - **Bound** — the exclusive end address strings may not cross on write;
@@ -364,13 +414,14 @@ the block's **Edit…** open the block dialog.
 - **Write mode** — **Packed** or **Slotted**; see [Writing](#writing-back-to-disk).
 - **Fill byte** — what pads unused space on write.
 - **Compression** — a block inherits its parent file's container and
-  compression and may override the compression, in which case it is a
+  compression and may override the compression in the Codecs bar (on a file
+  that picker previews a scheme instead), in which case it is a
   decompressed region over the compressed slot at its offset, with its own
   **spare room** rule (fill, or keep the bytes that were there).
 - **Jump to Source** shows the parent file at the block's own offset in the
   raw view — its compressed slot for a decompressed block, its first pointer
-  for a pointer list — with the block's start table picked and, where it has
-  one, its compression armed in the Compression preview.
+  for a pointer list — read the way the block reads and, where it has one,
+  with its compression armed in the Compression preview.
 
 ## Pointers
 
@@ -392,7 +443,7 @@ the block's **Edit…** open the block dialog.
   - the search runs with a Stop button and a progress bar, and a stopped
     search still offers what it had ranked;
   - **Use as Pointer Table** converts the block's source to a pointer table
-    from the chosen result; **Attach** adds the found addresses to the
+    from the chosen result, as one undo step; **Attach** adds the found addresses to the
     strings without changing the source.
 - **Overlays** — the raw view marks bytes that are pointers of the current
   block, and jumping from a pointer to its target and back is a click.
@@ -499,7 +550,7 @@ The editing surface, opened on a block.
 - **Preview** — the raw view always shows the bytes of the chain as far as
   the block's compression. Choosing a scheme in **Compression** decompresses
   from the current offset into the floating **Decompressed View**, decoded
-  through the start table; it hides when nothing decodes.
+  through the reading's table; it hides when nothing decodes.
 - **Jump to Next** skips past a complete structure; **Scan** searches forward
   for the next complete structure with a Stop button; **To Block** creates a
   decompressed block over one. All three want a *complete* structure: the
@@ -549,7 +600,7 @@ in the game. It is described in [preview.md](preview.md).
   nibble in place, one undo step per digit, the caret moving on to the next
   nibble; the bytes line below writes a run of hex bytes at an offset. Both make
   the file entry unsaved. Text is decoded, not editable here.
-- **Go to**, **Find** (hex bytes or quoted text through the start table) with
+- **Go to**, **Find** (hex bytes or quoted text through the reading's table) with
   next and previous, and **Follow selection**, which is remembered per machine.
 - The address column follows the navigation bar's address format.
 - Refreshes only while visible.
@@ -557,7 +608,7 @@ in the game. It is described in [preview.md](preview.md).
 ## Projects
 
 - A `.mapchar` project stores **references and settings, never bytes**:
-  every entry with its chain, block configuration and start table; per-string
+  every entry with its chain, block configuration, a file's reading; per-string
   translations, statuses and notes; table edits made in-app; font bindings
   and text boxes; the view position per entry.
 - Not saved: zoom, theme, window layout, undo history.

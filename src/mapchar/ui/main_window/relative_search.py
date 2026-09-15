@@ -51,7 +51,7 @@ class RelativeSearchMixin:
         entries = self._hit_entries(hit)
         if not entries:
             return
-        table_id = self.table_pick.currentData()
+        table_id = self._current_table_id()
         target = self.workspace.entry_for_table(table_id or "")
         if (
             target is not None

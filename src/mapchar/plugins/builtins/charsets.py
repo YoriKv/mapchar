@@ -76,6 +76,10 @@ UNICODE = ((0x20, 0x10FFFF),)
 """Every plane, so an emoji or a CJK extension character has a code too; the
 astral ones encode as four UTF-8 bytes or a UTF-16 surrogate pair."""
 
+HALF_WIDTH = ((0x20, 0x7E), (0xFF61, 0xFF9F))
+"""JIS X 0201 on its own: ASCII's printable codes and the half-width katakana,
+every one a single byte."""
+
 JIS_ROMAN = (("¥", 0x5C), ("‾", 0x7E))
 """JIS X 0201's Roman set puts the yen sign where ASCII has the backslash and
 the overline where it has the tilde. ASCII still decodes those two codes, and
@@ -87,11 +91,20 @@ def register(registry) -> None:
     registry.register(CodecCharset("ascii", "ASCII", "ascii", ((0x20, 0x7E),)))
     registry.register(CodecCharset("latin-1", "Latin-1", "latin-1", ((0x20, 0xFF),)))
     registry.register(
+        CodecCharset("windows-1252", "Windows-1252", "cp1252", ((0x20, 0xFFFF),))
+    )
+    registry.register(
+        CodecCharset("jis-x-0201", "JIS X 0201", "cp932", HALF_WIDTH, JIS_ROMAN)
+    )
+    registry.register(
         CodecCharset("shift-jis", "Shift-JIS (CP932)", "cp932", BMP, JIS_ROMAN)
     )
     registry.register(
         CodecCharset("euc-jp", "EUC-JP (JIS X 0213)", "euc_jis_2004", BMP, JIS_ROMAN)
     )
+    registry.register(CodecCharset("euc-kr", "EUC-KR", "euc_kr", BMP))
+    registry.register(CodecCharset("big5", "Big5", "big5", BMP))
+    registry.register(CodecCharset("gbk", "GBK", "gbk", BMP))
     registry.register(CodecCharset("utf-16le", "UTF-16 LE", "utf-16-le", UNICODE))
     registry.register(CodecCharset("utf-16be", "UTF-16 BE", "utf-16-be", UNICODE))
     registry.register(CodecCharset("utf-8", "UTF-8", "utf-8", UNICODE))

@@ -22,7 +22,7 @@ from mapchar.engines.pointers import discover
 from mapchar.plugins.base import Stage
 from mapchar.project.workspace import Entry
 from mapchar.ui.dialogs import DiscoveryDialog, PointerSearchDialog
-from mapchar.ui.undo_commands import PointerCommand
+from mapchar.ui.undo_commands import BlockEditCommand, PointerCommand
 from mapchar.ui.widgets import ModalProgress
 
 
@@ -98,15 +98,22 @@ class PointerDiscoveryMixin:
             self._use_as_pointer_table(entry, chosen)
 
     def _use_as_pointer_table(self, entry: Entry, candidate) -> None:
+        """Read the block from the found table: a block edit like any made in
+        the bars, so it re-reads with the translations kept and undoes."""
         from dataclasses import replace
 
-        entry.config = replace(entry.config, source=candidate.source())
-        # A new source re-reads the block; the translations are stashed on the
-        # way out and matched back by index, as they are for a block edit.
-        self.workspace.drop_document(entry)
-        self._doc = self._load_document(entry)
-        self.files_panel.refresh_labels()
-        self._refresh_view()
+        name, config, scheme, room = (
+            entry.name,
+            entry.config,
+            entry.compression_id,
+            entry.spare_room,
+        )
+        adopted = replace(config, source=candidate.source())
+        self._push_command(
+            BlockEditCommand(
+                self, entry, (name, config, scheme, room), (name, adopted, scheme, room)
+            )
+        )
 
     def _attach_pointers(self, entry: Entry, candidate) -> None:
         """Put the found pointers on the strings they reach, source untouched.

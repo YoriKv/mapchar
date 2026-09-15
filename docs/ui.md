@@ -28,7 +28,10 @@ No layout's minimum size may be set by text or a count that varies.
 - **Status and summary lines** are `ElidedLabel`s: they draw what fits and ask
   for no width, so a long notice cannot widen the window.
 - **A row of variable length** (the Strings view's code buttons) is a
-  `FlowLayout`, which wraps onto more rows. A fixed row too long for a narrow
+  `FlowLayout`, which wraps onto more rows. A bar of labelled controls (the
+  Codecs and Reading bars) is a `WrapBar`: a `FlowLayout` that also asks for the
+  height its rows take at its width, so a short window cannot squeeze a row out
+  of sight. A fixed row too long for a narrow
   window is split into two rows instead.
 - **Fields** keep a minimum from `fit_chars`, so no layout squeezes one below
   what it holds; pickers in a bar are `CompactComboBox`es of one fixed width.
@@ -39,7 +42,7 @@ No layout's minimum size may be set by text or a count that varies.
   scrollbar is the file's (or the stretch of it the view is confined to),
   never the box's.
 - **Dialogs fit a 768-pixel-high screen**: a long form is grouped into titled
-  boxes in columns (the Block dialog).
+  boxes in columns.
 - **Docks**: a tree's name column stretches and gives way first; count columns
   size to their contents.
 - The file size, selection and view-only notice sit at the **status bar's

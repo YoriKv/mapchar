@@ -18,9 +18,10 @@ from mapchar.core.block import (
 )
 from mapchar.project.projectfile import entries_from_payload, entries_payload
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.dialogs import BlockDialog
 from mapchar.ui.files_panel import STATUS_COL, sorted_entries
 from mapchar.ui.main_window import MainWindow
+from mapchar.ui.main_window.codecs_bar import POINTER
+from mapchar.ui.widgets import select_data
 from window_helpers import TABLE, add_block, make_window, open_rom_and_table
 
 DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
@@ -465,30 +466,33 @@ def test_a_multi_selection_leaves_only_remove_and_the_moves_live(window, tmp_pat
 # -- dialogs -------------------------------------------------------------------
 
 
-def test_the_block_dialog_carries_compression_and_spare_room(window, tmp_path):
+def test_the_reading_bar_carries_compression_and_spare_room(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    block.compression_id = "rle1"
-    block.spare_room = "keep"
-    dialog = window._block_dialog(block.config, block.name, block)
-    assert dialog.compression_id() == "rle1"
-    assert dialog.spare_room_rule() == "keep"
-    assert dialog.spare_room.isEnabled()
-    # Write mode and the fill byte round-trip through the same dialog.
-    assert dialog.config().fill == block.config.fill
-    plain = window._block_dialog(block.config, "b")
-    assert plain.compression_id() is None
-    assert not plain.spare_room.isEnabled()
+    window.undo_stack.clear()
+    select_data(window.compression_pick, "rle1")
+    assert block.compression_id == "rle1"
+    assert window.reading_bar.spare_room.isEnabled()
+    window.reading_bar.spare_room.setCurrentIndex(1)
+    assert block.spare_room == "keep"
+    # Write mode and the fill byte round-trip through the same bar.
+    assert window.reading_bar.config(block.config, "main").fill == block.config.fill
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert block.compression_id is None
+    assert not window.reading_bar.spare_room.isEnabled()
 
 
-def test_a_new_block_starts_on_the_container_s_suggested_mapping(window, tmp_path):
+def test_a_new_reading_turned_to_pointers_starts_on_the_suggested_mapping(
+    window, tmp_path
+):
     rom = tmp_path / "game.smc"
     rom.write_bytes(bytes(0x8000) + b"\x00" * 0x8000)
     window.open_rom(str(rom))
-    dialog = BlockDialog(
-        ["main"], None, "", None, ["linear", "lorom"], suggested_mapping="lorom"
-    )
-    assert dialog.ptr_mapping.currentText() == "lorom"
+    suggested = window._suggested_mapping()
+    assert suggested
+    select_data(window.table_pick, POINTER)
+    assert window._reading().source.mapping_id == suggested
 
 
 def test_editing_the_container_is_one_undo_step(window, tmp_path):
@@ -585,23 +589,18 @@ def test_a_partial_decode_is_never_a_structure_to_act_on(window, tmp_path):
     assert len(window.workspace.entries) == before
 
 
-def test_the_block_dialog_refuses_a_target_offset_it_cannot_read(monkeypatch):
-    """A number nobody can read stops the dialog closing, rather than escaping
-    ``config()`` as a traceback out of a Qt slot once it already has."""
-    said: list[str] = []
-    monkeypatch.setattr(
-        "mapchar.ui.dialogs.QMessageBox.warning",
-        lambda *a, **k: said.append(a[2]),
-    )
-    dialog = BlockDialog(["main"], None, "", None, ["linear"])
-    dialog.source_kind.setCurrentIndex(2)  # a pointer table: the field is live
-    dialog.ptr_offset.setText("nonsense")
-    dialog.accept()
-    assert said and dialog.result() != BlockDialog.DialogCode.Accepted
-    # And the app's one number spelling is what it reads, signs and $hex alike.
-    dialog.ptr_offset.setText("$-10")
-    dialog.accept()
-    assert dialog.config().source.offset == -0x10
+def test_the_reading_bar_keeps_a_target_offset_it_cannot_read(window, tmp_path):
+    """A number nobody can read keeps the value there was, and the app's one
+    number spelling is what it reads, signs and $hex alike."""
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", PointerTableSource(0, 4, 2, 2))
+    bar = window.reading_bar
+    bar.ptr_offset.setText("$-10")
+    bar.ptr_offset.editingFinished.emit()
+    assert block.config.source.offset == -0x10
+    bar.ptr_offset.setText("-")
+    bar.ptr_offset.editingFinished.emit()
+    assert block.config.source.offset == -0x10
 
 
 def test_a_slice_length_round_trips_and_a_falsy_one_means_unknown(window, tmp_path):

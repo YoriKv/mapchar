@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from bisect import bisect_right
 
-from mapchar.core.bits import Bits
 from mapchar.core.block import (
     EndToken,
     FixedLength,
@@ -18,9 +17,22 @@ from mapchar.core.block import (
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.core.tokens import Token
-from mapchar.engines.decode import DecodeRules, RunResult, decode_run
+from mapchar.engines.decode import RunResult
+from mapchar.pipeline.view_read import (
+    PointerCell,
+    cuts_at_end_tokens,
+    decode_strings,
+    pointer_cells,
+    target_string,
+)
 from mapchar.project.workspace import EntryKind
 from mapchar.ui import BYTES_PER_ROW
+from mapchar.ui.pointer_tokens import (
+    hex_tokens,
+    preview_reader,
+    text_tokens,
+    view_source,
+)
 from mapchar.ui.raw_widget import RowModel
 from mapchar.ui.text_widget import TextDecode, TextModel, text_model
 
@@ -91,6 +103,8 @@ class RefreshMixin:
             self._bounds = None
         self.whole_action.setEnabled(self._bounds is not None)
         self.offset_box.setText(self._format_address(self._offset))
+        if not moved:
+            self._sync_bars()
         tables = self._table_set()
         if not moved:
             self._text_decode = None
@@ -125,11 +139,32 @@ class RefreshMixin:
         the row cut off at its bottom edge."""
         entry = self._entry
         window = self.raw.visible_bytes() + BYTES_PER_ROW
-        data = doc.data[self._offset : min(self._offset + window, self._view_end())]
+        end = min(self._offset + window, self._view_end())
+        data = doc.data[self._offset : end]
+        is_block = entry is not None and entry.kind is EntryKind.BLOCK
+        if self._reads_pointers():
+            cells = self._pointer_cells(doc, self._offset, end)
+            tokens, tips = hex_tokens(
+                cells,
+                self._offset,
+                self._pointer_preview(doc, tables),
+                self.show_strings.isChecked(),
+            )
+            self.raw.set_model(
+                RowModel(
+                    self._offset,
+                    data,
+                    tokens,
+                    set(),
+                    doc.size,
+                    bounds=self._bounds,
+                    tips=tips,
+                )
+            )
+            return
         run = self._decode_window(data, tables)
         string_starts = {bit // 8 for bit in run.starts}
         pointer_bytes: set[int] = set()
-        is_block = entry is not None and entry.kind is EntryKind.BLOCK
         if is_block and entry.doc is not None:
             for rec in entry.doc.strings:
                 for p in rec.pointers:
@@ -156,18 +191,32 @@ class RefreshMixin:
             self._refresh_raw(self._doc, self._table_set())
             self._sync_steps()
 
-    @staticmethod
-    def _decode_window(data: bytes, tables: TableSet | None) -> RunResult:
-        """Decode one string after another over ``data`` until it runs out."""
+    def _decode_window(self, data: bytes, tables: TableSet | None) -> RunResult:
+        """Decode one string after another over ``data`` until it runs out,
+        each cut the way the reading cuts them."""
         if tables is None or not data:
             return RunResult([], 0)
-        return decode_run(
-            Bits(data),
-            tables,
-            rules=DecodeRules(end_terminated=True),
-            runs=None,
-            ends_only=False,
+        return decode_strings(data, self._reading(), tables)
+
+    def _pointer_cells(self, doc: Document, start: int, end: int) -> list[PointerCell]:
+        """The reading's pointers that start in bytes ``start`` to ``end``."""
+        entry = self._entry
+        source = view_source(
+            self._reading(), entry.kind is EntryKind.BLOCK, start, self._view_end()
         )
+        return pointer_cells(doc.data, source, start, end, self.registry)
+
+    def _pointer_preview(self, doc: Document, tables: TableSet | None):
+        """What a pointer's target reads as, through the strings' table."""
+        cfg = self._reading()
+        if tables is None or cfg is None:
+            return preview_reader(None)
+        return preview_reader(lambda at: target_string(doc.data, cfg, tables, at))
+
+    def _pointer_stride(self) -> int:
+        """Bytes from one pointer in view to the next."""
+        source = self._reading().source
+        return max(getattr(source, "stride", source.size), 1)
 
     def _refresh_text_mode(self, doc: Document, tables: TableSet | None) -> None:
         if self.tabs.currentWidget() is not self.text:
@@ -191,7 +240,8 @@ class RefreshMixin:
         """
         offset, end = self._offset, self._view_end()
         room = max(BYTES_PER_ROW, self.text.room())
-        if tables is None:
+        pointers = self._reads_pointers()
+        if tables is None and not pointers:
             return text_model([], offset, min(offset + room, end) - offset)
         # The last window is the best guess at this one: as many bytes as
         # overflowed then, or, where the first try overflowed, twice what was
@@ -214,11 +264,21 @@ class RefreshMixin:
         return model
 
     def _text_tokens(
-        self, doc: Document, tables: TableSet, offset: int, stop: int
+        self, doc: Document, tables: TableSet | None, offset: int, stop: int
     ) -> TextModel:
         """The text from ``offset`` to ``stop``, from the tokens kept since the
         last window where they serve, decoding only what they do not reach
-        (:class:`~mapchar.ui.text_widget.TextDecode`)."""
+        (:class:`~mapchar.ui.text_widget.TextDecode`). Read as pointers, a line
+        per pointer."""
+        if self._reads_pointers():
+            cells = self._pointer_cells(doc, offset, stop)
+            tokens = text_tokens(
+                cells,
+                offset,
+                self._pointer_preview(doc, tables),
+                self.show_strings.isChecked(),
+            )
+            return text_model(tokens, offset, stop - offset)
         cache = self._text_decode
         if cache is None or not cache.serves(doc.data, tables):
             cache = None
@@ -227,7 +287,9 @@ class RefreshMixin:
             model = cache.model(offset, stop)
             if model is not None:
                 return model
-        cache = self._text_decode = TextDecode(doc.data, tables, offset)
+        cache = self._text_decode = TextDecode(
+            doc.data, tables, offset, resumable=cuts_at_end_tokens(self._reading())
+        )
         cache.extend(stop, self._decode_window)
         model = cache.model(offset, stop)
         assert model is not None
@@ -260,7 +322,11 @@ class RefreshMixin:
         if trail and trail[-1][1] != self._offset:
             trail.clear()
         before = self._offset
-        if lines > 0:
+        if lines < 0 and self._reads_pointers():
+            # A line is a pointer, so a line up is a stride back.
+            first = self._view_range()[0]
+            target = max(first, self._offset + lines * self._pointer_stride())
+        elif lines > 0:
             target = self._text_lines_down(lines, doc)
         elif trail and trail[-1][2] == -lines:
             target = trail.pop()[0]

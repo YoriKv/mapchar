@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtWidgets import QApplication
 
-from mapchar.core.block import BlockConfig, EndToken, RangeSource
+from mapchar.core.block import with_region
 from mapchar.core.capabilities import Capability
 from mapchar.core.document import Document
 from mapchar.pipeline.pipeline import decompress_at, find_next_structure
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui import DUMP_WINDOW_BYTES
-from mapchar.ui.dialogs import BlockDialog
 from mapchar.ui.raw_widget import RowModel
 
 
@@ -166,29 +167,16 @@ class CompressionMixin:
             )
             return
         data, consumed = found.data, found.consumed
-        table_ids = list(self.workspace.tables())
-        if not table_ids:
-            self._error("Load a table first.")
-            return
-        cfg = BlockConfig(
-            RangeSource(0, len(data)),
-            EndToken(),
-            self.table_pick.currentData() or table_ids[0],
-        )
-        seed = Entry(
-            EntryKind.BLOCK, "", compression_id=self.compression_pick.currentData()
-        )
-        dialog = self._block_dialog(cfg, f"Compressed {self._offset:X}", seed)
-        if dialog.exec() != BlockDialog.DialogCode.Accepted:
-            return
+        cfg = with_region(self._reading() or self._default_reading(), 0, len(data))
+        if not cfg.table_id:
+            cfg = replace(cfg, table_id=self._default_table_id())
         entry = Entry(
             EntryKind.BLOCK,
-            dialog.name.text().strip() or f"Compressed {self._offset:X}",
+            f"Compressed {self._offset:X}",
             file_entry.path,
             parent=file_entry,
-            config=dialog.config(),
-            compression_id=dialog.compression_id(),
-            spare_room=dialog.spare_room_rule(),
+            config=cfg,
+            compression_id=self.compression_pick.currentData(),
             slice_offset=self._offset,
             # A decode that read nothing recorded nothing: the slot is left
             # unknown rather than claimed to be empty, and the write-back then

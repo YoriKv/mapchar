@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from mapchar.core.notices import Notice
@@ -174,6 +174,30 @@ class BlockConfig:
             # Skip ranges make the text non-contiguous; packing cannot lay it out.
             return WriteMode.SLOTTED
         return WriteMode.PACKED if self.has_pointers else WriteMode.SLOTTED
+
+
+def with_region(config: BlockConfig, start: int, stop: int) -> BlockConfig:
+    """``config`` read over bytes ``start`` to ``stop``: what a new block made
+    from a reading and a selection is.
+
+    The source keeps its kind — the fixed strings that fit, the pointers of a
+    table in that stretch, a list's pointers as a table of them — and what
+    named addresses of the old region (skip ranges, the bound) goes with it.
+    """
+    s = config.source
+    source: Source
+    if isinstance(s, FixedSource):
+        length = max(s.length, 1)
+        source = FixedSource(start, max(1, (stop - start) // length), length)
+    elif isinstance(s, PointerTableSource):
+        source = replace(s, start=start, stop=stop)
+    elif isinstance(s, PointerListSource):
+        source = PointerTableSource(
+            start, stop, s.size, s.size, s.endian, s.mapping_id, s.offset, s.bank
+        )
+    else:
+        source = RangeSource(start, stop)
+    return replace(config, source=source, skips=(), bound=None)
 
 
 class Status(Enum):

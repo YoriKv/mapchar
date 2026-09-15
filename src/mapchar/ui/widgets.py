@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QHBoxLayout,
     QLabel,
     QLayout,
     QLineEdit,
@@ -404,6 +405,58 @@ class FlowLayout(QLayout):
         return y + line - rect.y() + margins.bottom()
 
 
+class WrapBar(QWidget):
+    """A bar of labelled controls that wraps onto more rows as it narrows, and
+    keeps the height those rows need.
+
+    A :class:`FlowLayout` alone asks for one row's height, so a window short of
+    room squeezes the rows under it out of sight; this asks for the height its
+    rows take at the width it has, and asks again when the width changes.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.flow = FlowLayout(self)
+        self.flow.setContentsMargins(0, 0, 0, 0)
+        self._height = 0
+
+    def add_group(
+        self, label: str, *widgets: QWidget, tip: str | None = None
+    ) -> QWidget:
+        """``widgets`` after a caption, as one item that wraps whole."""
+        group = QWidget()
+        row = QHBoxLayout(group)
+        row.setContentsMargins(0, 0, 6, 0)
+        row.setSpacing(3)
+        if label:
+            caption = QLabel(label)
+            if tip:
+                caption.setToolTip(tip)
+            row.addWidget(caption)
+        for widget in widgets:
+            if tip and not widget.toolTip():
+                widget.setToolTip(tip)
+            row.addWidget(widget)
+        self.flow.addWidget(group)
+        return group
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        width = self.flow.minimumSize().width()
+        return QSize(width, self.flow.heightForWidth(max(self.width(), width)))
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return self.minimumSizeHint()
+
+    def event(self, event: QEvent) -> bool:
+        # A row shown or hidden, or a new width, changes the rows it takes.
+        if event.type() in (QEvent.Type.LayoutRequest, QEvent.Type.Resize):
+            height = self.flow.heightForWidth(max(self.width(), 1))
+            if height != self._height:
+                self._height = height
+                self.updateGeometry()
+        return super().event(event)
+
+
 class EscapeCloses:
     """Mixed into a tool window so Esc closes it, the way it closes a dialog.
 
@@ -593,6 +646,7 @@ __all__ = [
     "MONO_FAMILIES",
     "ModalProgress",
     "ResultsTable",
+    "WrapBar",
     "fill_pick",
     "fit_chars",
     "hint_field",

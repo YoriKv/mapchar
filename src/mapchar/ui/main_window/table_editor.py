@@ -25,9 +25,7 @@ class TableEditorMixin:
         if not self._selection or self._doc is None:
             return
         s, e = self._selection
-        table_entry = self.workspace.entry_for_table(
-            self.table_pick.currentData() or ""
-        )
+        table_entry = self.workspace.entry_for_table(self._current_table_id() or "")
         if table_entry is None:
             table = Table("main")
             table_entry = self._add_memory_table(table, "new.tbl")
@@ -38,7 +36,7 @@ class TableEditorMixin:
         self.table_editor.prefill(bytes_to_bits(self._doc.data[s : min(e, s + 4)]))
 
     def _show_table_editor(self) -> None:
-        entry = self.workspace.entry_for_table(self.table_pick.currentData() or "")
+        entry = self.workspace.entry_for_table(self._current_table_id() or "")
         if entry is None:
             tables = self.workspace.table_entries()
             entry = tables[0] if tables else None
@@ -134,7 +132,7 @@ class TableEditorMixin:
         if self.workspace.find_table(path) is not None:
             self._error(f"{os.path.basename(path)} is already open as a table.")
             return None
-        table = Table(free_table_id(table_id_for(path), self.workspace.tables()))
+        table = Table(free_table_id(table_id_for(path), self.workspace.loaded_tables()))
         if not self._write_text(path, write_native(table)):
             return None
         entry = self.open_table(path, "native")

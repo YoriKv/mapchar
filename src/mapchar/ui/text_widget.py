@@ -122,7 +122,9 @@ class TextDecode:
     ``margin`` bits — the longest key and operands of the set — before the cut.
     """
 
-    def __init__(self, data: bytes, tables: TableSet, origin: int) -> None:
+    def __init__(
+        self, data: bytes, tables: TableSet, origin: int, *, resumable: bool = True
+    ) -> None:
         self.data = data
         self.tables = tables
         self.origin = origin
@@ -140,7 +142,11 @@ class TextDecode:
         """The character each token's text starts at, and after the last the
         length of them all."""
         entries = [e for t in tables.tables.values() for e in t.entries.values()]
-        self.resumable = all(e.kind is not TokenKind.SWITCH for e in entries)
+        # A string cut by length rather than at an end token starts where the
+        # one before it ended, not at any token boundary.
+        self.resumable = resumable and all(
+            e.kind is not TokenKind.SWITCH for e in entries
+        )
         self.margin = max(
             (len(e.bits) + sum(o.bits for o in e.operands) for e in entries), default=8
         )

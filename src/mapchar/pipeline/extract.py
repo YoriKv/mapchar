@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from mapchar.core.bits import Bits
 from mapchar.core.block import (
     BlockConfig,
+    EndToken,
     Extraction,
     FixedLength,
     FixedSource,
@@ -103,11 +106,7 @@ def read_pointers(
         if value is None:
             notices.append(Notice("pointer past the end of the data", offset=address))
             continue
-        target = mapping.to_offset(value, source.bank, address)
-        if target is not None:
-            target += source.offset
-            if not (0 <= target < len(data)):
-                target = None
+        target = pointer_target(mapping, source, value, address, len(data))
         if target is None:
             notices.append(
                 Notice(f"pointer ${value:X} maps outside the data", offset=address)
@@ -124,6 +123,19 @@ def read_pointers(
         )
         targets.append(target)
     return refs, targets, notices
+
+
+def pointer_target(
+    mapping, source: PointerTableSource | PointerListSource, value, address, size
+) -> int | None:
+    """Where a pointer at ``address`` holding ``value`` points in data of
+    ``size`` bytes: mapped, moved by the source's offset, and ``None`` when it
+    lands outside."""
+    target = mapping.to_offset(value, source.bank, address)
+    if target is None:
+        return None
+    target += source.offset
+    return target if 0 <= target < size else None
 
 
 def _extract_pointers(
@@ -158,7 +170,7 @@ def _extract_pointers(
         else:
             # A fixed string keeps its whole extent even when it stops early
             # at an end token, so its slot stays whole.
-            tokens, end, res_notices = _decode_one(bits, config, tables, start, limit)
+            tokens, end, res_notices = decode_one(bits, config, tables, start, limit)
         strings.append(
             StringRecord(
                 len(strings),
@@ -170,6 +182,22 @@ def _extract_pointers(
             )
         )
     return Extraction(strings, notices)
+
+
+def string_at(
+    bits: Bits, config: BlockConfig, tables: TableSet, start_bit: int
+) -> list[Token]:
+    """The one string of the block's string type that starts at ``start_bit``.
+
+    What a pointer's target reads as, on its own: a string that ends at the
+    next pointer's target has no next pointer here, so it reads to an end token.
+    """
+    if isinstance(config.string_type, NextPointer):
+        config = replace(config, string_type=EndToken())
+    stop_bit = bits.length if config.bound is None else config.bound * 8
+    if stop_bit <= start_bit:
+        stop_bit = bits.length
+    return decode_one(bits, config, tables, start_bit, stop_bit)[0]
 
 
 def _decode_pascal(bits, config, tables, start, stop_bit, st: Pascal):
@@ -214,7 +242,7 @@ def _extract_range(
         )
     while pos < stop_bit:
         start = pos
-        tokens, record_end, res_notices = _decode_one(
+        tokens, record_end, res_notices = decode_one(
             bits, config, tables, start, stop_bit
         )
         if record_end <= start:
@@ -244,7 +272,7 @@ def _extract_fixed(
     return Extraction(strings, notices)
 
 
-def _decode_one(
+def decode_one(
     bits: Bits, config: BlockConfig, tables: TableSet, start: int, stop_bit: int
 ) -> tuple[list[Token], int, list[Notice]]:
     """One string of the block's string type, read within ``stop_bit``."""
