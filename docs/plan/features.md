@@ -427,9 +427,9 @@ the bars read the view, and opens it on its strings; from then on the bars are
 its settings (see [Reading the bytes](#reading-the-bytes)). The Reading bar
 shows the settings below that the mode, source kind and string type use, in
 four framed sections that sit side by side while there is room: **Source**
-(the kind, start, stop, count, length, pointer addresses, skip ranges),
-**Pointers** (size, stride, endian, mapping, offset, bank), **Strings** (string
-type and what it takes, strings per pointer, realign, lines, Show `[end]`) and
+(the kind, start, stop, count, length, pointer addresses), **Pointers** (size,
+stride, endian, mapping, offset, bank), **Strings** (string type and what it
+takes, strings per pointer, realign, skip ranges, lines, Show `[end]`) and
 **Writing** (bound, write mode, fill byte, spare room). A file has no addresses
 of its own, so its bar leaves out start, stop, count, pointer addresses, skip
 ranges and the Writing section; a section with nothing to show is hidden. With
@@ -456,11 +456,16 @@ as a **Range** of end-token strings — rather than every control at once.
 - **Strings per pointer** — how many end tokens one pointer's string spans.
 - **Realign** — after each end token, round the position up to a multiple of
   `M` plus `O`.
-- **Skip ranges** — `from → to` pairs: reading `from` continues at `to`
-  (Cartographer's auto-jump). The Skips picker shows them on one line and
-  opens a popup list of `from` / `to` rows in hex, with Add and Remove, that
-  applies as it is edited — a run of edits is one undo step — and the Hex
-  tab's **Add Skip from Selection** adds one over the selected bytes.
+- **Skip ranges** — `from → to` pairs: reading a string's bytes reaches `from`
+  and continues at `to` (Cartographer's auto-jump), so data sitting inside the
+  text is stepped over. They shape the strings, not where a source's addresses
+  are: a pointer table is still walked from `start` by `stride`, and a gap in
+  one is a matter for the stride or for a second block. Being a string's own
+  setting, the Skips picker stays in the Strings section, so it is there in
+  either mode of a block. It shows the ranges on one line and opens a popup
+  list of `from` / `to` rows in hex, with Add and Remove, that applies as it is
+  edited — a run of edits is one undo step — and the Hex tab's **Add Skip from
+  Selection** adds one over the selected bytes.
 - **Format** — the start table: a loaded table or an encoding, picked in the
   Format list; the table set follows from it.
 - **Fixed-line layout** — for fixed strings, an optional `line length` that

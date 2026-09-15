@@ -84,7 +84,6 @@ SECTIONS = {
         "count",
         "length",
         "ptr_addresses",
-        "skips",
     ),
     "Pointers": (
         "ptr_size",
@@ -101,6 +100,7 @@ SECTIONS = {
         "pascal",
         "spp",
         "realign",
+        "skips",
         "line_length",
         "show_end",
     ),
@@ -110,7 +110,8 @@ SECTIONS = {
 
 _NOT_STRING_VIEW = ("Source", "Pointers")
 """The sections about where a block's strings are, which a view of the strings'
-own bytes does not show."""
+own bytes does not show. Not Strings, which shapes the bytes themselves —
+skip ranges among them, so they are editable wherever the strings are read."""
 
 DEFAULT_READING = BlockConfig(RangeSource(0, 0), EndToken(), "")
 """What the bar shows with nothing open: a file read as a range of strings, so

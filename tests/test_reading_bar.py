@@ -152,6 +152,23 @@ def test_skip_ranges_are_edited_in_a_popup_list(window, tmp_path):
     assert popup.table.rowCount() == 1 and picker.currentText() == "11>14"
 
 
+def test_the_skips_picker_is_there_in_either_mode_of_a_block(window, tmp_path):
+    """Skips shape a string's bytes, not where a source's addresses are, so the
+    picker sits with the Strings settings and a view of the strings keeps it."""
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))
+    window.show()
+    picker = window.reading_bar.skips
+    assert picker.isVisibleTo(window)
+    window.mode_toggle.button(False).click()
+    assert picker.isVisibleTo(window)
+    window._show_string(block, 0)
+    assert picker.isVisibleTo(window)
+    # A file has no addresses of its own, so no skips either.
+    window._activate_entry(entry)
+    assert not picker.isVisibleTo(window)
+
+
 def test_a_skip_is_added_from_the_selection(window, tmp_path, monkeypatch):
     from mapchar.ui.main_window import raw_view
 
