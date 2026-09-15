@@ -827,9 +827,8 @@ def test_the_table_editor_shows_a_table_file_s_notices(window, tmp_path):
 
 # The rows that apply whatever is on screen, so no capability gates them: the
 # project and plugin rows, the panels, the themes, the help, the visit trail
-# (armed by the trail), the undo pair (armed by the stack), the entry clipboard
-# (scoped to the Files panel, which has a selection of its own) and Show Whole
-# File (armed by the refresh, while the view is confined).
+# (armed by the trail), the undo pair (armed by the stack) and the entry
+# clipboard (scoped to the Files panel, which has a selection of its own).
 ALWAYS_ON = frozenset(
     {
         "Open ROM…",
@@ -863,7 +862,6 @@ ALWAYS_ON = frozenset(
         "Dark Theme",
         "Back",
         "Forward",
-        "Show Whole File",
         "Files",
         "Tables",
         "Fonts",
@@ -1635,3 +1633,33 @@ def test_a_charset_picked_in_the_editor_is_one_undo_step_the_project_carries(
     window._save_table_entry(back)
     text = Path(str(back.path)).read_text()
     assert "@charset ascii" in text and "43=C" not in text
+
+
+def test_the_editor_moves_on_to_the_next_key_and_removes_on_del(
+    window, tmp_path, qtbot
+):
+    from PySide6.QtCore import Qt
+
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    table_entry = window.workspace.table_entries()[0]
+    window._edit_table_entry(table_entry)
+    editor = window.table_editor
+    table = table_entry.table
+    editor.form.line.setText("50=P")
+    editor._add()
+    assert table.entries["01010000"].text == "P"
+    # The next key of the same width is ready, its text blank, focus on it.
+    assert editor.form.key.text() == "51" and editor.form.text.text() == ""
+    assert editor.add.text() == "Add"
+    # A switch whose text has no brackets gets a word, not a refusal.
+    editor.form.line.setText("!F1=item @main:1")
+    assert "brackets" in editor.form.problem.text()
+    editor.form.line.setText("!F1=[item] @main:1")
+    assert editor.form.problem.text() == ""
+    # Several rows selected: the form waits, and Del removes them all at once.
+    editor.grid.selectAll()
+    assert not editor.add.isEnabled() and editor.remove.isEnabled()
+    qtbot.keyClick(editor.grid, Qt.Key.Key_Delete)
+    assert not table.entries and "Removed" in editor.status.text()
+    window.undo_stack.undo()
+    assert len(table.entries) == 4

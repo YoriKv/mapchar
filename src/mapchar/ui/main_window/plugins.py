@@ -118,7 +118,7 @@ class PluginsMixin:
         """What lists the registry's plugins by name follows it: the charsets
         offered as tables, the pointer mappings."""
         self._reset_builtin_tables()
-        self.reading_bar.set_mappings(self.registry.ids(Stage.MAPPING))
+        self.reading_bar.set_mappings(self.registry.plugins(Stage.MAPPING))
         self._refresh_table_picks()
 
     def _drop_clean_documents(self) -> int:

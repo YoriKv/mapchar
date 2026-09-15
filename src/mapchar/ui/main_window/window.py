@@ -285,13 +285,15 @@ class MainWindow(
         format_bar.setObjectName("format_bar")
         self.format_pick = CommandComboBox("New Table…")
         self.mode_toggle = ModeToggle((("Strings", False), ("Pointers", True)))
-        self.mode_toggle.button(False).setToolTip("Read the bytes as text")
-        self.mode_toggle.button(True).setToolTip(
-            "Read the bytes as pointers to strings"
+        self.mode_toggle.button(False).setToolTip(
+            "Read the bytes as text; on a block, show its strings"
         )
-        self.resolve_pointers = QCheckBox("Resolve pointers")
+        self.mode_toggle.button(True).setToolTip(
+            "Read the bytes as pointers to strings; on a block, show its pointers"
+        )
+        self.resolve_pointers = QCheckBox("Follow pointers")
         format_bar.add_group(
-            "Format",
+            "Table",
             self.format_pick,
             tip="The table or encoding the text is read through",
         )
@@ -299,12 +301,12 @@ class MainWindow(
         self.resolve_group = format_bar.add_group(
             "",
             self.resolve_pointers,
-            tip="Show the string each pointer reaches in its place",
+            tip="Show where each pointer points, and the string there",
         )
         layout.addWidget(format_bar)
         self.format_bar = format_bar
         self.reading_bar = ReadingBar(self.address_spelling)
-        self.reading_bar.set_mappings(self.registry.ids(Stage.MAPPING))
+        self.reading_bar.set_mappings(self.registry.plugins(Stage.MAPPING))
         layout.addWidget(self.reading_bar)
         self._reset_builtin_tables()
 
@@ -678,13 +680,6 @@ class MainWindow(
             act(navigate_menu, "&Start of File", self._go_home, None),
             act(navigate_menu, "&End of File", self._go_end, None),
         )
-        # Armed by the refresh rather than the capability table: it is live only
-        # while the view is confined, which is a state and not a kind of entry.
-        self.whole_action = act(
-            navigate_menu, "Show &Whole File", self._show_whole_file, None
-        )
-        self.whole_action.setEnabled(False)
-
         search_menu = bar.addMenu("&Search")
         self.search_actions = (
             act(search_menu, "&Search Window…", self._show_search, "Ctrl+Shift+F"),

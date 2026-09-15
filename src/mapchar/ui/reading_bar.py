@@ -51,6 +51,7 @@ from mapchar.core.block import (
     RangeSource,
     StringType,
     WriteMode,
+    default_write_mode,
 )
 from mapchar.ui.number_fields import (
     AddressEdit,
@@ -146,7 +147,7 @@ class SkipsPopup(QFrame):
         self._loading = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.addWidget(QLabel("Reading from continues at to, in hex"))
+        layout.addWidget(QLabel("Reading that reaches From continues at To (hex)"))
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["From", "To"])
         self.table.horizontalHeader().setSectionResizeMode(
@@ -315,6 +316,7 @@ class ReadingBar(WrapBar):
         self._pointers = False
         self._block = False
         self._string_view = False
+        self._mappings: dict[str, bool] = {}
         self._groups: dict[str, QWidget] = {}
         self.sections: dict[str, QWidget] = {}
 
@@ -334,7 +336,9 @@ class ReadingBar(WrapBar):
         self.ptr_offset = OffsetEdit()
         self.ptr_bank = HexSpinBox(0, 0xFFF, 2)
         self.ptr_addresses = hint_field(
-            QLineEdit(), "addresses, comma separated", "The pointers' addresses"
+            QLineEdit(),
+            "addresses, comma separated",
+            "Where each pointer sits, comma separated",
         )
         fit_chars(self.ptr_addresses, 24)
         self.spelling.changed.connect(self._respell_addresses)
@@ -343,31 +347,48 @@ class ReadingBar(WrapBar):
         for label, data in (
             ("End token", END),
             ("Fixed length", FIXED_LENGTH),
-            ("Pascal (length prefix)", PASCAL),
+            ("Length prefix", PASCAL),
             ("Next pointer", NEXT),
         ):
             self.string_type.addItem(label, data)
         self.fixed_length = number_spin(1, 1_000_000, 3)
         self.stop_at_end = QCheckBox("Stop at end token")
+        self.stop_at_end.setToolTip("End earlier at an end token")
         self.pascal_width = number_spin(1, 4, 1)
-        self.pascal_tokens = QCheckBox("Counts token weights")
+        self.pascal_endian = QComboBox()
+        self.pascal_endian.addItem("Little", "little")
+        self.pascal_endian.addItem("Big", "big")
+        self.pascal_endian.setToolTip("The prefix's byte order")
+        self.pascal_tokens = QCheckBox("Counts tokens")
+        self.pascal_tokens.setToolTip("The prefix counts tokens by weight, not bytes")
         self.spp = number_spin(1, 64, 2)
         self.realign_m = number_spin(0, 65536, 2, off=True)
         self.realign_o = number_spin(0, 65536, 2)
         self.line_length = number_spin(0, 1_000_000, 3, off=True)
         self.show_end = QCheckBox("Show [end]")
+        self.show_end.setToolTip("Show an [end] code after every fixed string")
         self.skips = SkipsPicker()
 
         self.bound = AddressEdit(self.spelling)
         hint_field(
             self.bound,
             "stop",
-            "The last address a write may reach; blank stops at the region's end",
+            "Writes stop before this address; blank uses the default shown",
         )
         self.write_mode = QComboBox()
-        self.write_mode.addItem("Automatic", None)
-        self.write_mode.addItem("Packed", WriteMode.PACKED)
-        self.write_mode.addItem("Slotted", WriteMode.SLOTTED)
+        for label, mode, tip in (
+            ("Automatic", None, "Packed with pointers, slotted without"),
+            (
+                "Packed",
+                WriteMode.PACKED,
+                "Strings laid end to end, every pointer rewritten",
+            ),
+            ("Slotted", WriteMode.SLOTTED, "Every string stays in its own place"),
+        ):
+            self.write_mode.addItem(label, mode)
+            self.write_mode.setItemData(
+                self.write_mode.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
+            )
         self.fill = HexEdit(2)
         self.spare_room = QComboBox()
         self.spare_room.addItem("Fill", "fill")
@@ -406,17 +427,27 @@ class ReadingBar(WrapBar):
                 (self.ptr_bank,),
                 "The bank a banked mapping reads in, in hex",
             ),
-            ("ptr_addresses", "Addresses", (self.ptr_addresses,), None),
+            (
+                "ptr_addresses",
+                "Addresses",
+                (self.ptr_addresses,),
+                "Where each pointer sits, comma separated",
+            ),
             ("string_type", "Ends at", (self.string_type,), "How a string ends"),
             ("fixed_length", "Length", (self.fixed_length,), "Bytes in every string"),
             ("stop_at_end", "", (self.stop_at_end,), None),
             (
                 "pascal",
                 "Prefix",
-                (self.pascal_width, self.pascal_tokens),
+                (self.pascal_width, self.pascal_endian, self.pascal_tokens),
                 "Bytes in the length prefix",
             ),
-            ("spp", "End tokens", (self.spp,), "End tokens in one string"),
+            (
+                "spp",
+                "Ends per string",
+                (self.spp,),
+                "End tokens one string runs through before it ends",
+            ),
             (
                 "realign",
                 "Realign",
@@ -443,7 +474,8 @@ class ReadingBar(WrapBar):
                 "spare_room",
                 "Spare room",
                 (self.spare_room,),
-                "What a shorter re-compression leaves in its slot",
+                "What a shorter re-compression leaves in its slot "
+                "(compressed blocks only)",
             ),
         ):
             groups[name] = (label, widgets, tip)
@@ -458,6 +490,7 @@ class ReadingBar(WrapBar):
             ("source_kind", self.source_kind),
             ("ptr_endian", self.ptr_endian),
             ("string_type", self.string_type),
+            ("pascal_endian", self.pascal_endian),
             ("write_mode", self.write_mode),
             ("spare_room", self.spare_room),
         ):
@@ -501,19 +534,55 @@ class ReadingBar(WrapBar):
 
     # -- loading --------------------------------------------------------------
 
-    def set_mappings(self, mapping_ids: list[str]) -> None:
+    def set_mappings(self, mappings) -> None:
+        """The mapping plugins on offer, listed by name; a mapping id typed in
+        that names none of them is kept as an id."""
         was = self.ptr_mapping.blockSignals(True)
-        text = self.ptr_mapping.currentText()
+        current = self.mapping_id()
+        self._mappings = {m.info.id: bool(m.needs_bank) for m in mappings}
         self.ptr_mapping.clear()
-        self.ptr_mapping.addItems(mapping_ids or ["linear"])
-        self.ptr_mapping.setCurrentText(text or (mapping_ids or ["linear"])[0])
+        for m in mappings:
+            self.ptr_mapping.addItem(m.info.name, m.info.id)
+        if not mappings:
+            self.ptr_mapping.addItem("linear", "linear")
+        self._show_mapping(current or self.ptr_mapping.itemData(0))
         self.ptr_mapping.blockSignals(was)
 
     def suggest_mapping(self, mapping_id: str) -> None:
         """Start the pointer mapping on ``mapping_id``, applying nothing."""
         was = self.ptr_mapping.blockSignals(True)
-        self.ptr_mapping.setCurrentText(mapping_id)
+        self._show_mapping(mapping_id)
         self.ptr_mapping.blockSignals(was)
+        self._sync()
+
+    def mapping_id(self) -> str:
+        """The mapping the picker names: a listed one's id, or the id typed."""
+        pick = self.ptr_mapping
+        text = pick.currentText().strip()
+        at = pick.findText(text)
+        if at >= 0:
+            return pick.itemData(at)
+        return text or "linear"
+
+    def _show_mapping(self, mapping_id: str) -> None:
+        at = self.ptr_mapping.findData(mapping_id)
+        if at >= 0:
+            self.ptr_mapping.setCurrentIndex(at)
+        else:
+            self.ptr_mapping.setCurrentText(mapping_id)
+
+    def _needs_bank(self) -> bool:
+        """Whether the mapping reads a bank: a listed one that says so, or an
+        id the list does not know, which is left its bank rather than guessed."""
+        return self._mappings.get(self.mapping_id(), True)
+
+    def show_bound_default(self, bound: int | None) -> None:
+        """Say in the Bound field's placeholder where a blank bound stops."""
+        hint_field(
+            self.bound,
+            "stop" if bound is None else self.spelling.format(bound),
+            self.bound.toolTip(),
+        )
 
     def load(
         self,
@@ -548,7 +617,7 @@ class ReadingBar(WrapBar):
                     )
                 self.ptr_size.setValue(s.size)
                 self.ptr_endian.setCurrentIndex(1 if s.endian == "big" else 0)
-                self.ptr_mapping.setCurrentText(s.mapping_id)
+                self._show_mapping(s.mapping_id)
                 self.ptr_offset.set_value(s.offset)
                 self.ptr_bank.setValue(s.bank)
             st = config.string_type
@@ -560,6 +629,7 @@ class ReadingBar(WrapBar):
             elif isinstance(st, Pascal):
                 kind = PASCAL
                 self.pascal_width.setValue(st.width)
+                self.pascal_endian.setCurrentIndex(1 if st.endian == "big" else 0)
                 self.pascal_tokens.setChecked(st.counts_tokens)
             elif isinstance(st, NextPointer):
                 kind = NEXT
@@ -638,7 +708,7 @@ class ReadingBar(WrapBar):
             "ptr_endian": pointers,
             "ptr_mapping": pointers,
             "ptr_offset": pointers,
-            "ptr_bank": pointers,
+            "ptr_bank": pointers and self._needs_bank(),
             "ptr_addresses": block and kind == LIST,
             "string_type": not fixed,
             "fixed_length": st == FIXED_LENGTH and not fixed,
@@ -656,6 +726,9 @@ class ReadingBar(WrapBar):
         }
         for name, visible in shown.items():
             self._groups[name].setVisible(visible)
+        self.pascal_endian.setVisible(self.pascal_width.value() > 1)
+        auto = default_write_mode(self._pointers, fixed, bool(self.skips.value()))
+        self.write_mode.setItemText(0, f"Automatic ({auto.value})")
         for title, names in SECTIONS.items():
             hidden = self._string_view and title in _NOT_STRING_VIEW
             self.sections[title].setVisible(not hidden and any(shown[n] for n in names))
@@ -693,7 +766,7 @@ class ReadingBar(WrapBar):
         pointer = {
             "size": self.ptr_size.value(),
             "endian": self.ptr_endian.currentData(),
-            "mapping_id": self.ptr_mapping.currentText().strip() or "linear",
+            "mapping_id": self.mapping_id(),
             "offset": getattr(old, "offset", 0) if offset is None else offset,
             "bank": self.ptr_bank.value(),
         }
@@ -743,7 +816,11 @@ class ReadingBar(WrapBar):
         if st == FIXED_LENGTH:
             return FixedLength(self.fixed_length.value(), self.stop_at_end.isChecked())
         if st == PASCAL:
-            return Pascal(self.pascal_width.value(), self.pascal_tokens.isChecked())
+            return Pascal(
+                self.pascal_width.value(),
+                self.pascal_tokens.isChecked(),
+                self.pascal_endian.currentData(),
+            )
         if st == NEXT and self._pointers:
             return NextPointer()
         return EndToken()

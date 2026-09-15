@@ -186,10 +186,6 @@ class NavigationMixin:
         else:
             self._go_to(bounds[0])
 
-    def _show_whole_file(self) -> None:
-        """Navigate ▸ Show Whole File: lift the bounds, staying where the view is."""
-        self._set_bounds(None)
-
     def _clamped(self, offset: int) -> int:
         """``offset`` held inside the view's bounds — what a step does, so
         walking off the end of a string cannot widen the view to the file."""

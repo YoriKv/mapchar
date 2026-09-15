@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -102,6 +101,9 @@ class TableEditor(EscapeCloses, QWidget):
         self._editing: str | None = None
         """The bits of the entry the form is editing; ``None`` for a new one."""
         self._filling = False
+        self._fills = 0
+        """How many times the grid was rebuilt: a change the window took back
+        through :meth:`set_entry` needs no second rebuild."""
         layout = QVBoxLayout(self)
 
         # -- which table, on what ---------------------------------------------
@@ -128,7 +130,7 @@ class TableEditor(EscapeCloses, QWidget):
         layout.addWidget(self.title)
 
         # -- the entries ------------------------------------------------------
-        self.grid = QTableWidget(0, 6)
+        self.grid = _EntryGrid(0, 6)
         self.grid.setHorizontalHeaderLabels(
             ["Key", "Kind", "Text", "Details", "Weight", "Comment"]
         )
@@ -155,7 +157,7 @@ class TableEditor(EscapeCloses, QWidget):
         self.new = QPushButton("New")
         self.new.setToolTip("Clear the form for an entry that is not in the table yet")
         self.remove = QPushButton("Remove")
-        self.remove.setToolTip("Remove the selected entries")
+        self.remove.setToolTip("Remove the selected entries (Del in the grid)")
         self.shift = QPushButton("Shift Keys…")
         self.shift.setToolTip("Move the selected entries' keys by a constant")
         self.fill = QPushButton("Fill…")
@@ -182,6 +184,7 @@ class TableEditor(EscapeCloses, QWidget):
         )
         self.grid.itemSelectionChanged.connect(self._on_selection)
         self.grid.itemChanged.connect(self._edited)
+        self.grid.delete_pressed.connect(self._remove)
         self.form.changed.connect(self._on_form_changed)
         self.form.submitted.connect(self._add)
         self.add.clicked.connect(self._add)
@@ -261,6 +264,12 @@ class TableEditor(EscapeCloses, QWidget):
             self.form.set_entry(None)
         self._sync_buttons()
 
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        # Opened on a table, the first thing to do is type a key.
+        if self._editing is None and not self.form.key.text():
+            self.form.focus_key()
+
     def prefill(self, key_bits: str) -> None:
         """Start a new entry on ``key_bits``, the raw view's selection."""
         self.grid.clearSelection()
@@ -275,16 +284,21 @@ class TableEditor(EscapeCloses, QWidget):
 
     def _fill(self) -> None:
         self._filling = True
+        self._fills += 1
+        same_table = self._table is (self._entry.table if self._entry else None)
         self._table = self._entry.table if self._entry is not None else None
         selected = self._editing
+        # A rebuild of the same table keeps its place; a new one starts at the top.
+        scroll = self.grid.verticalScrollBar().value() if same_table else 0
         self.grid.setRowCount(0)
+        selected_row = None
         if self._table is not None:
             entries = self._table.sorted_entries()
             self.grid.setRowCount(len(entries))
             for row, e in enumerate(entries):
                 self._set_row(row, e)
                 if e.bits == selected:
-                    self.grid.selectRow(row)
+                    selected_row = row
         self.grid.resizeColumnToContents(KEY)
         self.grid.resizeColumnToContents(KIND)
         self.grid.resizeColumnToContents(WEIGHT)
@@ -292,18 +306,22 @@ class TableEditor(EscapeCloses, QWidget):
             select_data(self.table_pick, id(self._entry))
         self._show_charset()
         self._apply_filter(self.filter.text())
+        self.grid.verticalScrollBar().setValue(scroll)
+        if selected_row is not None:
+            self.grid.selectRow(selected_row)
+            self.grid.scrollTo(self.grid.model().index(selected_row, KEY))
         self._filling = False
-        if selected is not None and selected not in (
-            self._table.entries if self._table else {}
-        ):
+        if selected is not None and selected_row is None:
             self._editing = None
             self.form.set_entry(None)
+        self._sync_buttons()
 
     def _set_row(self, row: int, e: TableEntry) -> None:
         cells = [
             format_key(e.bits),
             KIND_NAMES[e.kind],
-            e.text,
+            # A code reads as the dump shows it; the form holds the bare label.
+            f"[{e.text}]" if e.kind is TokenKind.CODE else e.text,
             describe(e),
             str(e.weight),
             e.comment.replace("\n", " ⏎ "),
@@ -342,7 +360,9 @@ class TableEditor(EscapeCloses, QWidget):
         if len(bits) == 1:
             self._editing = bits[0]
             self.form.set_entry(self._table.entries[bits[0]])
-        elif not bits:
+        else:
+            # Several rows, or none: the form is for one entry, so it is for
+            # a new one until one row is picked.
             self._editing = None
         self._sync_buttons()
 
@@ -350,12 +370,28 @@ class TableEditor(EscapeCloses, QWidget):
         self._sync_buttons()
 
     def _sync_buttons(self) -> None:
-        self.add.setText("Apply" if self._editing is not None else "Add")
+        editing = self._editing is not None
+        several = len(self._selected_bits()) > 1
+        self.add.setText("Apply" if editing else "Add")
+        self.add.setEnabled(not several)
         self.add.setToolTip(
-            "Put the entry back in the table as the form has it (Enter)"
-            if self._editing is not None
+            "Select one row to edit it, or none to add an entry"
+            if several
+            else "Put the entry back in the table as the form has it (Enter)"
+            if editing
             else "Put the entry in the table (Enter)"
         )
+        self.form.setEnabled(not several)
+        self.remove.setEnabled(bool(self._selected_bits()))
+        self.shift.setEnabled(bool(self._selected_bits()))
+
+    def _emit_change(self, before: Table) -> None:
+        """Hand the change to the window as one undo step, and rebuild the
+        grid unless the window already had the editor do so."""
+        fills = self._fills
+        self.changed.emit(self._entry, before)
+        if self._fills == fills:
+            self._fill()
 
     def _new(self) -> None:
         self.grid.clearSelection()
@@ -384,7 +420,9 @@ class TableEditor(EscapeCloses, QWidget):
         self.status.setText(
             f"Replaced {format_entry(replaced)}" if replaced is not None else ""
         )
-        self.changed.emit(self._entry, before)
+        if replace_bits is not None:
+            self._editing = entry.bits
+        self._emit_change(before)
         return True
 
     def _add(self) -> None:
@@ -394,13 +432,11 @@ class TableEditor(EscapeCloses, QWidget):
             self.status.setText(str(exc))
             return
         editing = self._editing
-        if self._commit(entry, editing):
-            if editing is None:
-                self.form.set_entry(None)
-                self.form.focus_key()
-            else:
-                self._editing = entry.bits
-            self._fill()
+        if self._commit(entry, editing) and editing is None:
+            # Entries are usually typed in key order: the form moves on to the
+            # next key of the same width, kind and weight, its text blank.
+            self.form.set_entry(replace(entry, bits=_next_key(entry.bits), text=""))
+            self.form.text.setFocus()
 
     def _edited(self, item: QTableWidgetItem) -> None:
         """A Text or Comment cell typed over in the grid."""
@@ -411,7 +447,10 @@ class TableEditor(EscapeCloses, QWidget):
         if old is None:
             return
         if item.column() == TEXT:
-            entry = replace(old, text=item.text())
+            text = item.text()
+            if old.kind is TokenKind.CODE:
+                text = text.strip().removeprefix("[").removesuffix("]")
+            entry = replace(old, text=text)
             try:
                 parse_entry(format_entry(entry))
             except ValueError as exc:
@@ -424,7 +463,8 @@ class TableEditor(EscapeCloses, QWidget):
             return
         if entry != old:
             self._commit(entry, bits)
-        self._fill()
+        else:
+            self._fill()
 
     # -- whole-table tools ------------------------------------------------------
 
@@ -455,8 +495,7 @@ class TableEditor(EscapeCloses, QWidget):
             return False
         self._editing = None
         self.status.setText(f"Shifted {len(moved)} entries by {delta:+X}.")
-        self.changed.emit(self._entry, before)
-        self._fill()
+        self._emit_change(before)
         return True
 
     def _shift(self) -> None:
@@ -487,8 +526,7 @@ class TableEditor(EscapeCloses, QWidget):
             f"Filled {added} entries from {start:0{width}X}."
             + (f" {kept} key(s) already taken were left alone." if kept else "")
         )
-        self.changed.emit(self._entry, before)
-        self._fill()
+        self._emit_change(before)
         return added
 
     def _fill_dialog(self) -> None:
@@ -508,23 +546,38 @@ class TableEditor(EscapeCloses, QWidget):
         bits_list = self._selected_bits()
         if table is None or not bits_list:
             return
-        n = len(bits_list)
-        if (
-            QMessageBox.question(
-                self,
-                "Remove Entries",
-                f"Remove {n} {'entry' if n == 1 else 'entries'}?",
-            )
-            != QMessageBox.StandardButton.Yes
-        ):
-            return
+        # No confirmation: it is one undo step, and says what it removed.
         before = self._snapshot()
         for bits in bits_list:
             table.remove(bits)
         self._editing = None
-        self.changed.emit(self._entry, before)
-        self._fill()
+        n = len(bits_list)
+        self.status.setText(
+            f"Removed {format_key(bits_list[0])}" if n == 1 else f"Removed {n} entries"
+        )
+        self._emit_change(before)
         self.form.set_entry(None)
+
+
+class _EntryGrid(QTableWidget):
+    """The entries grid: Del removes the selected rows when no cell is open."""
+
+    delete_pressed = Signal()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if (
+            event.key() == Qt.Key.Key_Delete
+            and self.state() != QTableWidget.State.EditingState
+        ):
+            self.delete_pressed.emit()
+            return
+        super().keyPressEvent(event)
+
+
+def _next_key(bits: str) -> str:
+    """The key after ``bits`` at the same width; the last key stays."""
+    value = int(bits, 2) + 1
+    return format(value, f"0{len(bits)}b") if value < 1 << len(bits) else bits
 
 
 class ShiftKeysDialog(QDialog):

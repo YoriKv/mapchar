@@ -170,10 +170,18 @@ class BlockConfig:
     def effective_write_mode(self) -> WriteMode:
         if self.write_mode is not None:
             return self.write_mode
-        if isinstance(self.source, FixedSource) or self.skips:
-            # Skip ranges make the text non-contiguous; packing cannot lay it out.
-            return WriteMode.SLOTTED
-        return WriteMode.PACKED if self.has_pointers else WriteMode.SLOTTED
+        return default_write_mode(
+            self.has_pointers, isinstance(self.source, FixedSource), bool(self.skips)
+        )
+
+
+def default_write_mode(pointers: bool, fixed: bool, skips: bool) -> WriteMode:
+    """The write mode a block without one of its own gets: packed with
+    pointers, slotted without — and slotted for fixed strings or skip ranges,
+    which make the text non-contiguous, so packing cannot lay it out."""
+    if fixed or skips:
+        return WriteMode.SLOTTED
+    return WriteMode.PACKED if pointers else WriteMode.SLOTTED
 
 
 def with_region(config: BlockConfig, start: int, stop: int) -> BlockConfig:

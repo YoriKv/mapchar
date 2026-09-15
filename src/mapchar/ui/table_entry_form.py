@@ -247,7 +247,7 @@ class ParamRow(QWidget):
             STOP_BYTES: self.bytes,
             STOP_BITS: self.bits,
         }
-        self.shared = QCheckBox("+")
+        self.shared = QCheckBox("counts here too (+)")
         self.shared.setToolTip(
             "Its matches also count towards the table that switched here\n"
             "(a Pascal string whose count covers the switched-to text)"
@@ -661,7 +661,7 @@ class TableEntryForm(QWidget):
                 if not self.key_bits():
                     self.line.clear()
             else:
-                self.problem.setText("")
+                self.problem.setText(self._hint(entry))
                 line = format_entry(entry)
                 # Left alone when it already says so: a set moves the cursor.
                 if self.line.text() != line:
@@ -669,6 +669,17 @@ class TableEntryForm(QWidget):
         finally:
             self._syncing = False
         self.changed.emit()
+
+    @staticmethod
+    def _hint(entry: Entry) -> str:
+        """A word on an entry that is valid but probably not what was meant."""
+        text = entry.text
+        if entry.kind is TokenKind.SWITCH and text and "[" not in text:
+            return (
+                f"Prints {text!r} as text before switching; "
+                f"a code that shows as [{text}] is written with the brackets."
+            )
+        return ""
 
     def _width_text(self) -> str:
         n = len(self.key_bits())
@@ -692,7 +703,7 @@ class TableEntryForm(QWidget):
         finally:
             self._syncing = False
         self.key_width.setText(self._width_text())
-        self.problem.setText("")
+        self.problem.setText(self._hint(entry))
         self.changed.emit()
 
     def focus_key(self) -> None:

@@ -75,8 +75,7 @@ the preview system in [preview.md](preview.md).
   - the navigation bar under Hex and Text; the string status bar under Strings.
 - **Hex** dock — optional, at the bottom, hidden by default.
 - **Navigate** menu — **Back / Forward** through the entries visited, **Go to
-  Address**, the ends of the file, and **Show Whole File**, live while the
-  view is confined to a stretch of it.
+  Address** and the ends of the file.
 - **Panels** menu — toggles each dock. **Reset Panel Layout** puts the docks
   back where a fresh install has them, leaving the window's own size alone.
 - **Tool windows** — separate top-level windows that remember their
@@ -225,9 +224,15 @@ the preview system in [preview.md](preview.md).
     bytes or bits) and whether its matches count towards the parent (`+`) —
     with **then return** after them; the comment; and the **Line** the form
     spells in the native grammar, which also works the other way: a line
-    typed or pasted into it fills the form. A problem with the entry is
-    said under the form before **Add** (or **Apply**, when a row is being
-    edited) puts it in the table; **New** clears the form for another;
+    typed or pasted into it fills the form. A problem with the entry — or a
+    word on one that is valid but probably not meant, such as a switch whose
+    text has no brackets — is said under the form before **Add** (or
+    **Apply**, when a row is being edited) puts it in the table. After an
+    Add the form moves on to the next key of the same width, kind and
+    weight with its text blank, since entries are usually typed in key
+    order; **New** clears it. With several rows selected the form waits:
+    only **Remove** (Del) and **Shift Keys…** apply, and Remove asks nothing,
+    being one undo step;
   - the raw view's **Add to Table…** opens the form on the selected bytes as
     the key;
   - **Shift Keys…** moves the selected entries' keys by a constant, typed as
@@ -370,9 +375,8 @@ The exploration surface, the equivalent of celPix's tile canvas.
   keys are off, since a step could only hide bytes that fit; the same goes for
   a file smaller than the window. Addresses stay the file's. Any position
   asked for outside them — a typed address, a Search Window or Scan hit, a
-  Strings row, an undo reaching its edit — widens the view to the whole file,
-  as **Navigate ▸ Show Whole File** does in place; the Find bar never asks for
-  one, searching only the bytes in bounds. A file is never confined, and a block
+  Strings row, an undo reaching its edit — widens the view to the whole file;
+  the Find bar never asks for one, searching only the bytes in bounds. A file is never confined, and a block
   returning to the screen is confined to its source again, keeping its
   position if that is inside it.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
@@ -780,4 +784,4 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Files panel | Up/Down open the row · Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
 | Tool windows | Esc close · Enter run the query |
-| Table Editor | Enter put the entry in the table · Ctrl+F filter · double-click edit a Text or Comment cell |
+| Table Editor | Enter put the entry in the table · Del remove the selected entries · Ctrl+F filter · double-click edit a Text or Comment cell |

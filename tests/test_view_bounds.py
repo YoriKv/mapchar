@@ -77,12 +77,10 @@ def test_a_block_opens_confined_to_its_source(window, tmp_path):
     assert len(window.raw._model.data) == 6
     assert window.raw.verticalScrollBar().maximum() == 0
     assert "viewing 000000–000005 (6 bytes)" in window.nav_status.text()
-    assert window.whole_action.isEnabled()
     # The file itself is never confined.
     window._activate_entry(file_entry)
     assert window._bounds is None
     assert len(window.raw._model.data) > 6
-    assert not window.whole_action.isEnabled()
 
 
 def test_a_pointer_table_block_opens_on_its_pointers(window, tmp_path):
@@ -142,8 +140,9 @@ def test_the_steps_are_off_while_the_whole_range_fits_in_view(window, tmp_path):
         assert _press(window, key)  # swallowed, not passed to the focused widget
         assert window._offset == 0x200
     assert not _press(window, Qt.Key.Key_A)
-    # Lifting the bounds brings the file, and the steps, back.
-    window.whole_action.trigger()
+    # The file itself brings the whole of it, and the steps, back.
+    window._activate_entry(file_entry)
+    window._go_to(0x200)
     assert _steps_enabled(window)
     assert _press(window, Qt.Key.Key_Down)
     assert window._offset == 0x210
@@ -163,16 +162,6 @@ def test_a_position_outside_the_bounds_widens_the_view(window, tmp_path):
     assert window._bounds is None
     assert window._offset == 0x300
     assert len(window.raw._model.data) > 0
-    assert not window.whole_action.isEnabled()
-
-
-def test_show_whole_file_lifts_the_bounds_in_place(window, tmp_path):
-    file_entry = open_rom_and_table(window, tmp_path, bytes(range(256)) * 4)
-    add_block(window, file_entry, "b", RangeSource(0x100, 0x180))
-    window._move(BYTES_PER_ROW)
-    window.whole_action.trigger()
-    assert window._bounds is None
-    assert window._offset == 0x110
 
 
 def test_a_block_left_outside_its_source_reopens_on_it(window, tmp_path):

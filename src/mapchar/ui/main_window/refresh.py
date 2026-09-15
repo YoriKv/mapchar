@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from bisect import bisect_right
+from dataclasses import replace
 
 from mapchar.core.bits import Bits
 from mapchar.core.block import (
@@ -14,6 +15,7 @@ from mapchar.core.block import (
     PointerListSource,
     PointerTableSource,
     RangeSource,
+    block_bound,
 )
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
@@ -86,7 +88,6 @@ class RefreshMixin:
         if doc is None:
             self._bounds = None
             self._text_decode = None
-            self.whole_action.setEnabled(False)
             self.raw.set_model(None)
             self.strings.set_rows([])
             self.nav_status.setText("")
@@ -104,7 +105,6 @@ class RefreshMixin:
             self._bounds[0] <= self._offset < self._bounds[1]
         ):
             self._bounds = None
-        self.whole_action.setEnabled(self._bounds is not None)
         self.offset_box.set_value(self._offset)
         if not moved:
             self._sync_bars()
@@ -112,6 +112,11 @@ class RefreshMixin:
         if not moved:
             self._text_decode = None
         reread = is_block and self._extract_current(entry, doc, tables)
+        self.reading_bar.show_bound_default(
+            block_bound(replace(entry.config, bound=None), doc.strings)
+            if is_block
+            else None
+        )
         self._refresh_raw(doc, tables)
         self._refresh_text_mode(doc, tables)
         self._refresh_decompress_preview(doc, tables)
