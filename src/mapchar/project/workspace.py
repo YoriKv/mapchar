@@ -93,6 +93,9 @@ class Entry:
     disk. ``None`` for a table entry with no file, whose every entry is
     therefore an addition the project carries whole.
     """
+    table_charset: str | None = None
+    """Tables: the charset the project puts on the table in place of its
+    file's, set from the Table Editor; ``None`` while the file's own applies."""
     table_overlay: dict[str, str | None] = field(default_factory=dict)
     """Tables: the in-app edits over the file.
 

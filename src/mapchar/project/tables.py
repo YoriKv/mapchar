@@ -21,7 +21,7 @@ from mapchar.core.table import Table
 from mapchar.core.text import read_text_any
 from mapchar.plugins.charsets import apply_charset
 from mapchar.project.formats.table_legacy import load_table_text
-from mapchar.project.formats.table_native import format_entry, parse_entry
+from mapchar.project.formats.table_native import format_entry_lines, parse_entry_lines
 
 if TYPE_CHECKING:
     from mapchar.plugins.registry import Registry
@@ -64,15 +64,16 @@ def read_table_file(
 def overlay_of(base: Table | None, live: Table) -> dict[str, str | None]:
     """How ``live`` differs from ``base``: the project's overlay.
 
-    Per entry key, one entry added or changed is its line in the native grammar
-    and one removed is ``None``. With no ``base`` every entry is an addition,
-    which is how a table with no file behind it is carried whole.
+    Per entry key, one entry added or changed is its lines in the native
+    grammar — its comment lines, then its own — and one removed is ``None``.
+    With no ``base`` every entry is an addition, which is how a table with no
+    file behind it is carried whole.
     """
     rows: dict[str, str | None] = {}
     for bits, entry in live.entries.items():
         old = base.entries.get(bits) if base is not None else None
         if old != entry:
-            rows[bits] = format_entry(entry)
+            rows[bits] = "\n".join(format_entry_lines(entry))
     if base is not None:
         for bits in base.entries:
             if bits not in live.entries:
@@ -91,7 +92,7 @@ def apply_overlay(table: Table, overlay: dict[str, str | None]) -> None:
             table.remove(bits)
             continue
         try:
-            table.add(parse_entry(line), replace=True)
+            table.add(parse_entry_lines(line), replace=True)
         except (ValueError, MapcharError):
             continue
 
@@ -102,6 +103,7 @@ def adopt_table(
     notices: Sequence[Notice] = (),
     *,
     from_file: bool = True,
+    registry: Registry | None = None,
 ) -> None:
     """Give ``entry`` the table a read just yielded, overlay laid back on top.
 
@@ -111,12 +113,64 @@ def adopt_table(
     without discarding the user's. Not ``from_file``, ``table`` is an empty table
     named for the entry, and the overlay is all of it. ``notices`` is what the
     read had to say, kept on the entry for the Table Editor to show, and replaced
-    with every re-read.
+    with every re-read. Given a ``registry``, a charset the project puts on the
+    table (:attr:`~mapchar.project.workspace.Entry.table_charset`) replaces the
+    file's before the overlay goes on.
     """
     entry.file_table = deepcopy(table) if from_file else None
     entry.table = table
     entry.notices = tuple(notices)
+    if registry is not None and entry.table_charset not in (None, table.charset):
+        rebase_charset(entry, entry.table_charset, registry)
+        table.replace_with(entry.file_table)
     apply_overlay(table, entry.table_overlay)
+
+
+def baseline_for(
+    entry: WorkspaceEntry, charset: str, registry: Registry
+) -> tuple[Table, str]:
+    """What ``entry``'s file says with ``charset`` in place of its own, and the
+    file's own charset.
+
+    Read again from the file rather than taken from the baseline held, which
+    has a charset folded in that cannot be told apart from the file's entries;
+    a table with no file starts from nothing.
+    """
+    if entry.path:
+        text, _ = read_text_any(entry.path)
+        table = load_table_text(text, entry.path, entry.dialect).table
+    else:
+        table = Table(entry.table.id if entry.table is not None else "table")
+    own = table.charset
+    table.charset = charset
+    apply_charset(table, registry)
+    return table, own
+
+
+def rebase_charset(entry: WorkspaceEntry, charset: str, registry: Registry) -> None:
+    """Measure ``entry``'s overlay against its file on ``charset``: the baseline
+    is rebuilt, and :attr:`~mapchar.project.workspace.Entry.table_charset` says
+    whether the project has to carry the charset. The live table is not
+    touched: :func:`set_charset` and an undo each put their own contents in."""
+    base, own = baseline_for(entry, charset, registry)
+    entry.file_table = base
+    entry.table_charset = None if charset == own else charset
+
+
+def set_charset(entry: WorkspaceEntry, charset: str, registry: Registry) -> None:
+    """Put ``entry``'s table on ``charset``, keeping its edits.
+
+    What the table said beyond its old charset — its overlay — is what it says
+    beyond the new one: the entries the old charset gave go, the new charset's
+    come, and the file's own entries and the in-app edits stay on top.
+    """
+    if entry.table is None:
+        return
+    edits = overlay_of(entry.file_table, entry.table)
+    rebase_charset(entry, charset, registry)
+    entry.table.replace_with(entry.file_table)
+    apply_overlay(entry.table, edits)
+    capture_overlay(entry)
 
 
 def capture_overlay(entry: WorkspaceEntry) -> None:

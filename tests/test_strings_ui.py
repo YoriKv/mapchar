@@ -223,20 +223,20 @@ def test_font_box_and_table_edits_undo_in_one_step(window, tmp_path):
     assert set(table_entry.table.entries) == set(was)
 
 
-def test_fill_leaves_taken_keys_alone(window, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QInputDialog, QMessageBox
-
+def test_fill_leaves_taken_keys_alone(window, tmp_path):
     data = b"\x41\x00" + b"\xff" * 8
     block_with(window, tmp_path, data, stop=2)
     table_entry = window.workspace.table_entries()[0]
     window._edit_table_entry(table_entry)
     editor = window.table_editor
-    monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("A-Z", True))
-    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("41", True))
-    monkeypatch.setattr(
-        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No
-    )
-    editor._fill_dialog()
+    # The dialog says which keys are taken; declined, they are left alone.
+    from mapchar.ui.table_editor import FillDialog
+
+    dialog = FillDialog(table_entry.table)
+    dialog.template.setCurrentIndex(dialog.template.findData("A-Z"))
+    dialog.first.setText("41")
+    assert "already have entries" in dialog.preview.text()
+    editor.fill_run(dialog.chars(), dialog.start(), dialog.width(), overwrite=False)
     assert "left alone" in editor.status.text()
     # 41=A, 42=B and 43=C were there already and keep their own text.
     assert table_entry.table.entries["01000010"].text == "B"

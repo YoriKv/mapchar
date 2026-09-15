@@ -38,8 +38,12 @@ from mapchar.core.tokens import (
 )
 from mapchar.engines.decode import DecodeRules, EndedBy, decode_run, innermost_index
 
-_Frame = tuple[str, int | None, bool, str | None]
-"""``(table_id, counter, shared, fallback_bits)``; counter None is unlimited."""
+_Frame = tuple[str, int | None, bool, str | None, tuple | None]
+"""``(table_id, counter, shared, fallback_bits, count)``; counter None is
+unlimited. ``count`` is ``(spec, at, consumed)`` for a frame whose count the
+data carries: the operand it is written as, the bit offset it was written at
+(``None`` until the frame is on top and writes its placeholder) and the weight
+matched so far, which closing the frame writes into the placeholder."""
 
 
 @dataclass
@@ -169,9 +173,12 @@ def _count(stack: list[_Frame], weight: int) -> list[_Frame]:
     stack = list(stack)
     i = len(stack) - 1
     while i >= 0:
-        tid, counter, shared, fb = stack[i]
+        tid, counter, shared, fb, cnt = stack[i]
         if counter is not None:
-            stack[i] = (tid, counter - weight, shared, fb)
+            stack[i] = (tid, counter - weight, shared, fb, cnt)
+        elif cnt is not None:
+            spec, at, consumed = cnt
+            stack[i] = (tid, counter, shared, fb, (spec, at, consumed + weight))
         if not shared:
             break
         i -= 1
@@ -184,9 +191,11 @@ def _frames_for(params: tuple[SwitchParam, ...], owner: str = "") -> list[_Frame
     frames: list[_Frame] = []
     for p in reversed(params):
         if p.table_id == RETURN:
-            frames.append((f"{RETURN}@{owner}", None, False, None))
+            frames.append((f"{RETURN}@{owner}", None, False, None, None))
         else:
-            frames.append((p.table_id, p.stop.count, p.shared, p.stop.fallback))
+            operand = p.stop.operand
+            count = (operand, None, 0) if operand is not None else None
+            frames.append((p.table_id, p.stop.count, p.shared, p.stop.fallback, count))
     return frames
 
 
@@ -212,7 +221,7 @@ def encode(
     indexes = {tid: _index(t) for tid, t in tables.tables.items()}
     heuristic = min((i.min_bits_per_atom for i in indexes.values()), default=1.0)
     n = len(atoms)
-    root: _Frame = (tables.start.id, None, False, None)
+    root: _Frame = (tables.start.id, None, False, None, None)
     start_state = (0, (root,), (), 0, 0)
     max_chain = len(tables.tables)
     tie = count()
@@ -228,7 +237,11 @@ def encode(
         closed.add(state)
         pos, stack, forbidden, chain, used = state
         farthest = max(farthest, pos)
-        if pos == n and not any(f[3] is not None for f in stack) and not forbidden:
+        if (
+            pos == n
+            and not any(f[3] is not None or f[4] is not None for f in stack)
+            and not forbidden
+        ):
             if end_terminated and ends > 1 and used != ends:
                 raise EncodeError(
                     f"the string holds {used} end token(s); the block reads "
@@ -240,7 +253,7 @@ def encode(
             if verify:
                 _verify(result, atoms, text, tables, end_terminated, ends)
             return result
-        for npos, nstack, nforbidden, emitted, is_end in _successors(
+        for succ in _successors(
             atoms,
             pos,
             stack,
@@ -252,15 +265,23 @@ def encode(
             used,
             chain,
             max_chain,
+            len(bits),
         ):
+            npos, nstack, nforbidden, emitted, is_end, *patch = succ
             nchain = 0 if npos > pos else chain + 1
             nstate = (npos, tuple(nstack), nforbidden, nchain, used + is_end)
             if nstate in closed:
                 continue
+            nbits = bits
+            if patch:
+                # A count frame closing writes what it matched into the
+                # placeholder it left when it opened.
+                at, value = patch[0]
+                nbits = nbits[:at] + value + nbits[at + len(value) :]
             ncost = cost + len(emitted)
             priority = ncost + heuristic * (n - npos)
             heapq.heappush(
-                heap, (priority, next(tie), ncost, nstate, bits + emitted, is_end)
+                heap, (priority, next(tie), ncost, nstate, nbits + emitted, is_end)
             )
 
     context = nfc(
@@ -288,9 +309,10 @@ def _successors(
     used,
     chain,
     max_chain,
+    bit_len,
 ):
     n = len(atoms)
-    tid, counter, shared, fallback = stack[-1]
+    tid, counter, shared, fallback, cnt = stack[-1]
 
     def emit(bits: str, weight: int, new_stack=None, push=(), is_end=False, advance=1):
         nf = _forbid(forbidden, bits)
@@ -307,6 +329,25 @@ def _successors(
         return (pos + advance, base, nf, bits, is_end)
 
     out = []
+    # A count frame writes its count first: a placeholder the close fills in.
+    # The decoder reads those bits blind, but a longer entry of the outer
+    # table could still begin with the switch's bits plus the count; the
+    # zeros stand in for the check here, and verification catches the rest.
+    if cnt is not None and cnt[1] is None:
+        spec, _, consumed = cnt
+        zeros = "0" * spec.bits
+        nf = _forbid(forbidden, zeros)
+        if nf is None:
+            return out
+        placed = list(stack)
+        placed[-1] = (tid, counter, shared, fallback, (spec, bit_len, consumed))
+        return [(pos, placed, nf, zeros, False)]
+    # Closing a count frame: what it matched, written where the placeholder is.
+    if cnt is not None:
+        spec, at, consumed = cnt
+        if 0 <= consumed < 1 << spec.bits:
+            value = spec.bits_of(consumed)
+            out.append((pos, list(stack[:-1]), forbidden, "", False, (at, value)))
     # A return frame at the top: leave it and the frame it was matched in.
     if tid.startswith(f"{RETURN}@"):
         owner = tid.split("@", 1)[1]

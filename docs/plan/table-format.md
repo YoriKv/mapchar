@@ -33,6 +33,12 @@ file spelled, and a file written back is NFC. Three kinds of line:
 | `@`              | a directive: `@keyword arguments`                         |
 | anything else    | an entry, or blank                                        |
 
+Comments are kept. The comment lines directly above an entry belong to it
+(`Entry.comment`, one line per `#` line, the `#` and one space dropped) and
+are written back above it; every other comment line — before the header,
+before a directive, set off by a blank line, or at the end — belongs to the
+file (`Table.comment`) and is written back under the header.
+
 Directives:
 
 | Directive           | Meaning                                                                             |
@@ -168,6 +174,7 @@ params    := param ( " " param )* [ " return" ]
 param     := "@" table ":" stop [ "+" ]
 stop      := N            exactly N weighted matches, then pop; 0 is no stop, as "*"
            | "*"          until the string ends, an end token, or a return entry
+           | operand      N read from the data as that operand when the frame opens: u8, u16, u24, u32, u16be, u24be, u32be
            | "$" hex      until those bits appear at a token boundary; they are consumed and pop the frame
            | "%" bits     the same, in bits
 table     := id           a loaded table
@@ -187,6 +194,14 @@ Semantics, in the stack machine of [architecture.md](architecture.md#31-decode):
   at every step of that frame. On decode they print nothing; on encode they
   are written whenever the frame closes, including at the end of the string,
   so a decoded string re-encodes to the same bytes.
+- **A count read from the data** (`u8`, `u16be`, …) is read the first time
+  the frame is on top — after the switch entry for the first parameter, after
+  the frame before it closes for the next — and becomes its counter; a count
+  of zero closes the frame at once. It prints nothing on decode, and on encode
+  is written with however many weighted matches the frame took, which is how
+  a Pascal string or a code followed by as many bytes as its next byte says
+  round-trips. Cut short by the end of the data, the bits are unmatched data
+  and the frame is gone, with a notice.
 - **`return`** as a trailing parameter runs after the parameters before it
   and then pops the innermost frame of the table the switch was matched in;
   at the top level it ends the string. `!KEY=return` alone is the same with
@@ -203,7 +218,9 @@ Semantics, in the stack machine of [architecture.md](architecture.md#31-decode):
 ```
 !F1=[item] @items:1          one item name, then back
 !F3=[menu] @items:$FF        item names until FF, which is consumed
-!03=[str] @upper:3+          three tokens from upper that also count here (Pascal strings)
+!03=[str] @upper:3+          three tokens from upper that also count here
+!02=[str] @upper:u8+         as many as the next byte says (Pascal strings)
+!FE=[raw] @raw:u8            a code followed by as many raw bytes as its next byte says
 !F4=[font2] @font2:*         switch until [end] or a return entry in font2
 ```
 
@@ -211,7 +228,10 @@ Semantics, in the stack machine of [architecture.md](architecture.md#31-decode):
 
 `@charset name` fills the current table with every code of a built-in
 charset before the file's own entries apply. Entries in the file override
-the charset code for code; an entry with empty text removes a code.
+the charset code for code; an entry with empty text removes a code. A table
+written back says only what it says beyond its charset: the entries the
+charset does not already give, and an empty-text entry for each charset code
+it dropped (`Table.own_entries`).
 
 | Name          | Entries                                                    |
 |---------------|------------------------------------------------------------|
@@ -291,6 +311,7 @@ until **Save As File** gives it one.
 | Codes inside legacy text (`[FB]`, `[cardinal #]`) | kept as codes, whitespace becoming `_`                    |
 | abcde `\n`                           | unchanged                                                               |
 | Bookmark lines `(…)`, `[…]`, `{…}`   | dropped                                                                 |
+| abcde `#` comments                   | kept as native comments: the lines directly above an entry are its own, the rest the table's |
 
 Every dialect's raw-byte notation (`<$XX>`) is written `[$XX]` in native
 scripts and translated back on Atlas export.

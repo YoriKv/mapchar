@@ -140,3 +140,23 @@ def test_labelled_return_encodes():
     packed = roundtrip(body, "[sub]x[pal][$AA][$BB]A[end]")
     assert packed == bytes.fromhex("F0 01 FE AA BB 41 00")
     assert roundtrip(body, "[sub]x[back]A[end]") == bytes.fromhex("F0 01 FF 41 00")
+
+
+def test_a_count_read_from_the_data_is_written_back():
+    body = (
+        "@table main\n01=a\n02=b\n!F0=[n] @raw:u8\n!F1=[items] @items:u8+\n"
+        "/FF=[end]\n@table items\n01=[Potion]\n02=[Sword]\n"
+    )
+    # 01 and 02 are entries, so only a count of two puts them in the frame.
+    assert roundtrip(body, "a[n][$01][$02]b[end]") == bytes.fromhex(
+        "01 F0 02 01 02 02 FF"
+    )
+    assert roundtrip(body, "[items][Sword][Potion][Sword]a[end]") == bytes.fromhex(
+        "F1 03 02 01 02 01 FF"
+    )
+    # A frame with nothing in it still writes its count.
+    assert roundtrip(body, "[n]a[end]") == bytes.fromhex("F0 00 01 FF")
+    ts = table_set(body, "main")
+    for text in ("a[n][$01][$02]b[end]", "[items][Sword][Potion]a[end]", "[n][end]"):
+        data = encode(text, ts).data
+        assert render(decode(Bits(data), ts, 0).tokens) == text

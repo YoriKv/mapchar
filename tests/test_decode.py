@@ -158,3 +158,20 @@ def test_labelled_return_with_raw_bytes():
 def test_realign_rounds_up_to_the_next_multiple():
     assert (align_up(5, 4), align_up(8, 4), align_up(5, 4, 2)) == (8, 8, 6)
     assert align_up(5, 0) == 5  # no multiple, no move
+
+
+def test_a_count_read_from_the_data_opens_the_frame():
+    # 02 is read as the count, prints nothing, and two ItemNames follow.
+    text, _ = run("!AB=[list] @ItemNames:u8", bytes.fromhex("AB 02 01 02 03"))
+    assert text == "[list][Potion][HolyHandGrenadeOfAntioch]cat"
+    # A count of zero: the frame closes at once.
+    assert run("!AB=[list] @raw:u8", bytes.fromhex("AB 00 01"))[0] == "[list]foo"
+    # Two counted parameters, each count read as its frame opens.
+    text, _ = run(
+        "!AB=[two] @ItemNames:u8 @raw:u8", bytes.fromhex("AB 01 03 02 01 02 03")
+    )
+    assert text == "[two][Sword][$01][$02]cat"
+    # Cut short: the count bits are unmatched data and the frame is gone.
+    ts = table_set(MAIN.replace("{ab}", "!AB=[n] @raw:u16"), "main")
+    result = decode(Bits(bytes.fromhex("AB 05")), ts, 0)
+    assert render(result.tokens) == "[n][$05]" and result.notices

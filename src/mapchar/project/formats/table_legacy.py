@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import replace
 
 from mapchar.core.bits import hex_to_bits
 from mapchar.core.errors import TableError
@@ -27,6 +28,7 @@ from mapchar.core.table import (
 )
 from mapchar.project.formats.table_native import (
     TableFile,
+    comment_text,
     is_native,
     parse_native,
     split_lines,
@@ -426,15 +428,28 @@ def read_abcde(
     notices: list[Notice] = []
     current: Table | None = None
     current_named = False
+    # Comments are kept as the native grammar keeps them: the lines directly
+    # above an entry are its own, the rest are the table's.
+    pending: list[str] = []
+    file_comment: list[str] = []
 
     def note(n: int, msg: str) -> None:
         notices.append(Notice(f"line {n}: {msg}", Level.INFO))
 
+    def flush() -> None:
+        file_comment.extend(pending)
+        pending.clear()
+
     for n, line in enumerate(split_lines(text), start=1):
-        if not line or line.startswith("#"):
+        if line.startswith("#"):
+            pending.append(comment_text(line))
+            continue
+        if not line.strip():
+            flush()
             continue
         m = re.match(r"^@([^<>]+)$", line)
         if m:
+            flush()
             tid = sanitize_id(m.group(1))
             if tid != m.group(1):
                 note(n, f"table id {m.group(1)!r} renamed to {tid!r}")
@@ -465,10 +480,15 @@ def read_abcde(
             entry = _abcde_switch(bits, w, rhs, is_end, n, path, note)
         if bits in current.entries:
             raise TableError(f"duplicate key {lhs!r}", path, n)
+        if pending:
+            entry = replace(entry, comment="\n".join(pending))
+            pending.clear()
         current.add(entry)
+    flush()
     if not tables:
         tables.append(Table(default_id))
     first, *extra = tables
+    first.comment = "\n".join(file_comment)
     for t in extra:
         notices.append(
             Notice(f"table {t.id!r} split from the file into its own entry", Level.INFO)

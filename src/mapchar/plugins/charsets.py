@@ -27,10 +27,13 @@ def apply_charset(table: Table, registry: Registry) -> None:
     if charset is None:
         raise TableError(f"unknown charset {table.charset!r} in table {table.id!r}")
     own = dict(table.entries)
+    table.charset_entries = {}
     for bits, text in charset.entries():
+        entry = Entry(bits, TokenKind.TEXT, escape_text(text))
+        table.charset_entries[bits] = entry
         if bits in table.entries:
             continue
-        table.add(Entry(bits, TokenKind.TEXT, escape_text(text)))
+        table.add(entry)
     for text, bits in getattr(charset, "aliases", lambda: ())():
         table.add_alias(escape_text(text), bits)
     for bits, entry in own.items():

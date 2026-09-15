@@ -1,12 +1,28 @@
-"""The Table Editor: a grid of entries over a table entry, saved as native."""
+"""The Table Editor: a table's entries in a grid, one of them in a form.
+
+The window edits one table entry's table in place: the grid shows every
+entry as key, kind, text, what it does and its weight; the form under it
+(:mod:`mapchar.ui.table_entry_form`) edits the selected one, or a new one,
+with a picker for everything but the text. Every change is handed to the
+window with the table as it was, which makes it one undo step
+(:class:`~mapchar.ui.undo_commands.TableCommand`).
+"""
 
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -16,10 +32,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.bits import parse_hex
+from mapchar.core.bits import format_key, parse_hex
 from mapchar.core.errors import TableError
 from mapchar.core.table import Entry as TableEntry
-from mapchar.core.table import Table
+from mapchar.core.table import Table, TokenKind
 from mapchar.engines.relsearch import (
     DIGIT,
     HIRAGANA,
@@ -29,13 +45,19 @@ from mapchar.engines.relsearch import (
     UPPER,
     entries_from_base,
 )
-from mapchar.project.formats.table_native import format_entry, format_key, parse_entry
+from mapchar.project.formats.table_native import format_entry, parse_entry
 from mapchar.project.workspace import Entry
+from mapchar.ui.number_fields import OffsetEdit
+from mapchar.ui.table_entry_form import KIND_NAMES, TableEntryForm, describe
 from mapchar.ui.widgets import (
+    CompactComboBox,
     ElidedLabel,
     EscapeCloses,
+    WrapBar,
+    fill_pick,
     fit_chars,
     hint_field,
+    select_data,
     show_elided_tooltips,
 )
 from mapchar.ui.window_layout import remember_layout
@@ -49,6 +71,12 @@ ALPHABETS = {
 }
 """The Fill dialog's canned runs, by the alphabet each names."""
 
+FILL_TEMPLATES = (*ALPHABETS, "A-Z a-z 0-9")
+CUSTOM = "Custom…"
+
+KEY, KIND, TEXT, DETAILS, WEIGHT, COMMENT = range(6)
+"""The grid's columns."""
+
 
 class TableEditor(EscapeCloses, QWidget):
     changed = Signal(object, object)
@@ -58,6 +86,10 @@ class TableEditor(EscapeCloses, QWidget):
     the table in place.
     """
     save_requested = Signal(object)
+    table_requested = Signal(object)
+    """The Table picker chose another table entry to edit."""
+    charset_chosen = Signal(object, str)
+    """The Charset picker put the table entry's table on a charset."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
@@ -67,26 +99,62 @@ class TableEditor(EscapeCloses, QWidget):
         self._layout = remember_layout(self, "table_editor")
         self._entry: Entry | None = None
         self._table: Table | None = None
+        self._editing: str | None = None
+        """The bits of the entry the form is editing; ``None`` for a new one."""
+        self._filling = False
         layout = QVBoxLayout(self)
+
+        # -- which table, on what ---------------------------------------------
+        head = WrapBar()
+        self.table_pick = CompactComboBox(220)
+        self.table_pick.setToolTip("The table being edited; every loaded table is here")
+        head.add_group("Table", self.table_pick)
+        self.charset_pick = CompactComboBox(150)
+        self.charset_pick.setToolTip(
+            "The built-in encoding the table sits on; its own entries override "
+            "the encoding's code for code"
+        )
+        head.add_group("Charset", self.charset_pick)
+        self.filter = hint_field(
+            QLineEdit(),
+            "Filter…",
+            "Show only the entries whose key or text has this (Ctrl+F)",
+        )
+        self.filter.setClearButtonEnabled(True)
+        fit_chars(self.filter, 12)
+        head.add_group("", self.filter)
+        layout.addWidget(head)
         self.title = ElidedLabel("No table")
         layout.addWidget(self.title)
-        self.grid = QTableWidget(0, 2)
-        self.grid.setHorizontalHeaderLabels(["Entry line", "Meaning"])
-        self.grid.horizontalHeader().setStretchLastSection(True)
+
+        # -- the entries ------------------------------------------------------
+        self.grid = QTableWidget(0, 6)
+        self.grid.setHorizontalHeaderLabels(
+            ["Key", "Kind", "Text", "Details", "Weight", "Comment"]
+        )
+        header = self.grid.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(TEXT, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(DETAILS, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COMMENT, QHeaderView.ResizeMode.Stretch)
+        self.grid.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.grid.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.EditKeyPressed
+        )
+        self.grid.verticalHeader().setVisible(False)
         show_elided_tooltips(self.grid)
         layout.addWidget(self.grid, 1)
+
+        # -- the entry ----------------------------------------------------------
+        self.form = TableEntryForm()
+        layout.addWidget(self.form)
         row = QHBoxLayout()
-        self.new_line = hint_field(
-            QLineEdit(),
-            "41=A   /FF=[end]   $F0=[color],u8   !F1=[item] @items:1",
-            "An entry line in the native grammar, such as\n"
-            "41=A   /FF=[end]   $F0=[color],u8   !F1=[item] @items:1\n"
-            "Enter or Add puts it in the table",
-        )
-        fit_chars(self.new_line, 14)
         self.add = QPushButton("Add")
+        self.add.setToolTip("Put the entry in the table (Enter)")
+        self.new = QPushButton("New")
+        self.new.setToolTip("Clear the form for an entry that is not in the table yet")
         self.remove = QPushButton("Remove")
-        self.add.setToolTip("Add the typed line to the table (Enter)")
         self.remove.setToolTip("Remove the selected entries")
         self.shift = QPushButton("Shift Keys…")
         self.shift.setToolTip("Move the selected entries' keys by a constant")
@@ -94,36 +162,112 @@ class TableEditor(EscapeCloses, QWidget):
         self.fill.setToolTip("Lay a run of characters over consecutive keys")
         self.save = QPushButton("Save")
         self.save.setToolTip("Write the table file, in the native grammar")
-        row.addWidget(self.new_line, 1)
-        row.addWidget(self.add)
-        row.addWidget(self.remove)
-        row.addWidget(self.shift)
-        row.addWidget(self.fill)
-        row.addWidget(self.save)
+        for button in (self.add, self.new, self.remove):
+            row.addWidget(button)
+        row.addStretch(1)
+        for button in (self.shift, self.fill, self.save):
+            row.addWidget(button)
         layout.addLayout(row)
         self.status = ElidedLabel("")
         layout.addWidget(self.status)
+
+        self.table_pick.currentIndexChanged.connect(self._on_table_pick)
+        self.charset_pick.currentIndexChanged.connect(self._on_charset_pick)
+        self.filter.textChanged.connect(self._apply_filter)
+        QShortcut(
+            QKeySequence.StandardKey.Find,
+            self,
+            self._focus_filter,
+            context=Qt.ShortcutContext.WidgetWithChildrenShortcut,
+        )
+        self.grid.itemSelectionChanged.connect(self._on_selection)
+        self.grid.itemChanged.connect(self._edited)
+        self.form.changed.connect(self._on_form_changed)
+        self.form.submitted.connect(self._add)
         self.add.clicked.connect(self._add)
-        self.new_line.returnPressed.connect(self._add)
+        self.new.clicked.connect(self._new)
         self.remove.clicked.connect(self._remove)
         self.shift.clicked.connect(self._shift)
         self.fill.clicked.connect(self._fill_dialog)
         self.save.clicked.connect(lambda: self.save_requested.emit(self._entry))
-        self.grid.itemChanged.connect(self._edited)
-        self._filling = False
-        self.resize(640, 480)
+        self.set_charsets([])
+        self.resize(720, 640)
+
+    @property
+    def new_line(self) -> QLineEdit:
+        """The form's Line field: an entry typed as its line."""
+        return self.form.line
+
+    # -- what is on offer -------------------------------------------------------
+
+    def set_tables(self, entries: list[Entry]) -> None:
+        """Every table entry the Table picker can switch to, and every table
+        id a switch parameter can name."""
+        loaded = [e for e in entries if e.table is not None]
+        fill_pick(
+            self.table_pick,
+            [(f"@{e.table.id}  ·  {e.name}", id(e)) for e in loaded],
+        )
+        self._tables = {id(e): e for e in loaded}
+        if self._entry is not None:
+            select_data(self.table_pick, id(self._entry))
+        self.form.set_tables([e.table.id for e in loaded])
+
+    def set_charsets(self, names: list[tuple[str, str]]) -> None:
+        """``(id, name)`` of every charset a table can sit on."""
+        was = self.charset_pick.blockSignals(True)
+        fill_pick(
+            self.charset_pick, [("none", "none"), *((n, cid) for cid, n in names)]
+        )
+        if self._table is not None:
+            self._show_charset()
+        self.charset_pick.blockSignals(was)
+
+    def _show_charset(self) -> None:
+        charset = self._table.charset if self._table is not None else "none"
+        if not select_data(self.charset_pick, charset):
+            # A charset no plugin provides is still the table's; it is named.
+            self.charset_pick.addItem(charset, charset)
+            self.charset_pick.setCurrentIndex(self.charset_pick.count() - 1)
+
+    def _on_table_pick(self, index: int) -> None:
+        if self._filling:
+            return
+        entry = self._tables.get(self.table_pick.itemData(index))
+        if entry is not None and entry is not self._entry:
+            self.table_requested.emit(entry)
+
+    def _on_charset_pick(self, index: int) -> None:
+        if self._filling or self._entry is None or self._table is None:
+            return
+        charset = self.charset_pick.itemData(index)
+        if charset and charset != self._table.charset:
+            self.charset_chosen.emit(self._entry, charset)
+
+    # -- the table --------------------------------------------------------------
 
     def set_entry(self, entry: Entry | None) -> None:
         self._entry = entry
         if entry is None or entry.table is None:
             self.title.setText(entry.name if entry is not None else "No table")
         else:
-            self.title.setText(f"@{entry.table.id} · {entry.name}")
+            where = entry.path or entry.name
+            dialect = entry.dialect or "native"
+            self.title.setText(
+                where if dialect == "native" else f"{where}  ·  {dialect}, converted"
+            )
         self._fill()
+        if self._editing is None:
+            self.form.set_entry(None)
+        self._sync_buttons()
 
     def prefill(self, key_bits: str) -> None:
-        self.new_line.setText(f"{format_key(key_bits)}=")
-        self.new_line.setFocus()
+        """Start a new entry on ``key_bits``, the raw view's selection."""
+        self.grid.clearSelection()
+        self._editing = None
+        self.form.set_entry(TableEntry(key_bits, TokenKind.TEXT, ""))
+        self.form.text.setFocus()
+        self._sync_buttons()
 
     def _snapshot(self) -> Table | None:
         """The entry's table as it is now, to undo back to."""
@@ -132,157 +276,205 @@ class TableEditor(EscapeCloses, QWidget):
     def _fill(self) -> None:
         self._filling = True
         self._table = self._entry.table if self._entry is not None else None
+        selected = self._editing
         self.grid.setRowCount(0)
         if self._table is not None:
             entries = self._table.sorted_entries()
             self.grid.setRowCount(len(entries))
             for row, e in enumerate(entries):
-                line = QTableWidgetItem(format_entry(e))
-                line.setData(Qt.ItemDataRole.UserRole, e.bits)
-                meaning = QTableWidgetItem(self._meaning(e))
-                meaning.setFlags(meaning.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.grid.setItem(row, 0, line)
-                self.grid.setItem(row, 1, meaning)
-        self.grid.resizeColumnToContents(0)
+                self._set_row(row, e)
+                if e.bits == selected:
+                    self.grid.selectRow(row)
+        self.grid.resizeColumnToContents(KEY)
+        self.grid.resizeColumnToContents(KIND)
+        self.grid.resizeColumnToContents(WEIGHT)
+        if self._entry is not None:
+            select_data(self.table_pick, id(self._entry))
+        self._show_charset()
+        self._apply_filter(self.filter.text())
         self._filling = False
+        if selected is not None and selected not in (
+            self._table.entries if self._table else {}
+        ):
+            self._editing = None
+            self.form.set_entry(None)
 
-    @staticmethod
-    def _meaning(e: TableEntry) -> str:
-        kind = e.kind.value
-        if e.operands:
-            return f"{kind}: {len(e.operands)} operand(s)"
-        if e.params:
-            return f"{kind}: " + " ".join(p.spec() for p in e.params)
-        return kind
+    def _set_row(self, row: int, e: TableEntry) -> None:
+        cells = [
+            format_key(e.bits),
+            KIND_NAMES[e.kind],
+            e.text,
+            describe(e),
+            str(e.weight),
+            e.comment.replace("\n", " ⏎ "),
+        ]
+        for column, text in enumerate(cells):
+            item = QTableWidgetItem(text)
+            if column not in (TEXT, COMMENT) or e.kind is TokenKind.RETURN:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if column == KEY:
+                item.setData(Qt.ItemDataRole.UserRole, e.bits)
+            self.grid.setItem(row, column, item)
 
-    def _apply_line(self, line: str, replace_bits: str | None) -> bool:
+    def _apply_filter(self, text: str) -> None:
+        words = text.casefold().split()
+        for row in range(self.grid.rowCount()):
+            key = self.grid.item(row, KEY).text().casefold()
+            shown = self.grid.item(row, TEXT).text().casefold()
+            comment = self.grid.item(row, COMMENT).text().casefold()
+            hit = all(w in key or w in shown or w in comment for w in words)
+            self.grid.setRowHidden(row, not hit)
+
+    def _focus_filter(self) -> None:
+        self.filter.setFocus()
+        self.filter.selectAll()
+
+    def _selected_bits(self) -> list[str]:
+        rows = sorted({i.row() for i in self.grid.selectedItems()})
+        return [self.grid.item(r, KEY).data(Qt.ItemDataRole.UserRole) for r in rows]
+
+    # -- the form ---------------------------------------------------------------
+
+    def _on_selection(self) -> None:
+        if self._filling or self._table is None:
+            return
+        bits = self._selected_bits()
+        if len(bits) == 1:
+            self._editing = bits[0]
+            self.form.set_entry(self._table.entries[bits[0]])
+        elif not bits:
+            self._editing = None
+        self._sync_buttons()
+
+    def _on_form_changed(self) -> None:
+        self._sync_buttons()
+
+    def _sync_buttons(self) -> None:
+        self.add.setText("Apply" if self._editing is not None else "Add")
+        self.add.setToolTip(
+            "Put the entry back in the table as the form has it (Enter)"
+            if self._editing is not None
+            else "Put the entry in the table (Enter)"
+        )
+
+    def _new(self) -> None:
+        self.grid.clearSelection()
+        self._editing = None
+        self.form.set_entry(None)
+        self.form.focus_key()
+        self._sync_buttons()
+
+    def _commit(self, entry: TableEntry, replace_bits: str | None) -> bool:
+        """Put ``entry`` in the table, in place of ``replace_bits`` when that is
+        another key; one undo step."""
         table = self._table
         if table is None:
-            return False
-        try:
-            entry = parse_entry(line.strip())
-        except ValueError as exc:
-            self.status.setText(str(exc))
+            self.status.setText("No table to edit.")
             return False
         before = self._snapshot()
+        replaced = table.entries.get(entry.bits) if replace_bits != entry.bits else None
         try:
             if replace_bits is not None and replace_bits != entry.bits:
                 table.remove(replace_bits)
             table.add(entry, replace=True)
         except TableError as exc:
             self.status.setText(exc.message)
+            table.replace_with(before)
             return False
-        self.status.setText("")
+        self.status.setText(
+            f"Replaced {format_entry(replaced)}" if replaced is not None else ""
+        )
         self.changed.emit(self._entry, before)
         return True
 
     def _add(self) -> None:
-        if self._apply_line(self.new_line.text(), None):
-            self.new_line.clear()
+        try:
+            entry = self.form.entry()
+        except ValueError as exc:
+            self.status.setText(str(exc))
+            return
+        editing = self._editing
+        if self._commit(entry, editing):
+            if editing is None:
+                self.form.set_entry(None)
+                self.form.focus_key()
+            else:
+                self._editing = entry.bits
             self._fill()
 
     def _edited(self, item: QTableWidgetItem) -> None:
-        if self._filling or item.column() != 0:
+        """A Text or Comment cell typed over in the grid."""
+        if self._filling or self._table is None:
             return
-        bits = item.data(Qt.ItemDataRole.UserRole)
-        if self._apply_line(item.text(), bits):
-            self._fill()
+        bits = self.grid.item(item.row(), KEY).data(Qt.ItemDataRole.UserRole)
+        old = self._table.entries.get(bits)
+        if old is None:
+            return
+        if item.column() == TEXT:
+            entry = replace(old, text=item.text())
+            try:
+                parse_entry(format_entry(entry))
+            except ValueError as exc:
+                self.status.setText(str(exc))
+                self._fill()
+                return
+        elif item.column() == COMMENT:
+            entry = replace(old, comment=item.text().replace(" ⏎ ", "\n").strip())
         else:
-            self._fill()
+            return
+        if entry != old:
+            self._commit(entry, bits)
+        self._fill()
 
-    def _shift(self) -> None:
-        """Move the selected entries' keys by a constant (a hex delta)."""
-        from PySide6.QtWidgets import QInputDialog
+    # -- whole-table tools ------------------------------------------------------
 
+    def shift_keys(self, delta: int, bits_list: list[str] | None = None) -> bool:
+        """Move the selected entries' keys (or ``bits_list``) by ``delta``."""
         table = self._table
-        rows = sorted({i.row() for i in self.grid.selectedItems()})
-        if table is None or not rows:
+        bits_list = self._selected_bits() if bits_list is None else bits_list
+        if table is None or not bits_list:
             self.status.setText("Select the entries to shift.")
-            return
-        text, ok = QInputDialog.getText(
-            self, "Shift Keys", "Add to each key (hex, may be negative):"
-        )
-        if not ok or not text.strip():
-            return
-        try:
-            delta = parse_hex(text)
-        except ValueError:
-            self.status.setText("Not a hex number.")
-            return
-        entries = [
-            table.entries[self.grid.item(r, 0).data(Qt.ItemDataRole.UserRole)]
-            for r in rows
-        ]
-        before = self._snapshot()
+            return False
+        entries = [table.entries[b] for b in bits_list if b in table.entries]
         moved = []
         for e in entries:
             value = int(e.bits, 2) + delta
             if value < 0 or value >= 1 << len(e.bits):
                 self.status.setText(f"{format_key(e.bits)} would leave its width.")
-                return
+                return False
             moved.append((e, format(value, f"0{len(e.bits)}b")))
+        before = self._snapshot()
         for e, _ in moved:
             table.remove(e.bits)
         try:
             for e, bits in moved:
-                table.add(
-                    TableEntry(bits, e.kind, e.text, e.weight, e.operands, e.params)
-                )
+                table.add(replace(e, bits=bits))
         except TableError as exc:
             self.status.setText(exc.message)
+            table.replace_with(before)
+            return False
+        self._editing = None
+        self.status.setText(f"Shifted {len(moved)} entries by {delta:+X}.")
         self.changed.emit(self._entry, before)
         self._fill()
+        return True
 
-    def _fill_dialog(self) -> None:
-        """Lay a string of characters over consecutive keys from a start key."""
-        from PySide6.QtWidgets import QInputDialog
+    def _shift(self) -> None:
+        if not self._selected_bits():
+            self.status.setText("Select the entries to shift.")
+            return
+        dialog = ShiftKeysDialog(len(self._selected_bits()), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.delta() is not None:
+            self.shift_keys(dialog.delta())
 
+    def fill_run(self, chars: str, start: int, width: int, overwrite: bool) -> int:
+        """Lay ``chars`` over consecutive keys of ``width`` hex digits from
+        ``start``; keys already taken are left alone unless ``overwrite``.
+        Returns how many entries were written."""
         table = self._table
-        if table is None:
-            return
-        templates = [*ALPHABETS, "A-Z a-z 0-9", "Custom…"]
-        choice, ok = QInputDialog.getItem(
-            self, "Fill", "Characters:", templates, 0, False
-        )
-        if not ok:
-            return
-        if choice == "Custom…":
-            chars, ok = QInputDialog.getText(self, "Fill", "Characters in key order:")
-            if not ok or not chars:
-                return
-        else:
-            chars = "".join(RUNS[ALPHABETS[part]] for part in choice.split())
-        start_text, ok = QInputDialog.getText(
-            self, "Fill", "First key (hex):", text="00"
-        )
-        if not ok:
-            return
-        digits = start_text.strip().replace("$", "")
-        try:
-            start = parse_hex(digits, default=-1)
-        except ValueError:
-            start = -1
-        if start < 0:
-            self.status.setText("Not a hex key.")
-            return
-        width = max(len(digits), 2)
+        if table is None or not chars:
+            return 0
         entries = entries_from_base(start, width * 4, "big", chars)
-        taken = [e for e in entries if e.bits in table.entries]
-        overwrite = False
-        if taken:
-            answer = QMessageBox.question(
-                self,
-                "Fill",
-                f"{len(taken)} of these keys already have entries "
-                f"(from {format_key(taken[0].bits)}). Overwrite them?",
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.No
-                | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.No,
-            )
-            if answer == QMessageBox.StandardButton.Cancel:
-                return
-            overwrite = answer == QMessageBox.StandardButton.Yes
         before = self._snapshot()
         added = 0
         for entry in entries:
@@ -297,24 +489,139 @@ class TableEditor(EscapeCloses, QWidget):
         )
         self.changed.emit(self._entry, before)
         self._fill()
+        return added
+
+    def _fill_dialog(self) -> None:
+        if self._table is None:
+            return
+        dialog = FillDialog(self._table, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chars, start, width = dialog.chars(), dialog.start(), dialog.width()
+        if not chars or start is None:
+            self.status.setText("Not a hex key.")
+            return
+        self.fill_run(chars, start, width, dialog.overwrite.isChecked())
 
     def _remove(self) -> None:
         table = self._table
-        rows = sorted({i.row() for i in self.grid.selectedItems()}, reverse=True)
-        if table is None or not rows:
+        bits_list = self._selected_bits()
+        if table is None or not bits_list:
             return
+        n = len(bits_list)
         if (
             QMessageBox.question(
                 self,
                 "Remove Entries",
-                f"Remove {len(rows)} {'entry' if len(rows) == 1 else 'entries'}?",
+                f"Remove {n} {'entry' if n == 1 else 'entries'}?",
             )
             != QMessageBox.StandardButton.Yes
         ):
             return
         before = self._snapshot()
-        for row in rows:
-            bits = self.grid.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        for bits in bits_list:
             table.remove(bits)
+        self._editing = None
         self.changed.emit(self._entry, before)
         self._fill()
+        self.form.set_entry(None)
+
+
+class ShiftKeysDialog(QDialog):
+    """How far to move the selected keys."""
+
+    def __init__(self, count: int, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Shift Keys")
+        form = QFormLayout(self)
+        self.offset = OffsetEdit()
+        self.offset.setToolTip(
+            "Hex, added to every selected key; a leading − subtracts"
+        )
+        form.addRow(f"Add to each of the {count} selected key(s)", self.offset)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self.offset.setFocus()
+
+    def delta(self) -> int | None:
+        return self.offset.value()
+
+
+class FillDialog(QDialog):
+    """A run of characters over consecutive keys, with a look at what it
+    would touch."""
+
+    def __init__(self, table: Table, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Fill")
+        self._table = table
+        form = QFormLayout(self)
+        self.template = QComboBox()
+        for name in (*FILL_TEMPLATES, CUSTOM):
+            self.template.addItem(name, name)
+        self.template.setToolTip("The characters, in key order")
+        form.addRow("Characters", self.template)
+        self.custom = hint_field(
+            QLineEdit(),
+            "typed in key order",
+            "The characters, one per key, in key order",
+        )
+        form.addRow("", self.custom)
+        self.first = hint_field(
+            QLineEdit(), "00", "The first key, in hex; its digits set every key's width"
+        )
+        fit_chars(self.first, 6)
+        self.first.setText("00")
+        form.addRow("First key", self.first)
+        self.overwrite = QCheckBox("Overwrite keys that already have entries")
+        form.addRow("", self.overwrite)
+        self.preview = ElidedLabel("")
+        form.addRow(self.preview)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self.template.currentIndexChanged.connect(self._refresh)
+        self.custom.textChanged.connect(self._refresh)
+        self.first.textChanged.connect(self._refresh)
+        self._refresh()
+
+    def chars(self) -> str:
+        choice = self.template.currentData()
+        if choice == CUSTOM:
+            return self.custom.text()
+        return "".join(RUNS[ALPHABETS[part]] for part in choice.split())
+
+    def start(self) -> int | None:
+        digits = self.first.text().strip().replace("$", "")
+        try:
+            value = parse_hex(digits, default=-1)
+        except ValueError:
+            return None
+        return value if value >= 0 else None
+
+    def width(self) -> int:
+        return max(len(self.first.text().strip().replace("$", "")), 2)
+
+    def _refresh(self) -> None:
+        self.custom.setVisible(self.template.currentData() == CUSTOM)
+        chars, start = self.chars(), self.start()
+        if not chars or start is None:
+            self.preview.setText("")
+            return
+        entries = entries_from_base(start, self.width() * 4, "big", chars)
+        taken = sum(e.bits in self._table.entries for e in entries)
+        last = format_key(entries[-1].bits) if entries else ""
+        self.preview.setText(
+            f"{len(entries)} keys, {format_key(entries[0].bits)} to {last}"
+            + (f"; {taken} already have entries" if taken else "")
+        )
+
+
+__all__ = ["ALPHABETS", "FillDialog", "ShiftKeysDialog", "TableEditor"]

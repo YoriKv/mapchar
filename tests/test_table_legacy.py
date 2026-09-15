@@ -186,3 +186,13 @@ def test_the_shift_jis_fixture_loads_as_cp932_from_disk():
     # Written back out, the table is UTF-8 and says the same thing.
     out = write_native(tf.table)
     assert "8ABA=漢" in out and out.encode("utf-8").decode("utf-8") == out
+
+
+def test_abcde_comments_are_kept():
+    from mapchar.project.formats.table_legacy import read_abcde
+
+    tf = read_abcde("# the font\n@main\n# letter A\n41=A\n# stray\n\n42=B\n")
+    table = tf.table
+    assert table.comment == "the font\nstray"
+    assert table.entries["01000001"].comment == "letter A"
+    assert table.entries["01000010"].comment == ""

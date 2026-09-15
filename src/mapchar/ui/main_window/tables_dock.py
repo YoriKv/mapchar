@@ -65,7 +65,7 @@ class TablesDockMixin:
             return
         # The in-app edits are laid back over the file's new contents rather
         # than dropped: a reload picks up what changed on disk, not a revert.
-        adopt_table(entry, tf.table, tf.notices)
+        adopt_table(entry, tf.table, tf.notices, registry=self.registry)
         entry.dialect = tf.dialect
         if not entry.table_overlay:
             self.workspace.mark_saved(entry)

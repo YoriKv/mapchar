@@ -438,6 +438,7 @@ class MainWindow(
         self.decompress_window = DecompressWindow(self)
         self.preview_window = PreviewWindow(self)
         self.table_editor = TableEditor(self)
+        self.table_editor.set_charsets(self.workspace.builtin_tables.names())
         self.find_replace = FindReplaceDialog(self)
 
         # Signals.
@@ -496,6 +497,8 @@ class MainWindow(
         self.preview_window.wrap_requested.connect(self._wrap_selected)
         self.table_editor.changed.connect(self._on_table_edited)
         self.table_editor.save_requested.connect(self._save_table_entry)
+        self.table_editor.table_requested.connect(self._edit_table_entry)
+        self.table_editor.charset_chosen.connect(self._on_charset_chosen)
         self.hex_panel.go_to_requested.connect(self._go_to)
         self.hex_panel.overtype_requested.connect(self.overtype_bytes)
         self.hex_panel.find_requested.connect(self._find_text_or_bytes)

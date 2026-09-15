@@ -175,10 +175,11 @@ replication notes rather than to abcde's behaviour:
 
 - **State** — the current bit, a stack of frames `(table, counter, stop,
   fallback_bits, shared)`, the tokens so far, `end_tokens_seen`.
-- **Step** — in the top frame: check the frame's fallback bits first; else
-  longest-prefix match in the frame's table (the trie); else emit one
-  unmatched byte (or the remaining bits when fewer than 8 remain before the
-  limit).
+- **Step** — in the top frame: a count the frame still has to read from the
+  data (a `u8`… stop) is read first, silently, and becomes its counter;
+  else check the frame's fallback bits; else longest-prefix match in the
+  frame's table (the trie); else emit one unmatched byte (or the remaining
+  bits when fewer than 8 remain before the limit).
 - **Count** — subtract the token's weight from the top frame's counter and,
   while the frame is `shared`, from the one beneath. A counter at or below
   zero pops the frame.
@@ -221,6 +222,11 @@ searches for the cheapest bit string that **decodes back to the same tokens**:
   abcde omits.
 - **Fallback bits** are emitted whenever a fallback frame closes, including
   at the end of the string.
+- **A count read from the data** is a placeholder of the operand's width,
+  emitted when its frame first comes on top, and filled in with the weight the
+  frame matched when the frame closes — a move the search may make at any
+  step, so the count is whatever the cheapest encoding needs. A frame still
+  open at the end of the text is closed there, which writes its count.
 - **End tokens** are ordinary alternatives; whether one is required at the
   end is the string rule's business, not the search's. In end-terminated
   rules one may only come last, except that a block reading N strings per
@@ -496,13 +502,16 @@ tools; **Save As File** folds the overlay into a native file.
 `project/tables.py` owns the overlay as well as the reading, because they are
 two halves of one thing. The live table is the entry's `table`; what the file
 gave is kept as `file_table`, the edits as `table_overlay` (per entry key: the
-entry's line in the native grammar, or `null` for one removed):
+entry's lines in the native grammar — its comment lines, then its own — or
+`null` for one removed), and a charset chosen in place of the file's as
+`table_charset`:
 
 | Function | When |
 |-------------------|------------------------------------------------------------|
 | `adopt_table`     | a read: the file's table becomes the baseline, and the overlay goes straight back over it — so a **Reload** picks up what changed on disk without discarding the user's edits |
 | `capture_overlay` | an edit: the overlay is re-measured from the table, never accumulated, so an undo and a redo leave the project holding exactly what it now says |
 | `fold_overlay`    | **Save As File**: the file now says it, so the overlay is spent |
+| `set_charset`     | the Table Editor's Charset pick: the baseline is rebuilt from the file on the new charset (`rebase_charset`), the live table becomes that baseline with the edits laid back over it, and the overlay is re-measured; an undo across the change rebases the same way before putting the old contents back |
 
 A table entry with no file — one made from a relative search or from Add from
 Selection, or split from a legacy file — has no baseline, so its every entry is
@@ -543,8 +552,9 @@ and aliases for renamed plugin ids.
       "offset": 4096 },
     { "kind": "table", "name": "main.tbl", "path": "tables/main.tbl",
       "dialect": "native",                           // opt
-      "overlay": {"01000011": "43=C",                // opt, the in-app edits
-                  "00000000": null} },               //   a line, or null=removed
+      "charset": "shift-jis",                        // opt, in place of the file's
+      "overlay": {"01000011": "# the letter C\n43=C", // opt, the in-app edits
+                  "00000000": null} },               //   its lines, or null=removed
     { "kind": "table", "name": "kanji.tbl",          // no path: no file
       "table": "kanji", "overlay": {…} },            //   its id, and all of it
     { "kind": "font", "name": "font.png", "path": "font.png",
@@ -596,7 +606,8 @@ Widgets outside the mixins: `reading_bar.py` (the Reading bar, loaded from and
 read back as a `BlockConfig`), `pointer_tokens.py` (pointers in view as tokens
 the Hex and Text tabs place), `raw_widget.py` (the two-column byte view),
 `text_widget.py` (the plain-text display), `strings_view.py` (the string grid
-and its cell editor), the panels (`files_panel.py`, `tables_panel.py`,
+and its cell editor), `table_entry_form.py` (the Table Editor's entry form:
+one entry as pickers and fields, and as the line that spells it), the panels (`files_panel.py`, `tables_panel.py`,
 `fonts_panel.py`, `hex_panel.py`), the tool windows, and the dialogs.
 
 What more than one of them needs lives in small modules: `ui/widgets.py`

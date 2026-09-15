@@ -158,12 +158,17 @@ class ProjectMixin:
         self._doc = None
         self._load_project_plugins(path)  # its plugins/ folder, before anything reads
         for e in loaded.entries:
-            # A table with no file was completed by the load: nothing to read.
-            if e.kind is not EntryKind.TABLE or not e.path:
+            if e.kind is not EntryKind.TABLE:
+                continue
+            if not e.path:
+                # A table with no file was completed by the load: nothing to
+                # read, unless the project puts a charset on it.
+                if e.table_charset and e.table is not None:
+                    adopt_table(e, e.table, from_file=False, registry=self.registry)
                 continue
             try:
                 tf = read_table_file(e.path, e.dialect, self.registry)
-                adopt_table(e, tf.table, tf.notices)
+                adopt_table(e, tf.table, tf.notices, registry=self.registry)
                 e.dialect = tf.dialect
             except (OSError, MapcharError) as exc:
                 e.missing = True
@@ -321,7 +326,7 @@ class ProjectMixin:
         if entry.kind is EntryKind.TABLE and entry.path:
             try:
                 tf = read_table_file(entry.path, entry.dialect, self.registry)
-                adopt_table(entry, tf.table, tf.notices)
+                adopt_table(entry, tf.table, tf.notices, registry=self.registry)
                 entry.dialect = tf.dialect
             except (OSError, MapcharError) as exc:
                 entry.missing = True

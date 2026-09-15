@@ -203,24 +203,48 @@ the preview system in [preview.md](preview.md).
   of the same id takes the id's place. A table file that is not UTF-8 is read as `cp932`, else
   `latin-1`, and says which in a notice.
 - **Table Editor** (View ▸ Table Editor…) edits one table entry's table over
-  a live view of the bytes, titled with its `@id` and file:
-  - a grid of one row per key: its line in the native grammar, edited as
-    text, beside what that line means (kind, operands, switches);
-  - **Add** — a typed entry line; the raw view's **Add to Table…** prefills it
-    from the selected bytes;
-  - **Shift Keys** — moves a range of keys up or down by a constant;
+  a live view of the bytes. Only text is typed; everything else an entry can
+  be is a picker, so the grammar need not be known to use it:
+  - a header with the **Table** picker (every loaded table, to switch between
+    them without the dock), the **Charset** picker (`none` or any registered
+    charset; choosing one moves the table onto it keeping its own entries and
+    edits, as one undo step) and a **filter** (Ctrl+F) matching key, text or
+    comment, under which the file and, for a converted table, its dialect
+    are named;
+  - a **grid** of one row per key — Key, Kind, Text, Details (what the entry
+    does, in words: `reads u8, u16`, `@items ×1, then return`), Weight,
+    Comment — whose Text and Comment cells are edited in place;
+  - an **entry form** under the grid, loaded from the selected row or blank
+    for a new one: the key as hex or, for a width that is not whole digits,
+    bits, with its width read out; the kind as a picker (Text, End, Code,
+    Switch, Return) that shows only what that kind takes; the text or, for a
+    code, the label; the weight; a code's operands as a list of spec pickers
+    (`u8`…`s16be`, N bytes, N bits); a switch's parameters as a list of rows —
+    the table (loaded ones, `raw`, `bits`), how it stops (until the string
+    ends, a count, a count read from the data as `u8`…`u32be`, until given
+    bytes or bits) and whether its matches count towards the parent (`+`) —
+    with **then return** after them; the comment; and the **Line** the form
+    spells in the native grammar, which also works the other way: a line
+    typed or pasted into it fills the form. A problem with the entry is
+    said under the form before **Add** (or **Apply**, when a row is being
+    edited) puts it in the table; **New** clears the form for another;
+  - the raw view's **Add to Table…** opens the form on the selected bytes as
+    the key;
+  - **Shift Keys…** moves the selected entries' keys by a constant, typed as
+    an offset;
   - **Fill…** — templates: `A–Z`, `a–z`, `0–9`, the three together, `あ-ん`,
-    `ア-ン`, or a typed string, laid over consecutive keys from a start key;
-    keys that already have entries are left alone unless the prompt is
-    answered with Overwrite (a whole standard encoding is a **charset** on the
-    table, not a fill);
+    `ア-ン`, or a typed string, laid over consecutive keys from a first key,
+    the dialog saying how many keys the run covers and how many already have
+    entries, which are left alone unless **Overwrite** is ticked (a whole
+    standard encoding is a **charset** on the table, not a fill);
   - every change is one undo step and re-decodes every view using the table;
   - the status line carries what reading the file had to report — a conversion
     from a legacy dialect, an encoding that is not UTF-8 — with each notice's
     fuller detail in its tooltip.
 - **Where the edits live** — in the project, as an overlay of the entries
   added, changed and removed over the file, so the table file on disk keeps
-  saying what it said for every other tool that reads it. **Save As File**
+  saying what it said for every other tool that reads it; a charset chosen in
+  the app in place of the file's is carried the same way. **Save As File**
   writes them out and spends the overlay. A table with no file of its own —
   from a relative search, or from **Add from selection** — is carried whole by
   the project the same way.
@@ -756,3 +780,4 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Files panel | Up/Down open the row · Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
 | Tool windows | Esc close · Enter run the query |
+| Table Editor | Enter put the entry in the table · Ctrl+F filter · double-click edit a Text or Comment cell |

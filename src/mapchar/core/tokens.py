@@ -28,7 +28,8 @@ class Token:
     table_id: str | None = None
     """The table the entry was matched in; ``raw``/``bits`` for raw frames."""
     fallback: bool = False
-    """Fallback bits that closed a frame: consumed, shown as nothing."""
+    """Bits a frame consumed silently: the fallback bits that closed it, or
+    the count that opened it. Shown as nothing."""
 
     def encoded_bits(self) -> str:
         """Every bit this token stands for, operands included."""

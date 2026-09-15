@@ -9,7 +9,12 @@ from mapchar.core.notices import notice_lines
 from mapchar.core.table import Table
 from mapchar.project.formats.table_legacy import free_table_id, table_id_for
 from mapchar.project.formats.table_native import write_native
-from mapchar.project.tables import capture_overlay, fold_overlay
+from mapchar.project.tables import (
+    capture_overlay,
+    fold_overlay,
+    rebase_charset,
+    set_charset,
+)
 from mapchar.project.workspace import Entry
 from mapchar.ui.undo_commands import TableCommand
 
@@ -73,6 +78,17 @@ class TableEditorMixin:
 
         self._push_command(TableCommand(self, entry, before, deepcopy(entry.table)))
 
+    def _on_charset_chosen(self, entry: Entry, charset: str) -> None:
+        """The Table Editor's Charset pick: the table moves onto ``charset``
+        with its edits, as one undo step."""
+        from copy import deepcopy
+
+        if entry.table is None or entry.table.charset == charset:
+            return
+        before = deepcopy(entry.table)
+        set_charset(entry, charset, self.registry)
+        self._on_table_edited(entry, before)
+
     def apply_table(self, entry: Entry, snapshot: Table, revision: int) -> None:
         """Put ``snapshot`` back on the entry, its ``Table`` keeping its identity.
 
@@ -86,12 +102,12 @@ class TableEditorMixin:
         if table is None:
             entry.table = deepcopy(snapshot)
         else:
-            table.id = snapshot.id
-            table.charset = snapshot.charset
-            for bits in list(table.entries):
-                table.remove(bits)
-            for table_entry in snapshot.entries.values():
-                table.add(table_entry)
+            # A step across a change of charset: the baseline follows, so the
+            # overlay is measured against the file on the charset it now has.
+            base = entry.file_table
+            if base is not None and base.charset != snapshot.charset:
+                rebase_charset(entry, snapshot.charset, self.registry)
+            table.replace_with(snapshot)
         # Re-measured against the file rather than accumulated, so an undo and a
         # redo leave the project holding exactly what the table now says.
         capture_overlay(entry)

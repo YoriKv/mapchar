@@ -7,13 +7,14 @@ directives; ``/`` end, ``$`` operands, ``!`` table control.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from mapchar.core.bits import format_key, hex_to_bits
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Notice
 from mapchar.core.table import (
     BITS,
+    COUNT_SPECS,
     ID_PATTERN,
     LABEL_PATTERN,
     RAW,
@@ -35,9 +36,20 @@ _ENTRY = re.compile(
 _LABEL_HEAD = re.compile(r"^\[(" + LABEL_PATTERN.pattern + r")\]")
 _PARAM = re.compile(
     r"^@(?P<table>" + ID_PATTERN.pattern + r"):"
-    r"(?P<stop>\*|\d+|\$[0-9A-Fa-f]+|%[01]+)(?P<shared>\+?)$"
+    r"(?P<stop>\*|\d+|" + "|".join(COUNT_SPECS) + r"|\$[0-9A-Fa-f]+|%[01]+)"
+    r"(?P<shared>\+?)$"
     r"|^return$"
 )
+
+
+def comment_text(line: str) -> str:
+    """What a ``#`` line says: the mark and one space after it dropped."""
+    return line.strip()[1:].removeprefix(" ")
+
+
+def comment_lines(comment: str) -> list[str]:
+    """``comment`` as the ``#`` lines that spell it in a file."""
+    return [f"# {line}".rstrip() for line in comment.split("\n")] if comment else []
 
 
 @dataclass
@@ -88,17 +100,33 @@ def parse_native(
     table = Table(default_id)
     seen_header = False
     named = False
+    pending: list[str] = []
+    """Comment lines not yet attached: the entry directly under them takes
+    them, and a blank line, a directive or the end of the file gives them to
+    the file."""
+    file_comment: list[str] = []
+
+    def flush() -> None:
+        file_comment.extend(pending)
+        pending.clear()
+
     for n, raw in enumerate(split_lines(text), start=1):
         line = raw.rstrip("\n")
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if stripped.startswith("#"):
+            pending.append(comment_text(stripped))
+            continue
+        if not stripped:
+            flush()
             continue
         if not seen_header:
+            flush()
             if stripped != HEADER:
                 raise TableError(f"expected {HEADER!r} as the first line", path, n)
             seen_header = True
             continue
         if stripped.startswith("@"):
+            flush()
             parts = stripped[1:].split(None, 1)
             keyword = parts[0] if parts else ""
             arg = parts[1].strip() if len(parts) > 1 else ""
@@ -123,12 +151,17 @@ def parse_native(
             entry = parse_entry(line)
         except ValueError as exc:
             raise TableError(str(exc), path, n) from None
+        if pending:
+            entry = replace(entry, comment="\n".join(pending))
+            pending.clear()
         try:
             table.add(entry)
         except TableError as exc:
             raise TableError(exc.message, path, n) from None
+    flush()
     if not seen_header:
         raise TableError(f"missing {HEADER!r} header", path)
+    table.comment = "\n".join(file_comment)
     return TableFile(table)
 
 
@@ -229,7 +262,24 @@ def parse_param(word: str) -> SwitchParam:
     return SwitchParam(table, parse_stop(stop), bool(shared))
 
 
+def parse_entry_lines(text: str) -> Entry:
+    """An entry with its comment lines above it, as :func:`format_entry_lines`
+    writes them. Raises ValueError."""
+    lines = text.split("\n")
+    comment = [comment_text(line) for line in lines[:-1] if line.strip()]
+    if any(not line.strip().startswith("#") for line in lines[:-1] if line.strip()):
+        raise ValueError("only comment lines may precede an entry")
+    entry = parse_entry(lines[-1].strip())
+    return replace(entry, comment="\n".join(comment)) if comment else entry
+
+
+def format_entry_lines(entry: Entry) -> list[str]:
+    """The entry's line, under its comment lines."""
+    return [*comment_lines(entry.comment), format_entry(entry)]
+
+
 def format_entry(entry: Entry) -> str:
+    """The entry's own line, without its comment."""
     key = format_key(entry.bits)
     if entry.weight != 1:
         key += f"<{entry.weight}>"
@@ -247,10 +297,14 @@ def format_entry(entry: Entry) -> str:
 
 
 def write_native(table: Table) -> str:
-    lines = [HEADER, f"@table {table.id}"]
+    """The table as a native file: what it says beyond its charset
+    (:meth:`~mapchar.core.table.Table.own_entries`), each entry under its
+    comment, the file's own comment under the header."""
+    lines = [HEADER, *comment_lines(table.comment), f"@table {table.id}"]
     if table.charset != "none":
         lines.append(f"@charset {table.charset}")
-    lines.extend(format_entry(entry) for entry in table.sorted_entries())
+    for entry in table.own_entries():
+        lines.extend(format_entry_lines(entry))
     return "\n".join(lines) + "\n"
 
 
@@ -258,10 +312,14 @@ __all__ = [
     "BITS",
     "RAW",
     "TableFile",
+    "comment_lines",
+    "comment_text",
     "format_entry",
+    "format_entry_lines",
     "format_key",
     "is_native",
     "parse_entry",
+    "parse_entry_lines",
     "parse_native",
     "parse_param",
     "split_lines",

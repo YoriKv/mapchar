@@ -135,7 +135,7 @@ def test_roundtrip_through_writer():
     table = parse_native(text).table
     out = write_native(table)
     assert parse_native(out).table.entries == table.entries
-    assert out.startswith(f"{HEADER}\n@table main\n")
+    assert out.startswith(f"{HEADER}\n# Dragon Warrior, main font\n@table main\n")
     assert "!F1=[item] @items:1" in out
     assert "$F0=[color],u8" in out
     assert "43<2>=weighted" in out
@@ -166,3 +166,61 @@ def test_decomposed_entry_text_is_written_back_composed():
 def test_an_id_with_whitespace_is_rejected(bad):
     with pytest.raises(TableError, match="invalid table id"):
         parse_native(HEADER + "\n" + bad + "\n41=A\n")
+
+
+def test_comments_belong_to_the_entry_under_them_or_to_the_file():
+    text = (
+        f"# before the header\n{HEADER}\n# about the file\n@table main\n"
+        "# the letter A\n#   indented\n41=A\n# orphaned by a blank line\n\n42=B\n"
+        "# trailing\n"
+    )
+    table = parse_native(text).table
+    assert table.entries["01000001"].comment == "the letter A\n  indented"
+    assert table.entries["01000010"].comment == ""
+    assert (
+        table.comment
+        == "before the header\nabout the file\norphaned by a blank line\ntrailing"
+    )
+    out = write_native(table)
+    assert out.startswith(f"{HEADER}\n# before the header\n# about the file\n")
+    assert "# the letter A\n#   indented\n41=A\n" in out
+    again = parse_native(out).table
+    assert again.entries == table.entries and again.comment == table.comment
+
+
+def test_an_entry_s_lines_carry_its_comment():
+    from mapchar.project.formats.table_native import (
+        format_entry_lines,
+        parse_entry_lines,
+    )
+
+    entry = parse_entry_lines("# a\n# b\n41=A")
+    assert entry.comment == "a\nb" and entry.text == "A"
+    assert format_entry_lines(entry) == ["# a", "# b", "41=A"]
+    assert parse_entry_lines("41=A").comment == ""
+    with pytest.raises(ValueError):
+        parse_entry_lines("42=B\n41=A")
+
+
+def test_a_count_read_from_the_data_is_a_stop():
+    e = parse_entry("!03=[str] @upper:u8+ @raw:u16be")
+    assert [p.spec() for p in e.params] == ["@upper:u8+", "@raw:u16be"]
+    assert e.params[0].stop.operand.bits == 8 and e.params[0].shared
+    assert e.params[1].stop.operand.big_endian
+    with pytest.raises(ValueError):
+        parse_entry("!03=[str] @upper:s8")
+
+
+def test_the_writer_leaves_out_what_the_charset_already_says():
+    from mapchar.plugins.charsets import apply_charset
+    from mapchar.plugins.registry import default_registry
+
+    table = parse_native(
+        f"{HEADER}\n@table t\n@charset ascii\n41=a\n42=\n/00=[end]\n"
+    ).table
+    apply_charset(table, default_registry())
+    assert table.entries["01000001"].text == "a"  # the file's own spelling
+    assert "01000010" not in table.entries  # dropped by the file
+    assert table.entries["01000011"].text == "C"  # the charset's
+    out = write_native(table)
+    assert out == f"{HEADER}\n@table t\n@charset ascii\n/00=[end]\n41=a\n42=\n"

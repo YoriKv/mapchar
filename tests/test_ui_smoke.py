@@ -302,17 +302,26 @@ def test_table_editor_shift_and_fill(window, tmp_path, monkeypatch):
     window._push_add(entry)
     editor = window.table_editor
     editor.set_entry(entry)
-    answers = iter([("A-Z", True), ("41", True)])
-    monkeypatch.setattr(
-        "PySide6.QtWidgets.QInputDialog.getItem", lambda *a, **k: next(answers)
-    )
-    monkeypatch.setattr(
-        "PySide6.QtWidgets.QInputDialog.getText", lambda *a, **k: next(answers)
-    )
+    from PySide6.QtWidgets import QDialog
+
+    from mapchar.ui.table_editor import FillDialog, ShiftKeysDialog
+
+    def run_fill(self):
+        self.template.setCurrentIndex(self.template.findData("A-Z"))
+        self.first.setText("41")
+        assert self.preview.text() == "26 keys, 41 to 5A"
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(FillDialog, "exec", run_fill)
     editor._fill_dialog()
     assert table.entries["01000001"].text == "A" and len(table.entries) == 26
     editor.grid.selectAll()
-    answers = iter([("-1", True)])
+
+    def run_shift(self):
+        self.offset.setText("-1")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ShiftKeysDialog, "exec", run_shift)
     editor._shift()
     assert table.entries["01000000"].text == "A" and "01011010" not in table.entries
 
@@ -1500,3 +1509,129 @@ def test_switching_entries_keeps_the_block_s_document(window, tmp_path):
     window._activate_entry(block)
     assert window.format_pick.currentData() == "main"
     assert block.doc is doc
+
+
+# --- the Table Editor's form -----------------------------------------------------
+
+
+def test_the_entry_form_spells_every_kind_both_ways(qtbot):
+    from mapchar.core.table import TokenKind
+    from mapchar.project.formats.table_native import parse_entry
+    from mapchar.ui.table_entry_form import STOP_DATA, TableEntryForm
+
+    form = TableEntryForm()
+    qtbot.addWidget(form)
+    form.set_tables(["main", "upper"])
+    for line in (
+        "41=A",
+        "%101<2>=x",
+        "/FF=[end]",
+        "$F0=[window],u8,u16be,3,bits:5",
+        "!03=[str] @upper:u8+ @raw:$FF @bits:%101 return",
+        "!F1= @upper:*",
+        "!FE=return",
+    ):
+        form.line.setText(line)
+        assert form.problem.text() == ""
+        assert form.entry() == parse_entry(line)
+        assert form.line.text() == line
+    # The pickers write the line: a switch's stop changed to a data-read count.
+    form.line.setText("!03=[str] @upper:3")
+    row = form.params.rows()[0]
+    row.stop.setCurrentIndex(row.stop.findData(STOP_DATA))
+    row.operand.setCurrentIndex(row.operand.findData("u16"))
+    row.shared.setChecked(True)
+    assert form.line.text() == "!03=[str] @upper:u16+"
+    form.then_return.setChecked(True)
+    assert form.line.text() == "!03=[str] @upper:u16+ return"
+    # A kind change shows what that kind takes.
+    form.kind.setCurrentIndex(form.kind.findData(TokenKind.CODE))
+    assert form.operands_box.isVisibleTo(form) and not form.params_box.isVisibleTo(form)
+    assert form.text_label.text() == "Label"
+    # A key that is not whole digits stays in bits.
+    form.line.setText("%101=x")
+    assert form.key_mode.value() == "bits" and form.key_width.text() == "3 bits"
+    form.key_mode.button("hex").click()
+    assert form.key_mode.value() == "bits" and "not whole" in form.problem.text()
+    # What the form cannot spell is said, not silently dropped.
+    form.line.setText("41=[unclosed")
+    assert "unclosed" in form.problem.text()
+
+
+def test_the_table_editor_edits_in_the_grid_and_the_form(window, tmp_path):
+    from mapchar.ui.table_editor import COMMENT, TEXT
+
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    table_entry = window.workspace.table_entries()[0]
+    window._edit_table_entry(table_entry)
+    editor = window.table_editor
+    table = table_entry.table
+    row = next(
+        r
+        for r in range(editor.grid.rowCount())
+        if editor.grid.item(r, 0).text() == "41"
+    )
+    # A row selected loads the form, and Apply puts it back changed.
+    editor.grid.selectRow(row)
+    assert editor.add.text() == "Apply" and editor.form.key.text() == "41"
+    editor.form.text.setText("a")
+    editor._add()
+    assert table.entries["01000001"].text == "a"
+    # The key changed in the form moves the entry.
+    editor.form.key.setText("4A")
+    editor._add()
+    assert "01000001" not in table.entries and table.entries["01001010"].text == "a"
+    # Text and Comment cells are typed over in place, one undo step each.
+    row = next(
+        r
+        for r in range(editor.grid.rowCount())
+        if editor.grid.item(r, 0).text() == "42"
+    )
+    editor.grid.item(row, TEXT).setText("bee")
+    assert table.entries["01000010"].text == "bee"
+    editor.grid.item(row, COMMENT).setText("the letter B")
+    assert table.entries["01000010"].comment == "the letter B"
+    assert table_entry.table_overlay["01000010"] == "# the letter B\n42=bee"
+    window.undo_stack.undo()
+    assert table.entries["01000010"].comment == ""
+    # The filter hides what does not match key, text or comment.
+    editor.filter.setText("bee")
+    shown = [
+        editor.grid.item(r, 0).text()
+        for r in range(editor.grid.rowCount())
+        if not editor.grid.isRowHidden(r)
+    ]
+    assert shown == ["42"]
+
+
+def test_a_charset_picked_in_the_editor_is_one_undo_step_the_project_carries(
+    window, tmp_path
+):
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    table_entry = window.workspace.table_entries()[0]
+    window._edit_table_entry(table_entry)
+    editor = window.table_editor
+    table = table_entry.table
+    assert editor.charset_pick.currentData() == "none"
+    editor.charset_pick.setCurrentIndex(editor.charset_pick.findData("ascii"))
+    assert table.charset == "ascii" and table.entries["01000011"].text == "C"
+    # The file's own entries stay on top of the charset's, and only they are
+    # the overlay: the charset itself is carried as one word.
+    assert table.entries["01000001"].text == "A"
+    assert table_entry.table_charset == "ascii"
+    assert "01000011" not in table_entry.table_overlay
+    window.undo_stack.undo()
+    assert table.charset == "none" and "01000011" not in table.entries
+    assert table_entry.table_charset is None
+    window.undo_stack.redo()
+    assert table.charset == "ascii" and editor.charset_pick.currentData() == "ascii"
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    window._new_project()
+    assert window.open_project(str(proj))
+    back = window.workspace.table_entries()[0]
+    assert back.table.charset == "ascii" and back.table.entries["01000011"].text == "C"
+    # Saved as a file, the charset is one line and the charset's codes none.
+    window._save_table_entry(back)
+    text = Path(str(back.path)).read_text()
+    assert "@charset ascii" in text and "43=C" not in text

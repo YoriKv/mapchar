@@ -101,6 +101,14 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ),
     ),
     (
+        "Table Editor",
+        (
+            ("Put the entry in the table", "Enter in the form"),
+            ("Edit a Text or Comment cell in place", "Double-click"),
+            ("Filter the entries", "Ctrl+F"),
+        ),
+    ),
+    (
         "Hex Panel",
         (
             ("Overtype the nibble under the caret", "0-9 / A-F"),

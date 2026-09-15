@@ -217,6 +217,8 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
             d["dialect"] = entry.dialect
         # The in-app edits, never the table file itself: a file another tool
         # reads keeps saying what it said until Save As File folds these in.
+        if entry.table_charset:
+            d["charset"] = entry.table_charset
         if entry.table_overlay:
             d["overlay"] = dict(entry.table_overlay)
         # A table with no file is named nowhere else.
@@ -443,6 +445,8 @@ def _entry_from(
         entry.bookmark_offset = int(raw.get("offset", 0))
     if kind is EntryKind.TABLE:
         entry.dialect = raw.get("dialect")
+        charset = raw.get("charset")
+        entry.table_charset = str(charset) if charset else None
         # Kept until the file has been read, which is what it is laid over
         # (:func:`~mapchar.project.tables.adopt_table`).
         overlay = raw.get("overlay")

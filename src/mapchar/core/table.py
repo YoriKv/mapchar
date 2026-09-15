@@ -128,6 +128,10 @@ class OperandSpec:
         return self.bits // 8 if self.kind == "bytes" else 1
 
 
+COUNT_SPECS = ("u8", "u16", "u24", "u32", "u16be", "u24be", "u32be")
+"""The operands a switch parameter may read its count from: the unsigned ones."""
+
+
 @dataclass(frozen=True)
 class Stop:
     """When a switch frame pops."""
@@ -136,15 +140,21 @@ class Stop:
     """Exactly this many weighted matches."""
     fallback: str | None = None
     """Bits that end the frame when they appear at a token boundary."""
+    operand: OperandSpec | None = None
+    """The count is read from the data as this operand when the frame opens:
+    a Pascal string, or a code followed by as many bytes as its next byte
+    says. Consumed and shown as nothing, like fallback bits."""
 
     @property
     def any(self) -> bool:
-        return self.count is None and self.fallback is None
+        return self.count is None and self.fallback is None and self.operand is None
 
     def spec(self, any_marker: str = "*") -> str:
         """How a switch parameter writes this stop; ``any_marker`` for no stop."""
         if self.count is not None:
             return str(self.count)
+        if self.operand is not None:
+            return self.operand.spec()
         if self.fallback is not None:
             if len(self.fallback) % 8 == 0:
                 return "$" + bits_to_hex(self.fallback)
@@ -155,13 +165,16 @@ class Stop:
 def parse_stop(word: str) -> Stop:
     """A switch parameter's stop as the table dialects write it.
 
-    ``*`` and ``0`` are no stop at all, digits a weighted count, ``$hex`` and
-    ``%bits`` fallback bits.
+    ``*`` and ``0`` are no stop at all, digits a weighted count, an unsigned
+    operand spec a count read from the data, ``$hex`` and ``%bits`` fallback
+    bits.
     """
     if word in ("*", "0"):
         return Stop()
     if word.isdigit():
         return Stop(count=int(word))
+    if word in COUNT_SPECS:
+        return Stop(operand=OperandSpec.parse(word))
     if word.startswith("$"):
         return Stop(fallback=hex_to_bits(word[1:]))
     return Stop(fallback=word[1:])
@@ -190,6 +203,9 @@ class Entry:
     weight: int = 1
     operands: tuple[OperandSpec, ...] = ()
     params: tuple[SwitchParam, ...] = ()
+    comment: str = ""
+    """The comment lines directly above the entry in its file, without their
+    ``#``, joined by newlines. Written back above it."""
 
     def __post_init__(self) -> None:
         # Every entry's text is NFC, whatever form the file it came from used,
@@ -254,7 +270,12 @@ class Table:
             raise TableError(f"invalid table id {id!r}")
         self.id = id
         self.charset = charset
+        self.comment = ""
+        """The file's own comment lines: every one not directly above an entry."""
         self.entries: dict[str, Entry] = {}
+        self.charset_entries: dict[str, Entry] = {}
+        """Every code the charset contributes, whether or not the file overrides
+        it, so a write can leave out what the charset already says."""
         self.labels: dict[str, Entry] = {}
         self.aliases: dict[str, str] = {}
         """Extra script-form text the encoder accepts for an entry's bits.
@@ -338,6 +359,37 @@ class Table:
 
     def sorted_entries(self) -> list[Entry]:
         return sorted(self.entries.values(), key=lambda e: (len(e.bits), e.bits))
+
+    def own_entries(self) -> list[Entry]:
+        """What a file has to say beyond the charset: every entry the charset
+        does not already give, plus an empty-text entry for each charset code
+        the table has dropped, so the file reads back to this table."""
+        own = [
+            e for e in self.sorted_entries() if self.charset_entries.get(e.bits) != e
+        ]
+        dropped = [
+            Entry(bits, TokenKind.TEXT, "")
+            for bits in self.charset_entries
+            if bits not in self.entries
+        ]
+        return sorted(own + dropped, key=lambda e: (len(e.bits), e.bits))
+
+    def replace_with(self, other: Table) -> None:
+        """Become ``other``, keeping this object's identity.
+
+        The views and the Table Editor hold one ``Table``, so an undo or a
+        change of charset puts new contents into it rather than swapping it out.
+        """
+        self.id = other.id
+        self.charset = other.charset
+        self.comment = other.comment
+        self.charset_entries = dict(other.charset_entries)
+        self.charset_applied = other.charset_applied
+        self.aliases = dict(other.aliases)
+        for bits in list(self.entries):
+            self.remove(bits)
+        for entry in other.entries.values():
+            self.add(entry)
 
 
 @dataclass

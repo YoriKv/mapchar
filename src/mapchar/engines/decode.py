@@ -20,6 +20,7 @@ from mapchar.core.table import (
     RAW,
     RETURN,
     Entry,
+    OperandSpec,
     Stop,
     SwitchParam,
     Table,
@@ -66,6 +67,9 @@ class _Frame:
     counter: int | None
     owner: str | None = None
     """For a return frame: the table whose innermost frame it leaves."""
+    pending: OperandSpec | None = None
+    """A count still to be read from the data, the first time the frame is
+    on top."""
 
 
 DEFAULT_RULES = DecodeRules()
@@ -112,6 +116,32 @@ def decode(
             owner = tables.tables.get(frame.owner or "")
             if owner is None or not _pop_table(stack, owner):
                 return DecodeResult(tokens, pos, EndedBy.RETURN, notices)
+            continue
+
+        # 0.5 A count read from the data opens the frame and prints nothing;
+        #     cut short by the end of the data, it is the raw bytes it was.
+        if frame.pending is not None:
+            spec, frame.pending = frame.pending, None
+            chunk = window(pos, spec.bits)
+            end = _advance(pos, len(chunk), skips)
+            if len(chunk) < spec.bits:
+                tokens.append(Token(chunk, pos, end, table_id=frame.table_id))
+                notices.append(
+                    Notice(
+                        f"@{frame.table_id}:{spec.spec()} count cut short by the "
+                        "end of the data",
+                        offset=pos // 8,
+                    )
+                )
+                pos = end
+                stack.pop()
+                continue
+            tokens.append(
+                Token(chunk, pos, end, table_id=frame.table_id, fallback=True)
+            )
+            pos = end
+            frame.counter = spec.value_of(chunk)
+            _pop_finished(stack)
             continue
 
         # 1. Fallback bits close the frame and print nothing.
@@ -252,7 +282,14 @@ def _frame_for(param: SwitchParam, tables: TableSet, owner: str) -> _Frame:
     if param.table_id == RETURN:
         return _Frame(RETURN, None, Stop(), False, None, owner)
     table = None if param.table_id in (RAW, BITS) else tables.table(param.table_id)
-    return _Frame(param.table_id, table, param.stop, param.shared, param.stop.count)
+    return _Frame(
+        param.table_id,
+        table,
+        param.stop,
+        param.shared,
+        param.stop.count,
+        pending=param.stop.operand,
+    )
 
 
 def _count(stack: list[_Frame], weight: int) -> None:
