@@ -127,6 +127,9 @@ class EntryTree(QTreeWidget):
     """Alt+Up / Alt+Down: step the selection one place, ``-1`` or ``+1``."""
     reorder_dropped = Signal(object, object)
     """The dragged row's entry key, and the key it should land in front of."""
+    current_navigated = Signal(object)
+    """A key moved the current row: the row it moved to, to be shown the same
+    way a click on it would show it."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -163,7 +166,11 @@ class EntryTree(QTreeWidget):
             self.move_pressed.emit(-1 if event.key() == Qt.Key.Key_Up else 1)
             event.accept()
             return
+        before = self.currentItem()
         super().keyPressEvent(event)
+        item = self.currentItem()
+        if item is not None and item is not before:
+            self.current_navigated.emit(item)
 
     def startDrag(self, actions) -> None:  # noqa: N802 - Qt override
         # A drag moves the one row it started on, so it has nothing to say
@@ -286,6 +293,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         changed nothing about the strings leaves the rows alone."""
         self.filter.textChanged.connect(self._apply_filter)
         self.tree.itemClicked.connect(self._on_clicked)
+        self.tree.current_navigated.connect(self._activate)
         self.tree.itemDoubleClicked.connect(self._on_double)
         self.tree.itemExpanded.connect(self._on_expanded)
         self.tree.itemCollapsed.connect(self._on_collapsed)
@@ -647,6 +655,11 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.filter.selectAll()
 
     def _on_clicked(self, item, column) -> None:
+        self._activate(item)
+
+    def _activate(self, item: QTreeWidgetItem) -> None:
+        """Show what a row stands for — what both a click on it and an arrow
+        key onto it mean."""
         if len(self.tree.selectedItems()) > 1:
             return
         entry = self.entry_of(item)

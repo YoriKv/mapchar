@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from helpers import pointer_rom
@@ -282,6 +283,23 @@ def test_a_string_row_confines_the_view_to_that_string(window, tmp_path):
     assert window._bounds == (0, 6)
     assert window._offset == 0
     assert window._entry is block
+
+
+def test_an_arrow_key_shows_the_row_it_lands_on(window, tmp_path):
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._activate_entry(file_entry)
+    panel = window.files_panel
+    panel._items[id(block)].setExpanded(True)
+    panel.tree.setCurrentItem(panel._items[id(file_entry)])
+    QTest.keyClick(panel.tree, Qt.Key.Key_Down)
+    assert panel.tree.currentItem() is panel._items[id(block)]
+    assert window._entry is block
+    assert window._bounds == (0, 6)
+    # On down into the strings: the same confinement a click on the row gives.
+    QTest.keyClick(panel.tree, Qt.Key.Key_Down)
+    assert window._bounds == (0, 3)
+    assert window.strings.selected_indices() == [0]
 
 
 def test_the_filter_reaches_the_strings(window, tmp_path):

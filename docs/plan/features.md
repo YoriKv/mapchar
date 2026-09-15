@@ -142,9 +142,10 @@ the preview system in [preview.md](preview.md).
   - **?** (file missing) or **!** (read notices), washing the row amber.
 - **Tooltips** give paths, container, offset and length, the start table, and
   any notice text, each notice's fuller detail indented under it.
-- **Selecting** — click opens an entry; a table opens the Table Editor and a
-  font the Preview window's Font tab, neither becoming the view; Shift/Ctrl
-  extend the selection; with several rows selected only Remove and Move
+- **Selecting** — click opens an entry, and an arrow key onto a row opens it
+  the same way; a table opens the Table Editor and a font the Preview
+  window's Font tab, neither becoming the view; Shift/Ctrl extend the
+  selection; with several rows selected only Remove and Move
   Up/Down apply. A block's row confines the view to its source, from its
   start — the range, the fixed strings, the pointer table, or the stretch a
   pointer list's pointers lie in — and a string's row confines it to that
@@ -359,8 +360,9 @@ The exploration surface, the equivalent of celPix's tile canvas.
   gets the bytes it touches. The status bar shows offset, length and the
   selected bytes' decode.
 - **Context menu** — New Block from Selection, New Bookmark, Add to Table
-  (opens the Table Editor with the bytes as a key), Search for Selection
-  (as bytes), Copy Hex, Copy Text.
+  (opens the Table Editor with the bytes as a key), Add Skip from Selection
+  (in a block: a skip range over the selected bytes, its own undo step),
+  Search for Selection (as bytes), Copy Hex, Copy Text.
 - **Editing** — the raw view is read-only; editing happens in the Strings
   view or the Hex panel.
 
@@ -434,7 +436,10 @@ ranges and the Writing section; a section with nothing to show is hidden.
 - **Realign** — after each end token, round the position up to a multiple of
   `M` plus `O`.
 - **Skip ranges** — `from → to` pairs: reading `from` continues at `to`
-  (Cartographer's auto-jump).
+  (Cartographer's auto-jump). The Skips picker shows them on one line and
+  opens a popup list of `from` / `to` rows in hex, with Add and Remove, that
+  applies as it is edited — a run of edits is one undo step — and the Hex
+  tab's **Add Skip from Selection** adds one over the selected bytes.
 - **Format** — the start table: a loaded table or an encoding, picked in the
   Format list; the table set follows from it.
 - **Fixed-line layout** — for fixed strings, an optional `line length` that
@@ -718,6 +723,6 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
 | Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F find bytes · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
-| Files panel | Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |
+| Files panel | Up/Down open the row · Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
 | Tool windows | Esc close · Enter run the query |
