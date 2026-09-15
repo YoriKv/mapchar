@@ -247,6 +247,9 @@ class BlockBarMixin:
         rec = self._string(entry, index)
         if entry is not self._entry or rec is None or self._doc is None:
             return
+        # The mode the string is opened over is what leaving it comes back to.
+        if not self._in_one_string():
+            entry.session.string_view = self._in_strings_mode()
         self._record_visit(entry, index)
         self._string_bounds = (max(0, rec.start), min(rec.end, self._doc.size))
         self._set_bounds((rec.start, rec.end))
@@ -255,6 +258,18 @@ class BlockBarMixin:
         # The view is already that string alone, so nothing in it is selected.
         self.raw.set_selection(0, 0)
         self._on_selection(0, 0)
+
+    def _leave_string(self, entry: Entry) -> None:
+        """Back out of one string of the block on screen to what it reads apart
+        from that string: its source, or all its strings in the Strings mode —
+        what Back does from a string to the block it is under, which is already
+        on screen and so cannot be activated into place."""
+        if entry is not self._entry or not self._in_one_string():
+            return
+        if entry.session.string_view:
+            self._view_strings(entry)
+        else:
+            self._view_source(entry)
 
     def _read_block_strings(self, entry: Entry) -> None:
         """The Files panel opened a block the session has not read: read it, so

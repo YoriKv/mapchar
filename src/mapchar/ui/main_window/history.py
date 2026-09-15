@@ -128,10 +128,14 @@ class HistoryMixin:
         entry, index = target
         self._history_walking = True
         try:
-            if index is None:
-                self._activate_entry(entry)
-            else:
+            if index is not None:
                 self._show_string(entry, index)
+            elif entry is self._entry:
+                # Only a string of the block on screen sits next to it in the
+                # trail, and re-activating what is on screen is a no-op.
+                self._leave_string(entry)
+            else:
+                self._activate_entry(entry)
         finally:
             self._history_walking = False
         if self.workspace.current is entry:

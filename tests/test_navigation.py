@@ -342,6 +342,21 @@ def test_a_string_under_a_block_is_a_visit_of_its_own(window, tmp_path):
     assert window._history_pos == 3  # walking it did not rewrite it
 
 
+def test_back_leaves_a_string_for_the_block_it_is_under(window, tmp_path):
+    """The block is already on screen, so leaving its string cannot activate
+    it: the view is confined to the block's source again in its place."""
+    file_entry = _opened(window, tmp_path)
+    block = add_block(window, file_entry, "b", RangeSource(0, 8))
+    source = window._bounds
+    window._show_string(block, 1)
+    assert window._bounds != source
+    window._history_step(-1)
+    assert window._entry is block and window._bounds == source
+    assert window._history_pos == 1
+    window._history_step(1)
+    assert window._bounds == window._string_bounds != source
+
+
 def test_closing_a_block_forgets_the_visits_to_its_strings(window, tmp_path):
     file_entry = _opened(window, tmp_path)
     block = add_block(window, file_entry, "b", RangeSource(0, 8))

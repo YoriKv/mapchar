@@ -111,6 +111,22 @@ class FormatBarMixin:
         text: one string, or all of a pointer block's."""
         return self._string_bounds is not None and self._bounds == self._string_bounds
 
+    def _in_strings_mode(self) -> bool:
+        """Whether the view is a pointer block's Strings mode: confined to all
+        of its strings, read as text."""
+        entry = self._entry
+        return (
+            entry is not None
+            and entry.kind is EntryKind.BLOCK
+            and self._in_string_view()
+            and self._string_bounds == self._string_span(entry)
+        )
+
+    def _in_one_string(self) -> bool:
+        """Whether the view is one string opened from the Files panel — a visit
+        of its own, laid over whichever mode the block is in."""
+        return self._in_string_view() and not self._in_strings_mode()
+
     def _default_table_id(self) -> str:
         loaded = self.workspace.loaded_tables()
         if loaded:

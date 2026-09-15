@@ -43,8 +43,10 @@ class EntrySession:
     resolve_pointers: bool = False
     """Read as pointers, show the string each reaches in its place."""
     string_view: bool = False
-    """A block left reading its strings as text rather than its source, which
-    coming back to it takes up again. Not saved."""
+    """A block left in its Strings mode — all its strings as text rather than
+    its source — which coming back to it takes up again. One string opened
+    from the Files panel is a visit laid over the mode, not the mode. Not
+    saved."""
     set_aside: BlockConfig | None = None
     """The reading the entry had before its last switch of mode, whose source
     and string type switching back restores. Not saved."""

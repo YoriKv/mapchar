@@ -270,6 +270,31 @@ def test_a_block_comes_back_on_the_strings_it_was_left_reading(window, tmp_path)
     assert window._bounds == (0, 6) and window.mode_toggle.value() is True
 
 
+def test_one_string_is_not_the_mode_a_block_is_left_in(window, tmp_path):
+    """A string opened from the Files panel is laid over the block's mode: the
+    block's row brings it back on its source, and Back out of the string lands
+    on the mode the string was opened over."""
+    rom = pointer_rom((0x14, 0x10, 0x14), "41 42 00 FF 42 00")
+    entry = open_rom_and_table(window, tmp_path, rom)
+    block = add_block(window, entry, "b", PointerTableSource(0, 6, 2, 2))
+    window._show_string(block, 1)
+    window._activate_entry(entry)
+    window._show_entry(block)
+    assert window._bounds == (0, 6) and window.mode_toggle.value() is True
+    # Opened over the Strings mode, Back returns to the Strings mode.
+    window.mode_toggle.button(False).click()
+    window._show_string(block, 1)
+    assert window._bounds == (0x14, 0x16)
+    window._history_step(-1)
+    assert window._bounds == (0x10, 0x16) and window.mode_toggle.value() is False
+    window._history_step(1)  # onto the string again
+    window._activate_entry(entry)
+    window._history_step(-1)  # the string, from another entry
+    assert window._entry is block and window._bounds == (0x14, 0x16)
+    window._history_step(-1)  # and out of it, onto the mode it was opened over
+    assert window._bounds == (0x10, 0x16) and window.mode_toggle.value() is False
+
+
 def test_a_pointer_block_s_string_opened_alone_reads_as_text(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
     block = add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))

@@ -195,4 +195,7 @@ class SessionMixin:
             return
         entry.session.offset = self._offset
         entry.session.view = self._current_view()
-        entry.session.string_view = self._in_string_view()
+        # One string opened over the block is a visit, not its mode: what the
+        # block is left reading is whichever mode lies under it.
+        if not self._in_one_string():
+            entry.session.string_view = self._in_strings_mode()
