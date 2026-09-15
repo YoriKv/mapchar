@@ -33,9 +33,7 @@ def test_the_encodings_are_tables_built_when_first_read():
     tables = CharsetTables(default_registry())
     ids = [cid for cid, _ in tables.names()]
     assert ids[:2] == ["ascii", "latin-1"]
-    assert {"shift-jis", "euc-jp", "jis-x-0201", "utf-8", "utf-16le", "big5"} <= set(
-        ids
-    )
+    assert {"shift-jis", "jis-x-0201", "utf-8", "utf-16le", "gbk"} <= set(ids)
     assert "none" not in tables and "none" not in ids
     assert not tables._built  # listing them reads none
     ascii_table = tables["ascii"]

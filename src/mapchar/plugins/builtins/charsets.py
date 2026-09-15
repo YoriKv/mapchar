@@ -99,12 +99,6 @@ def register(registry) -> None:
     registry.register(
         CodecCharset("shift-jis", "Shift-JIS (CP932)", "cp932", BMP, JIS_ROMAN)
     )
-    registry.register(
-        CodecCharset("euc-jp", "EUC-JP (JIS X 0213)", "euc_jis_2004", BMP, JIS_ROMAN)
-    )
-    registry.register(CodecCharset("euc-kr", "EUC-KR", "euc_kr", BMP))
-    registry.register(CodecCharset("big5", "Big5", "big5", BMP))
     registry.register(CodecCharset("gbk", "GBK", "gbk", BMP))
     registry.register(CodecCharset("utf-16le", "UTF-16 LE", "utf-16-le", UNICODE))
-    registry.register(CodecCharset("utf-16be", "UTF-16 BE", "utf-16-be", UNICODE))
     registry.register(CodecCharset("utf-8", "UTF-8", "utf-8", UNICODE))

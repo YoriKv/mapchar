@@ -208,13 +208,6 @@ def test_shift_jis_is_cp932_and_the_yen_sign_reaches_5c(registry):
     assert encode("\\\\[end]", ts).data == b"\x5c\x00"
 
 
-def test_euc_jp_covers_the_extension_rows(registry):
-    table = Table("main", "euc-jp")
-    apply_charset(table, registry)
-    for ch in ("あ", "漢", "①", "￥"):
-        assert table.entries[bytes_to_bits(ch.encode("euc_jis_2004"))].text == ch
-
-
 def test_a_long_string_encodes_through_a_charset_table_in_reasonable_time(registry):
     """A charset table is thousands of entries, so the encoder's per-search index
     and its atom walk must stay linear in the text. The bound is loose — the

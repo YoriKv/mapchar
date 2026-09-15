@@ -195,8 +195,8 @@ the preview system in [preview.md](preview.md).
   ones with no file. Conversion notices (dropped duplicates, renamed labels,
   generated kanji tables, split tables) are listed once per file.
 - **Charsets** — a table can sit on a built-in charset (ASCII, Latin-1,
-  Windows-1252, JIS X 0201, Shift-JIS as CP932, EUC-JP as JIS X 0213, EUC-KR,
-  Big5, GBK, UTF-8, UTF-16) and only list its overrides.
+  Windows-1252, JIS X 0201, Shift-JIS as CP932, GBK, UTF-8, UTF-16 LE) and only
+  list its overrides.
 - **Encodings as tables** — every charset is also offered in the Table list as
   a table of its own, under the loaded tables: that encoding with a NUL of its
   code unit's width (`00`, `0000` in UTF-16) as the end token. They are built
