@@ -235,6 +235,24 @@ def test_a_pointer_block_s_mode_shows_its_table_or_all_its_strings(window, tmp_p
     assert sections["Pointers"].isVisibleTo(window)
 
 
+def test_a_block_comes_back_on_the_strings_it_was_left_reading(window, tmp_path):
+    rom = pointer_rom((0x14, 0x10, 0x14), "41 42 00 FF 42 00")
+    entry = open_rom_and_table(window, tmp_path, rom)
+    block = add_block(window, entry, "b", PointerTableSource(0, 6, 2, 2))
+    window.mode_toggle.button(False).click()
+    assert window._bounds == (0x10, 0x16)
+    window._activate_entry(entry)
+    window._show_entry(block)  # its Files row
+    assert window._bounds == (0x10, 0x16) and window._offset == 0x10
+    assert window.mode_toggle.value() is False
+    # The row of the block already on screen still takes the view back out.
+    window._show_entry(block)
+    assert window._bounds == (0, 6) and window.mode_toggle.value() is True
+    window._activate_entry(entry)
+    window._show_entry(block)
+    assert window._bounds == (0, 6) and window.mode_toggle.value() is True
+
+
 def test_a_pointer_block_s_string_opened_alone_reads_as_text(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
     block = add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))

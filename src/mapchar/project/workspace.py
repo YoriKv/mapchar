@@ -42,6 +42,9 @@ class EntrySession:
     A block's own is :attr:`Entry.config`."""
     resolve_pointers: bool = False
     """Read as pointers, show the string each reaches in its place."""
+    string_view: bool = False
+    """A block left reading its strings as text rather than its source, which
+    coming back to it takes up again. Not saved."""
     set_aside: BlockConfig | None = None
     """The reading the entry had before its last switch of mode, whose source
     and string type switching back restores. Not saved."""

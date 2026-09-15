@@ -204,8 +204,9 @@ class MainWindow(
         self._bars_show: tuple | None = None
         """The entry and reading the bars were last loaded with."""
         self._string_bounds: tuple[int, int] | None = None
-        """The bytes of the string last opened from the Files panel: while the
-        view is confined to exactly them, it reads them as text
+        """The bytes of the strings last opened as text — a string from the Files
+        panel, or a pointer block's in the Strings mode: while the view is
+        confined to exactly them, it reads them as text
         (:mod:`mapchar.ui.main_window.block_bar`)."""
         self._preview_scheme: str | None = None
         """The compression scheme the Decompressed view previews a file through:

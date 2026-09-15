@@ -208,9 +208,15 @@ class EntriesMixin:
     def _show_entry(self, entry: Entry) -> None:
         """A Files row clicked: the entry on screen, and a block confined to its
         source — again when it already was, which is how a view drilled into
-        one string comes back out."""
+        one string comes back out.
+
+        Not when the row brings back a block that was left reading its strings:
+        it comes back on them, and the row that put it there is not a gesture
+        away from them.
+        """
+        shown = entry is self._entry
         self._activate_entry(entry)
-        if entry.kind is EntryKind.BLOCK:
+        if entry.kind is EntryKind.BLOCK and (shown or not self._in_string_view()):
             self._view_source(entry)
 
     def _on_entry_double(self, entry: Entry) -> None:

@@ -204,16 +204,50 @@ class BlockBarMixin:
         if bounds is not None:
             self._go_to(bounds[0])
 
+    def _string_span(self, entry: Entry) -> tuple[int, int] | None:
+        """The bytes a block's strings lie in, from the lowest-placed to the
+        end of the highest, or ``None`` when it has none. The pointers may
+        reach them in any order, share one, or leave bytes between them; that
+        stretch holds those bytes too."""
+        doc = self._doc if entry is self._entry else entry.doc
+        strings = entry.doc.strings if entry.doc is not None else []
+        if doc is None or not strings:
+            return None
+        start = max(0, min(rec.start for rec in strings))
+        end = min(max(rec.end for rec in strings), doc.size)
+        return (start, end) if end > start else None
+
+    def _view_strings(self, entry: Entry) -> None:
+        """The Strings mode on a pointer block: the view confined to its
+        strings, read as text."""
+        span = self._string_span(entry) if entry is self._entry else None
+        if span is None:
+            self._sync_view_mode()
+            return
+        self._string_bounds = span
+        self._set_bounds(span)
+        self._go_to(span[0])
+
     def _show_string(self, entry: Entry, index: int) -> None:
         """A string clicked under its block in the Files panel: the block on
         screen, the view confined to that string's bytes, and the string
         selected in the Strings grid, with no bytes selected in the view. The
         string's bytes are text, so a pointer block's view reads them as such
-        for as long as it is confined to them."""
-        self._activate_entry(entry)
+        for as long as it is confined to them.
+
+        One string is a visit of its own, and the block it is under is not: the
+        click is one gesture, so Back takes one step to leave the string for
+        wherever the view was before it.
+        """
+        walking, self._history_walking = self._history_walking, True
+        try:
+            self._activate_entry(entry)
+        finally:
+            self._history_walking = walking
         rec = self._string(entry, index)
         if entry is not self._entry or rec is None or self._doc is None:
             return
+        self._record_visit(entry, index)
         self._string_bounds = (max(0, rec.start), min(rec.end, self._doc.size))
         self._set_bounds((rec.start, rec.end))
         self.strings.select_index(index)

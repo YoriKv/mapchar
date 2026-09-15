@@ -148,7 +148,8 @@ the preview system in [preview.md](preview.md).
   selection; with several rows selected only Remove and Move
   Up/Down apply. A block's row confines the view to its source, from its
   start — the range, the fixed strings, the pointer table, or the stretch a
-  pointer list's pointers lie in — and a string's row confines it to that
+  pointer list's pointers lie in, unless it was left reading its strings, which
+  it comes back on — and a string's row confines it to that
   string's bytes, with none of them selected (see [Raw view](#raw-view)),
   read as text even when the block reads pointers: the mode shows **Strings**
   and the Reading bar only its **Strings** and **Writing** sections. A string
@@ -254,8 +255,9 @@ and Strings tabs read again at once.
   confines the view to its pointer table and **Strings** to its strings, read
   as text, from the lowest-placed string to the end of the highest — the
   pointers may reach them in any order, share one, or leave bytes between
-  them, and those bytes show too. A block without pointers has **Pointers**
-  disabled.
+  them, and those bytes show too. A block comes back on whichever of the two
+  it was left on, for as long as the session lasts. A block without pointers
+  has **Pointers** disabled.
   The Reading bar shows only the sections and settings the mode uses — in
   Pointers mode the **Strings** section too, since it shapes what Resolve
   pointers shows.
@@ -356,7 +358,8 @@ The exploration surface, the equivalent of celPix's tile canvas.
   and the Reading bar's start, stop, bound and pointer addresses. Offsets are
   typed in hex, with a leading `-` to subtract. **Back /
   Forward** (Alt+Left / Alt+Right, or the browser buttons on a mouse) walk a
-  trail of the entries visited.
+  trail of what has been on screen: the entries visited, and each string
+  opened from the Files panel, which Back comes out of the way it came in.
 - **The keys work wherever the focus is** — a picked table or a clicked row
   does not take the navigation keys away — except inside a text field or a list,
   which spend the arrows themselves. The Text tab's box is not one: read-only,

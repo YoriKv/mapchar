@@ -4,9 +4,13 @@ A session wanders: a bookmark's target, a block's parent file, the entry an undo
 reverted in, the block a search result turned into — several gestures move the
 view somewhere the user did not pick from the Files list, and finding the way
 back by hand means remembering which row it was. So the window keeps a **visit
-trail** of the entries that have been on screen and walks it like a browser's
-history: Back returns to the previous one, Forward retraces, and visiting
-somewhere new from the middle of the trail drops whatever lay ahead.
+trail** of what has been on screen and walks it like a browser's history: Back
+returns to the previous one, Forward retraces, and visiting somewhere new from
+the middle of the trail drops whatever lay ahead.
+
+A visit is an entry, or **one string under a block**: opening a string from the
+Files panel confines the view to its bytes, which is as much a place as the
+block itself, so Back comes out of it the way it came in.
 
 It is **session state, not project state** — a trail of live ``Entry`` objects,
 never written to the ``.mapchar`` file, the same reasoning that keeps the undo
@@ -14,9 +18,10 @@ stack out of it. Two consequences: closing an entry takes its slots out of the
 trail, because they cannot be returned to, and opening a project replaces the
 workspace wholesale, which wipes the trail on the way through.
 
-Recorded from the workspace's ``on_current_changed`` rather than at the
-activation call sites: every way the view can move ends there, and it is the only
-place that is true of.
+Entry visits are recorded from the workspace's ``on_current_changed`` rather than
+at the activation call sites: every way the view can move ends there, and it is
+the only place that is true of. A string has no such funnel and is recorded where
+it is opened, in place of the visit to the block it belongs to.
 """
 
 from __future__ import annotations
@@ -26,6 +31,10 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QMenu
 
 from mapchar.project.workspace import Entry, EntryKind
+
+Visit = tuple[Entry, int | None]
+"""One place the view has been: an entry, and the string of it that was opened
+or ``None`` for the entry itself."""
 
 _TRAIL_LIMIT = 64
 """Deep enough that a session's worth of hopping stays retraceable, bounded so a
@@ -49,10 +58,11 @@ class HistoryMixin:
         deliberately declines, so they reach the shortcut system instead of the
         filter and cannot be stolen from a focused text input.
         """
-        # The entries visited, oldest first, and where in them the view sits.
-        # _history[_history_pos] is always the entry on screen; -1 is an empty
-        # trail, meaning nothing has been shown yet.
-        self._history: list[Entry] = []
+        # The visits, oldest first, and where in them the view sits. Each is an
+        # entry and the string of it that was opened, or None for the entry
+        # itself. _history[_history_pos] is always what is on screen; -1 is an
+        # empty trail, meaning nothing has been shown yet.
+        self._history: list[Visit] = []
         self._history_pos = -1
         # Set while a Back/Forward step activates its target, so the activation
         # it causes is not recorded as a new visit — the whole point of a trail
@@ -83,19 +93,25 @@ class HistoryMixin:
             target = self._history_target(delta)
             action.setEnabled(target is not None)
             where = (
-                f"{way} to {target.name}"
+                f"{way} to {self._visit_name(target)}"
                 if target is not None
                 else f"Nothing to go {way.lower()} to"
             )
             button = "Mouse 4" if delta < 0 else "Mouse 5"
             action.setToolTip(f"{where}\nAlso {button} (the browser {way} button)")
 
-    def _history_target(self, delta: int) -> Entry | None:
-        """The entry ``delta`` steps along the trail, or ``None`` at that end."""
+    def _history_target(self, delta: int) -> Visit | None:
+        """The visit ``delta`` steps along the trail, or ``None`` at that end."""
         at = self._history_pos + delta
         if 0 <= at < len(self._history):
             return self._history[at]
         return None
+
+    def _visit_name(self, visit: Visit) -> str:
+        """What a visit is called in a menu: an entry by its name, a string by
+        the number its Files row carries under its block."""
+        entry, index = visit
+        return entry.name if index is None else f"{entry.name} ▸ string {index}"
 
     def _history_step(self, delta: int) -> None:
         """Move one visit back (-1) or forward (+1); a no-op at either end.
@@ -109,12 +125,16 @@ class HistoryMixin:
         target = self._history_target(delta)
         if target is None:
             return
+        entry, index = target
         self._history_walking = True
         try:
-            self._activate_entry(target)
+            if index is None:
+                self._activate_entry(entry)
+            else:
+                self._show_string(entry, index)
         finally:
             self._history_walking = False
-        if self.workspace.current is target:
+        if self.workspace.current is entry:
             self._history_pos += delta
             self._sync_history_actions()
 
@@ -141,11 +161,12 @@ class HistoryMixin:
             self._history_step(delta)
         return True
 
-    def _record_visit(self, entry: Entry | None) -> None:
-        """Note ``entry`` as the newest visit, dropping any forward tail.
+    def _record_visit(self, entry: Entry | None, index: int | None = None) -> None:
+        """Note ``entry`` — or its string ``index`` — as the newest visit,
+        dropping any forward tail.
 
         Nothing-open (``None``) is not a visit but the absence of one. Re-showing
-        the entry already on screen is not one either: consecutive duplicates
+        what is already on screen is not one either: consecutive duplicates
         would make Back a no-op that looks like a dead key.
         """
         if entry is None or self._history_walking:
@@ -156,10 +177,10 @@ class HistoryMixin:
         # ``workspace.current`` as the neighbour of a closed row.
         if entry.kind not in (EntryKind.FILE, EntryKind.BLOCK):
             return
-        if self._history_target(0) is entry:
+        if self._history_target(0) == (entry, index):
             return
         del self._history[self._history_pos + 1 :]
-        self._history.append(entry)
+        self._history.append((entry, index))
         del self._history[: max(0, len(self._history) - _TRAIL_LIMIT)]
         self._history_pos = len(self._history) - 1
         self._sync_history_actions()
@@ -172,10 +193,10 @@ class HistoryMixin:
         the gap; those collapse into one, or Back would step onto the entry
         already shown and spend a keypress going nowhere.
         """
-        kept: list[Entry] = []
+        kept: list[Visit] = []
         pos = self._history_pos
         for i, visited in enumerate(self._history):
-            if visited is entry or (kept and kept[-1] is visited):
+            if visited[0] is entry or (kept and kept[-1] == visited):
                 if i <= pos:
                     pos -= 1  # a slot at or before the view's own vanished
             else:

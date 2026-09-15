@@ -553,7 +553,6 @@ class ModeToggle(QWidget):
             self._group.addButton(button, index)
             row.addWidget(button)
         self._group.button(0).setChecked(True)
-        self._locked = False
         self._group.idClicked.connect(lambda i: self.chosen.emit(self._data[i]))
 
     def value(self) -> object:
@@ -564,20 +563,6 @@ class ModeToggle(QWidget):
 
     def set_value(self, value: object) -> None:
         self.button(value).setChecked(True)
-
-    def set_locked(self, locked: bool) -> None:
-        """Keep the buttons as they show, pressed one plainly down, but let
-        neither the mouse nor the keyboard change it; hovering the toggle
-        reaches its own tooltip."""
-        for button in self._group.buttons():
-            button.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, locked)
-            button.setFocusPolicy(
-                Qt.FocusPolicy.NoFocus if locked else Qt.FocusPolicy.TabFocus
-            )
-        self._locked = locked
-
-    def locked(self) -> bool:
-        return self._locked
 
 
 class EscapeCloses:

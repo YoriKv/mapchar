@@ -307,7 +307,7 @@ def test_walking_the_trail_does_not_rewrite_it(window, tmp_path):
     window._history_step(1)
     window._history_step(-1)
     assert window._entry is file_entry
-    assert window._history == [file_entry, block]
+    assert window._history == [(file_entry, None), (block, None)]
 
 
 def test_visiting_somewhere_new_drops_the_forward_tail(window, tmp_path):
@@ -315,9 +315,39 @@ def test_visiting_somewhere_new_drops_the_forward_tail(window, tmp_path):
     first = add_block(window, file_entry, "first", RangeSource(0, 8))
     window._history_step(-1)
     second = add_block(window, file_entry, "second", RangeSource(8, 16))
-    assert window._history == [file_entry, second]
+    assert window._history == [(file_entry, None), (second, None)]
     assert first is not None
     assert not window._forward_action.isEnabled()
+
+
+def test_a_string_under_a_block_is_a_visit_of_its_own(window, tmp_path):
+    """Opening a string confines the view to its bytes, which is as much a
+    place as the block, and the click is one step of the trail, not two."""
+    file_entry = _opened(window, tmp_path)
+    block = add_block(window, file_entry, "b", RangeSource(0, 8))
+    window._activate_entry(file_entry)
+    window._show_string(block, 1)
+    assert window._history[-1] == (block, 1)
+    assert window._history == [
+        (file_entry, None),
+        (block, None),
+        (file_entry, None),
+        (block, 1),
+    ]
+    window._history_step(-1)
+    assert "string 1" in window._forward_action.toolTip()  # named in the menu
+    assert window._entry is file_entry
+    window._history_step(1)
+    assert window._entry is block and window._bounds == window._string_bounds
+    assert window._history_pos == 3  # walking it did not rewrite it
+
+
+def test_closing_a_block_forgets_the_visits_to_its_strings(window, tmp_path):
+    file_entry = _opened(window, tmp_path)
+    block = add_block(window, file_entry, "b", RangeSource(0, 8))
+    window._show_string(block, 0)
+    window._forget_visits(block)
+    assert window._history == [(file_entry, None)]
 
 
 def test_nothing_to_go_back_to_disables_the_action(window, tmp_path):
@@ -339,7 +369,7 @@ def test_closing_an_entry_forgets_its_visits(window, tmp_path, monkeypatch):
     block = add_block(window, file_entry, "b", RangeSource(0, 8))
     window._remove_entries([block])
     assert block not in window.workspace.entries
-    assert block not in window._history
+    assert all(e is not block for e, _ in window._history)
     assert not window._back_action.isEnabled()
 
 
@@ -357,7 +387,7 @@ def test_a_reorder_keeps_the_trail(window, tmp_path):
     file_entry = _opened(window, tmp_path)
     block = add_block(window, file_entry, "b", RangeSource(0, 8))
     window.workspace.reorder(block, 0)
-    assert window._history == [file_entry, block]
+    assert window._history == [(file_entry, None), (block, None)]
 
 
 def test_only_entries_that_can_be_the_view_enter_the_trail(window, tmp_path):
@@ -368,17 +398,17 @@ def test_only_entries_that_can_be_the_view_enter_the_trail(window, tmp_path):
     block = add_block(window, file_entry, "b", RangeSource(0, 8))
     table_entry = window.workspace.entry_for_table("main")
     window._activate_entry(table_entry)
-    assert window._history == [file_entry, block]
+    assert window._history == [(file_entry, None), (block, None)]
     assert window._entry is block  # and the view never left
     font_entry = window.open_font(str(tmp_path / "sheet.png"))
     window._activate_entry(font_entry)
-    assert window._history == [file_entry, block]
+    assert window._history == [(file_entry, None), (block, None)]
     assert window._entry is block and window.workspace.current is block
     assert window.preview_window.tabs.currentIndex() == 1  # the Font tab
     window._new_bookmark()
     bookmark = window.workspace.entries[-1]
     window._activate_entry(bookmark)
-    assert window._history == [file_entry, block]
+    assert window._history == [(file_entry, None), (block, None)]
 
 
 def test_re_activating_the_entry_on_screen_keeps_the_position(window, tmp_path):
@@ -389,7 +419,7 @@ def test_re_activating_the_entry_on_screen_keeps_the_position(window, tmp_path):
     window._go_to(0x20)
     window._activate_entry(file_entry)
     assert window._offset == 0x20
-    assert window._history == [file_entry]
+    assert window._history == [(file_entry, None)]
 
 
 def test_the_back_mouse_button_steps_the_trail(window, tmp_path):

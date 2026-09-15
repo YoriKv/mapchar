@@ -159,12 +159,20 @@ class SessionMixin:
             self._string_bounds = None
             self._load_reading_bar()
             self._offset = entry.session.offset
-            # A block opens on its source: the view is confined to it, and the
+            # A block opens on its source, or on its strings when that is what
+            # it was left reading: the view is confined to that stretch, and the
             # position it was left at is kept only while it is inside.
             self._bounds = None
             if entry.kind is EntryKind.BLOCK and entry.config is not None:
                 self._bounds = self._source_bounds(entry)
                 start = source_start(entry.config.source)
+                # A block left reading its strings comes back on them, not on
+                # the source it was made over.
+                span = self._string_span(entry) if entry.session.string_view else None
+                if span is not None:
+                    self._string_bounds = self._bounds = span
+                    start = span[0]
+                    self._sync_view_mode()
                 inside = self._bounds is None or (
                     self._bounds[0] <= self._offset < self._bounds[1]
                 )
@@ -187,3 +195,4 @@ class SessionMixin:
             return
         entry.session.offset = self._offset
         entry.session.view = self._current_view()
+        entry.session.string_view = self._in_string_view()
