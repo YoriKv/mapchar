@@ -165,9 +165,11 @@ the preview system in [preview.md](preview.md).
 - **Reorder** by drag or Alt+Up/Down. **Sort by** Name, Type or (blocks)
   Offset.
 - **Context menu**, by kind: New Block / from Selection, New Bookmark,
-  Rename, Edit File Container…, Container Info…, Save As File…, New
-  Table…, Write, Dump…, Export ▸, Show in File Manager, Remove. Empty space
-  offers Open ROM…, Open Table…, New Table… and Paste.
+  Edit File Container…, Container Info…, Dump All Blocks…, Dump…, Jump to
+  Source, Jump to Bookmark, Edit…, Save As File…, New Table…, Write, Export ▸,
+  Rename…, Cut / Copy / Paste / Duplicate, Move Up / Down, Sort By ▸, Show in
+  File Manager, Remove. Empty space offers Open ROM…, Open Table…, New Table…
+  and Paste.
 - **Cut / Copy / Paste / Duplicate** act on entries (references plus
   settings), never on bytes. The clipboard carries absolute paths, so entries
   paste into another mapchar window.
@@ -419,10 +421,12 @@ The exploration surface, the equivalent of celPix's tile canvas.
   down to the digit and bit, each digit being a nibble; the rest of the window
   gets the bytes it touches. The status bar shows offset, length and the
   selected bytes' decode.
-- **Context menu** — New Block from Selection, New Bookmark, Add to Table
-  (opens the Table Editor with the bytes as a key), Add Skip from Selection
-  (in a block: a skip range over the selected bytes, its own undo step),
-  Search for Selection (as bytes), Copy Hex, Copy Text.
+- **Context menu** — New Block from Selection, New Bookmark, Jump to Pointer
+  Target (on a pointer of the current block) and Jump to Pointer (on a string
+  one of its pointers reaches), Add to Table… (opens the Table Editor with
+  the bytes as a key), Add Skip from Selection (in a block: a skip range over
+  the selected bytes, its own undo step), Search for Selection (as bytes),
+  Copy Hex, Copy Text.
 - **Editing** — the raw view is read-only; editing happens in the Strings
   view or the Hex panel.
 
@@ -546,8 +550,10 @@ as a **Range** of end-token strings — rather than every control at once.
 
 ## Pointers
 
-- **Mappings** — LINEAR, LoROM, HiROM, GB, GBA, and **Banked** (bank size,
-  bank base address, bank number taken from the block or a field). Each
+- **Mappings** — LINEAR, LoROM, HiROM, GB, GBA, **Relative** (the value is
+  the distance from the pointer to its target) and **Banked** (bank size, bank
+  base address, bank number taken from the block or a field), which the two
+  NES layouts `nes_c000` and `nes_8000_2000` are ready-made settings of. Each
   applies after the container's header offset, then the block's `offset`.
 - **Pointer table entry** in the Strings view — every string lists the
   pointers that reach it; a target reached by several pointers is one string
@@ -670,7 +676,6 @@ The editing surface, opened on a block.
 - **Atlas** — **Export** writes an Atlas script plus abcde-dialect tables for
   a block; **Import** reads the subset of Atlas commands that map to block
   settings and reports the rest.
-- **Export raw** writes the block's decoded, decompressed bytes.
 
 ## Compression
 
@@ -807,7 +812,7 @@ in the game. It is described in [preview.md](preview.md).
 **Help ▸ Shortcuts… (F1)** shows the live list in two balanced columns, one
 section per menu, built from the menu bar plus the keys and mouse gestures no
 menu row can carry (the Hex and Text views, the Strings view, the Files panel, the
-Find bar, the Hex panel, the tool windows). **Help ▸ Legend…** explains every colour and mark the Hex and
+Find bar, the Table Editor, the Hex panel, the tool windows). **Help ▸ Legend…** explains every colour and mark the Hex and
 Text views, the Hex panel and the Strings view draw, each beside a swatch.
 **Help ▸ About** gives the version, author, homepage and licenses.
 

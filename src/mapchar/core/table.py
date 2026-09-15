@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
-from mapchar.core.bits import bits_to_hex, hex_to_bits
+from mapchar.core.bits import bits_to_hex
 from mapchar.core.errors import TableError
 from mapchar.core.numbers import parse_num
 from mapchar.core.text import nfc
@@ -163,24 +163,6 @@ class Stop:
         return any_marker
 
 
-def parse_stop(word: str) -> Stop:
-    """A switch parameter's stop as the table dialects write it.
-
-    ``*`` and ``0`` are no stop at all, digits a weighted count, an unsigned
-    operand spec a count read from the data, ``$hex`` and ``%bits`` fallback
-    bits.
-    """
-    if word in ("*", "0"):
-        return Stop()
-    if word.isdigit():
-        return Stop(count=int(word))
-    if word in COUNT_SPECS:
-        return Stop(operand=OperandSpec.parse(word))
-    if word.startswith("$"):
-        return Stop(fallback=hex_to_bits(word[1:]))
-    return Stop(fallback=word[1:])
-
-
 @dataclass(frozen=True)
 class SwitchParam:
     table_id: str
@@ -236,10 +218,6 @@ class Entry:
         """A switch that prints nothing; the encoder inserts it where needed."""
         return self.kind is TokenKind.SWITCH and self.text == ""
 
-    @property
-    def is_end(self) -> bool:
-        return self.kind is TokenKind.END
-
     def is_newline(self, label: str) -> bool:
         """Whether this entry is the line code ``[label]``: a code with that
         label, or text that ends in it. Every rendering breaks the line after
@@ -257,27 +235,6 @@ class Entry:
 def _line_code(label: str) -> re.Pattern[str]:
     """``[label]`` at the end of a text, line-break escapes aside."""
     return re.compile(r"\[" + re.escape(label) + r"\](?:\\n)*$")
-
-
-def sanitize_id(text: str) -> str:
-    """``text`` as a table id: everything ``ID_PATTERN`` rejects becomes ``_``.
-
-    Letters of every script pass, so two Japanese-named tables in one legacy
-    file keep their own names instead of colliding on underscores.
-    """
-    return re.sub(r"[^\w.-]", "_", nfc(text))
-
-
-def sanitize_label(text: str) -> str:
-    """``text`` as a code label: an outer bracket pair off, no whitespace."""
-    text = text.strip()
-    if len(text) >= 2 and text[0] == "[" and text[-1] == "]":
-        text = text[1:-1]
-    fixed = re.sub(r"\s+", "_", text.strip())
-    fixed = re.sub(r"[\[\]]", "_", fixed)
-    if not fixed or fixed[0] in "$%":
-        fixed = "_" + fixed
-    return fixed if LABEL_PATTERN.fullmatch(fixed) else "_" + re.sub(r"\W", "_", fixed)
 
 
 class Table:

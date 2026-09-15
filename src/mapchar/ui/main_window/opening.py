@@ -70,13 +70,12 @@ class OpeningMixin:
             return None
         entry = Entry(EntryKind.TABLE, os.path.basename(path), path, dialect=tf.dialect)
         adopt_table(entry, tf.table, tf.notices)
-        self.undo_stack.beginMacro(f"Open {entry.name}")
-        self._push_add(entry)
-        # A table file holds one table; the others a legacy conversion made are
-        # entries of their own, with no file until they are saved.
-        for extra in tf.extra_tables:
-            self._add_memory_table(extra, f"{extra.id}.tbl")
-        self.undo_stack.endMacro()
+        with self._macro(f"Open {entry.name}"):
+            self._push_add(entry)
+            # A table file holds one table; the others a legacy conversion made
+            # are entries of their own, with no file until they are saved.
+            for extra in tf.extra_tables:
+                self._add_memory_table(extra, f"{extra.id}.tbl")
         if tf.notices:
             self.statusBar().showMessage(
                 f"{entry.name}: {len(tf.notices)} conversion notice(s);"

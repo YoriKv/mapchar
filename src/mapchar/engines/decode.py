@@ -95,23 +95,7 @@ def decode(
     lines = 0
 
     def window(at: int, n: int) -> str:
-        """``n`` bits from ``at``, spliced across skip ranges, cut at the limit."""
-        if not skips:
-            return bits.window(at, min(n, limit - at))
-        out = ""
-        cur = at
-        while len(out) < n and cur < limit:
-            want = n - len(out)
-            nxt = next((s for s, e in skips if cur <= s < cur + want and e != s), None)
-            take = min(want, limit - cur, (nxt - cur) if nxt is not None else want)
-            if take > 0:
-                out += bits.window(cur, take)
-                cur += take
-            if nxt is not None and cur == nxt:
-                cur = next(e for s, e in skips if s == nxt)
-            elif take <= 0:
-                break
-        return out
+        return _window(bits, at, n, limit, skips)
 
     while pos < limit:
         frame = stack[-1]
@@ -337,6 +321,28 @@ def _pop_table(stack: list[_Frame], table: Table) -> bool:
     return True
 
 
+def _window(
+    bits: Bits, at: int, n: int, limit: int, skips: list[tuple[int, int]]
+) -> str:
+    """``n`` bits from ``at``, spliced across skip ranges, cut at the limit."""
+    if not skips:
+        return bits.window(at, min(n, limit - at))
+    out = ""
+    cur = at
+    while len(out) < n and cur < limit:
+        want = n - len(out)
+        nxt = next((s for s, e in skips if cur <= s < cur + want and e != s), None)
+        take = min(want, limit - cur, (nxt - cur) if nxt is not None else want)
+        if take > 0:
+            out += bits.window(cur, take)
+            cur += take
+        if nxt is not None and cur == nxt:
+            cur = next(e for s, e in skips if s == nxt)
+        elif take <= 0:
+            break
+    return out
+
+
 def _advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
     """``n`` bits past ``pos``, jumping over any skip range on the way."""
     if not skips:
@@ -373,7 +379,7 @@ def _read_operands(
     """Read the entry's operands; ``short`` is set when the data ran out."""
     values: list[int] = []
     for spec in entry.operands:
-        chunk = bits.window(pos, min(spec.bits, max(limit - pos, 0)))
+        chunk = _window(bits, pos, spec.bits, limit, skips)
         if len(chunk) < spec.bits:
             return tuple(values), pos, True
         values.append(spec.value_of(chunk))
@@ -382,7 +388,6 @@ def _read_operands(
 
 
 __all__ = [
-    "RAW",
     "DecodeResult",
     "DecodeRules",
     "EndedBy",

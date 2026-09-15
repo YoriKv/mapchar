@@ -22,7 +22,7 @@ from mapchar.core.block import (
 from mapchar.core.capabilities import Capability
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui import BYTES_PER_ROW
-from mapchar.ui.files_panel import PREVIEW_CHARS, string_preview
+from mapchar.ui.entry_text import PREVIEW_CHARS, string_preview
 from window_helpers import ASCII_TABLE, add_block, make_window, open_rom_and_table
 
 DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 0x40

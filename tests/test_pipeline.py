@@ -4,17 +4,17 @@ import pytest
 
 from mapchar.core.context import KEY_HEADER_SIZE, KEY_SOURCE_FILES, PipelineContext
 from mapchar.core.errors import PipelineError
+from mapchar.pipeline.filechange import FileChange
 from mapchar.pipeline.inspection import inspect_container
 from mapchar.pipeline.pipeline import (
-    FileChange,
     FileRef,
     PathwayConfig,
     SlotFill,
     compress_for_slot,
-    find_next_structure,
     load,
     save,
 )
+from mapchar.pipeline.scan import find_next_structure
 from mapchar.plugins.base import PluginInfo, Stage, WriteTarget
 from mapchar.plugins.builtins.containers import NES_MAGIC
 

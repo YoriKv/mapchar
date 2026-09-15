@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
@@ -18,7 +16,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.ui import BYTES_PER_ROW, DUMP_WINDOW_BYTES, settings, theme
+from mapchar.core.bits import parse_hex_bytes
+from mapchar.ui import (
+    BYTES_PER_ROW,
+    DUMP_WINDOW_BYTES,
+    set_setting_bool,
+    setting_bool,
+    theme,
+)
 from mapchar.ui.find_row import FindRow
 from mapchar.ui.number_fields import AddressEdit, AddressSpelling
 from mapchar.ui.widgets import fit_chars, hint_field, mono_font
@@ -101,8 +106,10 @@ class HexPanel(QWidget):
         self._pinned_caret: int | None = None
         """Where the next render must leave the caret — an overtype's own next
         nibble, which outranks both the selection and the caret before it."""
-        self._addr_of: Callable[[int], str] = lambda at: f"{at:06X}"
-        self._addr_width = 6
+        self._spelling = spelling
+        """How the address column is spelled: the window's one spelling, so the
+        dump agrees with the navigation bar rather than always showing a flat
+        offset. Without one, flat hex."""
         self._rendered: tuple[bytes, int, int, int, list[str]] | None = None
         """What the dump's text was last built from — the bytes, the window,
         the address column's width and every address in it — so a render that
@@ -129,7 +136,7 @@ class HexPanel(QWidget):
             "Scroll the dump to whatever is selected in the raw view.\n"
             "Off, the dump stays where you left it."
         )
-        self.follow.setChecked(_stored_follow())
+        self.follow.setChecked(setting_bool(FOLLOW_SELECTION_KEY, True))
         top.addWidget(QLabel("Go to"))
         top.addWidget(self.goto)
         top.addWidget(QLabel("Find"))
@@ -160,9 +167,29 @@ class HexPanel(QWidget):
         self.find_row.find_requested.connect(self.find_requested)
         self.bytes.returnPressed.connect(self._on_apply)
         self.apply.clicked.connect(self._on_apply)
-        self.follow.toggled.connect(_remember_follow)
+        self.follow.toggled.connect(
+            lambda on: set_setting_bool(FOLLOW_SELECTION_KEY, on)
+        )
+        if spelling is not None:
+            # The address format changed under the dump: the column it spells
+            # has to be built again, and nothing else asks it to.
+            spelling.changed.connect(self._on_spelling_changed)
+
+    def _on_spelling_changed(self, _old) -> None:
+        if self.isVisible():
+            self._render()
 
     # -- geometry of one rendered line ---------------------------------------
+    def _addr_of(self, at: int) -> str:
+        """One address as the dump's column spells it."""
+        return self._spelling.format(at) if self._spelling is not None else f"{at:06X}"
+
+    @property
+    def _addr_width(self) -> int:
+        """How wide the address column is: as wide as the file's last address,
+        and never narrower than a flat six-digit offset."""
+        return max(len(self._addr_of(max(len(self._data) - 1, 0))), 6)
+
     @property
     def _hex_start(self) -> int:
         """Column the hex cells begin at: the address column plus its gap."""
@@ -186,16 +213,10 @@ class HexPanel(QWidget):
         data: bytes,
         offset: int,
         selection: tuple[int, int] | None,
-        addr_of: Callable[[int], str] | None = None,
     ) -> None:
-        """The bytes to dump, where from, what is selected, and how to spell an
-        address — the last so the dump's own column agrees with the navigation
-        bar's address format rather than always showing a flat offset."""
+        """The bytes to dump, where from, and what is selected."""
         self._data = data
         self._selection = selection
-        if addr_of is not None:
-            self._addr_of = addr_of
-            self._addr_width = max(len(addr_of(max(len(data) - 1, 0))), 6)
         if selection and self.follow.isChecked():
             offset = max(0, selection[0] - selection[0] % BYTES_PER_ROW)
         self._offset = offset - offset % BYTES_PER_ROW
@@ -295,21 +316,11 @@ class HexPanel(QWidget):
     def _on_apply(self) -> None:
         at = self.at.value()
         try:
-            data = bytes.fromhex(self.bytes.text().replace("$", "").replace(",", " "))
+            data = parse_hex_bytes(self.bytes.text())
         except ValueError:
             return
         if at is not None and data:
             self.overtype_requested.emit(at, data)
-
-
-def _stored_follow() -> bool:
-    """The remembered Follow selection switch, on by default."""
-    value = settings().value(FOLLOW_SELECTION_KEY, True)
-    return value if isinstance(value, bool) else str(value).lower() in ("true", "1")
-
-
-def _remember_follow(on: bool) -> None:
-    settings().setValue(FOLLOW_SELECTION_KEY, on)
 
 
 __all__ = ["FOLLOW_SELECTION_KEY", "HexPanel"]

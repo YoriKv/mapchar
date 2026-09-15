@@ -80,7 +80,7 @@ by `id`.
 | `address`     | `$start`                                                       |
 | `original`    | the decode, with codes in brackets and line breaks after `\n` tokens |
 | `translation` | the translation, empty when untouched                          |
-| `status`      | `untouched`, `edited`, `review`, `too_long`, `invalid`         |
+| `status`      | `untouched`, `edited`, `review`                                |
 | `notes`       | free text                                                      |
 
 - **TSV / CSV** — a header row then one row per string; line breaks inside
@@ -96,8 +96,8 @@ by `id`.
   current decode is skipped and listed, unless **Force** is on; the comparison
   is on NFC, so a round trip through an editor that decomposes text skips
   nothing. `status` becomes *edited* when the translation changed and *review*
-  when the record says so; `too_long` and `invalid` are recomputed, never
-  imported.
+  when the record says so; whether a string is too long or does not encode is
+  recomputed, never imported.
 
 ## Cartographer
 
@@ -118,7 +118,7 @@ and creates one block per `#BLOCK`:
 | `STRING END REALIGN *`                | realign                                                 |
 | `AUTO JUMP START/STOP`                | skip ranges                                             |
 | `TABLE`, `TABLE ID`, `SUB TABLE`      | table files registered through the abcde dialect; start table |
-| `SORT OUTPUT BY STRING ADDRESS`       | Strings view sort, saved in the block                   |
+| `SORT OUTPUT BY STRING ADDRESS`       | recorded on the command file, no effect on the block     |
 | `COMMENTS`, `SHOW END ADDRESS`, `TRIM TRAILING NEWLINES`, `ATLAS PTRS`, `GAME NAME` | recorded for export, no effect on the block |
 
 The block is then extracted. The exporter writes the reverse mapping for a
@@ -149,7 +149,9 @@ inserts ([`../abcde/atlas.md`](../abcde/atlas.md)):
 
 The text is what mapchar would insert; the pointer commands reproduce
 mapchar's *packed* layout. A block in *slotted* mode exports one `#JMP` per
-string.
+string. Every address the script carries is a **file offset** — Atlas writes to
+the ROM file, so the container's header is added to it, and the import
+subtracts it back off.
 
 **Import** reads the subset of Atlas that maps onto a block: `#ADDTBL`,
 `#ACTIVETBL`, `#JMP`, `#HDR`, `#W8`–`#W32`, `#PTRTBL`/`#WRITE`,

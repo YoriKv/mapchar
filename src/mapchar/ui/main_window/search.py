@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mapchar.core.bits import parse_hex_bytes
 from mapchar.core.errors import MapcharError
 
 
@@ -117,7 +118,7 @@ class SearchMixin:
                 return None
             return result.data
         try:
-            return bytes.fromhex(text.replace("$", "").replace(" ", ""))
+            return parse_hex_bytes(text)
         except ValueError:
             self._error("Not hex bytes.")
             return None

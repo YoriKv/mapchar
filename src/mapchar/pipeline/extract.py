@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from mapchar.core.bits import Bits
+from mapchar.core.bits import Bits, bits_to_bytes
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -19,10 +19,12 @@ from mapchar.core.block import (
     RangeSource,
     StringRecord,
 )
+from mapchar.core.mapping import read_pointer
 from mapchar.core.notices import Notice
 from mapchar.core.table import Entry, TableSet, TokenKind
 from mapchar.core.tokens import CodeRef, TextRun, Token, escape_text, parse_text
 from mapchar.engines.decode import DecodeResult, DecodeRules, EndedBy, decode
+from mapchar.plugins.registry import mapping_for
 
 
 def artificial(label: str, bit: int) -> Token:
@@ -82,12 +84,10 @@ def extract(
     raise TypeError(f"unknown source {source!r}")
 
 
-def read_pointers(
+def _read_pointers(
     data: bytes, source: PointerTableSource | PointerListSource, registry
 ) -> tuple[list[PointerRef], list[int | None], list[Notice]]:
     """Every pointer of the source with its target offset (None when unmapped)."""
-    from mapchar.core.mapping import mapping_for, read_pointer
-
     mapping = mapping_for(source, registry)
     notices: list[Notice] = []
     if mapping is None:
@@ -143,7 +143,7 @@ def _extract_pointers(
     source: PointerTableSource | PointerListSource,
     registry,
 ) -> Extraction:
-    refs, targets, notices = read_pointers(bits.data, source, registry)
+    refs, targets, notices = _read_pointers(bits.data, source, registry)
     # One string per distinct target, in address order, with every pointer.
     by_target: dict[int, list[PointerRef]] = {}
     for ref, target in zip(refs, targets, strict=True):
@@ -214,7 +214,7 @@ def _decode_pascal(bits, config, tables, start, stop_bit, st: Pascal):
             start,
             [Notice("Pascal length past the end of the data", offset=start // 8)],
         )
-    raw = int(chunk, 2).to_bytes(st.width, "big")
+    raw = bits_to_bytes(chunk)
     n = int.from_bytes(raw, "big" if st.endian == "big" else "little")
     body = start + length_bits
     if st.counts_tokens:

@@ -12,10 +12,10 @@ from mapchar.core.block import (
     RangeSource,
     WriteMode,
 )
-from mapchar.core.mapping import resolve_mapping
 from mapchar.engines.pointers import discover
 from mapchar.pipeline.extract import extract
 from mapchar.plugins.base import Stage
+from mapchar.plugins.registry import resolve_mapping
 
 TS = table_set(ABC_TABLE, "main")
 

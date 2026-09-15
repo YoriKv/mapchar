@@ -27,9 +27,6 @@ from enum import Enum
 from typing import Any, TypeVar
 
 from mapchar.core.context import (
-    KEY_COMPLETE,
-    KEY_CONSUMED,
-    KEY_DECOMPRESS_PARTIAL,
     KEY_HEADER_SIZE,
     KEY_SOURCE_FILES,
     KEY_SUGGESTED_MAPPING,
@@ -37,26 +34,22 @@ from mapchar.core.context import (
     SourceSpan,
 )
 from mapchar.core.errors import MapcharError, PipelineError, Stage
+from mapchar.pipeline.filechange import current_bytes
 from mapchar.plugins.base import RAW_CONTAINER, ReadSource, WriteTarget, writes_back
 from mapchar.plugins.registry import PassThrough, Registry
 
 T = TypeVar("T")
 
 __all__ = [
-    "FileChange",
     "FileRef",
     "Loaded",
     "MapcharError",
     "PathwayConfig",
     "PipelineError",
-    "ScanResult",
     "SlotFill",
     "Stage",
-    "Structure",
+    "bind_tables",
     "compress_for_slot",
-    "decompress_at",
-    "existing_bytes",
-    "find_next_structure",
     "load",
     "save",
 ]
@@ -352,7 +345,7 @@ def load(
 
     data = _run(Stage.CONTAINER, _id(container), "read", read, config.pathway)
     for stage, plugin in stages[1:]:
-        _bind(plugin, raw, ctx)
+        bind_tables(plugin, raw, ctx)
         data = _run(
             stage,
             _id(plugin),
@@ -396,7 +389,7 @@ def _container_hints(container: Any, source: ReadSource, ctx: PipelineContext) -
             ctx.set(KEY_HEADER_SIZE, header)
 
 
-def _bind(plugin: Any, rom: bytes, ctx: PipelineContext) -> None:
+def bind_tables(plugin: Any, rom: bytes, ctx: PipelineContext) -> None:
     """Hand a scheme the whole buffer, for the ones whose tables live in it.
 
     A Huffman tree at a fixed ROM address is not in the stream being decoded, so
@@ -443,7 +436,15 @@ def compress_for_slot(
     buffer it was read from, so a short one means something went wrong and
     inventing bytes to cover it would bury that.
     """
-    stages = _stages(config, registry)
+    return _compress_for_slot(data, config, _stages(config, registry), ctx)
+
+
+def _compress_for_slot(
+    data: bytes,
+    config: PathwayConfig,
+    stages: list[tuple[Stage, Any]],
+    ctx: PipelineContext,
+) -> bytes:
     packed = data
     for stage, plugin in reversed(stages[1:]):
         if not writes_back(plugin, stage):
@@ -487,9 +488,14 @@ def compress_for_slot(
 def save(
     data: bytes, config: PathwayConfig, registry: Registry, ctx: PipelineContext
 ) -> list[str]:
-    """Run the stages backward and store the result: the paths that changed."""
-    packed = compress_for_slot(data, config, registry, ctx)
-    container = _stages(config, registry)[0][1]
+    """Run the stages backward and store the result: the paths that changed.
+
+    The container is asked whether it writes back at all **before** anything is
+    compressed: the answer does not depend on the bytes, so packing them first
+    would only put work in front of the same refusal.
+    """
+    stages = _stages(config, registry)
+    container = stages[0][1]
     if not writes_back(container, Stage.CONTAINER):
         raise PipelineError(
             Stage.CONTAINER,
@@ -498,6 +504,7 @@ def save(
             "container cannot write back",
             config.pathway,
         )
+    packed = _compress_for_slot(data, config, stages, ctx)
     return _deposit(
         config,
         lambda target: _run(
@@ -532,7 +539,7 @@ def _deposit(
     identically.
     """
     paths = config.source.paths
-    blobs = [_existing(p) for p in paths]
+    blobs = [current_bytes(p) for p in paths]
     existing = b"".join(blobs)
     out = produce(
         WriteTarget(existing, paths, config.source.offset, config.source.length)
@@ -558,197 +565,3 @@ def _deposit(
             f.write(chunk)
         written.append(path)
     return written
-
-
-def _existing(path: str) -> bytes:
-    """A *destination's* current bytes, or ``b""`` when it is not there yet.
-
-    Write-side only. A missing **source** is a hard failure that the load's
-    error funnel reports; a missing destination is a file about to be created.
-    """
-    if not os.path.exists(path):
-        return b""
-    with open(path, "rb") as f:
-        return f.read()
-
-
-def existing_bytes(paths: tuple[str, ...]) -> dict[str, bytes]:
-    """What each destination holds right now, keyed by path."""
-    return {p: _existing(p) for p in paths}
-
-
-@dataclass(frozen=True)
-class FileChange:
-    """The bytes one write changed in one file, and enough to put either side back.
-
-    Only the run that differs is held — a write changes one block's region of a
-    ROM — with the file's size on each side, since a single file may grow or
-    shrink. :meth:`apply` moves the file from ``before`` to ``after``, and
-    :meth:`flipped` is the same change the other way, so an undo and a redo are
-    one operation over a pair rather than two.
-    """
-
-    path: str
-    offset: int
-    before: bytes
-    after: bytes
-    before_size: int
-    after_size: int
-
-    @classmethod
-    def between(cls, path: str, before: bytes, after: bytes) -> FileChange | None:
-        """The change from ``before`` to ``after``; ``None`` when they are equal."""
-        if before == after:
-            return None
-        start = 0
-        limit = min(len(before), len(after))
-        while start < limit and before[start] == after[start]:
-            start += 1
-        end = 0
-        limit -= start
-        while end < limit and before[-1 - end] == after[-1 - end]:
-            end += 1
-        return cls(
-            path,
-            start,
-            before[start : len(before) - end],
-            after[start : len(after) - end],
-            len(before),
-            len(after),
-        )
-
-    def flipped(self) -> FileChange:
-        return FileChange(
-            self.path,
-            self.offset,
-            self.after,
-            self.before,
-            self.after_size,
-            self.before_size,
-        )
-
-    def _holds(self, data: bytes, chunk: bytes, size: int) -> bool:
-        if len(data) != size:
-            return False
-        return data[self.offset : self.offset + len(chunk)] == chunk
-
-    def holds_after(self) -> bool:
-        return self._holds(_existing(self.path), self.after, self.after_size)
-
-    def holds_before(self) -> bool:
-        return self._holds(_existing(self.path), self.before, self.before_size)
-
-    def apply(self) -> bool:
-        """Put ``after`` in the file: ``True`` once it holds it.
-
-        The file is read **now**, as a write reads it, and only a file whose
-        run still holds ``before`` is touched — one changed there since, by
-        another program or by hand, holds neither side and is left as it is,
-        which is the ``False``. Bytes outside the run are the file's own
-        business, as they are to the write.
-        """
-        data = _existing(self.path)
-        if self._holds(data, self.after, self.after_size):
-            return True
-        if not self._holds(data, self.before, self.before_size):
-            return False
-        end = self.offset + len(self.before)
-        with open(self.path, "wb") as f:
-            f.write(data[: self.offset] + self.after + data[end:])
-        return True
-
-
-@dataclass(frozen=True)
-class Structure:
-    """One compressed structure as a scheme read it."""
-
-    data: bytes
-    consumed: int
-    """Compressed bytes the scheme took from its input."""
-    complete: bool
-    """Whether it reached its end marker rather than the edge of the window."""
-
-
-def decompress_at(
-    buffer: bytes,
-    plugin: Any,
-    offset: int,
-    *,
-    partial: bool = False,
-    window: int = 0,
-    ctx: PipelineContext | None = None,
-) -> Structure | None:
-    """``plugin``'s reading of the structure at ``offset``, or ``None``.
-
-    ``None`` means the scheme rejected the bytes — the ordinary answer at almost
-    every offset, which is why this reports rather than raises: a probe is not a
-    load, and the caller is asking *whether* there is a structure here.
-
-    ``partial`` asks for the prefix decoded so far when the input runs out
-    mid-structure (:data:`KEY_DECOMPRESS_PARTIAL`), which is what a bounded
-    preview wants: the window it was given is its own limit, not evidence that
-    the data is bad. ``window`` caps how many compressed bytes are fed in;
-    0 feeds the rest of the buffer.
-    """
-    ctx = PipelineContext() if ctx is None else ctx
-    if partial:
-        ctx.set(KEY_DECOMPRESS_PARTIAL, True)
-    end = len(buffer) if window <= 0 else offset + window
-    try:
-        data = plugin.decompress(buffer[offset:end], ctx)
-    except Exception:  # noqa: BLE001 - not a structure here
-        return None
-    if not data:
-        return None
-    return Structure(data, int(ctx.get(KEY_CONSUMED) or 0), bool(ctx.get(KEY_COMPLETE)))
-
-
-@dataclass(frozen=True)
-class ScanResult:
-    """Where a forward structure scan ended (:func:`find_next_structure`).
-
-    ``found`` is the hit offset or ``None``; ``end`` is where the scan stopped,
-    which is where a caller lands when there was no hit; ``stopped`` is True
-    when the caller aborted through its tick callback rather than reaching the
-    end.
-    """
-
-    found: int | None
-    end: int
-    stopped: bool
-
-
-def find_next_structure(
-    buffer: bytes,
-    plugin: Any,
-    start: int,
-    *,
-    min_size: int = 16,
-    window: int = 0,
-    progress_every: int = 256,
-    on_tick: Callable[[int], bool] | None = None,
-) -> ScanResult:
-    """The first offset at or after ``start`` where ``plugin`` reads a structure.
-
-    Walks the buffer a byte at a time, trying a **strict** decode at each one; a
-    hit is a *complete* structure of at least ``min_size`` bytes. Strict and
-    complete because a best-effort partial decode succeeds on almost any bytes,
-    which would make every offset a hit and the scan useless.
-
-    Qt-free, and cancellable: every ``progress_every`` bytes ``on_tick(pos)`` is
-    called if given, and returning True abandons the scan. That is the whole of
-    how the toolbar's Stop button reaches in — the UI pumps its event loop in
-    the callback and answers from whatever the user did.
-    """
-    ctx = PipelineContext()
-    _bind(plugin, buffer, ctx)
-    pos = max(0, start)
-    size = len(buffer)
-    while pos < size:
-        found = decompress_at(buffer, plugin, pos, window=window)
-        if found is not None and found.complete and len(found.data) >= min_size:
-            return ScanResult(pos, pos, False)
-        pos += 1
-        if on_tick is not None and pos % progress_every == 0 and on_tick(pos):
-            return ScanResult(None, pos, True)
-    return ScanResult(None, pos, False)

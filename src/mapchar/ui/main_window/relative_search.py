@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QInputDialog, QMessageBox
+from copy import deepcopy
+
+from PySide6.QtWidgets import QInputDialog
 
 from mapchar.core.table import Entry as TableEntry
 from mapchar.core.table import Table
 from mapchar.engines.relsearch import Hit, entries_from_base, entries_from_hit
-from mapchar.ui.table_editor import ALPHABETS
+from mapchar.ui.alphabets import RUN_NAMES
+from mapchar.ui.undo_commands import TableCommand
 
 
 class RelativeSearchMixin:
@@ -17,7 +20,7 @@ class RelativeSearchMixin:
     rest of the window only through ``self``.
     """
 
-    _RUN_NAMES = {run: name for name, run in ALPHABETS.items()}
+    _RUN_NAMES = RUN_NAMES
     """What the Build table dialog calls each alphabet run: the Table Editor's
     Fill names, so one hit and one fill offer the same alphabets."""
 
@@ -53,22 +56,21 @@ class RelativeSearchMixin:
             return
         table_id = self._current_table_id()
         target = self.workspace.entry_for_table(table_id or "")
-        if (
-            target is not None
-            and QMessageBox.question(
-                self,
-                "Build Table",
-                f"Add {len(entries)} entries to @{table_id}? (No creates a new table)",
-            )
-            == QMessageBox.StandardButton.Yes
+        if target is not None and self._ask(
+            "Build Table",
+            f"Add {len(entries)} entries to @{table_id}? (No creates a new table)",
         ):
-            table = target.table
+            # Through a command like every other table change, so the entries
+            # added here go back out on one undo.
+            before = target.table
+            after = deepcopy(before)
             added = 0
             for entry in entries:
-                if entry.bits not in table.entries:
-                    table.add(entry)
+                if entry.bits not in after.entries:
+                    after.add(entry)
                     added += 1
-            self.workspace.stamp(target)
+            if added:
+                self._push_command(TableCommand(self, target, deepcopy(before), after))
             self.statusBar().showMessage(f"Added {added} entries to @{table_id}", 4000)
         else:
             name = f"relsearch_{hit.offset:X}"

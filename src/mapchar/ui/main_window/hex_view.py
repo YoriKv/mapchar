@@ -11,9 +11,8 @@ class HexViewMixin:
     """
 
     def _sync_hex_panel(self) -> None:
-        """Hand the dock the bytes, the position, the selection and the address
-        format — the last so its address column agrees with the navigation bar's
-        rather than always spelling a flat offset.
+        """Hand the dock the bytes, the position and the selection. It spells its
+        own address column, from the window's ``AddressSpelling``.
 
         Only while the dock is visible: the dump is the most expensive surface in
         the window to render and the least often open.
@@ -22,11 +21,9 @@ class HexViewMixin:
             return
         doc = self._doc
         if doc is None:
-            self.hex_panel.set_data(b"", 0, None, self._format_address)
+            self.hex_panel.set_data(b"", 0, None)
         else:
-            self.hex_panel.set_data(
-                doc.data, self._offset, self._selection, self._format_address
-            )
+            self.hex_panel.set_data(doc.data, self._offset, self._selection)
 
     def _find_text_or_bytes(self, text: str, backwards: bool = False) -> None:
         """The Hex dock's find field: the same search as the Find bar's, which

@@ -3,15 +3,16 @@ from __future__ import annotations
 import os
 
 from mapchar.plugins.base import Stage
-from mapchar.plugins.discovery import (
-    ENV_VAR,
-    PLUGIN_README,
-    TrustStore,
-    discover,
-    plugin_roots,
-    seed_examples,
-)
+from mapchar.plugins.discovery import ENV_VAR, discover, plugin_roots
+from mapchar.plugins.examples import PLUGIN_README, seed_examples
 from mapchar.plugins.registry import default_registry
+from mapchar.plugins.trust import TrustStore
+from mapchar.project.tables import read_table_file
+
+
+def read_table(path: str):
+    """What the app injects: a ``.tbl`` charset read as a table."""
+    return read_table_file(path).table
 
 
 def test_roots_and_seed(tmp_path, monkeypatch):
@@ -108,7 +109,9 @@ def test_discover_presets_code_and_issues(tmp_path, registry):
         asked.append(os.path.basename(path))
         return not path.endswith("declined.py")
 
-    result = discover(registry, plugin_roots(str(user), None), trust, confirm)
+    result = discover(
+        registry, plugin_roots(str(user), None), trust, confirm, read_table
+    )
     assert (
         "mine" in result.loaded
         and "swap2" in result.loaded
@@ -266,7 +269,9 @@ def test_a_preset_with_a_byte_order_mark_and_a_kana_name_loads(tmp_path, registr
     (user / "charsets").mkdir()
     (user / "charsets" / "かな.tbl").write_bytes("41=あ\n42=が\n".encode("cp932"))
 
-    result = discover(registry, plugin_roots(str(user), None), TrustStore(None), None)
+    result = discover(
+        registry, plugin_roots(str(user), None), TrustStore(None), None, read_table
+    )
 
     assert not result.issues
     assert set(result.loaded) == {"ろむ", "かな"}

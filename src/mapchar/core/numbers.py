@@ -23,20 +23,53 @@ def format_num(value: int) -> str:
     return f"${value:X}" if value >= 0 else f"$-{-value:X}"
 
 
+_HEX_DIGITS = "0123456789abcdefABCDEF"
+
+
+def _scan_hex(text: str, signed: bool) -> tuple[int, str]:
+    """``(sign, digits)`` of a hex number written with ``$``, ``0x`` or ``_``.
+
+    ``digits`` is empty for blank text, which each caller answers its own way;
+    anything else that is not hex raises ``ValueError``.
+    """
+    digits, sign = text.strip(), 1
+    if signed:
+        for prefix in ("-$", "$-", "-", "$"):
+            if digits.startswith(prefix):
+                digits, sign = digits[len(prefix) :], -1 if "-" in prefix else 1
+                break
+    else:
+        digits = digits.removeprefix("$")
+    digits = digits.removeprefix("0x").removeprefix("0X").replace("_", "")
+    if digits and not all(c in _HEX_DIGITS for c in digits):
+        raise ValueError(f"not a hex number: {text!r}")
+    return sign, digits
+
+
+def parse_hex(text: str, default: int | None = 0) -> int | None:
+    """A hex number written with any of ``$``, ``0x`` or ``_``; empty is ``default``."""
+    sign, digits = _scan_hex(text, signed=True)
+    return default if not digits else sign * int(digits, 16)
+
+
 def parse_hex_offset(text: str) -> int:
     """A signed hex offset — ``1F0``, ``$1F0``, ``-10``, ``-$10`` or ``$-10``.
 
     Raises ``ValueError``, blank text included.
     """
-    digits, sign = text.strip(), 1
-    for prefix in ("-$", "$-", "-", "$"):
-        if digits.startswith(prefix):
-            digits, sign = digits[len(prefix) :], -1 if "-" in prefix else 1
-            break
-    digits = digits.removeprefix("0x").removeprefix("0X")
-    if not digits or not all(c in "0123456789abcdefABCDEF_" for c in digits):
+    sign, digits = _scan_hex(text, signed=True)
+    if not digits:
         raise ValueError(f"not a hex offset: {text!r}")
     return sign * int(digits, 16)
+
+
+def parse_flat_hex(text: str) -> int | None:
+    """An unsigned hex offset, or ``None`` for blank text or text nothing reads."""
+    try:
+        _, digits = _scan_hex(text, signed=False)
+    except ValueError:
+        return None
+    return int(digits, 16) if digits else None
 
 
 def format_hex_offset(value: int) -> str:

@@ -18,10 +18,15 @@ from typing import TYPE_CHECKING
 from mapchar.core.errors import MapcharError
 from mapchar.core.notices import Level, Notice
 from mapchar.core.table import Table
-from mapchar.core.text import read_text_any
 from mapchar.plugins.charsets import apply_charset
-from mapchar.project.formats.table_legacy import load_table_text
-from mapchar.project.formats.table_native import format_entry_lines, parse_entry_lines
+from mapchar.project.formats.legacy import load_table_text
+from mapchar.project.formats.table_native import (
+    format_entry_lines,
+    parse_entry_lines,
+    sanitize_id,
+)
+from mapchar.project.formats.textfile import read_text_any
+from mapchar.project.workspace import free_name
 
 if TYPE_CHECKING:
     from mapchar.plugins.registry import Registry
@@ -29,17 +34,33 @@ if TYPE_CHECKING:
     from mapchar.project.workspace import Entry as WorkspaceEntry
 
 
+def table_id_for(path: str | None) -> str:
+    """The name a table file without a ``@table`` line gives its table."""
+    if not path:
+        return "table"
+    name = path.replace("\\", "/").rsplit("/", 1)[-1]
+    if "." in name:
+        name = name.rsplit(".", 1)[0]
+    return sanitize_id(name) or "table"
+
+
+def free_table_id(table_id: str, taken) -> str:
+    """``table_id``, numbered up (``main_2``) until it is not in ``taken``."""
+    return free_name(table_id, taken, "{name}_{n}")
+
+
 def read_table_file(
     path: str, dialect: str | None = None, registry: Registry | None = None
 ) -> TableFile:
     """The table in ``path``, read in ``dialect``; ``None`` detects it.
 
-    The encoding is decided by :func:`~mapchar.core.text.read_text_any`: UTF-8,
-    else ``cp932`` for the Shift-JIS tables legacy tools left behind, else
-    ``latin-1``. Anything but UTF-8 is recorded as a notice and left on
-    ``TableFile.encoding``, so the UI can say what the file was read as. Given a
-    ``registry``, every table has its charset applied. Raises ``OSError`` for
-    the file and :class:`~mapchar.core.errors.MapcharError` for its contents.
+    The encoding is decided by
+    :func:`~mapchar.project.formats.textfile.read_text_any`: UTF-8, else
+    ``cp932`` for the Shift-JIS tables legacy tools left behind, else
+    ``latin-1``. Anything but UTF-8 is left on ``TableFile.encoding`` and said
+    in a notice, which is what the Table Editor shows. Given a ``registry``,
+    every table has its charset applied. Raises ``OSError`` for the file and
+    :class:`~mapchar.core.errors.MapcharError` for its contents.
     """
     text, encoding = read_text_any(path)
     tf = load_table_text(text, path, dialect)
@@ -57,7 +78,7 @@ def read_table_file(
         )
     if registry is not None:
         for table in tf.tables:
-            apply_charset(table, registry)
+            apply_charset(table, registry, tf.notices)
     return tf
 
 

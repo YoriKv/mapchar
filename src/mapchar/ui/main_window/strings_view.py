@@ -8,14 +8,14 @@ from collections import Counter
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMenu
 
-from mapchar.core.block import FixedLength, Status, WriteMode
+from mapchar.core.block import Status, block_bound
 from mapchar.core.document import Document
 from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
 from mapchar.engines.layout import layout as layout_glyphs
 from mapchar.pipeline.extract import extract
-from mapchar.pipeline.insert import block_bound, layout_block
-from mapchar.project.workspace import Entry, StringState
+from mapchar.pipeline.insert import layout_block, room_for
+from mapchar.project.workspace import Entry
 from mapchar.ui.strings_view import CodeInfo, RowData
 from mapchar.ui.undo_commands import StringFieldCommand
 
@@ -46,31 +46,6 @@ class StringsViewMixin:
         source = rec.translation if rec.translation is not None else rec.original
         return layout_glyphs(source, font_entry.font, entry.box).overflows
 
-    @staticmethod
-    def _stash_strings(entry: Entry, doc: Document | None = None) -> None:
-        """Copy a block's translations onto the entry, where no document holds
-        them.
-
-        The safety net under everything that drops or fails to build a document
-        — a block edit, an unavailable table, a refused extraction — so the next
-        successful read puts the same translations back on the same indices.
-        Merged into whatever is already stashed, since a block may go through
-        several such rounds before it reads again.
-        """
-        doc = doc if doc is not None else entry.doc
-        if doc is None or not doc.strings:
-            return
-        saved = dict(entry.pending_strings or {})
-        for rec in doc.strings:
-            touched = (
-                rec.translation is not None
-                or rec.status is not Status.UNTOUCHED
-                or rec.notes
-            )
-            if touched:
-                saved[rec.index] = StringState(rec.translation, rec.status, rec.notes)
-        entry.pending_strings = saved or None
-
     def _extract_current(
         self, entry: Entry, doc: Document, tables: TableSet | None
     ) -> bool:
@@ -88,7 +63,7 @@ class StringsViewMixin:
             # a document drop cannot reach them — every translation of every
             # block on that table would otherwise go with it. The block reads
             # as unreadable in the Files panel until the table comes back.
-            self._stash_strings(entry, doc)
+            entry.stash_strings(doc)
             changed = doc.extraction_key is not None
             doc.extraction_key = None
             self.statusBar().showMessage(
@@ -113,7 +88,7 @@ class StringsViewMixin:
             # nothing to replace the translations with, and dropping them would
             # lose work the user cannot get back.
             self.statusBar().showMessage(str(exc), 5000)
-            self._stash_strings(entry, doc)
+            entry.stash_strings(doc)
             return False
         old = {s.index: s for s in doc.strings}
         for rec in ex.strings:
@@ -194,7 +169,7 @@ class StringsViewMixin:
 
     def _row_for(self, rec, cfg, result, bound: int, problems=None) -> RowData:
         used = rec.byte_length(cfg.skips) if cfg is not None else rec.length
-        room, problem = self._room(rec, cfg, bound), ""
+        room, problem = room_for(rec, cfg, bound), ""
         status = rec.status.value
         if result is not None:
             enc = result.encoded.get(rec.index)
@@ -221,18 +196,6 @@ class StringsViewMixin:
             problem,
             " ".join(f"{p.address:X}" for p in rec.pointers),
         )
-
-    @staticmethod
-    def _room(rec, cfg, bound: int) -> int:
-        """How many bytes the string may take: its own, or up to the block's
-        ``bound`` (:func:`~mapchar.core.block.block_bound`) when it is packed."""
-        if cfg is None:
-            return rec.length
-        if isinstance(cfg.string_type, FixedLength):
-            return cfg.string_type.length
-        if cfg.effective_write_mode is WriteMode.PACKED:
-            return max(bound - rec.start, 0)
-        return rec.byte_length(cfg.skips)
 
     def _refresh_string_row(self, entry, index: int) -> None:
         doc = entry.doc
@@ -288,15 +251,19 @@ class StringsViewMixin:
         entry = self._entry
         if entry is None or entry.doc is None:
             return
-        self.undo_stack.beginMacro("Copy originals")
-        for rec in entry.doc.strings:
-            if rec.translation is None:
-                self._push_command(
-                    StringFieldCommand(
-                        self, entry, rec.index, "translation", None, rec.original_text()
+        with self._macro("Copy originals"):
+            for rec in entry.doc.strings:
+                if rec.translation is None:
+                    self._push_command(
+                        StringFieldCommand(
+                            self,
+                            entry,
+                            rec.index,
+                            "translation",
+                            None,
+                            rec.original_text(),
+                        )
                     )
-                )
-        self.undo_stack.endMacro()
 
     def _strings_menu(self, indices: list[int], pos: QPoint) -> None:
         menu = QMenu(self)
@@ -323,6 +290,9 @@ class StringsViewMixin:
         self._sync_preview()
         if not (self._offset <= rec.start < self._offset + self._view_bytes()):
             self._go_to(rec.start)
+        # Through the one selection path, so the Hex dock follows too — and
+        # after the move, which would otherwise sync it before the selection is
+        # on the window. ``select_index`` blocks its signals, so the row the
+        # selection lands back on does not come round again.
         self.raw.set_selection(rec.start, rec.end)
-        self._selection = (rec.start, rec.end)
-        self._update_nav_status()
+        self._on_selection(rec.start, rec.end)

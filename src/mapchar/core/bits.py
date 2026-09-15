@@ -87,14 +87,6 @@ def format_key(bits: str) -> str:
     return bits_to_hex(bits)
 
 
-def parse_hex(text: str, default: int = 0) -> int:
-    """A hex number written with any of ``$``, ``0x`` or ``_``; empty is ``default``."""
-    text = text.strip().replace("$", "").replace("0x", "").replace("_", "")
-    if not text:
-        return default
-    return int(text, 16)
-
-
 def align_up(pos: int, multiple: int, offset: int = 0) -> int:
     """The first position at or after ``pos`` that is ``offset`` past a multiple.
 
@@ -115,3 +107,10 @@ _REVERSED = bytes(int(format(b, "08b")[::-1], 2) for b in range(256))
 def reverse_bits(data: bytes) -> bytes:
     """Every byte with its bits in the opposite order."""
     return data.translate(_REVERSED)
+
+
+def parse_hex_bytes(text: str) -> bytes:
+    """Typed hex bytes: pairs of hex digits, with ``$`` before any of them and
+    spaces or commas between them. Raises ``ValueError`` on anything else."""
+    cleaned = text.replace("$", "").replace(",", " ")
+    return bytes.fromhex(cleaned)

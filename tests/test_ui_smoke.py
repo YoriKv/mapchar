@@ -9,7 +9,7 @@ from helpers import pointer_rom, texts
 from mapchar.core.block import RangeSource, Status
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.main_window import MainWindow
-from mapchar.ui.raw_widget import POINTER_TOKENS
+from mapchar.ui.token_text import POINTER_TOKENS
 from window_helpers import ASCII_TABLE, TABLE, add_block, open_rom_and_table
 
 
@@ -308,7 +308,7 @@ def test_table_editor_shift_and_fill(window, tmp_path, monkeypatch):
     editor.set_entry(entry)
     from PySide6.QtWidgets import QDialog
 
-    from mapchar.ui.table_editor import FillDialog, ShiftKeysDialog
+    from mapchar.ui.table_dialogs import FillDialog, ShiftKeysDialog
 
     def run_fill(self):
         self.template.setCurrentIndex(self.template.findData("A-Z"))
@@ -1519,7 +1519,8 @@ def test_switching_entries_keeps_the_block_s_document(window, tmp_path):
 def test_the_entry_form_spells_every_kind_both_ways(qtbot):
     from mapchar.core.table import TokenKind
     from mapchar.project.formats.table_native import parse_entry
-    from mapchar.ui.table_entry_form import STOP_DATA, TableEntryForm
+    from mapchar.ui.entry_rows import STOP_DATA
+    from mapchar.ui.table_entry_form import TableEntryForm
 
     form = TableEntryForm()
     qtbot.addWidget(form)
@@ -1810,3 +1811,91 @@ def test_the_editor_sorts_and_chooses_columns(window, tmp_path):
     table_entry.dialect = "abcde"
     editor.set_entry(table_entry)
     assert not editor.save.isEnabled()
+
+
+def test_a_block_with_no_configuration_still_refreshes(window, tmp_path):
+    """A project file writes a block's configuration only when it has one, so a
+    config-less block round-trips — and the refresh has to survive it, rather
+    than reading ``entry.config`` as though a block always had one."""
+    file_entry = open_rom_and_table(window, tmp_path, b"AB\x00CD\x00")
+    block = Entry(
+        EntryKind.BLOCK, "No reading", file_entry.path, parent=file_entry, config=None
+    )
+    window._push_add(block)
+    window._activate_entry(block)
+    assert window._entry is block
+    assert window.block_label.text().startswith("No reading")
+    window._refresh_view()
+    window._refresh_view(moved=True)
+
+
+def test_adding_relative_search_entries_to_a_table_undoes(
+    window, tmp_path, monkeypatch
+):
+    """Build Table ▸ add to the current table is a table change like any other:
+    one step, and undoing it takes the entries back out."""
+    from PySide6.QtWidgets import QInputDialog
+
+    from mapchar.engines.relsearch import UPPER, Hit
+
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    table_entry = window.workspace.entry_for_table("main")
+    before = len(table_entry.table.entries)
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("A-Z", True))
+    monkeypatch.setattr(
+        "mapchar.ui.main_window.window.QMessageBox.question",
+        lambda *a, **k: (
+            __import__("PySide6.QtWidgets").QtWidgets.QMessageBox.StandardButton.Yes
+        ),
+    )
+    hit = Hit(0, 1, "little", {UPPER: 0x80}, tuple(range(0x80, 0x86)))
+    window._build_table_from_hit(hit)
+    assert len(table_entry.table.entries) > before
+    window.undo_stack.undo()
+    assert len(table_entry.table.entries) == before
+
+
+def test_a_block_from_a_scanned_region_undoes_with_its_end_token(window, tmp_path):
+    """The guessed terminator and the block are one gesture, so one undo takes
+    both back out — otherwise undoing the block leaves the entry behind."""
+    from mapchar.engines.scan import Region
+    from mapchar.project.formats.table_native import HEADER
+
+    # No end token of its own: the scan's guessed terminator becomes the block's.
+    open_rom_and_table(
+        window,
+        tmp_path,
+        b"AB\x0fCD\x0f",
+        table=f"{HEADER}\n@table main\n41=A\n42=B\n",
+    )
+    table_entry = window.workspace.entry_for_table("main")
+    before = len(table_entry.table.entries)
+    blocks = len(window.workspace.of_kind(EntryKind.BLOCK))
+    window._block_from_region(Region(0, 6, 1.0, terminator=0x0F))
+    assert len(table_entry.table.entries) == before + 1
+    assert len(window.workspace.of_kind(EntryKind.BLOCK)) == blocks + 1
+    window.undo_stack.undo()
+    assert len(table_entry.table.entries) == before
+    assert len(window.workspace.of_kind(EntryKind.BLOCK)) == blocks
+
+
+def test_a_block_from_a_scanned_region_keeps_a_table_that_already_has_an_end(
+    window, tmp_path
+):
+    """A table that already labels [end] on other bits keeps it: the guessed
+    terminator is not added, and the block still comes out."""
+    from mapchar.engines.scan import Region
+    from mapchar.project.formats.table_native import HEADER
+
+    open_rom_and_table(
+        window,
+        tmp_path,
+        b"AB\x0fCD\x0f",
+        table=f"{HEADER}\n@table main\n41=A\n42=B\n/00=[end]\n",
+    )
+    table_entry = window.workspace.entry_for_table("main")
+    before = len(table_entry.table.entries)
+    blocks = len(window.workspace.of_kind(EntryKind.BLOCK))
+    window._block_from_region(Region(0, 6, 1.0, terminator=0x0F))
+    assert len(table_entry.table.entries) == before
+    assert len(window.workspace.of_kind(EntryKind.BLOCK)) == blocks + 1

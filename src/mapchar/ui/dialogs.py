@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from mapchar.core.numbers import format_hex_offset
 from mapchar.project.formats.script import DumpMode
 from mapchar.ui.number_fields import OffsetEdit
-from mapchar.ui.widgets import ResultsTable, show_elided_tooltips
+from mapchar.ui.widgets import ResultsTable, ok_cancel, show_elided_tooltips
 
 
 class ContainerDialog(QDialog):
@@ -80,11 +80,7 @@ class ContainerDialog(QDialog):
         self.note = QLabel("")
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons = ok_cancel(self)
         layout.addWidget(buttons)
         self.container.currentIndexChanged.connect(self._sync)
         self.resize(520, 320)
@@ -138,11 +134,7 @@ class DumpDialog(QDialog):
         form.addRow("Content", self.mode)
         self.all_blocks = QCheckBox("Every block of the file")
         form.addRow("", self.all_blocks)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons = ok_cancel(self)
         form.addRow(buttons)
 
     def dump_mode(self) -> DumpMode:
@@ -200,11 +192,7 @@ class PointerSearchDialog(QDialog):
         form.addRow("Offset from", self.offset_from)
         form.addRow("Offset to", self.offset_to)
         form.addRow("Offset step", self.offset_step)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons = ok_cancel(self)
         form.addRow(buttons)
 
     def selected_only(self) -> bool:

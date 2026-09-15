@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from mapchar.plugins.registry import Registry
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mapchar.plugins.registry import Registry
 
 
 def register_builtins(registry: Registry) -> None:

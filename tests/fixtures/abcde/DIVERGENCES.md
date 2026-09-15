@@ -18,4 +18,4 @@ behaviour is documented under `docs/`.
 | Tables and scripts NFD-normalised, Cartographer output NFC | NFC everywhere: table text, translations, font alphabets and search needles are composed on load and stored composed, and the encoder decomposes atoms so either spelling encodes | `tests/test_unicode.py` |
 | Fallback bits not emitted at end of text on insert | Always emitted when the frame closes | phase 2 |
 | Encoder without longest-prefix safety, non-optimal, end tokens suppress alternatives, frames keyed by file name | Prefix-safe Dijkstra keyed by table identity | phase 2 |
-| romjuice text-mode ROM reads, stale end-of-file buffer, last-line truncation, `!00` never swapping | Not reproduced; `!` swaps import as `*` switches | `test_table_legacy.py::test_romjuice_swap` |
+| romjuice text-mode ROM reads, stale end-of-file buffer, last-line truncation, `!00` never swapping | Not reproduced; a `!` swap names romjuice's second table file, which mapchar cannot, so it is dropped with a notice | `test_table_legacy.py::test_romjuice_swap_is_dropped_with_a_notice` |

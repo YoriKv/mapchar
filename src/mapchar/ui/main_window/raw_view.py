@@ -9,7 +9,6 @@ from PySide6.QtWidgets import QApplication, QMenu
 
 from mapchar.core.bits import Bits
 from mapchar.engines.decode import DecodeRules, decode
-from mapchar.ui.undo_commands import BlockEditCommand
 
 
 class RawViewMixin:
@@ -69,14 +68,9 @@ class RawViewMixin:
         if entry is None or not self._selection:
             return
         cfg = entry.config
-        before = (entry.name, cfg, entry.compression_id, entry.spare_room)
-        after = (
-            entry.name,
-            replace(cfg, skips=cfg.skips + (self._selection,)),
-            entry.compression_id,
-            entry.spare_room,
+        self._push_block_edit(
+            entry, config=replace(cfg, skips=cfg.skips + (self._selection,))
         )
-        self._push_command(BlockEditCommand(self, entry, before, after))
 
     def _copy_selection_text(self) -> None:
         if not self._selection or self._doc is None:

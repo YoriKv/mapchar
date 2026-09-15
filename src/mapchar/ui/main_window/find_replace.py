@@ -34,9 +34,7 @@ class FindReplaceMixin:
             doc = self._load_document(entry)
             if doc is None:
                 continue
-            self._extract_current(
-                entry, doc, self._table_set_for(entry.config.table_id)
-            )
+            self._extract_current(entry, doc, self._table_set_of(entry))
             if doc.strings:
                 blocks.append(entry)
         if current in blocks:
@@ -96,20 +94,19 @@ class FindReplaceMixin:
         blocks = self._fr_blocks(project)
         if not blocks or not needle:
             return
-        self.undo_stack.beginMacro("Replace all")
         n = 0
-        for entry in blocks:
-            # Make the block current first: a string edit on the block in view
-            # refreshes one row instead of re-reading the whole block.
-            if entry is not self._entry:
-                self._activate_entry(entry)
-            for rec in list(entry.doc.strings):
-                new, count = scriptfind.replace(
-                    rec.current_text(), needle, replacement, case=case
-                )
-                if count:
-                    self._set_translation(entry, rec.index, new)
-                    n += 1
-        self.undo_stack.endMacro()
+        with self._macro("Replace all"):
+            for entry in blocks:
+                # Make the block current first: a string edit on the block in
+                # view refreshes one row instead of re-reading the whole block.
+                if entry is not self._entry:
+                    self._activate_entry(entry)
+                for rec in list(entry.doc.strings):
+                    new, count = scriptfind.replace(
+                        rec.current_text(), needle, replacement, case=case
+                    )
+                    if count:
+                        self._set_translation(entry, rec.index, new)
+                        n += 1
         where = "the project" if project else "the block"
         self.statusBar().showMessage(f"Replaced in {n} string(s) of {where}", 4000)

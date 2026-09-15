@@ -13,8 +13,8 @@ from mapchar.plugins.base import (
     PluginInfo,
     ReadSource,
     Stage,
-    WriteTarget,
 )
+from mapchar.plugins.builtins.mappings import parse_banked
 
 
 class RegistryError(Exception):
@@ -146,10 +146,34 @@ def default_registry() -> Registry:
     return registry
 
 
+def resolve_mapping(registry: Registry, id: str) -> Any | None:
+    """A mapping plugin by id, including on-demand banked ids; None if unknown.
+
+    A retired id is forwarded here too (:func:`~mapchar.plugins.aliases.current_id`),
+    since a parameterised id is built rather than registered and so never reaches
+    the registry's own fallback.
+    """
+    plugin = registry.plugin(Stage.MAPPING, id)
+    if plugin is not None:
+        return plugin
+    return parse_banked(current_id(id))
+
+
+def mapping_for(source: Any, registry: Registry | None = None) -> Any | None:
+    """The mapping plugin a source names, or ``None`` when it is unknown.
+
+    Without a ``registry`` the built-in one answers.
+    """
+    if registry is None:
+        registry = default_registry()
+    return resolve_mapping(registry, source.mapping_id)
+
+
 __all__ = [
     "PassThrough",
     "Registry",
     "RegistryError",
-    "WriteTarget",
     "default_registry",
+    "mapping_for",
+    "resolve_mapping",
 ]

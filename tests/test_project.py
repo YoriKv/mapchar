@@ -79,8 +79,8 @@ def test_project_roundtrip(tmp_path):
     lb = loaded.entries[1]
     assert lb.parent is loaded.entries[0] and lb.config == cfg
     assert loaded.current is lb
-    assert loaded.strings[1][1].translation == "C[end]"
-    assert loaded.strings[1][1].status is Status.EDITED
+    assert lb.pending_strings[1].translation == "C[end]"
+    assert lb.pending_strings[1].status is Status.EDITED
     assert loaded.entries[2].bookmark_offset == 2
     assert loaded.entries[3].dialect == "abcde"
     assert os.path.isabs(lb.path)
@@ -147,9 +147,9 @@ def test_unopened_blocks_keep_their_strings_over_a_save(tmp_path):
     again = tmp_path / "q.mapchar"
     save_project(str(again), loaded.entries, None)
     back = load_project(str(again))
-    assert back.strings[1][0].translation == "X[end]"
-    assert back.strings[1][0].notes == "why"
-    assert back.strings[2][0].status is Status.REVIEW
+    assert back.entries[1].pending_strings[0].translation == "X[end]"
+    assert back.entries[1].pending_strings[0].notes == "why"
+    assert back.entries[2].pending_strings[0].status is Status.REVIEW
 
 
 def test_document_strings_win_over_pending_and_a_drop_stashes_them(tmp_path):
@@ -433,6 +433,17 @@ def test_a_table_with_no_file_is_carried_whole_and_read_back(tmp_path):
     back = load_project(str(proj)).entries[0]
     assert back.table.id == "main" and back.file_table is None
     assert back.table.entries["01000001"].text == "A"
+
+
+def test_a_renamed_table_keeps_its_id_when_its_file_is_missing(tmp_path):
+    """The id is the project's, not the table's: a save made before the file
+    was ever read — because it is not there — must still write it down."""
+    entry = Entry(EntryKind.TABLE, "main.tbl", str(tmp_path / "gone.tbl"))
+    entry.table_id = "renamed"
+    entry.missing = True
+    proj = tmp_path / "p.mapchar"
+    save_project(str(proj), [entry], None)
+    assert load_project(str(proj)).entries[0].table_id == "renamed"
 
 
 def test_folding_the_overlay_empties_it(tmp_path):

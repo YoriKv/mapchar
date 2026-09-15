@@ -5,18 +5,19 @@ import subprocess
 from conftest import ABCDE, needs_abcde
 from helpers import ABC_TABLE, pointer_rom, table_set, tables_from
 from mapchar.core.block import BlockConfig, EndToken, PointerTableSource, RangeSource
-from mapchar.pipeline.exchange.atlas import (
+from mapchar.pipeline.extract import extract
+from mapchar.project.exchange.addresses import shift_config
+from mapchar.project.exchange.atlas import (
     atlas_text,
     read_atlas,
     write_abcde_table,
     write_atlas,
 )
-from mapchar.pipeline.exchange.cartographer import (
+from mapchar.project.exchange.cartographer import (
     parse_command_file,
     write_command_file,
 )
-from mapchar.pipeline.extract import extract
-from mapchar.project.formats.table_legacy import read_abcde
+from mapchar.project.formats.legacy.abcde import read_abcde
 
 BODY = ABC_TABLE + (
     "$F0=[color],u8\n!F1=[item] @items:1\n@table items\n01=[Herb]\n!FF=return\n"
@@ -67,6 +68,35 @@ def test_write_and_read_atlas_script(registry):
     assert back.strings[0].insert_at == 0x10 and len(back.tables) == 2
     stopped = read_atlas(s + "#AUTOCMD($1, #JMP($2))\nX\n")
     assert stopped.stopped_at is not None and len(stopped.strings) == 2
+
+
+def test_atlas_addresses_are_file_offsets(registry):
+    """Atlas writes to the file, so the export carries the header on every address."""
+    header = 0x200
+    data = pointer_rom((0x10, 0x13), "41 42 00 43 00")
+    cfg = BlockConfig(
+        PointerTableSource(0, 4, 2, 2, "little", "linear"),
+        EndToken(),
+        "main",
+        bound=0x19,
+    )
+    ex = extract(data, cfg, TS, registry)
+    export = write_atlas(
+        "D",
+        shift_config(cfg, header),
+        ex.strings,
+        TS,
+        {f"{t.id}.tbl": t for t in TS.tables.values()},
+        header=header,
+    )
+    s = export.script
+    assert f"#JMP(${0x10 + header:X}, ${0x18 + header:X})" in s
+    assert f"#HDR(${header:X})" in s
+    assert f"#W16(${header:X})\n" in s and f"#W16(${header + 2:X})\n" in s
+    back = read_atlas(s)
+    assert back.strings[0].insert_at - header == 0x10
+    assert [tuple(a - header for a in x.pointers) for x in back.strings] == [(0,), (2,)]
+    assert [x.text for x in back.strings] == [r.current_text() for r in ex.strings]
 
 
 @needs_abcde

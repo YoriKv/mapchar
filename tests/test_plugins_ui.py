@@ -8,8 +8,9 @@ import pytest
 
 from mapchar.core.block import RangeSource
 from mapchar.plugins.base import Stage
-from mapchar.plugins.discovery import TrustStore, discover, plugin_roots
+from mapchar.plugins.discovery import discover, plugin_roots
 from mapchar.plugins.registry import default_registry
+from mapchar.plugins.trust import TrustStore
 from window_helpers import add_block, make_window, open_rom_and_table
 
 THEIRS = (

@@ -20,9 +20,9 @@ A **font** entry is a glyph sheet image plus a map:
     tries the longest override first, so `th → glyph` fires inside a word;
   - a **space** width and a **missing** glyph.
 - **Widths** — for variable-width fonts, an advance width per glyph from a
-  width list in the map, or **measured** from the sheet: the last inked
-  column of each cell plus the gap set beside the Measure button.
-  Fixed-width fonts use the cell width.
+  width list in the map, or **Measure Widths** from the sheet: the last inked
+  column of each cell plus the **Gap** set beside the button. **Fixed Width**
+  gives every glyph the cell's full width.
 - **Colour** — on an indexed sheet the chosen palette index is transparent; an
   RGB sheet takes the top-left pixel's colour, as does an indexed one with no
   index given. The rest draw as in the sheet.
@@ -35,12 +35,14 @@ The Font tab shows the sheet as a grid of cells, each captioned with what it
 spells, at its own zoom; a click picks one cell or a whole row, and the pick
 is where the alphabet starts:
 
-- **Fill from table** lays the start table's one-character text over the
+- **Fill from Table** lays the start table's one-character text over the
   glyphs from the pick, in key order;
-- **Fill with…** does the same for `A–Z`, `a–z`, `0–9`, the three together,
+- **Fill With…** does the same for `A–Z`, `a–z`, `0–9`, the three together,
   printable ASCII, `あ-ん`, `ア-ン` or a typed string;
-- **Shift up / down** moves the whole alphabet one row of glyphs;
-- **Copy / Paste** carry the alphabet as `20=A` lines, one glyph per line.
+- **Shift Up** / **Shift Down** move the whole alphabet one row of glyphs;
+- **Copy Alphabet** / **Paste Alphabet** carry it as `20=A` lines, one glyph
+  per line;
+- **Add Mapping** adds a row that draws a text or `[code]` as one glyph.
 
 ## Text boxes
 
@@ -86,8 +88,8 @@ mean different things in each.
   the Strings view: a line wider than the box, or more lines than a page
   holds. The offending glyphs are tinted in the preview.
 - **Pages** step with buttons when a string spans several.
-- **Zoom** and a pixel grid as in the raw view; the preview can be copied as
-  an image.
+- **Zoom** and **Grid**, which rules the box in pixels; **Copy Image** puts
+  the page as drawn on the clipboard.
 
 ## Wrapping
 

@@ -39,7 +39,7 @@ non-goal; round-tripping is the contract.
 from __future__ import annotations
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
-from mapchar.plugins.builtins.compression._limits import MAX_OUT
+from mapchar.plugins.builtins.compression._limits import MAX_OUT, stream_error
 from mapchar.plugins.builtins.compression._lz import MatchFinder, copy_back
 
 SHORT_MAX_DISTANCE = 256
@@ -57,18 +57,15 @@ _BITS_SHORT = 2 + 2 + 8
 _BITS_LONG = 2 + 16
 _BITS_LONG_EXTENDED = 2 + 16 + 8
 
-# Compressor tuning, as in the other LZ built-ins
-# (:class:`~mapchar.plugins.builtins.compression._lz.MatchFinder`).
-_MAX_CANDIDATES = 96
-
-
-def _fail(reason: str) -> ValueError:
-    return ValueError(f"corrupt PRS stream: {reason}")
+_SCHEME = "PRS"
 
 
 class _Truncated(ValueError):
     """The buffer ended mid-op — recoverable under a partial decode, unlike a
     stream whose own structure is wrong."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(str(stream_error(_SCHEME, reason)))
 
 
 class _BitReader:
@@ -82,7 +79,7 @@ class _BitReader:
 
     def byte(self) -> int:
         if self.pos >= len(self.data):
-            raise _Truncated("corrupt PRS stream: source ended mid-op")
+            raise _Truncated("source ended mid-op")
         value = self.data[self.pos]
         self.pos += 1
         return value
@@ -125,7 +122,9 @@ def _copy(out: bytearray, distance: int, length: int, what: str) -> None:
     just read one is the only place that can still say which overreached.
     """
     if distance > len(out):
-        raise _fail(f"{what} copy reaches before the start of the output")
+        raise stream_error(
+            _SCHEME, f"{what} copy reaches before the start of the output"
+        )
     copy_back(out, distance, length)
 
 
@@ -149,7 +148,7 @@ def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]
             if len(out) >= MAX_OUT:
                 # Past any structure a game unpacks in one go: the bytes were not
                 # a stream, whatever they decoded to.
-                raise _Truncated("corrupt PRS stream: output past the cap")
+                raise _Truncated("output past the cap")
             if reader.bit():
                 out.append(reader.byte())
             elif reader.bit():  # long copy
@@ -187,12 +186,7 @@ def compress(data: bytes) -> bytes:
     # Scored rather than longest-wins, so this walks the chain itself: PRS has two
     # back-reference ops of different cost, and a nearer short match written as the
     # cheap one can beat a distant long one.
-    finder = MatchFinder(
-        data,
-        min_match=MIN_MATCH,
-        window=LONG_MAX_DISTANCE,
-        max_candidates=_MAX_CANDIDATES,
-    )
+    finder = MatchFinder(data, min_match=MIN_MATCH, window=LONG_MAX_DISTANCE)
 
     def best_match(pos: int) -> tuple[int, int, int]:
         """The most profitable match at ``pos``, as ``(benefit, length, distance)``.

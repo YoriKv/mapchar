@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from mapchar.core.block import EndToken, Status, block_bound
 from mapchar.core.errors import MapcharError
+from mapchar.pipeline.insert import room_for
 from mapchar.ui.undo_commands import StringFieldCommand
 
 
@@ -112,7 +113,7 @@ class StringEditMixin:
             return
         used = -(-len(result.bits) // 8)
         room = (
-            self._room(rec, entry.config, block_bound(entry.config, entry.doc.strings))
+            room_for(rec, entry.config, block_bound(entry.config, entry.doc.strings))
             if rec
             else 0
         )

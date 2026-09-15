@@ -46,13 +46,10 @@ from mapchar.core.context import (
     PipelineContext,
 )
 from mapchar.plugins.base import PluginInfo, Stage
-from mapchar.plugins.builtins.compression._limits import MAX_BANK
+from mapchar.plugins.builtins.compression._limits import MAX_BANK, stream_error
 from mapchar.plugins.builtins.compression._lz import MatchFinder, copy_from
 
-# One HiROM bank — the conventional cap on an uncompressed structure, and the
-# reach of the absolute 16-bit backreference offset.
-_MAX_OUT = MAX_BANK
-
+_SCHEME = "LZ"
 _TERMINATOR = 0xFF
 _MAX_SHORT = 32
 _MAX_LONG = 1024
@@ -92,10 +89,6 @@ _ORIG_MAX_LITERAL = 1024
 _NO_CHOICE = (_OP_LITERAL, 0, 0)
 
 
-def _fail(reason: str) -> ValueError:
-    return ValueError(f"corrupt LZ stream: {reason}")
-
-
 def decompress(
     data: bytes, *, big_endian_offsets: bool, allow_partial: bool = False
 ) -> tuple[bytes, int]:
@@ -107,10 +100,12 @@ def decompress(
 
     With ``allow_partial``, for a *bounded* buffer that may cut the structure
     short, running out of source is not an error: the prefix decoded so far comes
-    back, finishing as much of the current command as the buffer allows.
-    Structural corruption — a backreference into unwritten output, output past the
-    64 KB cap — raises either way, which is what lets a window preview tell "a
-    structure continues past the window" from "this is not a structure at all".
+    back, finishing as much of the current command as the buffer allows. Reaching
+    the one-bank output cap is a short read of the same kind
+    (:mod:`~mapchar.plugins.builtins.compression._limits`). Structural
+    corruption — a backreference into unwritten output — raises either way, which
+    is what lets a window preview tell "a structure continues past the window"
+    from "this is not a structure at all".
     """
     out = bytearray()
     n = len(data)
@@ -119,7 +114,7 @@ def decompress(
     def truncated(reason: str) -> tuple[bytes, int]:
         if allow_partial:
             return bytes(out), n
-        raise _fail(reason)
+        raise stream_error(_SCHEME, reason)
 
     while True:
         if i >= n:
@@ -137,8 +132,8 @@ def decompress(
         else:
             length = (cmd & 0x1F) + 1
             op = cmd & 0xE0
-        if len(out) + length > _MAX_OUT:
-            raise _fail(f"output exceeds the {_MAX_OUT:#x}-byte cap")
+        if len(out) + length > MAX_BANK:
+            return truncated(f"output exceeds the {MAX_BANK:#x}-byte cap")
 
         if op == _OP_LITERAL:
             if i + length > n:
@@ -172,12 +167,25 @@ def decompress(
                 off = data[i] | (data[i + 1] << 8)
             i += 2
             if off >= len(out):
-                raise _fail(
-                    f"backreference into unwritten output ({off:#x} >= {len(out):#x})"
+                raise stream_error(
+                    _SCHEME,
+                    f"backreference into unwritten output ({off:#x} >= {len(out):#x})",
                 )
             # Overlap-aware: a copy reaching past `len(out)` re-reads bytes this
             # command just produced, which is the format's run-extension idiom.
             copy_from(out, off, length)
+
+
+def _check_input(data: bytes) -> bytes | None:
+    """Both parses' entry rule, and the empty structure when there is nothing to
+    pack: a backreference offset is 16 bits absolute, so a structure is one bank.
+    """
+    n = len(data)
+    if n > MAX_BANK:
+        raise ValueError(
+            f"data is {n:#x} bytes; LZ structures cap at {MAX_BANK:#x} (one 64 KB bank)"
+        )
+    return bytes((_TERMINATOR,)) if n == 0 else None
 
 
 def _emit_header(out: bytearray, op: int, length: int) -> None:
@@ -189,6 +197,79 @@ def _emit_header(out: bytearray, op: int, length: int) -> None:
         out.append(encoded & 0xFF)
 
 
+def _emit_offset(out: bytearray, offset: int, big_endian_offsets: bool) -> None:
+    """The backreference's absolute 16-bit offset — the one thing LZ1 and LZ2
+    disagree about."""
+    hi, lo = (offset >> 8) & 0xFF, offset & 0xFF
+    out += bytes((hi, lo) if big_endian_offsets else (lo, hi))
+
+
+def _emit_op(
+    out: bytearray,
+    data: bytes,
+    i: int,
+    op: int,
+    length: int,
+    offset: int = 0,
+    *,
+    big_endian_offsets: bool,
+) -> None:
+    """One whole command covering ``data[i : i + length]``: header, then payload.
+
+    What the payload is follows from ``op`` alone, so both parses emit through
+    this and neither can disagree with the decoder about it.
+    """
+    _emit_header(out, op, length)
+    if op == _OP_LITERAL:
+        out += data[i : i + length]
+    elif op == _OP_FILL or op == _OP_INCREASING:
+        out.append(data[i])
+    elif op == _OP_WORD_FILL:
+        out += data[i : i + 2]
+    else:
+        _emit_offset(out, offset, big_endian_offsets)
+
+
+def _run_tables(
+    data: bytes, *, caps: tuple[int, int, int], wrap: bool
+) -> tuple[list[int], list[int], list[int]]:
+    """How far the fill, increasing and alternating patterns reach from each
+    position — the three commands whose reach is a property of the bytes alone,
+    so it is worth knowing everywhere at once rather than re-measuring per parse
+    step.
+
+    ``caps`` is the ``(fill, increasing, alternating)`` maximum each command may
+    be emitted at, which differs between the two parses. ``wrap`` says whether an
+    increasing run may cross ``$FF`` back to ``$00``: the decoder always does, but
+    the original encoder never emitted a run that needed it, and those bytes fall
+    through to literals — so reproducing its stream means stopping there.
+
+    Both tables run to ``n + 1`` so a position may ask about the one past its own
+    without a bounds test; nothing can start there, so the extra entry stays 1.
+    """
+    n = len(data)
+    max_fill, max_inc, max_alt = caps
+    fill = [1] * (n + 1)
+    inc = [1] * (n + 1)
+    alt = [1] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        nxt = i + 1
+        if nxt < n:
+            if data[nxt] == data[i]:
+                fill[i] = min(fill[nxt] + 1, max_fill)
+            step = (data[i] + 1) & 0xFF if wrap else data[i] + 1
+            if data[nxt] == step:
+                inc[i] = min(inc[nxt] + 1, max_inc)
+        # a,b,a,b,… continues exactly when data[i+2] repeats data[i]; the tail
+        # from i+1 is the same shape with the pair swapped, so its length carries.
+        alt[i] = (
+            min(alt[nxt] + 1, max_alt)
+            if i + 2 < n and data[i + 2] == data[i]
+            else min(2, n - i)
+        )
+    return fill, inc, alt
+
+
 def _original_runs(data: bytes) -> tuple[list[int], list[int], list[int], list[int]]:
     """Each run command's reach at every position under the original parse's
     pre-emption rules, plus where the next run of any kind starts.
@@ -198,15 +279,15 @@ def _original_runs(data: bytes) -> tuple[list[int], list[int], list[int], list[i
     not fire there — and ``next_run[i]`` is the first position from ``i`` on where
     some run fires, which is where a backreference has to stop.
 
-    Pre-emption is what the clipping encodes: a fill run is always maximal, a word
-    run yields the boundary byte to a fill starting inside it, and an increasing
-    run yields to either. One backward pass does the lot, since each clip needs
-    only the answers already computed for ``i + 1``.
+    Pre-emption is what the clipping over :func:`_run_tables` encodes: a fill run
+    is always maximal, a word run yields the boundary byte to a fill starting
+    inside it, and an increasing run yields to either. One backward pass does the
+    lot, since each clip needs only the answers already computed for ``i + 1``.
     """
     n = len(data)
-    fill = [1] * n
-    inc_raw = [1] * n
-    word_raw = [1] * n
+    fill, inc_raw, word_raw = _run_tables(
+        data, caps=(_ORIG_MAX_FILL, _ORIG_MAX_INC, _ORIG_MAX_WORD), wrap=False
+    )
     word = [1] * n
     inc = [1] * n
     # Length n + 1: position n - 1 asks about n, where no run can start.
@@ -215,22 +296,6 @@ def _original_runs(data: bytes) -> tuple[list[int], list[int], list[int], list[i
     next_run = [n] * (n + 1)
     for i in range(n - 1, -1, -1):
         nxt = i + 1
-        if nxt < n:
-            if data[nxt] == data[i]:
-                fill[i] = min(fill[nxt] + 1, _ORIG_MAX_FILL)
-            # No modulo wrap: `data[i] + 1` is 256 at 0xFF and never equals a
-            # byte, so the run stops there. The decoder wraps; the original
-            # encoder never emitted a run that needed it, and those bytes fall
-            # through to literals.
-            if data[nxt] == data[i] + 1:
-                inc_raw[i] = min(inc_raw[nxt] + 1, _ORIG_MAX_INC)
-        # a,b,a,b,… continues exactly when data[i+2] repeats data[i]; the tail
-        # from i+1 is the same shape with the pair swapped, so its length carries.
-        word_raw[i] = (
-            min(word_raw[nxt] + 1, _ORIG_MAX_WORD)
-            if i + 2 < n and data[i + 2] == data[i]
-            else min(2, n - i)
-        )
         next_fill[i] = i if fill[i] >= _ORIG_MIN_FILL else next_fill[nxt]
         word[i] = min(word_raw[i], next_fill[nxt] - i)
         next_word[i] = i if word[i] >= _ORIG_MIN_WORD else next_word[nxt]
@@ -263,13 +328,10 @@ def compress(data: bytes, *, big_endian_offsets: bool) -> bytes:
     compressor, never an invalid one, and :func:`compress_improved` is the
     ~13%-smaller alternative.
     """
+    empty = _check_input(data)
+    if empty is not None:
+        return empty
     n = len(data)
-    if n > _MAX_OUT:
-        raise ValueError(
-            f"data is {n:#x} bytes; LZ structures cap at {_MAX_OUT:#x} (one 64 KB bank)"
-        )
-    if n == 0:
-        return bytes((_TERMINATOR,))
 
     fill, word, inc, next_run = _original_runs(data)
     # Ties go to the *earliest* offset, so the chain is walked oldest-first and
@@ -290,8 +352,14 @@ def compress(data: bytes, *, big_endian_offsets: bool) -> bytes:
         pos = literal_start
         while pos < end:
             length = min(end - pos, _ORIG_MAX_LITERAL)
-            _emit_header(out, _OP_LITERAL, length)
-            out.extend(data[pos : pos + length])
+            _emit_op(
+                out,
+                data,
+                pos,
+                _OP_LITERAL,
+                length,
+                big_endian_offsets=big_endian_offsets,
+            )
             pos += length
         literal_start = -1
 
@@ -320,44 +388,14 @@ def compress(data: bytes, *, big_endian_offsets: bool) -> bytes:
                 continue
 
         flush_literals(i)
-        _emit_header(out, op, length)
-        if op == _OP_FILL or op == _OP_INCREASING:
-            out.append(data[i])
-        elif op == _OP_WORD_FILL:
-            out += data[i : i + 2]
-        elif big_endian_offsets:
-            out += bytes(((offset >> 8) & 0xFF, offset & 0xFF))
-        else:
-            out += bytes((offset & 0xFF, (offset >> 8) & 0xFF))
+        _emit_op(
+            out, data, i, op, length, offset, big_endian_offsets=big_endian_offsets
+        )
         i += length
 
     flush_literals(n)
     out.append(_TERMINATOR)
     return bytes(out)
-
-
-def _run_lengths(data: bytes) -> tuple[list[int], list[int], list[int]]:
-    """How far the fill, increasing and alternating patterns reach from each
-    position — the three commands whose reach is a property of the bytes alone,
-    so it is worth knowing everywhere at once rather than re-measuring per parse
-    step."""
-    n = len(data)
-    fill = [1] * (n + 1)
-    inc = [1] * (n + 1)
-    alt = [1] * (n + 1)
-    for i in range(n - 2, -1, -1):
-        if data[i + 1] == data[i]:
-            fill[i] = min(fill[i + 1] + 1, _MAX_LONG)
-        if data[i + 1] == (data[i] + 1) & 0xFF:
-            inc[i] = min(inc[i + 1] + 1, _MAX_LONG)
-        # a,b,a,b,… continues exactly when data[i+2] repeats data[i]; the tail
-        # from i+1 is the same shape with the pair swapped, so its length carries.
-        alt[i] = (
-            min(alt[i + 1] + 1, _MAX_LONG)
-            if data[i + 2 : i + 3] == data[i : i + 1]
-            else 2
-        )
-    return fill, inc, alt
 
 
 def compress_improved(data: bytes, *, big_endian_offsets: bool) -> bytes:
@@ -370,15 +408,14 @@ def compress_improved(data: bytes, *, big_endian_offsets: bool) -> bytes:
     bytes here can leave the next position straddling a run it would otherwise
     have coded whole — and on Yoshi's Island's blobs guessing costs ~1.4%.
     """
+    empty = _check_input(data)
+    if empty is not None:
+        return empty
     n = len(data)
-    if n > _MAX_OUT:
-        raise ValueError(
-            f"data is {n:#x} bytes; LZ structures cap at {_MAX_OUT:#x} (one 64 KB bank)"
-        )
-    if n == 0:
-        return bytes((_TERMINATOR,))
 
-    fill, inc, alt = _run_lengths(data)
+    fill, inc, alt = _run_tables(
+        data, caps=(_MAX_LONG, _MAX_LONG, _MAX_LONG), wrap=True
+    )
     # No distance window: the offset is *absolute* within the structure, so every
     # earlier position is addressable. Bounding the scan to the newest
     # _MAX_CHAIN candidates keeps a worst-case input from going quadratic.
@@ -457,18 +494,7 @@ def compress_improved(data: bytes, *, big_endian_offsets: bool) -> bytes:
     i = 0
     while i < n:
         op, length, off = choice[i]
-        _emit_header(out, op, length)
-        if op == _OP_LITERAL:
-            out += data[i : i + length]
-        elif op == _OP_FILL or op == _OP_INCREASING:
-            out.append(data[i])
-        elif op == _OP_WORD_FILL:
-            out += data[i : i + 2]
-        else:
-            if big_endian_offsets:
-                out += bytes(((off >> 8) & 0xFF, off & 0xFF))
-            else:
-                out += bytes((off & 0xFF, (off >> 8) & 0xFF))
+        _emit_op(out, data, i, op, length, off, big_endian_offsets=big_endian_offsets)
         i += length
     out.append(_TERMINATOR)
     return bytes(out)

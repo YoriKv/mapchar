@@ -17,12 +17,12 @@ pointers on the strings.
 
 from __future__ import annotations
 
-from mapchar.core.mapping import resolve_mapping
 from mapchar.engines.pointers import discover
 from mapchar.plugins.base import Stage
+from mapchar.plugins.registry import resolve_mapping
 from mapchar.project.workspace import Entry
 from mapchar.ui.dialogs import DiscoveryDialog, PointerSearchDialog
-from mapchar.ui.undo_commands import BlockEditCommand, PointerCommand
+from mapchar.ui.undo_commands import PointerCommand
 from mapchar.ui.widgets import ModalProgress
 
 
@@ -102,17 +102,8 @@ class PointerDiscoveryMixin:
         the bars, so it re-reads with the translations kept and undoes."""
         from dataclasses import replace
 
-        name, config, scheme, room = (
-            entry.name,
-            entry.config,
-            entry.compression_id,
-            entry.spare_room,
-        )
-        adopted = replace(config, source=candidate.source())
-        self._push_command(
-            BlockEditCommand(
-                self, entry, (name, config, scheme, room), (name, adopted, scheme, room)
-            )
+        self._push_block_edit(
+            entry, config=replace(entry.config, source=candidate.source())
         )
 
     def _attach_pointers(self, entry: Entry, candidate) -> None:

@@ -40,8 +40,8 @@ the editor, and the checks a change has to pass.
   configuration, launching `python -m mapchar` with the project interpreter.
 - `.editorconfig` mirrors the ruff settings (88 columns, 4 spaces, LF, UTF-8)
   so the IDE and the linter agree.
-- The `pycharm` MCP server, when connected, answers Python navigation
-  questions; grep when it is not.
+- Python navigation is by grep; the documentation is searched through qmd
+  (see [README.md](README.md)).
 
 ## Layout
 
@@ -50,14 +50,15 @@ mapchar/
 ├── src/mapchar/         the app package
 │   ├── core/            the data model (Qt-free)
 │   ├── engines/         decode, encode, search, scan, layout (Qt-free)
-│   ├── pipeline/        stages, extraction, insertion, exchange (Qt-free)
+│   ├── pipeline/        stages, extraction, insertion (Qt-free)
 │   ├── plugins/         plugin API, registry, built-ins (Qt-free)
-│   ├── project/         workspace, project file, table and script formats (Qt-free)
+│   ├── project/         workspace, project file, table, script and exchange formats (Qt-free)
 │   ├── ui/              the PySide6 application
 │   └── resources/       package data
 ├── tests/               pytest, flat, one module per area
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
-├── tools/               regen_fixtures.py, make_sample_projects.py, ui_screenshots.py, samples/
+├── tools/               regen_fixtures.py, make_sample_projects.py,
+│                       subset_icon_font.py, ui_screenshots.py, samples/
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
 ├── release.sh           cuts a release (see release.md)

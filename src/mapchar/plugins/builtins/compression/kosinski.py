@@ -51,7 +51,7 @@ occupies.
 from __future__ import annotations
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
-from mapchar.plugins.builtins.compression._limits import MAX_OUT
+from mapchar.plugins.builtins.compression._limits import MAX_OUT, stream_error
 from mapchar.plugins.builtins.compression._lz import MatchFinder, copy_back
 
 DESC_BYTES = 2
@@ -80,10 +80,6 @@ LONG_COST = 2 + 24
 END_COST = 2 + 24
 
 OP_LITERAL, OP_INLINE, OP_SHORT, OP_LONG = range(4)
-
-
-def _fail(reason: str) -> ValueError:
-    return ValueError(f"corrupt Kosinski stream: {reason}")
 
 
 class _Truncated(Exception):
@@ -138,7 +134,9 @@ def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]
     error to a short result.
     """
     if len(data) < DESC_BYTES:
-        raise _fail(f"shorter than the {DESC_BYTES}-byte descriptor word")
+        raise stream_error(
+            "Kosinski", f"shorter than the {DESC_BYTES}-byte descriptor word"
+        )
     reader = _Reader(data)
     out = bytearray()
     complete = False
@@ -172,17 +170,20 @@ def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]
                 length = ((reader.bit() << 1) | reader.bit()) + INLINE_MIN
                 distance = INLINE_WINDOW - reader.byte()
             if distance > len(out):
-                raise _fail(
+                raise stream_error(
+                    "Kosinski",
                     f"match reaches {distance:,} bytes back "
-                    f"into {len(out):,} bytes of output"
+                    f"into {len(out):,} bytes of output",
                 )
             copy_back(out, distance, length)
     except _Truncated:
         if not partial:
-            raise _fail(f"source ended after {len(out):,} bytes") from None
+            raise stream_error(
+                "Kosinski", f"source ended after {len(out):,} bytes"
+            ) from None
 
     if not complete and not partial:
-        raise _fail(f"source ended after {len(out):,} bytes")
+        raise stream_error("Kosinski", f"source ended after {len(out):,} bytes")
     return bytes(out), reader.pos, complete
 
 

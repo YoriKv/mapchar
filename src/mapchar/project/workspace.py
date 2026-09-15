@@ -36,7 +36,7 @@ class EntrySession:
     table_id: str | None = None
     offset: int = 0
     view: str = "raw"
-    """``raw`` or ``strings``."""
+    """Which view the entry was left in: ``raw``, ``text`` or ``strings``."""
     config: BlockConfig | None = None
     """A file's reading, as the top bar sets it: what New Block starts from.
     A block's own is :attr:`Entry.config`."""
@@ -139,21 +139,47 @@ class Entry:
     def is_child(self) -> bool:
         return self.kind in (EntryKind.BLOCK, EntryKind.BOOKMARK)
 
+    def stash_strings(self, doc: Document | None = None) -> None:
+        """Copy this block's translations onto the entry, where no document
+        holds them.
 
-def free_name(name: str, taken) -> str:
+        The safety net under everything that drops or fails to build a document
+        — a block edit, an unavailable table, a refused extraction — so the next
+        successful read puts the same translations back on the same indices.
+        Merged into whatever is already stashed, since a block may go through
+        several such rounds before it reads again.
+        """
+        doc = doc if doc is not None else self.doc
+        if doc is None or not doc.strings:
+            return
+        saved = dict(self.pending_strings or {})
+        for rec in doc.strings:
+            touched = (
+                rec.translation is not None
+                or rec.status is not Status.UNTOUCHED
+                or rec.notes
+            )
+            if touched:
+                saved[rec.index] = StringState(rec.translation, rec.status, rec.notes)
+        self.pending_strings = saved or None
+
+
+def free_name(name: str, taken, pattern: str = "{name} ({n})") -> str:
     """``name``, numbered up (``name (2)``) until it is not in ``taken``.
 
     Blocks and bookmarks are named uniquely: a dump, a translator file and an
     Atlas script all name a string by its block, so two blocks called the same
-    could not be told apart on the way back in.
+    could not be told apart on the way back in. ``pattern`` spells the numbered
+    form for callers that number up some other way — a table id has no room for
+    a space or brackets (:func:`~mapchar.project.tables.free_table_id`).
     """
     taken = set(taken)
     if name not in taken:
         return name
     n = 2
-    while f"{name} ({n})" in taken:
+    while pattern.format(name=name, n=n) in taken:
         n += 1
-    return f"{name} ({n})"
+    return pattern.format(name=name, n=n)
 
 
 NAMED_UNIQUELY = (EntryKind.BLOCK, EntryKind.BOOKMARK)
@@ -244,6 +270,61 @@ class Workspace:
 
     def of_kind(self, kind: EntryKind) -> list[Entry]:
         return [e for e in self.entries if e.kind is kind]
+
+    def blocks_on_tables(self, entries: list[Entry]) -> list[Entry]:
+        """The blocks whose start table is in one of the table entries ``entries``.
+
+        What a table's removal leaves behind: the block keeps its strings and
+        its configuration, but nothing can decode the bytes again until the
+        table is back, so the removal has to say so before it happens.
+        """
+        going = {
+            e.table.id
+            for e in entries
+            if e.kind is EntryKind.TABLE and e.table is not None
+        }
+        if not going:
+            return []
+        return [
+            b
+            for b in self.of_kind(EntryKind.BLOCK)
+            if b.config is not None and b.config.table_id in going
+        ]
+
+    @staticmethod
+    def reordered(
+        entries: list[Entry], entry: Entry, before: Entry | None
+    ) -> list[Entry]:
+        """``entries`` with ``entry`` and its children lifted out and put back in
+        front of ``before`` (at the end when it is ``None``)."""
+        group = [entry] + [e for e in entries if e.parent is entry]
+        rest = [e for e in entries if e not in group]
+        at = rest.index(before) if before in rest else len(rest)
+        return rest[:at] + group + rest[at:]
+
+    def drop_clean_documents(self) -> int:
+        """Forget every cached document so a new registry re-reads it — except
+        the ones holding unsaved edits. Returns how many were kept.
+
+        A refresh is not a revert: translations, overtypes and status changes
+        live only in the document, so dropping a dirty one throws work away while
+        the entry still reads as edited. Those keep what they have, and re-read
+        when the user next writes or closes them. A dirty entry's parents are
+        kept too: a block settles its bytes through its file's buffer, so
+        re-reading that from disk underneath it would strand the edits.
+        """
+        keep: set[int] = set()
+        for entry in self.entries:
+            if not entry.dirty:
+                continue
+            node: Entry | None = entry
+            while node is not None:
+                keep.add(id(node))
+                node = node.parent
+        for entry in self.entries:
+            if id(entry) not in keep:
+                self.drop_document(entry)
+        return sum(1 for entry in self.entries if entry.dirty)
 
     def files(self) -> list[Entry]:
         return self.of_kind(EntryKind.FILE)

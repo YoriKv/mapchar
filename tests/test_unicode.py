@@ -14,8 +14,8 @@ from helpers import table_set
 from mapchar.core.bits import bytes_to_bits
 from mapchar.core.block import Status, StringRecord
 from mapchar.core.font import Font, TextBox
-from mapchar.core.table import ID_PATTERN, Entry, Table, TokenKind, sanitize_id
-from mapchar.core.text import char_units, fold, graphemes, nfc, nfd, read_text_any
+from mapchar.core.table import ID_PATTERN, Entry, Table, TokenKind
+from mapchar.core.text import char_units, fold, graphemes, nfc, nfd
 from mapchar.core.tokens import Token
 from mapchar.engines import scriptfind
 from mapchar.engines.encode import encode
@@ -23,7 +23,8 @@ from mapchar.engines.layout import layout
 from mapchar.plugins.base import Stage
 from mapchar.plugins.builtins.charsets import UNICODE, CodecCharset
 from mapchar.plugins.charsets import apply_charset
-from mapchar.project.formats.table_native import HEADER, parse_native
+from mapchar.project.formats.table_native import HEADER, parse_native, sanitize_id
+from mapchar.project.formats.textfile import read_text_any
 from mapchar.project.tables import read_table_file
 
 GA = "が"

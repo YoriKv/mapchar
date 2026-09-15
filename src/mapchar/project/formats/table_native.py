@@ -2,6 +2,10 @@
 
 See ``docs/plan/table-format.md``. One line per entry; ``#`` comments; ``@``
 directives; ``/`` end, ``$`` operands, ``!`` table control.
+
+The spelling helpers every dialect shares live here too: :func:`parse_stop`
+for a switch parameter's stop, and :func:`sanitize_id` and
+:func:`sanitize_label` for names a file may write any way it likes.
 """
 
 from __future__ import annotations
@@ -13,26 +17,28 @@ from mapchar.core.bits import format_key, hex_to_bits
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Notice
 from mapchar.core.table import (
-    BITS,
     COUNT_SPECS,
     ID_PATTERN,
     LABEL_PATTERN,
-    RAW,
     RETURN,
     Entry,
     OperandSpec,
+    Stop,
     SwitchParam,
     Table,
     TokenKind,
-    parse_stop,
 )
-from mapchar.core.text import nfc, split_lines
+from mapchar.core.text import nfc
+from mapchar.project.formats.textfile import split_lines
 
 HEADER = "@mapchar table 1"
 
-_ENTRY = re.compile(
-    r"^(?P<prefix>[/$!]?)(?P<key>%[01]+|[0-9A-Fa-f]+)(?:<(?P<weight>-?\d+)>)?=(?P<rhs>.*)$"
-)
+KEY_FIELD = r"(?P<key>%[01]+|[0-9A-Fa-f]+)(?:<(?P<weight>-?\d+)>)?="
+"""How every dialect spells an entry's key: ``%bits`` or hex digits, an
+optional ``<weight>``, then ``=``. The native grammar and abcde differ only in
+what may precede it, so they share the middle."""
+
+_ENTRY = re.compile(r"^(?P<prefix>[/$!]?)" + KEY_FIELD + r"(?P<rhs>.*)$")
 _LABEL_HEAD = re.compile(r"^\[(" + LABEL_PATTERN.pattern + r")\]")
 _PARAM = re.compile(
     r"^@(?P<table>" + ID_PATTERN.pattern + r"):"
@@ -40,6 +46,45 @@ _PARAM = re.compile(
     r"(?P<shared>\+?)$"
     r"|^return$"
 )
+
+
+def parse_stop(word: str) -> Stop:
+    """A switch parameter's stop as the table dialects write it.
+
+    ``*`` and ``0`` are no stop at all, digits a weighted count, an unsigned
+    operand spec a count read from the data, ``$hex`` and ``%bits`` fallback
+    bits.
+    """
+    if word in ("*", "0"):
+        return Stop()
+    if word.isdigit():
+        return Stop(count=int(word))
+    if word in COUNT_SPECS:
+        return Stop(operand=OperandSpec.parse(word))
+    if word.startswith("$"):
+        return Stop(fallback=hex_to_bits(word[1:]))
+    return Stop(fallback=word[1:])
+
+
+def sanitize_id(text: str) -> str:
+    """``text`` as a table id: everything ``ID_PATTERN`` rejects becomes ``_``.
+
+    Letters of every script pass, so two Japanese-named tables in one legacy
+    file keep their own names instead of colliding on underscores.
+    """
+    return re.sub(r"[^\w.-]", "_", nfc(text))
+
+
+def sanitize_label(text: str) -> str:
+    """``text`` as a code label: an outer bracket pair off, no whitespace."""
+    text = text.strip()
+    if len(text) >= 2 and text[0] == "[" and text[-1] == "]":
+        text = text[1:-1]
+    fixed = re.sub(r"\s+", "_", text.strip())
+    fixed = re.sub(r"[\[\]]", "_", fixed)
+    if not fixed or fixed[0] in "$%":
+        fixed = "_" + fixed
+    return fixed if LABEL_PATTERN.fullmatch(fixed) else "_" + re.sub(r"\W", "_", fixed)
 
 
 def comment_text(line: str) -> str:
@@ -50,6 +95,39 @@ def comment_text(line: str) -> str:
 def comment_lines(comment: str) -> list[str]:
     """``comment`` as the ``#`` lines that spell it in a file."""
     return [f"# {line}".rstrip() for line in comment.split("\n")] if comment else []
+
+
+class Comments:
+    """The ``#`` lines a table file carries, as every dialect keeps them.
+
+    The lines directly above an entry are that entry's own; a blank line, a
+    directive or the end of the file gives whatever is pending to the file.
+    """
+
+    def __init__(self) -> None:
+        self.pending: list[str] = []
+        self.file: list[str] = []
+
+    def add(self, line: str) -> None:
+        """Collect one ``#`` line for whatever comes next."""
+        self.pending.append(comment_text(line))
+
+    def flush(self) -> None:
+        """Nothing took the pending lines: they are the file's."""
+        self.file.extend(self.pending)
+        self.pending.clear()
+
+    def take(self, entry: Entry) -> Entry:
+        """``entry`` with the pending lines on it, which it consumes."""
+        if not self.pending:
+            return entry
+        entry = replace(entry, comment="\n".join(self.pending))
+        self.pending.clear()
+        return entry
+
+    def file_text(self) -> str:
+        """Everything that fell to the file, as one comment."""
+        return "\n".join(self.file)
 
 
 @dataclass
@@ -67,14 +145,7 @@ class TableFile:
     """
     encoding: str = "utf-8"
     """The encoding the file was decoded as; a legacy table is often
-    ``cp932`` (:func:`mapchar.core.text.read_text_any` decides)."""
-    end_marker: str | None = None
-    """The text an Atlas table spelled its end token with, when it named one.
-
-    Atlas writes the end token as an ordinary entry with a chosen text, and a
-    script dumped for that table has to spell it the same way; no other dialect
-    sets this.
-    """
+    ``cp932`` (:func:`mapchar.project.formats.textfile.read_text_any` decides)."""
 
     @property
     def tables(self) -> list[Table]:
@@ -100,33 +171,25 @@ def parse_native(
     table = Table(default_id)
     seen_header = False
     named = False
-    pending: list[str] = []
-    """Comment lines not yet attached: the entry directly under them takes
-    them, and a blank line, a directive or the end of the file gives them to
-    the file."""
-    file_comment: list[str] = []
-
-    def flush() -> None:
-        file_comment.extend(pending)
-        pending.clear()
+    comments = Comments()
 
     for n, raw in enumerate(split_lines(text), start=1):
         line = raw.rstrip("\n")
         stripped = line.strip()
         if stripped.startswith("#"):
-            pending.append(comment_text(stripped))
+            comments.add(stripped)
             continue
         if not stripped:
-            flush()
+            comments.flush()
             continue
         if not seen_header:
-            flush()
+            comments.flush()
             if stripped != HEADER:
                 raise TableError(f"expected {HEADER!r} as the first line", path, n)
             seen_header = True
             continue
         if stripped.startswith("@"):
-            flush()
+            comments.flush()
             parts = stripped[1:].split(None, 1)
             keyword = parts[0] if parts else ""
             arg = parts[1].strip() if len(parts) > 1 else ""
@@ -151,17 +214,14 @@ def parse_native(
             entry = parse_entry(line)
         except ValueError as exc:
             raise TableError(str(exc), path, n) from None
-        if pending:
-            entry = replace(entry, comment="\n".join(pending))
-            pending.clear()
         try:
-            table.add(entry)
+            table.add(comments.take(entry))
         except TableError as exc:
             raise TableError(exc.message, path, n) from None
-    flush()
+    comments.flush()
     if not seen_header:
         raise TableError(f"missing {HEADER!r} header", path)
-    table.comment = "\n".join(file_comment)
+    table.comment = comments.file_text()
     return TableFile(table)
 
 
@@ -309,19 +369,16 @@ def write_native(table: Table) -> str:
 
 
 __all__ = [
-    "BITS",
-    "RAW",
+    "Comments",
     "TableFile",
     "comment_lines",
     "comment_text",
     "format_entry",
     "format_entry_lines",
-    "format_key",
     "is_native",
     "parse_entry",
     "parse_entry_lines",
     "parse_native",
     "parse_param",
-    "split_lines",
     "write_native",
 ]

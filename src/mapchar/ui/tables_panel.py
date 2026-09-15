@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPalette, QPixmap
-from PySide6.QtWidgets import QHeaderView, QStyle, QTreeWidgetItem, QWidget
+from PySide6.QtWidgets import QStyle, QTreeWidgetItem, QWidget
 
 from mapchar.project.workspace import Workspace
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.panel import WorkspaceTreePanel
-from mapchar.ui.widgets import show_elided_tooltips
 
 
 class TablesPanel(ThemedIcons, WorkspaceTreePanel):
@@ -19,15 +18,9 @@ class TablesPanel(ThemedIcons, WorkspaceTreePanel):
 
     def __init__(self, workspace: Workspace, parent: QWidget | None = None):
         super().__init__(workspace, parent)
-        self.tree.setHeaderLabels(["Table", "Entries"])
+        self.set_columns(["Table", "Entries"])
         self.tree.setRootIsDecorated(False)
-        # The name gives way when the dock narrows; the counts keep their room.
-        header = self.tree.header()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        show_elided_tooltips(self.tree)
-        self.tree.itemDoubleClicked.connect(self._on_double)
+        self.entry_double_clicked.connect(self._on_chosen)
         self._start_id: str | None = None
         self.rebuild()
 
@@ -78,7 +71,6 @@ class TablesPanel(ThemedIcons, WorkspaceTreePanel):
     def _bake_icons(self) -> None:
         self.rebuild()
 
-    def _on_double(self, item: QTreeWidgetItem, column: int) -> None:
-        entry = self.entry_of(item)
-        if entry is not None and entry.table is not None:
+    def _on_chosen(self, entry) -> None:
+        if entry.table is not None:
             self.table_chosen.emit(entry.table.id)

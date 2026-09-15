@@ -52,10 +52,11 @@ def current_id(plugin_id: str) -> str:
 
     **A parameterised id is forwarded by its head.** A banked mapping names its
     numbers inside the id (``banked:<base>:<size>``,
-    :func:`~mapchar.core.mapping.parse_banked`), so an exact lookup could never
-    match one — every set of numbers would need its own row. Everything before
-    the first ``:`` is what is looked up and the rest rides along unchanged, so
-    one row forwards every parameterisation. Keys here are therefore bare heads;
+    :func:`~mapchar.plugins.builtins.mappings.parse_banked`), so an exact
+    lookup could never match one — every set of numbers would need its own
+    row. Everything before the first ``:`` is what is looked up and the rest
+    rides along unchanged, so one row forwards every parameterisation. Keys
+    here are therefore bare heads;
     a key with a ``:`` in it can never fire.
 
     The walk carries a seen-set rather than trusting a hand-edited table to

@@ -3,6 +3,7 @@ strings or pointers, and how they are cut, all applied as they change."""
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 
 from mapchar.core.block import BlockConfig, EndToken, RangeSource
@@ -10,7 +11,6 @@ from mapchar.core.errors import MapcharError
 from mapchar.core.table import TableSet
 from mapchar.plugins.base import Stage
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.undo_commands import BlockEditCommand
 from mapchar.ui.widgets import fill_pick, select_data
 
 DEFAULT_ENCODING = "ascii"
@@ -59,13 +59,27 @@ class FormatBarMixin:
         items += [(name, cid) for cid, name in names if cid not in loaded]
         return items
 
+    @contextmanager
+    def _bars_quiet(self):
+        """Load the bars without the signals they emit applying what they show.
+
+        Each control is put back the way it was rather than simply un-blocked,
+        so a load nested inside one that is already quiet leaves it quiet.
+        """
+        bars = (self.format_pick, self.resolve_pointers)
+        blocked = [widget.blockSignals(True) for widget in bars]
+        try:
+            yield
+        finally:
+            for widget, was in zip(bars, blocked, strict=True):
+                widget.blockSignals(was)
+
     def _refresh_table_picks(self) -> None:
         pick = self.format_pick
-        was = pick.blockSignals(True)
-        fill_pick(pick, self._table_items())
-        pick.add_command_row()
-        self._select_reading()
-        pick.blockSignals(was)
+        with self._bars_quiet():
+            fill_pick(pick, self._table_items())
+            pick.add_command_row()
+            self._select_reading()
         self.tables_panel.set_start_table(self._current_table_id())
         self.table_editor.set_tables(self.workspace.table_entries())
 
@@ -79,15 +93,14 @@ class FormatBarMixin:
             self._sync_mode(False)
             return
         table_id, pick = cfg.table_id, self.format_pick
-        was = pick.blockSignals(True)
-        if not select_data(pick, table_id):
-            # A table the reading names but nobody loaded is still what it
-            # names: said so, rather than shown as some other table.
-            at = pick.count() - 2
-            label = f"@{table_id}  (not loaded)" if table_id else "(no table)"
-            pick.insertItem(at, label, table_id or "")
-            pick.setCurrentIndex(at)
-        pick.blockSignals(was)
+        with self._bars_quiet():
+            if not select_data(pick, table_id):
+                # A table the reading names but nobody loaded is still what it
+                # names: said so, rather than shown as some other table.
+                at = pick.count() - 2
+                label = f"@{table_id}  (not loaded)" if table_id else "(no table)"
+                pick.insertItem(at, label, table_id or "")
+                pick.setCurrentIndex(at)
         self._sync_mode(cfg.has_pointers)
 
     def _sync_mode(self, pointers: bool) -> None:
@@ -96,8 +109,7 @@ class FormatBarMixin:
         a pointer block's table or its strings, and nothing but strings for any
         other block. Strings' bytes are text, so a view of them shows Strings
         with only the settings that shape a string."""
-        entry = self._entry
-        block = entry is not None and entry.kind is EntryKind.BLOCK
+        block = self._current_block() is not None
         string_view = self._in_string_view()
         shown = pointers and not string_view
         self.mode_toggle.set_value(shown)
@@ -197,9 +209,8 @@ class FormatBarMixin:
         suggested = self._suggested_mapping()
         if suggested and not cfg.has_pointers:
             self.reading_bar.suggest_mapping(suggested)
-        was = self.resolve_pointers.blockSignals(True)
-        self.resolve_pointers.setChecked(entry.session.resolve_pointers)
-        self.resolve_pointers.blockSignals(was)
+        with self._bars_quiet():
+            self.resolve_pointers.setChecked(entry.session.resolve_pointers)
         self._select_reading()
 
     def _sync_bars(self) -> None:
@@ -211,13 +222,8 @@ class FormatBarMixin:
         if cfg is None:
             return
         if self._bars_show != (entry, cfg, entry.compression_id, entry.spare_room):
-            pickers = (self.format_pick, self.resolve_pointers)
-            blocked = [p.blockSignals(True) for p in pickers]
-            try:
+            with self._bars_quiet():
                 self._load_reading_bar()
-            finally:
-                for picker, was in zip(pickers, blocked, strict=True):
-                    picker.blockSignals(was)
 
     def _on_format_pick(self) -> None:
         self._on_reading_edited("table")
@@ -234,13 +240,14 @@ class FormatBarMixin:
         pointer table or its strings.
         """
         entry, base = self._entry, self._reading()
-        if entry is not None and entry.kind is EntryKind.BLOCK and base is not None:
+        block = self._current_block()
+        if block is not None and base is not None:
             if not base.has_pointers:
                 self._sync_mode(False)
             elif pointers:
-                self._view_source(entry)
+                self._view_source(block)
             else:
-                self._view_strings(entry)
+                self._view_strings(block)
             return
         if entry is None or base is None or base.has_pointers == pointers:
             self._sync_mode(base is not None and base.has_pointers)
@@ -271,24 +278,26 @@ class FormatBarMixin:
             return
         cfg = self.reading_bar.config(base, self.format_pick.currentData() or "")
         if entry.kind is EntryKind.BLOCK:
-            before = (entry.name, entry.config, entry.compression_id, entry.spare_room)
-            after = (
-                entry.name,
-                cfg,
-                entry.compression_id,
-                self.reading_bar.spare_room_rule(),
+            self._push_block_edit(
+                entry,
+                field=field,
+                config=cfg,
+                spare_room=self.reading_bar.spare_room_rule(),
             )
-            if after != before:
-                self._push_command(BlockEditCommand(self, entry, before, after, field))
         elif cfg != base or entry.session.config is None:
             entry.session.config = cfg
             entry.session.table_id = cfg.table_id
             self._refresh_view()
-        self.tables_panel.set_start_table(self._current_table_id())
 
     def _table_set(self) -> TableSet | None:
         """The set the reading's table heads."""
         return self._table_set_for(self._current_table_id())
+
+    def _table_set_of(self, entry: Entry) -> TableSet | None:
+        """The set an entry's own reading is read through — which is the current
+        one only while that entry is the view."""
+        cfg = entry.config
+        return self._table_set_for(cfg.table_id) if cfg is not None else None
 
     def _table_set_for(self, table_id: str | None) -> TableSet | None:
         """The set ``table_id`` heads, or ``None`` when it is not loaded."""

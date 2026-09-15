@@ -167,9 +167,6 @@ class WindowLayout(QObject):
         self.save()  # the layout on screen is the layout that is stored
 
 
-__all__ = ["LAYOUT_VERSION", "SAVE_DELAY_MS", "WindowLayout"]
-
-
 def remember_layout(window: QWidget, key: str) -> WindowLayout:
     """Give one tool window a remembered geometry, under ``key``.
 
@@ -182,3 +179,11 @@ def remember_layout(window: QWidget, key: str) -> WindowLayout:
     layout = WindowLayout(window, key)
     layout.restore()
     return layout
+
+
+__all__ = [
+    "LAYOUT_VERSION",
+    "SAVE_DELAY_MS",
+    "WindowLayout",
+    "remember_layout",
+]

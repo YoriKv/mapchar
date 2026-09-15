@@ -6,14 +6,13 @@ import os
 
 from mapchar.core.context import KEY_HEADER_SIZE
 from mapchar.core.errors import MapcharError
-from mapchar.pipeline.exchange.atlas import read_atlas, write_atlas
-from mapchar.pipeline.exchange.cartographer import (
+from mapchar.project.exchange.addresses import shift_config
+from mapchar.project.exchange.atlas import read_atlas, write_atlas
+from mapchar.project.exchange.cartographer import (
     parse_command_file,
-    shift_config,
     write_command_file,
 )
-from mapchar.pipeline.exchange.script_import import apply_script
-from mapchar.project.formats.script import parse_script
+from mapchar.project.formats.script import apply_script, parse_script
 from mapchar.project.formats.translator import (
     apply_records,
     read_delimited,
@@ -32,6 +31,16 @@ class ImportExportMixin:
     A slice of :class:`~mapchar.ui.main_window.window.MainWindow`, reaching the
     rest of the window only through ``self``.
     """
+
+    def _container_header(self, file_entry: Entry | None) -> int:
+        """``file_entry``'s container header: what a file address carries and a
+        block's offsets do not.
+
+        Cartographer and Atlas both address the file, so an export adds this to
+        every address it writes and an import subtracts it back off.
+        """
+        doc = self._load_document(file_entry) if file_entry is not None else None
+        return int(doc.ctx.get(KEY_HEADER_SIZE, 0) or 0) if doc is not None else 0
 
     def _import_cartographer_dialog(self) -> None:
         path = self._pick_open("Import Cartographer Command File", "*.txt;;*")
@@ -57,10 +66,8 @@ class ImportExportMixin:
         created: list[Entry] = []
         # Cartographer addresses are file offsets; blocks address the payload
         # the container yields, which drops the file's header.
-        doc = self._load_document(file_entry)
-        header = int(doc.ctx.get(KEY_HEADER_SIZE, 0) or 0) if doc is not None else 0
-        self.undo_stack.beginMacro(f"Import {os.path.basename(path)}")
-        try:
+        header = self._container_header(file_entry)
+        with self._macro(f"Import {os.path.basename(path)}"):
             for sub in cf.sub_tables:
                 self.open_table(os.path.normpath(os.path.join(base, sub)), "abcde")
             for block in cf.blocks:
@@ -85,8 +92,6 @@ class ImportExportMixin:
                 )
                 self._push_add(entry)
                 created.append(entry)
-        finally:
-            self.undo_stack.endMacro()
         self._remember_dir(path)
         if created:
             self._activate_entry(created[0])
@@ -114,26 +119,25 @@ class ImportExportMixin:
             return 0
         script = read_atlas(text)
         notices = list(script.notices)
+        # The script addresses the file; the block's records address the payload.
+        header = self._container_header(entry.parent)
         by_pointer = {p.address: r for r in entry.doc.strings for p in r.pointers}
         by_start = {r.start: r for r in entry.doc.strings}
         applied = 0
-        self.undo_stack.beginMacro(f"Import {os.path.basename(path)}")
-        try:
+        with self._macro(f"Import {os.path.basename(path)}"):
             for i, item in enumerate(script.strings):
                 rec = None
                 for addr in item.pointers:
-                    rec = by_pointer.get(addr)
+                    rec = by_pointer.get(addr - header)
                     if rec is not None:
                         break
                 if rec is None and item.insert_at is not None:
-                    rec = by_start.get(item.insert_at)
+                    rec = by_start.get(item.insert_at - header)
                 if rec is None:
                     notices.append(f"string {i}: no block string matches its address")
                     continue
                 self._set_translation(entry, rec.index, item.text)
                 applied += 1
-        finally:
-            self.undo_stack.endMacro()
         self._remember_dir(path)
         self._refresh_view()
         self._report(
@@ -160,8 +164,14 @@ class ImportExportMixin:
             for e in self.workspace.table_entries()
             if e.table is not None and e.table.id in tables.tables
         }
+        header = self._container_header(entry.parent)
         export = write_atlas(
-            entry.name, entry.config, entry.doc.strings, tables, table_files
+            entry.name,
+            shift_config(entry.config, header),
+            entry.doc.strings,
+            tables,
+            table_files,
+            header=header,
         )
         folder = os.path.dirname(path)
         if not self._write_text(path, export.script):
@@ -193,8 +203,7 @@ class ImportExportMixin:
             if table_entry and table_entry.path
             else "main.tbl"
         )
-        parent_doc = self._load_document(entry.parent) if entry.parent else None
-        header = int(parent_doc.ctx.get(KEY_HEADER_SIZE, 0) or 0) if parent_doc else 0
+        header = self._container_header(entry.parent)
         text, notes = write_command_file(
             entry.name,
             shift_config(entry.config, header),
@@ -264,40 +273,39 @@ class ImportExportMixin:
             self._error(f"Cannot import {path}: {exc}")
             return
         # Record the changes as one undo step.
-        self.undo_stack.beginMacro(f"Import {os.path.basename(path)}")
-        for name, strs in blocks.items():
-            entry = next(
-                (
-                    e
-                    for e in self.workspace.entries
-                    if e.kind is EntryKind.BLOCK and e.name == name
-                ),
-                None,
-            )
-            if entry is None:
-                continue
-            for rec, (tr, st, notes) in zip(strs, before[name], strict=False):
-                new = (rec.translation, rec.status, rec.notes)
-                rec.translation, rec.status, rec.notes = tr, st, notes
-                if new[0] != tr:
-                    self._push_command(
-                        StringFieldCommand(
-                            self, entry, rec.index, "translation", tr, new[0]
+        with self._macro(f"Import {os.path.basename(path)}"):
+            for name, strs in blocks.items():
+                entry = next(
+                    (
+                        e
+                        for e in self.workspace.entries
+                        if e.kind is EntryKind.BLOCK and e.name == name
+                    ),
+                    None,
+                )
+                if entry is None:
+                    continue
+                for rec, (tr, st, notes) in zip(strs, before[name], strict=False):
+                    new = (rec.translation, rec.status, rec.notes)
+                    rec.translation, rec.status, rec.notes = tr, st, notes
+                    if new[0] != tr:
+                        self._push_command(
+                            StringFieldCommand(
+                                self, entry, rec.index, "translation", tr, new[0]
+                            )
                         )
-                    )
-                if new[1] != st:
-                    self._push_command(
-                        StringFieldCommand(
-                            self, entry, rec.index, "status", st.value, new[1].value
+                    if new[1] != st:
+                        self._push_command(
+                            StringFieldCommand(
+                                self, entry, rec.index, "status", st.value, new[1].value
+                            )
                         )
-                    )
-                if new[2] != notes:
-                    self._push_command(
-                        StringFieldCommand(
-                            self, entry, rec.index, "notes", notes, new[2]
+                    if new[2] != notes:
+                        self._push_command(
+                            StringFieldCommand(
+                                self, entry, rec.index, "notes", notes, new[2]
+                            )
                         )
-                    )
-        self.undo_stack.endMacro()
         self._remember_dir(path)
         self._refresh_view()
         self._report(
@@ -317,7 +325,9 @@ class ImportExportMixin:
         self.export_file(path, kind)
 
     def export_file(self, path: str, kind: str) -> None:
-        entry = self._entry
+        entry = self._current_block(need_doc=True, complain="Select a block to export.")
+        if entry is None:
+            return
         records = records_for(entry.name, entry.doc.strings)
         if kind == "po":
             rom = (

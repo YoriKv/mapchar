@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from mapchar.core.bits import format_key
 from mapchar.core.block import (
     BlockConfig,
     Pascal,
@@ -14,7 +13,6 @@ from mapchar.core.block import (
 )
 from mapchar.core.numbers import format_num, parse_num
 from mapchar.core.table import Table, TableSet, TokenKind
-from mapchar.core.text import split_lines
 from mapchar.core.tokens import (
     CodeRef,
     TextRun,
@@ -24,6 +22,8 @@ from mapchar.core.tokens import (
     parse_text,
 )
 from mapchar.pipeline.extract import strip_artificial
+from mapchar.project.formats.legacy.abcde import write_abcde_table
+from mapchar.project.formats.textfile import split_lines
 
 ADDRESS_TYPES = {
     "linear": "LINEAR",
@@ -40,58 +40,6 @@ class AtlasExport:
     tables: dict[str, str]
     """Table file name to its abcde-dialect text."""
     notices: list[str] = field(default_factory=list)
-
-
-# --- tables in the abcde dialect ------------------------------------------
-
-
-def write_abcde_table(table: Table) -> str:
-    lines = [f"@{table.id}"]
-    for e in table.sorted_entries():
-        key = format_key(e.bits)
-        weight = f"<{e.weight}>" if e.weight != 1 else ""
-        if e.kind is TokenKind.TEXT:
-            lines.append(f"{key}{weight}={_abcde_text(e.text)}")
-        elif e.kind is TokenKind.END:
-            lines.append(f"/{key}{weight}={_abcde_text(e.text)}")
-        elif e.kind is TokenKind.RETURN:
-            lines.append(f"!{key}{weight}=,-1")
-        elif e.kind is TokenKind.CODE:
-            n = sum(o.bits for o in e.operands) // 8
-            lines.append(f"!{key}{weight}=<[{e.text}]>,{n}")
-        else:
-            params = []
-            for p in e.params:
-                if p.table_id == "return":
-                    params.append("-1")
-                    continue
-                m = p.stop.spec(any_marker="0")
-                if p.table_id == "raw":
-                    params.append(m + ("+" if p.shared else ""))
-                elif p.table_id == "bits":
-                    params.append(f"<binary>:{m}" + ("+" if p.shared else ""))
-                else:
-                    params.append(f"<@{p.table_id}>:{m}" + ("+" if p.shared else ""))
-            label = f"<{_abcde_text(e.text)}>" if e.text else ""
-            lines.append(f"!{key}{weight}={label}," + ",".join(params))
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _abcde_text(script_form: str) -> str:
-    """Native text to abcde text: brackets literal, ``\\n`` kept, no other escapes."""
-    out = []
-    i = 0
-    while i < len(script_form):
-        c = script_form[i]
-        if c == "\\" and i + 1 < len(script_form):
-            nxt = script_form[i + 1]
-            out.append("\\n" if nxt == "n" else nxt)
-            i += 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out).replace("<", "").replace(">", "")
 
 
 # --- script text --------------------------------------------------------------
@@ -131,8 +79,18 @@ def write_atlas(
     strings: list[StringRecord],
     tables: TableSet,
     table_files: dict[str, Table],
+    *,
+    header: int = 0,
 ) -> AtlasExport:
-    """An Atlas script plus abcde-dialect tables that insert the block."""
+    """An Atlas script plus abcde-dialect tables that insert the block.
+
+    Atlas writes to the ROM **file**, so every address the script carries is a
+    file offset: ``header`` — the container's header, what the block's own
+    offsets drop — is added to each one. ``config`` is expected already shifted
+    by the same amount
+    (:func:`~mapchar.project.exchange.addresses.shift_config`), which is what
+    moves the bound, the skips and ``#HDR``.
+    """
     notices: list[str] = []
     out = [f"// mapchar: {block_name}"]
     files = {name: write_abcde_table(table) for name, table in table_files.items()}
@@ -178,19 +136,24 @@ def write_atlas(
     packed = mode is WriteMode.PACKED
     if packed and strings:
         bound = config.bound if config.bound is not None else getattr(src, "stop", None)
+        start = strings[0].start + header
         if bound is not None:
-            out.append(f"#JMP({format_num(strings[0].start)}, {format_num(bound - 1)})")
+            out.append(f"#JMP({format_num(start)}, {format_num(bound - 1)})")
         else:
-            out.append(f"#JMP({format_num(strings[0].start)})")
+            out.append(f"#JMP({format_num(start)})")
     width = {1: "W8", 2: "W16", 3: "W24", 4: "W32"}
     for rec in strings:
         out.append("")
         out.append(f"// #{rec.index}")
         if not packed:
-            out.append(f"#JMP({format_num(rec.start)}, {format_num(rec.end - 1)})")
+            out.append(
+                f"#JMP({format_num(rec.start + header)}, "
+                f"{format_num(rec.end - 1 + header)})"
+            )
         if mapping in ADDRESS_TYPES:
             for ptr in rec.pointers:
-                out.append(f"#{width.get(ptr.size, 'W16')}({format_num(ptr.address)})")
+                addr = format_num(ptr.address + header)
+                out.append(f"#{width.get(ptr.size, 'W16')}({addr})")
         text = rec.current_text()
         for line in strip_artificial(text, config):
             out.append(atlas_text(line, tables))

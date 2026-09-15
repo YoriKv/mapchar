@@ -9,7 +9,7 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
 )
-from mapchar.pipeline.exchange.cartographer import CommandFileError, parse_command_file
+from mapchar.project.exchange.cartographer import CommandFileError, parse_command_file
 
 RAW_BLOCK = """\
 #GAME NAME:      Synthetic

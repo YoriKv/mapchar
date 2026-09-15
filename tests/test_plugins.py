@@ -3,7 +3,6 @@ from __future__ import annotations
 from mapchar.core.bits import bytes_to_bits
 from mapchar.core.block import BlockConfig, PointerTableSource
 from mapchar.core.context import KEY_HEADER_SIZE, KEY_SUGGESTED_MAPPING, PipelineContext
-from mapchar.core.mapping import resolve_mapping
 from mapchar.core.table import Table
 from mapchar.plugins.aliases import RENAMED, current_config_ids, current_id
 from mapchar.plugins.base import (
@@ -15,7 +14,7 @@ from mapchar.plugins.base import (
 )
 from mapchar.plugins.builtins.containers import GB_LOGO, GBA_LOGO, NES_MAGIC
 from mapchar.plugins.charsets import apply_charset
-from mapchar.plugins.registry import PassThrough
+from mapchar.plugins.registry import PassThrough, resolve_mapping
 
 
 def test_detection_and_roundtrip(registry):

@@ -16,8 +16,9 @@ checks the ones a test can see.
   file picker, a prompt.
 - **Every menu row carries a mnemonic** (`&`), unique within its menu, context
   menus included.
-- **A switch left off says so**: a spin box whose zero or −1 means "none" shows
-  a special value text (`off`) rather than a label explaining the number.
+- **A number that means something else says so**: a spin box whose zero or −1
+  is not a count shows a special value text — `off`, `none`, `fit`, `box`,
+  `top-left` — rather than a label explaining the number.
 - **Words, never class names**: a source or string type is shown as the Block
   dialog names it (`Pointer table · End token`).
 
@@ -68,7 +69,10 @@ No layout's minimum size may be set by text or a count that varies.
 - **An offset is an `OffsetEdit`**: the addresses' width, in hex with `$`
   optional and a leading `-` to subtract, shown as `1F0` or `-10`.
 - **Any other hex number** — a fill byte, a bank, the Custom bank fields — is a
-  `HexEdit` or `HexSpinBox`, upper case and padded to its digits.
+  `HexEdit` or `HexSpinBox`, upper case and padded to its digits; a number
+  whose digit count means something, as the Fill dialog's first key means the
+  width of every key it lays down, is a `HexEdit(pad=False)` and keeps the
+  digits it was typed with.
 
 ## Cut-short text reads in full
 

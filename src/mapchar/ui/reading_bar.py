@@ -19,26 +19,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import QPoint, QRegularExpression, Qt, Signal
-from PySide6.QtGui import QKeyEvent, QRegularExpressionValidator
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QFrame,
-    QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
-    QPushButton,
-    QStyledItemDelegate,
-    QTableWidget,
-    QTableWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
-from mapchar.core.bits import parse_hex
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -62,6 +51,7 @@ from mapchar.ui.number_fields import (
     number_spin,
     respell_addresses,
 )
+from mapchar.ui.skips_picker import SkipsPicker
 from mapchar.ui.widgets import CompactComboBox, WrapBar, fit_chars, hint_field
 
 RANGE, TABLE, LIST = "range", "table", "list"
@@ -108,181 +98,21 @@ _NOT_STRING_VIEW = ("Source", "Pointers")
 own bytes does not show. Not Strings, which shapes the bytes themselves —
 skip ranges among them, so they are editable wherever the strings are read."""
 
+
+def _endian_combo(tip: str = "") -> QComboBox:
+    """A byte-order picker, little first as a console's numbers are."""
+    combo = QComboBox()
+    combo.addItem("Little", "little")
+    combo.addItem("Big", "big")
+    if tip:
+        combo.setToolTip(tip)
+    return combo
+
+
 DEFAULT_READING = BlockConfig(RangeSource(0, 0), EndToken(), "")
 """What the bar shows with nothing open: a file read as a range of strings, so
 the window starts on one source's settings rather than on every source's at
 once."""
-
-_HEX = QRegularExpression(r"\s*\$?[0-9A-Fa-f_]*\s*")
-
-
-class _HexDelegate(QStyledItemDelegate):
-    """Cells edited as hex numbers."""
-
-    def createEditor(self, parent, option, index):  # noqa: N802 - Qt override
-        editor = QLineEdit(parent)
-        editor.setValidator(QRegularExpressionValidator(_HEX, editor))
-        return editor
-
-
-class SkipsPopup(QFrame):
-    """The list of a block's skip ranges, edited in a popup under its picker.
-
-    A row is a ``from`` and a ``to`` in hex; the list applies as it changes,
-    and a row with a side still blank or unreadable is left out until it can
-    be read whole. The popup closes on Esc or a click outside it.
-    """
-
-    changed = Signal()
-
-    def __init__(self, parent: QWidget):
-        super().__init__(parent, Qt.WindowType.Popup)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self._loading = False
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.addWidget(QLabel("Reading that reaches From continues at To (hex)"))
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["From", "To"])
-        self.table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setItemDelegate(_HexDelegate(self.table))
-        self.table.setMinimumSize(fit_chars(QLineEdit(), 10).minimumWidth() * 2, 120)
-        self.table.cellChanged.connect(self._on_cell_changed)
-        layout.addWidget(self.table, 1)
-        row = QHBoxLayout()
-        self.add_button = QPushButton("Add")
-        self.add_button.clicked.connect(lambda: self.add(None, None))
-        self.remove_button = QPushButton("Remove")
-        self.remove_button.clicked.connect(self.remove_current)
-        row.addWidget(self.add_button)
-        row.addWidget(self.remove_button)
-        row.addStretch(1)
-        layout.addLayout(row)
-
-    def set_value(self, skips: tuple[tuple[int, int], ...]) -> None:
-        """Show ``skips``; a list already showing them, blank rows and all, is
-        left as it is, so a reload after an edit does not lose the row being
-        typed into."""
-        if self.value() == tuple(skips):
-            return
-        self._loading = True
-        try:
-            self.table.setRowCount(0)
-            for a, b in skips:
-                self._append(f"{a:X}", f"{b:X}")
-        finally:
-            self._loading = False
-
-    def value(self) -> tuple[tuple[int, int], ...]:
-        """The rows that read as a pair of numbers."""
-        skips = []
-        for row in range(self.table.rowCount()):
-            try:
-                a = parse_hex(self._text(row, 0), None)
-                b = parse_hex(self._text(row, 1), None)
-            except ValueError:
-                continue
-            if a is not None and b is not None:
-                skips.append((a, b))
-        return tuple(skips)
-
-    def add(self, start: int | None, stop: int | None) -> None:
-        """Append a range — blank, to be typed, when either side is ``None``."""
-        row = self._append(
-            "" if start is None else f"{start:X}", "" if stop is None else f"{stop:X}"
-        )
-        self.table.setCurrentCell(row, 0)
-        if start is None or stop is None:
-            self.table.editItem(self.table.item(row, 0 if start is None else 1))
-        else:
-            self.changed.emit()
-
-    def remove_current(self) -> None:
-        row = self.table.currentRow()
-        if row < 0:
-            return
-        had = self.value()
-        self.table.removeRow(row)
-        if self.value() != had:
-            self.changed.emit()
-
-    def _append(self, start: str, stop: str) -> int:
-        was, self._loading = self._loading, True
-        try:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(start))
-            self.table.setItem(row, 1, QTableWidgetItem(stop))
-        finally:
-            self._loading = was
-        return row
-
-    def _text(self, row: int, column: int) -> str:
-        item = self.table.item(row, column)
-        return item.text() if item is not None else ""
-
-    def _on_cell_changed(self, row: int, column: int) -> None:
-        if not self._loading:
-            self.changed.emit()
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
-        if event.key() == Qt.Key.Key_Escape:
-            self.hide()
-        else:
-            super().keyPressEvent(event)
-
-
-class SkipsPicker(CompactComboBox):
-    """A block's skip ranges: the list as one line, opening on the popup that
-    edits it in place of a dropdown."""
-
-    changed = Signal()
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(140, parent)
-        self.addItem("none")
-        self.setToolTip("Byte ranges inside the region that are not text")
-        self.popup = SkipsPopup(self)
-        self.popup.changed.connect(self._on_changed)
-
-    def set_value(self, skips: tuple[tuple[int, int], ...]) -> None:
-        self.popup.set_value(skips)
-        self._show_summary()
-
-    def value(self) -> tuple[tuple[int, int], ...]:
-        return self.popup.value()
-
-    def add(self, start: int, stop: int) -> None:
-        """Append ``start`` to ``stop`` and apply it."""
-        self.popup.add(start, stop)
-
-    def _on_changed(self) -> None:
-        self._show_summary()
-        self.changed.emit()
-
-    def _show_summary(self) -> None:
-        text = ", ".join(f"{a:X}>{b:X}" for a, b in self.value()) or "none"
-        self.setItemText(0, text)
-
-    def showPopup(self) -> None:  # noqa: N802 - Qt override
-        below = self.mapToGlobal(QPoint(0, self.height()))
-        screen = self.screen().availableGeometry()
-        size = self.popup.sizeHint()
-        x = min(below.x(), screen.right() - size.width())
-        y = below.y()
-        if y + size.height() > screen.bottom():
-            y = self.mapToGlobal(QPoint(0, 0)).y() - size.height()
-        self.popup.move(max(x, screen.left()), max(y, screen.top()))
-        self.popup.show()
-        self.popup.table.setFocus()
-
-    def hidePopup(self) -> None:  # noqa: N802 - Qt override
-        pass
 
 
 def source_kind(config: BlockConfig) -> str:
@@ -319,9 +149,7 @@ class ReadingBar(WrapBar):
         self.count = number_spin(1, 1_000_000, 4)
         self.ptr_size = number_spin(1, 4, 1)
         self.ptr_stride = number_spin(1, 4096, 2)
-        self.ptr_endian = QComboBox()
-        self.ptr_endian.addItem("Little", "little")
-        self.ptr_endian.addItem("Big", "big")
+        self.ptr_endian = _endian_combo()
         self.ptr_mapping = CompactComboBox(150)
         self.ptr_mapping.setEditable(True)
         self.ptr_offset = OffsetEdit()
@@ -348,10 +176,7 @@ class ReadingBar(WrapBar):
         self.stop_at_end = QCheckBox("Stop at end token")
         self.stop_at_end.setToolTip("End earlier at an end token")
         self.pascal_width = number_spin(1, 4, 1)
-        self.pascal_endian = QComboBox()
-        self.pascal_endian.addItem("Little", "little")
-        self.pascal_endian.addItem("Big", "big")
-        self.pascal_endian.setToolTip("The prefix's byte order")
+        self.pascal_endian = _endian_combo("The prefix's byte order")
         self.pascal_tokens = QCheckBox("Counts tokens")
         self.pascal_tokens.setToolTip("The prefix counts tokens by weight, not bytes")
         self.spp = number_spin(1, 64, 2)
@@ -532,7 +357,9 @@ class ReadingBar(WrapBar):
         that names none of them is kept as an id."""
         was = self.ptr_mapping.blockSignals(True)
         current = self.mapping_id()
-        self._mappings = {m.info.id: bool(m.needs_bank) for m in mappings}
+        self._mappings = {
+            m.info.id: bool(getattr(m, "needs_bank", True)) for m in mappings
+        }
         self.ptr_mapping.clear()
         for m in mappings:
             self.ptr_mapping.addItem(m.info.name, m.info.id)

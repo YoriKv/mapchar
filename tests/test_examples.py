@@ -25,10 +25,10 @@ from helpers import (
 )
 from mapchar.core.context import PipelineContext
 from mapchar.core.table import TableSet
-from mapchar.pipeline.exchange.cartographer import parse_command_file
 from mapchar.pipeline.extract import extract
 from mapchar.plugins.base import ReadSource, Stage
-from mapchar.project.formats.table_legacy import load_table_text
+from mapchar.project.exchange.cartographer import parse_command_file
+from mapchar.project.formats.legacy import load_table_text
 
 EXAMPLES = ABCDE / "eg" / "NES"
 GAMES = {

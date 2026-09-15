@@ -8,8 +8,8 @@ import pytest
 
 from helpers import cartographer_blocks, load_abcde_tables, normalise_dump, texts
 from mapchar.core.table import TableSet
-from mapchar.pipeline.exchange.cartographer import parse_command_file
 from mapchar.pipeline.extract import extract
+from mapchar.project.exchange.cartographer import parse_command_file
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "abcde")
 

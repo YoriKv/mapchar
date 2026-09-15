@@ -145,6 +145,7 @@ def test_the_custom_bank_fields_make_a_layout(window, tmp_path):
     window.bank_size_box.setText("20")
     window.addr_base_box.setText("0")
     window.bank_base_box.setText("0")
+    window._on_custom_bank()  # what editing a field emits
     assert window._format_address(0x21) == "$01:0001"
     assert window._parse_address("$01:0001") == 0x21
 

@@ -12,7 +12,7 @@ from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import apply_splices, layout_block
 from mapchar.plugins.charsets import apply_charset
 from mapchar.plugins.registry import default_registry
-from mapchar.project.formats.table_legacy import load_table_text
+from mapchar.project.formats.legacy import load_table_text
 from mapchar.project.formats.table_native import HEADER, parse_native
 
 ABC_TABLE = "@table main\n41=A\n42=B\n43=C\n/00=[end]\nFE=[line]\\n\n"

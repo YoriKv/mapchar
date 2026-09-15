@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from mapchar.core.block import Status
 from mapchar.core.errors import MapcharError
-from mapchar.pipeline.insert import Splice, apply_splices, layout_block
+from mapchar.pipeline.filechange import FileChange, existing_bytes
+from mapchar.pipeline.insert import FileBlock, lay_out_file
 from mapchar.pipeline.pipeline import (
-    FileChange,
     FileRef,
     PathwayConfig,
     compress_for_slot,
-    existing_bytes,
     save,
 )
 from mapchar.project.workspace import Entry, EntryKind, StringState
@@ -86,7 +87,7 @@ class WritingMixin:
         doc = self._load_document(entry)
         if doc is None or entry.config is None:
             return None
-        self._extract_current(entry, doc, self._table_set_for(entry.config.table_id))
+        self._extract_current(entry, doc, self._table_set_of(entry))
         return doc.strings
 
     def _dirty_blocks(self) -> list[Entry]:
@@ -123,7 +124,7 @@ class WritingMixin:
         disk is written here, where a refusal can be reported beside the block
         it concerns, and the command's first redo lands only the in-memory side
         — its file already holds the result, and
-        :meth:`~mapchar.pipeline.pipeline.FileChange.apply` leaves a file that
+        :meth:`~mapchar.pipeline.filechange.FileChange.apply` leaves a file that
         does alone.
         """
         by_file: dict[int, tuple[Entry, list[Entry]]] = {}
@@ -141,12 +142,12 @@ class WritingMixin:
                 ok = False
             else:
                 commands.append(command)
-        if len(commands) > 1:
-            self.undo_stack.beginMacro("Write All")
-        for command in commands:
-            self._push_command(command)
-        if len(commands) > 1:
-            self.undo_stack.endMacro()
+        # One file's write is its own step, named after the file; several are
+        # grouped under one, so undoing a Write All puts every file back.
+        group = self._macro("Write All") if len(commands) > 1 else nullcontext()
+        with group:
+            for command in commands:
+                self._push_command(command)
         return ok
 
     def _write_file(
@@ -156,23 +157,13 @@ class WritingMixin:
         parent_doc = self._load_document(file_entry)
         if parent_doc is None:
             return None
-        new_data = parent_doc.data
         problems: list[str] = []
-        # Which buffer each written block reads afterwards: the file's, or for a
-        # compressed one the payload its slot now holds.
-        written: dict[int, tuple[Entry, bytes | None]] = {}
-        # Several blocks can sit over one compressed slot, and the slot holds one
-        # stream: each is laid out into the *same* decompressed buffer and the
-        # buffer is compressed once. Recompressing per block would have the last
-        # splice at the slot's offset replace every earlier one, so one of two
-        # blocks written together would silently lose its edits.
-        payloads: dict[tuple[str, int], bytes] = {}
-        members: dict[tuple[str, int], list[Entry]] = {}
+        blocks: list[FileBlock] = []
         for block in file_blocks:
             doc = self._load_document(block)
             if doc is None or block.config is None:
                 continue
-            ts = self._table_set_for(block.config.table_id)
+            ts = self._table_set_of(block)
             if ts is None:
                 problems.append(
                     f"{block.name}: table @{block.config.table_id} is not loaded"
@@ -180,35 +171,30 @@ class WritingMixin:
                 )
                 continue
             self._extract_current(block, doc, ts)
-            slot = (block.compression_id or "", block.slice_offset)
-            if block.compression_id:
-                base = payloads.setdefault(slot, doc.data)
-            else:
-                base = new_data
-            res = layout_block(base, block.config, ts, doc.strings, self.registry)
-            if not res.ok:
-                for p in res.problems:
-                    problems.append(f"{block.name} #{p.index}: {p.message}")
-                continue
-            if block.compression_id:
-                payloads[slot] = apply_splices(base, res.splices)
-                members.setdefault(slot, []).append(block)
-            else:
-                new_data = apply_splices(new_data, res.splices)
-                written[id(block)] = (block, None)
-        for slot, payload in payloads.items():
-            sharing = members.get(slot)
-            if not sharing:
-                continue
-            # The slot's bounds and spare-room rule are one slot's, so the first
-            # block over it speaks for all of them.
-            packed, problem = self._recompress(sharing[0], payload)
-            if problem:
-                problems.append(problem)
-                continue
-            new_data = apply_splices(new_data, [Splice(slot[1], packed)])
-            for block in sharing:
-                written[id(block)] = (block, payload)
+            blocks.append(
+                FileBlock(
+                    block,
+                    block.name,
+                    block.config,
+                    ts,
+                    doc.strings,
+                    doc.data,
+                    (block.compression_id, block.slice_offset)
+                    if block.compression_id
+                    else None,
+                )
+            )
+        laid = lay_out_file(
+            parent_doc.data,
+            blocks,
+            self.registry,
+            recompress=lambda first, payload: self._recompress(first.key, payload),
+        )
+        new_data = laid.data
+        # Which buffer each written block reads afterwards: the file's, or for a
+        # compressed one the payload its slot now holds.
+        written = {id(e): (e, payload) for e, payload in laid.written.items()}
+        problems += laid.problems
         if problems:
             TextDialog("Cannot Write", "\n".join(problems), self).exec()
             return None

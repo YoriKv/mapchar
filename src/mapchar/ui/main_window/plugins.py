@@ -6,8 +6,7 @@ import os
 
 from mapchar.plugins.base import Stage
 from mapchar.plugins.charsets import apply_charset
-from mapchar.plugins.discovery import PLUGIN_README
-from mapchar.project.workspace import Entry
+from mapchar.plugins.examples import PLUGIN_README
 from mapchar.ui.dialogs import TextDialog
 
 
@@ -95,7 +94,7 @@ class PluginsMixin:
         self.registry = registry
         self._plugin_issues = list(issues)
         self._registry_changed()
-        kept = self._drop_clean_documents()
+        kept = self.workspace.drop_clean_documents()
         for e in self.workspace.table_entries():
             # The file's own table as well as the live one: it is the baseline
             # the project's overlay is measured against, so a charset applied to
@@ -104,10 +103,7 @@ class PluginsMixin:
                 if t is not None:
                     t.charset_applied = False
                     apply_charset(t, self.registry)
-        if self._entry is not None:
-            self._doc = self._load_document(self._entry)
-            self._restore_session()
-        self._refresh_view()
+        self._reload_current_document()
         message = "Plugins refreshed"
         if kept:
             message += f"; {kept} entry(ies) with unsaved edits kept as they are"
@@ -120,27 +116,3 @@ class PluginsMixin:
         self._reset_builtin_tables()
         self.reading_bar.set_mappings(self.registry.plugins(Stage.MAPPING))
         self._refresh_table_picks()
-
-    def _drop_clean_documents(self) -> int:
-        """Forget every cached document so the new registry re-reads it — except
-        the ones holding unsaved edits. Returns how many were kept.
-
-        A refresh is not a revert: translations, overtypes and status changes
-        live only in the document, so dropping a dirty one throws work away while
-        the entry still reads as edited. Those keep what they have, and re-read
-        when the user next writes or closes them. A dirty entry's parents are
-        kept too: a block settles its bytes through its file's buffer, so
-        re-reading that from disk underneath it would strand the edits.
-        """
-        keep: set[int] = set()
-        for entry in self.workspace.entries:
-            if not entry.dirty:
-                continue
-            node: Entry | None = entry
-            while node is not None:
-                keep.add(id(node))
-                node = node.parent
-        for entry in self.workspace.entries:
-            if id(entry) not in keep:
-                self.workspace.drop_document(entry)
-        return sum(1 for entry in self.workspace.entries if entry.dirty)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mapchar.core.capabilities import Capability, supports
 from mapchar.core.font import Font, TextBox
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.workspace import Entry
 from mapchar.ui.undo_commands import BoxCommand, FontCommand
 
 
@@ -22,8 +22,8 @@ class FontsMixin:
         fonts = self.workspace.fonts()
         if entry not in fonts:
             return
-        block = self._entry
-        if block is not None and block.kind is EntryKind.BLOCK:
+        block = self._current_block()
+        if block is not None:
             from dataclasses import replace
 
             box = block.box or TextBox()

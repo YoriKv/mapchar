@@ -294,13 +294,13 @@ until **Save As File** gives it one.
 |--------------------------------------|-------------------------------------------------------------------------|
 | `HEX=text` (all)                     | `HEX=text`, with the dialect's width rule applied (romjuice's `⌊digits/2⌋` bytes) |
 | `/HEX=text` (Cartographer, Atlas, abcde) | `/HEX=text`                                                         |
-| Atlas `/text`                        | Not an entry: recorded as the file's suggested artificial end label      |
+| Atlas `/text`                        | Not an entry and it names no byte: dropped, with a notice               |
 | Atlas `*HEX`, `*HEX=text`            | `HEX=\n`, `HEX=text\n`                                                  |
 | Atlas `!XX`, `@XX` (dakuten)         | Dropped, with a notice                                                  |
 | Cartographer `$HEX=label,N`          | `$HEX=[label],N`; whitespace in `label` becomes `_`                     |
 | romjuice `$HEX=N`                    | `$HEX=[raw_HEX],N`                                                      |
 | romjuice `@HEX=N,BASE`               | `!HEX=[kanji_BASE] @kanji_BASE:N`, plus a generated table `kanji_BASE`, its own entry, holding `b=text` for every 2-byte entry `BASE+b` of the source table |
-| romjuice `!HEX` in table 1, table 2  | `!HEX=[swap] @table2:*` in table 1; `!HEX=return` in table 2. romjuice's swap persists across strings; the conversion does not, and says so |
+| romjuice `!HEX` (swap)               | Dropped, with a notice: the entry swaps to romjuice's *second* table file, which mapchar has no way to name — which is also what romjuice does when it was given only one |
 | romjuice duplicate keys              | first wins, the rest are dropped with a notice                          |
 | romjuice `\r`                        | `\n`                                                                    |
 | A file that is not UTF-8             | read as `cp932`, else `latin-1`, with a notice naming the encoding       |

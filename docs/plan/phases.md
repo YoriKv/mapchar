@@ -17,9 +17,10 @@ into blocks and dump it.
 - Blocks with *range* and *fixed strings* sources, *end token* and *fixed
   length* string types, realign and skip ranges.
 - The native script writer.
-- The application shell: Files panel, Tables dock, Codecs and Block bars,
-  Raw view with navigation and selection, Hex panel read-only, bookmarks,
-  Table Editor, undo for entry and view changes, `.mapchar` projects.
+- The application shell: Files panel, Tables dock, the Format, Reading and
+  Block bars, Raw view with navigation and selection, Hex panel read-only,
+  bookmarks, Table Editor, undo for entry and view changes, `.mapchar`
+  projects.
 - Find and relative search with table building.
 - Complete when a Cartographer command file's `RAW` and `FIXED_STRING`
   blocks, imported through phase 1's readers, dump the same strings abcde

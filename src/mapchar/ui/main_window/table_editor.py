@@ -15,16 +15,17 @@ from mapchar.core.notices import notice_lines
 from mapchar.core.table import ID_PATTERN, Table, TableSet, TokenKind
 from mapchar.core.tokens import render
 from mapchar.engines.decode import DecodeRules, decode
-from mapchar.project.formats.table_legacy import free_table_id, table_id_for
 from mapchar.project.formats.table_native import write_native
 from mapchar.project.tables import (
     capture_overlay,
     fold_overlay,
+    free_table_id,
     rebase_charset,
     set_charset,
+    table_id_for,
 )
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.undo_commands import BlockEditCommand, TableCommand
+from mapchar.ui.undo_commands import TableCommand
 
 SAMPLE_BYTES = 24
 """How far past an entry's key the sample line reads."""
@@ -56,7 +57,7 @@ class TableEditorMixin:
         file on screen, read on from ``at`` or from where they are first
         found, through the table being edited."""
         doc = self._doc
-        entry = self.table_editor._entry
+        entry = self.table_editor.entry
         if doc is None or entry is None or entry.table is None or len(bits) % 8:
             return ""
         key = bits_to_bytes(bits)
@@ -90,25 +91,26 @@ class TableEditorMixin:
         if new in self.workspace.loaded_tables():
             self._error(f"A table called {new!r} is already loaded.")
             return
-        self.undo_stack.beginMacro(f"Rename table {old} to {new}")
-        self._push_command(
-            TableCommand(self, entry, deepcopy(entry.table), _renamed(entry.table, new))
-        )
-        for other in self.workspace.table_entries():
-            table = other.table
-            if table is None or other is entry or old not in table.switch_targets():
-                continue
+        with self._macro(f"Rename table {old} to {new}"):
             self._push_command(
-                TableCommand(self, other, deepcopy(table), _retargeted(table, old, new))
+                TableCommand(
+                    self, entry, deepcopy(entry.table), _renamed(entry.table, new)
+                )
             )
-        for block in self.workspace.of_kind(EntryKind.BLOCK):
-            cfg = block.config
-            if cfg is None or cfg.table_id != old:
-                continue
-            before = (block.name, cfg, block.compression_id, block.spare_room)
-            after = (block.name, replace(cfg, table_id=new), *before[2:])
-            self._push_command(BlockEditCommand(self, block, before, after))
-        self.undo_stack.endMacro()
+            for other in self.workspace.table_entries():
+                table = other.table
+                if table is None or other is entry or old not in table.switch_targets():
+                    continue
+                self._push_command(
+                    TableCommand(
+                        self, other, deepcopy(table), _retargeted(table, old, new)
+                    )
+                )
+            for block in self.workspace.of_kind(EntryKind.BLOCK):
+                cfg = block.config
+                if cfg is None or cfg.table_id != old:
+                    continue
+                self._push_block_edit(block, config=replace(cfg, table_id=new))
         # Readings are session state, not project state: they just follow.
         for e in self.workspace.entries:
             if e.session.table_id == old:
@@ -182,7 +184,7 @@ class TableEditorMixin:
         # redo leave the project holding exactly what the table now says.
         capture_overlay(entry)
         self.workspace.stamp(entry, revision)
-        if self.table_editor._entry is entry:
+        if self.table_editor.entry is entry:
             self.table_editor.set_entry(entry)
         self._tables_changed()
 

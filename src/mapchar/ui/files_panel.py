@@ -8,26 +8,19 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QIcon, QKeySequence, QPalette
+from PySide6.QtGui import QBrush, QColor, QIcon, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QLineEdit,
-    QTreeWidget,
     QTreeWidgetItem,
     QWidget,
 )
 
-from mapchar.core.block import (
-    PointerListSource,
-    PointerTableSource,
-    RangeSource,
-    Status,
-    source_start,
-)
-from mapchar.core.notices import notice_lines
 from mapchar.core.text import fold
 from mapchar.project.workspace import Entry, EntryKind, Workspace
+from mapchar.ui.entry_text import label, status_mark, string_preview, tooltip
+from mapchar.ui.entry_tree import EntryTree
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.panel import WorkspaceTreePanel
@@ -52,188 +45,15 @@ MARKERS: dict[EntryKind, tuple[Glyph, QPalette.ColorRole]] = {
 ICON_SIZE = QSize(13, 16)
 STATUS_COL = 1
 """The narrow second column: ``?`` for a missing file, ``!`` for notices."""
-DUPLICATE_KEY = QKeySequence("Ctrl+D")
-
 SORT_KEYS = ("Name", "Type", "Offset")
 """What **Sort by** offers; Offset only makes sense among a file's children."""
 
 STRING_ROLE = Qt.ItemDataRole.UserRole + 1
 """On a string row: ``(block entry id, string index)``. The entry role stays
 empty there, so nothing that acts on entries mistakes a string for one."""
-PREVIEW_CHARS = 48
-"""How much of a string a row shows before cutting it short."""
 _UNBUILT = object()
 """The stub under a block whose strings are not built: it keeps the expander,
 and opening the block replaces it."""
-
-
-def string_preview(text: str) -> str:
-    """One line of a string's text, cut short with an ellipsis.
-
-    Line breaks and runs of spaces fold to one space — a row is a line — and
-    a string that shows nothing says so, rather than being a bare number.
-    """
-    flat = " ".join(text.split())
-    if not flat:
-        return "(empty)"
-    if len(flat) <= PREVIEW_CHARS:
-        return flat
-    return flat[: PREVIEW_CHARS - 1] + "…"
-
-
-def entry_offset(entry: Entry) -> int:
-    """Where a row sits in its parent file — what an Offset sort orders by.
-
-    A compressed block is addressed by its compressed slot; every other block
-    by where its source begins, which for a pointer list is its first pointer.
-    A row that is not inside a file sorts first.
-    """
-    if entry.kind is EntryKind.BOOKMARK:
-        return entry.bookmark_offset
-    if entry.kind is not EntryKind.BLOCK:
-        return -1
-    if entry.compression_id:
-        return entry.slice_offset
-    start = source_start(entry.config.source if entry.config is not None else None)
-    return 0 if start is None else start
-
-
-def sorted_entries(entries: list[Entry], key: str) -> list[Entry]:
-    """``entries`` in ``key`` order — the group a Sort by acts on."""
-    if key == "Name":
-        return sorted(entries, key=lambda e: fold(e.name))
-    if key == "Type":
-        return sorted(entries, key=lambda e: (e.kind.value, fold(e.name)))
-    return sorted(entries, key=entry_offset)
-
-
-class EntryTree(QTreeWidget):
-    """The Files tree: reorder by drag, and the keys that act on entries.
-
-    A drag never leaves the widget, so the dragged row is read off the tree
-    rather than out of the drop's mime data, and the drop only means anything
-    between two *siblings*: a row taken *onto* another would be a re-pointing,
-    which is a dialog's decision, not an aim's.
-    """
-
-    delete_pressed = Signal()
-    cut_pressed = Signal()
-    copy_pressed = Signal()
-    paste_pressed = Signal()
-    duplicate_pressed = Signal()
-    rename_pressed = Signal()
-    move_pressed = Signal(int)
-    """Alt+Up / Alt+Down: step the selection one place, ``-1`` or ``+1``."""
-    reorder_dropped = Signal(object, object)
-    """The dragged row's entry key, and the key it should land in front of."""
-    current_navigated = Signal(object)
-    """A key moved the current row: the row it moved to, to be shown the same
-    way a click on it would show it."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._dragged: QTreeWidgetItem | None = None
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-
-    def keyPressEvent(self, event) -> None:
-        for sequence, signal in (
-            (QKeySequence.StandardKey.Delete, self.delete_pressed),
-            (QKeySequence.StandardKey.Cut, self.cut_pressed),
-            (QKeySequence.StandardKey.Copy, self.copy_pressed),
-            (QKeySequence.StandardKey.Paste, self.paste_pressed),
-        ):
-            if event.matches(sequence):
-                signal.emit()
-                event.accept()
-                return
-        # Compared as a sequence: Qt has no standard key for Duplicate.
-        if QKeySequence(event.keyCombination()) == DUPLICATE_KEY:
-            self.duplicate_pressed.emit()
-            event.accept()
-            return
-        if event.key() == Qt.Key.Key_F2 and not event.modifiers():
-            self.rename_pressed.emit()
-            event.accept()
-            return
-        if event.modifiers() == Qt.KeyboardModifier.AltModifier and event.key() in (
-            Qt.Key.Key_Up,
-            Qt.Key.Key_Down,
-        ):
-            self.move_pressed.emit(-1 if event.key() == Qt.Key.Key_Up else 1)
-            event.accept()
-            return
-        before = self.currentItem()
-        super().keyPressEvent(event)
-        item = self.currentItem()
-        if item is not None and item is not before:
-            self.current_navigated.emit(item)
-
-    def startDrag(self, actions) -> None:  # noqa: N802 - Qt override
-        # A drag moves the one row it started on, so it has nothing to say
-        # about a set of them: Move Up/Down is what reorders a selection.
-        if len(self.selectedItems()) > 1:
-            return
-        self._dragged = self.currentItem()
-        # Qt accepts a drop *between* two rows only when their parent is a drop
-        # target, so the group being rearranged is opened for the length of the
-        # drag; the rest of the time nothing here is a drop target at all.
-        group = self._dragged.parent() if self._dragged is not None else None
-        if group is not None:
-            group.setFlags(group.flags() | Qt.ItemFlag.ItemIsDropEnabled)
-        try:
-            super().startDrag(actions)
-        finally:
-            if group is not None:
-                group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
-            self._dragged = None
-
-    def _drop_before(self, event):
-        """The dragged item and the sibling it would land in front of, or
-        ``None`` when this drop is not a reorder we allow."""
-        source = self._dragged
-        if source is None:
-            return None
-        target = self.itemAt(event.position().toPoint())
-        if target is None or target is source:
-            return None
-        parent = source.parent()
-        if parent is None or target.parent() is not parent:
-            return None
-        position = self.dropIndicatorPosition()
-        if position is QTreeWidget.DropIndicatorPosition.AboveItem:
-            return source, target
-        if position is QTreeWidget.DropIndicatorPosition.BelowItem:
-            index = parent.indexOfChild(target) + 1
-            after = parent.child(index) if index < parent.childCount() else None
-            return source, after
-        return None
-
-    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
-        # The base class decides where the indicator is drawn, so it runs
-        # first; what it accepted is then overruled for anything refused above,
-        # which is what makes an illegal target show the "no drop" cursor.
-        super().dragMoveEvent(event)
-        if self._drop_before(event) is None:
-            event.ignore()
-
-    def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
-        landing = self._drop_before(event)
-        if landing is None:
-            event.ignore()
-            return
-        source, before = landing
-        # Accepted, but as IgnoreAction and without the base class: Qt's own
-        # internal move would rearrange the view behind the workspace's back,
-        # leaving an order nothing agreed to and no undo step for it.
-        event.setDropAction(Qt.DropAction.IgnoreAction)
-        event.accept()
-        self.reorder_dropped.emit(
-            source.data(0, Qt.ItemDataRole.UserRole),
-            before.data(0, Qt.ItemDataRole.UserRole) if before is not None else None,
-        )
 
 
 class FilesPanel(ThemedIcons, WorkspaceTreePanel):
@@ -244,7 +64,6 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
     strings_requested = Signal(object)
     """A block the session has not read was opened: read it, so its strings
     can be listed."""
-    entry_double_clicked = Signal(object)
     context_menu_requested = Signal(object, QPoint)
     remove_requested = Signal(list)
     rename_committed = Signal(object, str)
@@ -293,7 +112,6 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.filter.textChanged.connect(self._apply_filter)
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.current_navigated.connect(self._activate)
-        self.tree.itemDoubleClicked.connect(self._on_double)
         self.tree.itemExpanded.connect(self._on_expanded)
         self.tree.itemCollapsed.connect(self._on_collapsed)
         self.tree.itemChanged.connect(self._on_item_changed)
@@ -360,14 +178,14 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
 
     def _dress(self, entry: Entry, item: QTreeWidgetItem) -> None:
         """Put the row's label, marks, wash and tooltip on ``item``."""
-        item.setText(0, self._label(entry))
+        item.setText(0, label(entry))
         item.setIcon(0, self._marker(entry))
-        mark, why = self._status_mark(entry)
+        mark, why = status_mark(entry, self.workspace.tables())
         item.setText(STATUS_COL, mark)
         wash = QBrush(NOTICE_WASH) if mark else QBrush()
         for column in (0, STATUS_COL):
             item.setBackground(column, wash)
-        tip = self._tooltip(entry, why)
+        tip = tooltip(entry, why)
         item.setToolTip(0, tip)
         item.setToolTip(STATUS_COL, tip)
         if entry.kind is EntryKind.BLOCK:
@@ -475,127 +293,6 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.refresh_labels()
 
     # -- what a row says ------------------------------------------------
-
-    def _label(self, entry: Entry) -> str:
-        mark = " ●" if entry.dirty else ""
-        extra = ""
-        if entry.kind is EntryKind.BLOCK:
-            extra = self._block_extra(entry)
-        if entry.kind is EntryKind.TABLE and entry.table is not None:
-            extra = f"  ({len(entry.table.entries)})"
-        if entry.kind is EntryKind.FILE:
-            bits = []
-            if entry.extra_paths:
-                bits.append(f"{1 + len(entry.extra_paths)} files")
-            if entry.container_id != "raw":
-                bits.append(entry.container_id)
-            if bits:
-                extra = f"  [{' · '.join(bits)}]"
-        return f"{entry.name}{extra}{mark}"
-
-    @staticmethod
-    def _block_extra(entry: Entry) -> str:
-        """A block's string count and status summary.
-
-        Counted off the records when the block is loaded, else off the
-        translations it is carrying with no document to hold them, so a block
-        the session has not opened still says how much work is in it.
-        """
-        if entry.doc is not None:
-            statuses = [rec.status for rec in entry.doc.strings]
-            total = len(statuses)
-            too_long = entry.doc.too_long
-        elif entry.pending_strings:
-            statuses = [st.status for st in entry.pending_strings.values()]
-            total = len(statuses)
-            too_long = 0
-        else:
-            return ""
-        parts = [str(total)]
-        for label, n in (
-            ("edited", sum(s is Status.EDITED for s in statuses)),
-            ("too long", too_long),
-            ("review", sum(s is Status.REVIEW for s in statuses)),
-        ):
-            if n:
-                parts.append(f"{n} {label}")
-        return f"  ({', '.join(parts)})"
-
-    def _status_mark(self, entry: Entry) -> tuple[str, str]:
-        """``('?' | '!' | '', why)`` — the status column and what it stands for.
-
-        Missing wins over a notice: a file that is not there cannot have been
-        read, so any notice on the entry is from an older load.
-        """
-        if entry.missing:
-            return "?", "the file is not where the project says it is"
-        serious, rest = self._notices(entry)
-        lines = serious + rest
-        return ("!" if serious else "", "\n".join(lines)) if lines else ("", "")
-
-    def _notices(self, entry: Entry) -> tuple[list[str], list[str]]:
-        """What a read had to give up on this row, as (warnings, the rest).
-
-        Only a warning raises the ``!``; an info notice still earns its line in
-        the tooltip, which is where a user looks to ask what is wrong with a row.
-        """
-        serious: list[str] = []
-        rest: list[str] = []
-        if entry.kind is EntryKind.BLOCK and entry.config is not None:
-            table_id = entry.config.table_id
-            if table_id and table_id not in self.workspace.tables():
-                serious.append(
-                    f"start table @{table_id} is not loaded: the strings here are "
-                    "kept but cannot be re-read"
-                )
-        if entry.doc is not None:
-            serious += [f"no write-back: {name}" for name in entry.doc.missing_plugins]
-            # Both halves: what the byte stages had to assume while loading, and
-            # what the extraction found in the strings.
-            for notice in list(entry.doc.ctx.notices) + list(entry.doc.notices):
-                (serious if notice.is_warning else rest).extend(notice_lines(notice))
-        return serious, rest
-
-    def _tooltip(self, entry: Entry, why: str = "") -> str:
-        lines = [entry.path or "(in memory)"]
-        if entry.kind is EntryKind.FILE:
-            for n, path in enumerate(entry.extra_paths, 2):
-                lines.append(f"{n}. {path}")
-            lines.append(f"container: {entry.container_id}")
-        if entry.kind is EntryKind.BLOCK and entry.config is not None:
-            lines.append(f"source: {self._source_text(entry)}")
-            lines.append(f"start table: @{entry.config.table_id or '-'}")
-            if entry.compression_id:
-                lines.append(f"compression: {entry.compression_id}")
-        if entry.kind is EntryKind.BOOKMARK:
-            lines.append(f"offset: {entry.bookmark_offset:X}")
-            lines.append("double-click to jump")
-        if entry.kind is EntryKind.TABLE:
-            lines.append(f"dialect: {entry.dialect or 'native'}")
-            if entry.table is not None:
-                lines.append(f"table: @{entry.table.id}")
-        if entry.dirty:
-            lines.append("unsaved edits")
-        if why:
-            lines.append(why)
-        return "\n".join(lines)
-
-    @staticmethod
-    def _source_text(entry: Entry) -> str:
-        """A block's source as offset and length, in the parent's coordinates."""
-        if entry.compression_id:
-            length = (
-                f"{entry.slice_length:X}" if entry.slice_length else "found on read"
-            )
-            return f"compressed at {entry.slice_offset:X}, length {length}"
-        source = entry.config.source
-        if isinstance(source, RangeSource):
-            return f"{source.start:X}–{source.stop:X}"
-        if isinstance(source, PointerTableSource):
-            return f"pointer table {source.start:X}–{source.stop:X}"
-        if isinstance(source, PointerListSource):
-            return f"{len(source.addresses)} pointers"
-        return source.__class__.__name__
 
     def _update_item(self, entry: Entry) -> None:
         item = self._items.get(id(entry))
@@ -833,8 +530,8 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         words = fold(text).split()
 
         def matches(item: QTreeWidgetItem) -> bool:
-            label = fold(item.text(0))
-            return all(w in label for w in words)
+            row = fold(item.text(0))
+            return all(w in row for w in words)
 
         for group in self._groups.values():
             for i in range(group.childCount()):

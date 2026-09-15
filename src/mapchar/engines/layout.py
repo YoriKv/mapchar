@@ -199,11 +199,12 @@ def layout(source: list[Token] | str, font: Font, box: TextBox) -> Layout:
                     x += advance + box.letter_spacing
                     continue
                 glyph = font.missing
-        over = (
-            x + advance > box.origin_x + (box.width - box.origin_x) or line >= max_lines
-        )
+        # ``x`` runs from ``origin_x`` here, so the right edge is ``width``
+        # itself; :func:`wrap` measures from 0 instead.
+        too_wide = x + advance > box.width
+        over = too_wide or line >= max_lines
         if over:
-            result.overflow_width = result.overflow_width or x + advance > box.width
+            result.overflow_width = result.overflow_width or too_wide
         y = box.origin_y + line * box.line_height
         result.placements.append(Placement(glyph, x, y, page, index, over))
         x += advance + box.letter_spacing

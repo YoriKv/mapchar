@@ -13,7 +13,6 @@ from mapchar.core.block import (
 )
 from mapchar.core.errors import ScriptError
 from mapchar.core.numbers import format_num, parse_num
-from mapchar.core.text import escape, unescape
 from mapchar.pipeline.extract import extract
 from mapchar.project.formats.script import (
     DumpMode,
@@ -22,6 +21,7 @@ from mapchar.project.formats.script import (
     parse_script,
     write_script,
 )
+from mapchar.project.formats.textfile import escape, unescape
 
 TS = table_set(ABC_TABLE + "40=@\n23=#\n5C=\\\\\n", "main")
 
@@ -68,14 +68,23 @@ def test_write_and_parse():
     block = script.blocks[0]
     assert block.name == "Dialogue" and block.config == cfg
     assert block.strings[0].text == "A[line]B[end]"
-    assert block.strings[0].original == "A[line]B[end]"
-    assert (
-        block.strings[1].text == "B[end]" and block.strings[1].original == "@#\\\\[end]"
-    )
+    assert block.strings[1].text == "B[end]"
     assert (block.strings[1].start, block.strings[1].end) == (4, 8)
     originals = write_script([("Dialogue", cfg, ex.strings)], DumpMode.ORIGINALS)
     assert "\n\\@#\\\\[end]\n" in originals
     assert parse_script(originals).blocks[0].strings[1].text == "@#\\\\[end]"
+
+
+def test_a_line_break_in_a_quoted_name_round_trips():
+    # The quoted fields are spelled by textfile.escape, which escapes the line
+    # break a block name or a path may carry; a local copy of the rule did not.
+    data = bytes.fromhex("41 00")
+    cfg = BlockConfig(RangeSource(0, 2), EndToken(), "main")
+    ex = extract(data, cfg, TS)
+    text = write_script([("two\nlines", cfg, ex.strings)], rom='a"b\nc')
+    assert '@rom "a\\"b\\nc"' in text
+    script = parse_script(text)
+    assert script.rom == 'a"b\nc' and script.blocks[0].name == "two\nlines"
 
 
 def test_script_errors():

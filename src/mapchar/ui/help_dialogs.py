@@ -31,11 +31,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypeVar
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -47,8 +46,8 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar import APP_NAME, __version__, resources
-from mapchar.ui import theme
-from mapchar.ui.widgets import mono_font
+from mapchar.ui import marks, theme
+from mapchar.ui.widgets import close_box, mono_font
 
 _S = TypeVar("_S", bound="tuple[str, Sequence]")
 """A titled section — its rows are whatever the page lays out."""
@@ -66,14 +65,15 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Start / end of file", "Home / End"),
             ("Back / forward through visited entries", "Mouse 4 / Mouse 5"),
             ("Select bytes", "Drag over hex or text"),
-            ("The view's own menu", "Right-click"),
+            ("Zoom the Text view", "Ctrl+Wheel"),
+            ("The Hex view's own menu", "Right-click"),
         ),
     ),
     (
         "Strings View",
         (
-            ("Edit the selected cell", "Enter, or double-click"),
-            ("Commit the cell being edited", "Ctrl+Return"),
+            ("Edit the selected cell", "F2, double-click, or start typing"),
+            ("Commit the cell being edited", "Enter"),
             ("Write the block's newline code", "Shift+Return"),
             ("Complete a code", "["),
             ("Cancel the edit", "Esc"),
@@ -84,27 +84,30 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Files Panel (while focused)",
         (
+            ("Open the row", "Up / Down, or double-click"),
             ("Extend the selection", "Shift+click / Ctrl+click"),
-            ("Reorder the selected rows", "Alt+Up / Alt+Down"),
+            ("Reorder the selected rows", "Alt+Up / Alt+Down, or drag"),
             ("Cut / copy / paste entries", "Ctrl+X / C / V"),
             ("Duplicate entries", "Ctrl+D"),
             ("Remove the selected entries", "Del"),
             ("Filter the list", "Ctrl+F"),
             ("Rename the row", "F2"),
+            ("The rows' own menu", "Right-click"),
         ),
     ),
     (
-        "Find Bar",
+        "Find Bar and Find and Replace",
         (
             ("Find the next match", "Enter"),
-            ("Find the previous match", "Shift+Enter"),
+            ("Find the previous match in the bar", "Shift+Enter"),
+            ("Close Find and Replace", "Esc"),
         ),
     ),
     (
         "Table Editor",
         (
             ("Put the entry in the table", "Enter in the form"),
-            ("Edit a Text or Comment cell in place", "Double-click"),
+            ("Edit a Text or Comment cell in place", "F2, or double-click"),
             ("Open any other cell's control in the form", "Double-click"),
             ("Sort by a column", "Click its header"),
             ("Choose the columns", "Right-click a header"),
@@ -124,7 +127,8 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Tool Windows",
         (
             ("Close the window", "Esc"),
-            ("Run the search", "Enter in the query"),
+            ("Run the search", "Enter in the Search window's query"),
+            ("Jump to a search result", "Double-click"),
         ),
     ),
 )
@@ -162,11 +166,11 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
             (Swatch("end", tint=theme.TINT_END, small=True), "An end token"),
             (
                 Swatch("kanji", tint=theme.TINT_SWITCH, small=True),
-                "A table switch or return, or bits read by a table's fallback",
+                "A table switch or return",
             ),
             (
                 Swatch(tint=theme.TINT_SWITCH, mark="tick"),
-                "A switch or return that prints nothing",
+                "A token that prints nothing: a silent switch or return, or bits read by a table's fallback",
             ),
             (
                 Swatch("·", tint=theme.TINT_RAW, dim=True),
@@ -174,7 +178,7 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
             ),
             (
                 Swatch("1F", tint=theme.TINT_POINTER),
-                "A pointer to one of the block's strings",
+                "A pointer to one of the block's strings; its text shows →address, or the string with Follow Pointers on",
             ),
             (Swatch("A", tint=theme.TINT_SELECTION), "The selected bytes"),
             (Swatch("A", mark="rule"), "Where the block starts a string"),
@@ -191,7 +195,7 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
         "Text View",
         (
             (Swatch("[line]"), "A code, by its label; a newline code ends the line"),
-            (Swatch("A", tint=theme.TINT_SELECTION), "The selected bytes"),
+            (Swatch("[$FF]"), "A byte no table matches; [%bits] for a tail shorter than a byte"),
         ),
     ),
     (
@@ -219,12 +223,12 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
                 "Something the tables cannot encode",
             ),
             (
-                Swatch("overflows", ink=theme.ERROR_INK),
+                Swatch("overflows box", ink=theme.ERROR_INK),
                 "The text does not fit the entry's box",
             ),
-            (Swatch("12 / 16"), "Bytes the string encodes to, and its room"),
+            (Swatch("12 / 16"), "Bytes the string encodes to, and its room; coloured like the status"),
             (Swatch("↵"), "A line break in the Original or Translation"),
-            (Swatch("1F"), "The address of a pointer to the string"),
+            (Swatch("1F"), "The addresses of the pointers to the string"),
         ),
     ),
 )
@@ -358,40 +362,24 @@ class SwatchWidget(QWidget):
         dim.setAlpha(140)
         cell = QRectF(self.rect())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
         if swatch.tint is not None and swatch.mark != "tick":
-            painter.setBrush(swatch.tint)
-            painter.drawRoundedRect(cell.adjusted(1, 1, -1, -1), 3, 3)
+            marks.chip(painter, cell, swatch.tint)
         if swatch.mark == "tick":
-            strong = QColor(swatch.tint or ink)
-            strong.setAlpha(220)
-            painter.setBrush(strong)
-            painter.drawRoundedRect(
-                QRectF(cell.center().x() - 2, cell.top() + 1, 4, cell.height() - 2),
-                3,
-                3,
+            marks.tick(
+                painter,
+                QRectF(cell.center().x() - 1, cell.top(), 4, cell.height()),
+                swatch.tint or ink,
             )
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         if swatch.mark == "rule":
-            painter.setPen(QPen(theme.TINT_STRING_RULE, 1))
-            x = cell.left() + 3
-            painter.drawLine(QPointF(x, cell.top()), QPointF(x, cell.bottom()))
+            marks.rule(painter, cell.adjusted(3, 0, 0, 0))
         if swatch.text:
             painter.setFont(self._label_font if swatch.small else self._font)
             colour = swatch.ink if swatch.ink is not None else ink
             painter.setPen(QPen(dim if swatch.dim else colour))
             painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, swatch.text)
         if swatch.mark == "notch":
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(dim)
-            right, top = cell.right(), cell.top() + 1
-            painter.drawPolygon(
-                [
-                    QPointF(right - 4, top),
-                    QPointF(right, top),
-                    QPointF(right, top + 4),
-                ]
-            )
+            marks.notch(painter, cell, dim)
         painter.end()
 
 
@@ -460,9 +448,7 @@ class _ScrolledPage(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        buttons.accepted.connect(self.accept)
+        buttons = close_box(self)
 
         layout = QVBoxLayout(self)
         layout.addWidget(scroll)
@@ -562,9 +548,7 @@ class AboutDialog(QDialog):
         top.addWidget(icon)
         top.addWidget(text, 1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        buttons.accepted.connect(self.accept)
+        buttons = close_box(self)
 
         layout = QVBoxLayout(self)
         layout.addLayout(top)

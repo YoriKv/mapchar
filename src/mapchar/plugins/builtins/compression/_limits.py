@@ -27,3 +27,14 @@ has not found it, and one that does not was never going to.
 
 MAX_BANK = 0x10000
 """The tighter cap the schemes whose own fields reach one 64 KiB bank use."""
+
+
+def stream_error(scheme: str, reason: str) -> ValueError:
+    """ "These bytes are not a ``scheme`` stream", spelled once.
+
+    Every decoder here refuses the same way and for the same reasons — a field
+    that cannot be read, a back-reference before the start of the output — and
+    the message is what the UI shows against the entry, so it reads the same
+    whichever scheme the block is on.
+    """
+    return ValueError(f"corrupt {scheme} stream: {reason}")

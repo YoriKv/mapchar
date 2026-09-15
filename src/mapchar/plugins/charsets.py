@@ -2,16 +2,50 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 
 from mapchar.core.errors import TableError
+from mapchar.core.notices import Level, Notice
 from mapchar.core.table import Entry, Table, TokenKind
 from mapchar.core.tokens import escape_text
 from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import Registry
 
 
-def apply_charset(table: Table, registry: Registry) -> None:
+def _charset_aliases(
+    charset, notices: list[Notice] | None
+) -> Iterable[tuple[str, str]]:
+    """``aliases()`` if the charset has one and it answers, else nothing.
+
+    The probe :func:`mapchar.pipeline.pipeline._probe` runs over a container's
+    optional hooks, in the one place a charset's are reached: absence is already
+    defined as no aliases, so a charset that *cannot* answer is read as one that
+    never offered any — a display detail must not take a table load down — and
+    the notice is how its author finds out.
+    """
+    ask = getattr(charset, "aliases", None)
+    if not callable(ask):
+        return ()
+    try:
+        return list(ask())
+    except Exception as exc:  # noqa: BLE001 - a probe must not fail the load
+        if notices is not None:
+            notices.append(
+                Notice(
+                    f"charset {charset.info.id} could not answer aliases(),"
+                    " so it was read as offering none",
+                    Level.WARNING,
+                    detail=f"{exc}\nRead as if the charset had not defined"
+                    " aliases(), which is what one staying quiet means.",
+                    source=charset.info.id,
+                )
+            )
+        return ()
+
+
+def apply_charset(
+    table: Table, registry: Registry, notices: list[Notice] | None = None
+) -> None:
     """Fill ``table`` with its charset's codes under the file's own entries.
 
     File entries win code for code; a file entry with empty text removes the
@@ -19,7 +53,9 @@ def apply_charset(table: Table, registry: Registry) -> None:
 
     A charset may also offer ``aliases()``: text the encoder accepts for a
     code whose own text is something else, which is how the yen sign reaches
-    Shift-JIS ``5C`` while ``5C`` still decodes as a backslash.
+    Shift-JIS ``5C`` while ``5C`` still decodes as a backslash. It is optional
+    and probed — one that raises is read as one that offered none, recorded on
+    ``notices`` when the caller keeps a list.
     """
     if table.charset == "none" or table.charset_applied:
         return
@@ -34,7 +70,7 @@ def apply_charset(table: Table, registry: Registry) -> None:
         if bits in table.entries:
             continue
         table.add(entry)
-    for text, bits in getattr(charset, "aliases", lambda: ())():
+    for text, bits in _charset_aliases(charset, notices):
         table.add_alias(escape_text(text), bits)
     for bits, entry in own.items():
         if entry.kind is TokenKind.TEXT and entry.text == "":

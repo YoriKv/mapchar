@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import QPoint, QStringListModel, Qt, Signal
-from PySide6.QtGui import QColor, QFontDatabase, QTextCursor
+from PySide6.QtGui import QColor, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -29,7 +29,12 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.text import fold
 from mapchar.ui import theme
-from mapchar.ui.widgets import FlowLayout, show_elided_tooltips
+from mapchar.ui.widgets import (
+    FlowLayout,
+    install_column_menu,
+    mono_font,
+    show_elided_tooltips,
+)
 
 (
     COL_INDEX,
@@ -114,7 +119,7 @@ class CodeEditor(QPlainTextEdit):
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
-        self.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.setFont(mono_font())
         self.setTabChangesFocus(True)
         self.newline_code = newline_code
         """What Shift+Return writes: the block's newline code."""
@@ -268,8 +273,8 @@ class StringsView(QWidget):
         # never stops short of its right edge.
         header.setStretchLastSection(True)
         header.setSectionsMovable(True)
-        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header.customContextMenuRequested.connect(self._on_header_menu)
+        # Translation never goes away, being the one column the view is for.
+        self.column_menu = install_column_menu(self.table, HEADERS, COL_TRANSLATION)
         self.delegate = TranslationDelegate(self)
         self.table.setItemDelegateForColumn(COL_TRANSLATION, self.delegate)
         # The code buttons wrap onto more rows rather than setting the window's
@@ -464,29 +469,6 @@ class StringsView(QWidget):
         idx = self.selected_indices()
         if idx:
             self.row_selected.emit(idx[0])
-
-    def column_menu(self):
-        """A checkable entry per column: hide and show them.
-
-        Dragging a header section reorders them; Translation never goes away,
-        being the one column the view is for.
-        """
-        from PySide6.QtWidgets import QMenu
-
-        menu = QMenu(self)
-        for column, name in enumerate(HEADERS):
-            action = menu.addAction(name)
-            action.setCheckable(True)
-            action.setChecked(not self.table.isColumnHidden(column))
-            if column == COL_TRANSLATION:
-                action.setEnabled(False)
-            action.toggled.connect(
-                lambda on, c=column: self.table.setColumnHidden(c, not on)
-            )
-        return menu
-
-    def _on_header_menu(self, pos: QPoint) -> None:
-        self.column_menu().exec(self.table.horizontalHeader().mapToGlobal(pos))
 
     def _on_menu(self, pos: QPoint) -> None:
         self.context_menu_requested.emit(

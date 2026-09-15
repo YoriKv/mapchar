@@ -12,13 +12,11 @@ def main(argv: list[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication, QMessageBox
 
     from mapchar import resources
-    from mapchar.plugins.discovery import (
-        TrustStore,
-        discover,
-        plugin_roots,
-        seed_examples,
-    )
+    from mapchar.plugins.discovery import discover, plugin_roots
+    from mapchar.plugins.examples import seed_examples
     from mapchar.plugins.registry import default_registry
+    from mapchar.plugins.trust import TrustStore
+    from mapchar.project.tables import read_table_file
     from mapchar.ui import settings
     from mapchar.ui.main_window import MainWindow
     from mapchar.ui.theme import apply_theme
@@ -86,7 +84,12 @@ def main(argv: list[str] | None = None) -> int:
                 and os.path.abspath(path).startswith(inside),
             )
 
-        result = discover(registry, roots, trust, ask)
+        def read_table(path: str):
+            # Injected: a .tbl charset is a table file, and reading one is
+            # project's job — plugins sits under project and cannot import it.
+            return read_table_file(path).table
+
+        result = discover(registry, roots, trust, ask, read_table)
         return registry, result.issues
 
     registry, issues = reload_plugins(None)

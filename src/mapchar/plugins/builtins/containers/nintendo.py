@@ -1,122 +1,32 @@
-"""ROM containers: flat files, iNES, SNES, GB, GBA, Nintendo 64 and Mega Drive.
+"""Nintendo's containers: iNES, the three SNES framings, Game Boy, GBA and N64.
 
-A container unwraps a file into the image every published offset, pointer and
-table is quoted against. ``read`` publishes where the payload starts
-(``KEY_SOURCE_OFFSET``), the bytes a pointer mapping subtracts
-(``KEY_HEADER_SIZE``) and the mapping the format implies
-(``KEY_SUGGESTED_MAPPING``), and notes anything it had to assume or drop.
-
-``write`` works its destination out from the destination's own bytes, through
-the same helper ``read`` used so the two cannot drift, and preserves
-everything it did not decode: a copier or iNES header, and a trailing partial
-block a deinterleave could not reassemble. A destination that is a **slot**
-rather than a whole file is spliced where it lies instead
-(:func:`slot_write`), the framing around it being the file's own.
-
-Three optional hooks answer without a full read: ``header_size`` and
-``default_mapping`` for the two hints, and ``describe`` for the fields
-Container Info lists.
+Each strips whatever its format puts in front of the image — an iNES header and
+trainer, a copier header, an interleave — and puts it back on the way out, so
+the offsets the app quotes are offsets into the image the console sees.
 """
 
 from __future__ import annotations
 
-from mapchar.core.context import (
-    KEY_HEADER_SIZE,
-    KEY_SOURCE_OFFSET,
-    KEY_SUGGESTED_MAPPING,
-    PipelineContext,
-)
+from mapchar.core.context import PipelineContext
 from mapchar.plugins.base import (
-    RAW_CONTAINER,
     ContainerField,
     PluginInfo,
     ReadSource,
     Stage,
     WriteTarget,
 )
+from mapchar.plugins.builtins.containers._common import (
+    _Flat,
+    _sum_value,
+    format_size,
+    publish_hints,
+    slot_write,
+    splice,
+)
 
 NES_MAGIC = b"NES\x1a"
 GB_LOGO = bytes.fromhex("CEED6666CC0D000B")
 GBA_LOGO = bytes.fromhex("24FFAE51699AA221")
-
-
-def splice(existing: bytes, at: int, data: bytes) -> bytes:
-    """``existing`` with ``data`` laid over it at ``at``, keeping every other byte.
-
-    Zero-extends when the result reaches past the end, so a write into a file
-    shorter than the payload — or one that is not there yet — lands rather than
-    failing on the gap.
-    """
-    out = bytearray(existing)
-    end = at + len(data)
-    if len(out) < end:
-        out.extend(b"\x00" * (end - len(out)))
-    out[at:end] = data
-    return bytes(out)
-
-
-def slot_write(data: bytes, target: WriteTarget) -> bytes:
-    """``data`` back into the window it was read from, keeping every other byte.
-
-    What every write half does when the target is a **slot** rather than the
-    whole file — a block's compressed region inside its parent. The read was
-    handed that window alone and unwrapped no framing inside it, so neither does
-    the write: it puts the bytes back where they came from and leaves the file
-    around them, framing included, exactly as it stands.
-    """
-    return data if target.whole_file else splice(target.existing, target.offset, data)
-
-
-def format_size(count: int) -> str:
-    """``count`` bytes as one short phrase: whole binary multiples get a unit."""
-    for unit, size in (("MiB", 1 << 20), ("KiB", 1 << 10)):
-        if count >= size and count % size == 0:
-            return f"{count // size} {unit}"
-    return f"{count} bytes"
-
-
-class _Flat:
-    """A container whose payload is the whole file: no header, no offset.
-
-    ``default_mapping`` names the pointer mapping the format implies, if any.
-    """
-
-    info: PluginInfo
-
-    def header_size(self, source: ReadSource | None = None) -> int:
-        return 0
-
-    def default_mapping(self, source: ReadSource | None = None) -> str | None:
-        return None
-
-    def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
-        # Nothing published about a header, rather than a zero: absence already
-        # means "adds none", and a zero would overwrite the header size a block
-        # inherits from its parent file — which its pointers are quoted against,
-        # and which it runs this container over a slot of.
-        suggested = self.default_mapping(source)
-        if suggested is not None:
-            ctx.set(KEY_SUGGESTED_MAPPING, suggested)
-        return source.data
-
-    def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes:
-        return slot_write(data, target)
-
-    def describe(
-        self, source: ReadSource, ctx: PipelineContext
-    ) -> tuple[ContainerField, ...]:
-        return (
-            ContainerField(
-                "Payload",
-                f"the whole file, {format_size(len(source.data))}",
-                "Nothing is stripped: this format's bytes are read where "
-                "they lie, so a file offset is a payload offset.",
-            ),
-        )
-
-
-class Raw(_Flat):
-    info = PluginInfo(RAW_CONTAINER, "Flat file", Stage.CONTAINER, "Generic")
 
 
 INES_HEADER = 16
@@ -171,11 +81,7 @@ class INes:
                 "header to skip. The whole file is read as it lies.",
                 source=self.info.id,
             )
-        ctx.set(KEY_SOURCE_OFFSET, size)
-        ctx.set(KEY_HEADER_SIZE, size)
-        suggested = self.default_mapping(source)
-        if suggested is not None:
-            ctx.set(KEY_SUGGESTED_MAPPING, suggested)
+        publish_hints(ctx, size, size, self.default_mapping(source))
         # What a save with nothing at the destination has to rebuild from: the
         # header, and any trainer, that the body on its own is missing.
         ctx.set(KEY_INES_SOURCE, source.data)
@@ -307,9 +213,7 @@ class SnesHeadered:
                 "takes real data off the front of the image.",
                 source=self.info.id,
             )
-        ctx.set(KEY_SOURCE_OFFSET, COPIER_HEADER)
-        ctx.set(KEY_HEADER_SIZE, COPIER_HEADER)
-        ctx.set(KEY_SUGGESTED_MAPPING, self.default_mapping(source))
+        publish_hints(ctx, COPIER_HEADER, COPIER_HEADER, self.default_mapping(source))
         return source.data[COPIER_HEADER:]
 
     def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes:
@@ -428,9 +332,7 @@ class SnesInterleaved:
                 "to deinterleave. It is probably not an interleaved image.",
                 source=self.info.id,
             )
-        ctx.set(KEY_SOURCE_OFFSET, header)
-        ctx.set(KEY_HEADER_SIZE, header)
-        ctx.set(KEY_SUGGESTED_MAPPING, self.default_mapping(source))
+        publish_hints(ctx, header, header, self.default_mapping(source))
         half, lowers = self._HALF, banks * self._HALF
         out = bytearray()
         for i in range(banks):
@@ -648,13 +550,6 @@ class GameBoy(_Flat):
         return tuple(fields)
 
 
-def _sum_value(stored: int, computed: int, spec: str) -> str:
-    """``0xNN`` when the file's copy is right, both values when it is not."""
-    if stored == computed:
-        return f"0x{stored:{spec}} (correct)"
-    return f"0x{stored:{spec}} in file, 0x{computed:{spec}} correct"
-
-
 class GameBoyAdvance(_Flat):
     info = PluginInfo(
         "gba",
@@ -825,122 +720,3 @@ class N64Rom:
                 "arrived in, the normalised bytes no longer saying which.",
             ),
         )
-
-
-class Smd:
-    """A Sega ``.smd`` dump, deinterleaved to contiguous Mega Drive bytes.
-
-    ``.smd`` has a 512-byte copier header and then 16 KiB blocks storing all
-    their odd bytes and then all their even ones. Each block is woven back
-    together on its own, so the halves never reach across a boundary, and the
-    write is the exact inverse. Plain ``.md``/``.bin`` dumps are not
-    interleaved and want the flat file instead.
-    """
-
-    # Suffix only: the copier header carries no marker to assert on.
-    info = PluginInfo(
-        "smd",
-        "Mega Drive (.smd, deinterleave)",
-        Stage.CONTAINER,
-        "Sega",
-        extensions=(".smd",),
-    )
-
-    _HEADER = 512
-    _BLOCK = 16384
-    _HALF = 8192
-
-    def header_size(self, source: ReadSource | None = None) -> int:
-        return self._HEADER
-
-    def default_mapping(self, source: ReadSource | None = None) -> str | None:
-        # The 68000 sees the cartridge from address 0, so a pointer is an
-        # offset into the deinterleaved image.
-        return "linear"
-
-    def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
-        body = source.data[self._HEADER :]
-        block, half = self._BLOCK, self._HALF
-        blocks = len(body) // block
-        tail = len(body) - blocks * block
-        if tail:
-            ctx.note(
-                f"Dropped {tail} trailing byte(s): not a whole 16 KiB block",
-                detail="The odd/even split is per block, so a partial one "
-                "cannot be reassembled. A save leaves those bytes as they are.",
-                source=self.info.id,
-            )
-        if not blocks:
-            ctx.note(
-                "No complete 16 KiB block: nothing to show",
-                detail="Past the 512-byte header this file has less than one "
-                "whole block, so there is nothing to reassemble. It may not "
-                "be a .smd at all.",
-                source=self.info.id,
-            )
-        ctx.set(KEY_SOURCE_OFFSET, self._HEADER)
-        ctx.set(KEY_HEADER_SIZE, self._HEADER)
-        ctx.set(KEY_SUGGESTED_MAPPING, self.default_mapping(source))
-        out = bytearray(blocks * block)
-        for i in range(blocks):
-            at = i * block
-            out[at + 1 : at + block : 2] = body[at : at + half]  # first half: odd
-            out[at : at + block : 2] = body[at + half : at + block]  # second: even
-        return bytes(out)
-
-    def write(self, data: bytes, target: WriteTarget, ctx: PipelineContext) -> bytes:
-        if not target.whole_file:
-            return slot_write(data, target)
-        block, half = self._BLOCK, self._HALF
-        blocks = len(data) // block
-        body = bytearray(blocks * block)
-        for i in range(blocks):
-            at = i * block
-            body[at : at + half] = data[at + 1 : at + block : 2]  # odd: first half
-            body[at + half : at + block] = data[at : at + block : 2]  # even: second
-        return splice(target.existing, self._HEADER, bytes(body))
-
-    def describe(
-        self, source: ReadSource, ctx: PipelineContext
-    ) -> tuple[ContainerField, ...]:
-        body = max(0, len(source.data) - self._HEADER)
-        blocks = body // self._BLOCK
-        tail = body - blocks * self._BLOCK
-        return (
-            ContainerField(
-                "Copier header",
-                f"{self._HEADER} bytes, skipped",
-                "The .smd wrapper's own metadata, never decoded and "
-                "preserved as it stands on write.",
-            ),
-            ContainerField(
-                "Deinterleaved blocks",
-                f"{blocks} x 16 KiB ({format_size(blocks * self._BLOCK)})",
-                "Each block holds all its odd bytes and then all its even "
-                "ones, woven back together one block at a time.",
-            ),
-            ContainerField(
-                "Trailing bytes",
-                f"{tail} (dropped)" if tail else "none",
-                "A partial block cannot be reassembled, so it is not shown "
-                "here and a save leaves it as it is.",
-            ),
-        )
-
-
-def register(registry) -> None:
-    # Registration order breaks a tie in detection, so the consoles come in
-    # the order their claims are worth checking. The interleaved image comes
-    # last: it claims nothing, being picked by hand.
-    for plugin in (
-        INes(),
-        GameBoy(),
-        GameBoyAdvance(),
-        N64Rom(),
-        SnesHeadered(),
-        Snes(),
-        Smd(),
-        Raw(),
-        SnesInterleaved(),
-    ):
-        registry.register(plugin)

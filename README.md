@@ -50,7 +50,7 @@ Grab the build for your platform from the [Releases page](https://github.com/Yor
 
 ### First steps
 
-1. **Open a file** - File -> Open, or drag a ROM/binary onto the window.
+1. **Open a file** - File -> Open ROM, or drag a ROM/binary onto the window.
 2. **Find the text** - scroll the raw view, type in an offset, or use Search to find
    where the strings are.
 3. **Get a table** - load a `.tbl` file, build one yourself, or pick one of the built-in charsets.

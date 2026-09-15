@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mapchar.core.numbers import parse_flat_hex
+
 HEX_ID = "hex"
 """The flat-offset address format, which is not a bank layout and has no preset."""
 
@@ -201,10 +203,4 @@ def parse_address(text: str, layout: AddressLayout | None = None) -> int | None:
         offset = layout.parse(text)
         if offset is not None:
             return offset
-    digits = text.strip().removeprefix("$").removeprefix("0x").removeprefix("0X")
-    if not digits or not all(c in "0123456789abcdefABCDEF_" for c in digits):
-        return None
-    try:
-        return int(digits, 16)
-    except ValueError:
-        return None
+    return parse_flat_hex(text)

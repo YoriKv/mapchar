@@ -12,7 +12,7 @@ from mapchar.core.block import (
     WriteMode,
 )
 from mapchar.pipeline.extract import extract
-from mapchar.pipeline.insert import encode_string
+from mapchar.pipeline.insert import FileBlock, encode_string, lay_out_file
 
 TS = table_set(ABC_TABLE, "main")
 
@@ -72,6 +72,18 @@ def test_fixed_strings_and_lines():
     )
     res, out = relayout(data, cfg, TS, {1: "A[end][end]\n"})
     assert res.ok and out == bytes.fromhex("41 42 43 41 00 EE")
+
+
+def test_a_fixed_length_string_is_never_padded_past_its_slot():
+    # The last run of a range the fixed length does not divide is shorter than
+    # it. Padding to the full length would run into the neighbour — out is a
+    # bytearray, so the slice assignment grows the buffer rather than stopping.
+    data = bytes.fromhex("41 42 43 41 42")
+    cfg = BlockConfig(RangeSource(0, 5), FixedLength(3), "main", fill=0xEE)
+    res, out = relayout(data, cfg, TS, {1: "C"})
+    assert not res.ok and out is None
+    assert res.problems[0].index == 1
+    assert "short of the fixed length" in res.problems[0].message
 
 
 def test_pascal():
@@ -148,3 +160,89 @@ def test_a_string_read_across_a_backwards_skip_keeps_both_pieces(registry):
     assert res.ok and out == data
     res, _ = relayout(data, cfg, ts, {1: "X[end]A[end]"}, registry)
     assert not res.ok and "skip range" in res.problems[0].message
+
+
+def _file_block(key, data, cfg, edits, slot=None, payload=None):
+    """One :class:`FileBlock` over ``data``, with ``{index: text}`` translated."""
+    ex = extract(payload if payload is not None else data, cfg, TS)
+    for i, text in edits.items():
+        ex.strings[i].translation = text
+    return FileBlock(
+        key,
+        str(key),
+        cfg,
+        TS,
+        ex.strings,
+        payload if payload is not None else data,
+        slot,
+    )
+
+
+def test_lay_out_file_splices_each_uncompressed_block_into_the_file():
+    data = bytes.fromhex("41 42 00 43 00 41 41") + bytes.fromhex("41 42 00")
+    first = BlockConfig(RangeSource(0, 7), EndToken(), "main", fill=0xEE)
+    second = BlockConfig(RangeSource(7, 10), EndToken(), "main", fill=0xEE)
+    laid = lay_out_file(
+        data,
+        [
+            _file_block("a", data, first, {0: "A[end]"}),
+            _file_block("b", data, second, {0: "B[end]"}),
+        ],
+        recompress=lambda block, payload: (b"", "never asked"),
+    )
+    assert laid.ok and laid.problems == []
+    assert laid.data == bytes.fromhex("41 00 EE 43 00 41 41 42 00 EE")
+    # Neither reads its own buffer afterwards: both sit in the file itself.
+    assert laid.written == {"a": None, "b": None}
+
+
+def test_lay_out_file_compresses_a_shared_slot_once():
+    """Two blocks over one compressed slot are laid into the same payload and
+    the payload is packed once, so neither loses the other's edits."""
+    payload = bytes.fromhex("41 42 00 43 00 41 41")
+    cfg_a = BlockConfig(RangeSource(0, 3), EndToken(), "main", fill=0xEE)
+    cfg_b = BlockConfig(RangeSource(3, 5), EndToken(), "main", fill=0xEE)
+    packed: list[bytes] = []
+
+    def recompress(block, buffer):
+        packed.append(buffer)
+        return b"<packed>", None
+
+    laid = lay_out_file(
+        b"\x00" * 4 + b"junkjunk",
+        [
+            _file_block("a", payload, cfg_a, {0: "B[end]"}, ("lz", 4), payload),
+            _file_block("b", payload, cfg_b, {0: "A[end]"}, ("lz", 4), payload),
+        ],
+        recompress=recompress,
+    )
+    assert laid.ok, laid.problems
+    # One recompress, over a payload carrying both edits.
+    assert packed == [bytes.fromhex("42 00 EE 41 00 41 41")]
+    assert laid.data == b"\x00" * 4 + b"<packed>"
+    assert laid.written == {"a": packed[0], "b": packed[0]}
+
+
+def test_lay_out_file_reports_a_block_that_will_not_fit_and_keeps_the_rest():
+    data = bytes.fromhex("41 42 00 43 00 41 41")
+    cfg = BlockConfig(RangeSource(0, 7), EndToken(), "main", fill=0xEE)
+    laid = lay_out_file(
+        data,
+        [_file_block("a", data, cfg, {1: "BB[end]"})],
+        recompress=lambda block, payload: (b"", None),
+    )
+    assert not laid.ok
+    assert laid.problems == ["a #1: 1 byte(s) too long for its slot"]
+    assert laid.data == data and laid.written == {}
+
+
+def test_lay_out_file_reports_a_slot_that_will_not_compress():
+    payload = bytes.fromhex("41 42 00 43 00 41 41")
+    cfg = BlockConfig(RangeSource(0, 3), EndToken(), "main", fill=0xEE)
+    laid = lay_out_file(
+        b"\x00" * 8,
+        [_file_block("a", payload, cfg, {0: "B[end]"}, ("lz", 0), payload)],
+        recompress=lambda block, buffer: (b"", "lz: no room in the slot"),
+    )
+    assert laid.problems == ["lz: no room in the slot"]
+    assert laid.data == b"\x00" * 8 and laid.written == {}

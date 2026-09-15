@@ -10,9 +10,10 @@ holds, each with the address it reaches.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from mapchar.core.bits import Bits
+from mapchar.core.bits import Bits, align_up
 from mapchar.core.block import (
     BlockConfig,
     FixedLength,
@@ -20,11 +21,12 @@ from mapchar.core.block import (
     PointerListSource,
     PointerTableSource,
 )
-from mapchar.core.mapping import mapping_for, read_pointer
-from mapchar.core.table import TableSet, TokenKind
+from mapchar.core.mapping import read_pointer
+from mapchar.core.table import TableSet
 from mapchar.core.tokens import Token
 from mapchar.engines.decode import DecodeRules, RunResult, decode_run
 from mapchar.pipeline.extract import decode_one, pointer_target, string_at
+from mapchar.plugins.registry import mapping_for
 
 PointerSource = PointerTableSource | PointerListSource
 
@@ -61,6 +63,42 @@ def cuts_at_end_tokens(config: BlockConfig | None) -> bool:
     """Whether a view reads ``config`` from end token to end token, so any token
     boundary on a byte is a fresh start."""
     return _view_cut(config) is None
+
+
+def align_before(
+    data: bytes,
+    first: int,
+    start: int,
+    offset: int,
+    decode: Callable[[bytes], list[Token]],
+    *,
+    tries: int,
+    lookahead: int,
+) -> tuple[int, list[Token]]:
+    """The tokens from about ``start`` up to ``offset``, decoded from whichever
+    of the few bytes back from ``start`` reads best.
+
+    Best is the fewest tokens left unmatched — a start inside a character leaves
+    a trail of them — and then a token starting at ``offset`` itself, so the text
+    above is in step with the text in view whenever that is in step with the
+    file. A start that reads with nothing unmatched and in step is as good as one
+    gets, and the tries stop there. ``first`` is as far back as the view reaches,
+    and ``lookahead`` how far past ``offset`` is decoded to see whether a token
+    starts there.
+    """
+    best: tuple[tuple[int, bool], int, list[Token]] | None = None
+    start = max(first, start)
+    for at in range(start, max(first - 1, start - tries), -1):
+        rel = (offset - at) * 8
+        tokens = decode(data[at : offset + lookahead])
+        before = [t for t in tokens if t.bit_start < rel]
+        unmatched = sum(t.entry is None and not t.fallback for t in before)
+        score = (unmatched, not any(t.bit_start == rel for t in tokens))
+        if best is None or score < best[0]:
+            best = (score, at, before)
+        if score == (0, False):
+            break
+    return best[1], best[2]
 
 
 def _view_cut(config: BlockConfig | None) -> BlockConfig | None:
@@ -103,7 +141,7 @@ def pointer_cells(
     mapping = mapping_for(source, registry)
     if isinstance(source, PointerTableSource):
         stride = max(source.stride, 1)
-        first = source.start + max(0, -(-(lo - source.start) // stride)) * stride
+        first = align_up(lo, stride, source.start)
         addresses = range(first, min(source.stop, hi), stride)
     else:
         addresses = sorted(a for a in source.addresses if lo <= a < hi)
@@ -127,7 +165,7 @@ def pointer_window(source: PointerSource, lo: int, count: int) -> int | None:
     has fewer."""
     if isinstance(source, PointerTableSource):
         stride = max(source.stride, 1)
-        first = source.start + max(0, -(-(lo - source.start) // stride)) * stride
+        first = align_up(lo, stride, source.start)
         last = first + (count - 1) * stride
         return last + source.size if last < source.stop else None
     addresses = sorted(a for a in source.addresses if a >= lo)
@@ -152,6 +190,6 @@ def target_string(
     cut = (
         last is not None
         and last.bit_end >= (target + PREVIEW_BYTES) * 8
-        and (last.entry is None or last.entry.kind is not TokenKind.END)
+        and not last.is_end
     )
     return tokens, cut

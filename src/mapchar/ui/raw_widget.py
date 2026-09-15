@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -20,11 +19,17 @@ from PySide6.QtWidgets import QAbstractScrollArea, QToolTip, QWidget
 
 from mapchar.core.table import TokenKind
 from mapchar.core.tokens import Token
-from mapchar.ui import BYTES_PER_ROW, theme
-from mapchar.ui.widgets import mono_font
+from mapchar.ui import BYTES_PER_ROW, marks, theme
+from mapchar.ui.token_text import (
+    POINTER_TOKENS,
+    display_text,
+    row_runs,
+    token_bytes,
+)
+from mapchar.ui.widgets import mono_font, wheel_steps
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterator
 
 HEX_CELL = 3
 """Character widths a byte owns in the hex column: its pair and a space."""
@@ -60,60 +65,6 @@ class RowModel:
     tips: dict[int, str] = field(default_factory=dict)
     """A token's hover text in place of its own, by its first bit: what a
     pointer holds and reaches."""
-
-
-POINTER_TOKENS = "\x00pointer"
-"""The ``table_id`` of a token that is a pointer rather than text: tinted as
-one, and hovered for what :attr:`RowModel.tips` says of it."""
-
-
-def token_bytes(token: Token) -> range:
-    """The relative bytes a token covers, at least the one it starts in."""
-    first = token.bit_start // 8
-    return range(first, max(first, (token.bit_end - 1) // 8) + 1)
-
-
-def row_runs(rels: Iterable[int]) -> Iterator[tuple[int, int]]:
-    """Sorted byte offsets as ``(first, last)`` runs, broken at row ends."""
-    run: list[int] = []
-    for rel in sorted(rels):
-        if run and (rel != run[1] + 1 or rel % BYTES_PER_ROW == 0):
-            yield run[0], run[1]
-            run = []
-        run = [run[0] if run else rel, rel]
-    if run:
-        yield run[0], run[1]
-
-
-BREAK_MARK = "↵"
-CODE_MARK = "▪"
-_EMBEDDED_BREAK = re.compile(r"\[[^\[\]]*\]\n|\n")
-_EMBEDDED_CODE = re.compile(r"\[[^\[\]]*\]")
-
-
-def compact_text(text: str) -> str:
-    """Rendered text on one line: a name ending a line as :data:`BREAK_MARK`,
-    any other as :data:`CODE_MARK`."""
-    return _EMBEDDED_CODE.sub(CODE_MARK, _EMBEDDED_BREAK.sub(BREAK_MARK, text))
-
-
-def display_text(token: Token) -> tuple[str, bool]:
-    """What the text column shows for a token, and whether it is a label.
-
-    Unmatched data is a dot (the hex column already shows its bytes). A token
-    whose whole text is one bracketed name — a code, an end token, a table
-    entry written as ``[tile60]`` — shows the name alone, as a label. Text with
-    a name inside it keeps its letters: a name ending a line becomes
-    :data:`BREAK_MARK` and any other :data:`CODE_MARK`, so ``s[line]`` reads
-    ``s↵``; the tooltip has it whole.
-    """
-    if token.entry is None and not token.fallback:
-        return "·", False
-    text = token.text()
-    bare = text.strip("\n")
-    if bare.startswith("[") and bare.endswith("]") and bare.count("[") == 1:
-        return bare[1:-1], True
-    return compact_text(text), False
 
 
 class RawWidget(QAbstractScrollArea):
@@ -160,6 +111,10 @@ class RawWidget(QAbstractScrollArea):
         self._anchor: int | None = None
         self._anchor_bits: tuple[int, int] | None = None
         self._address_digits = 6
+        self._addr_of: Callable[[int], str] | None = None
+        self._addr_width = 0
+        """How the address column spells an offset and how wide it is; ``None``
+        spells flat hex as wide as the buffer needs."""
         self._base = 0
         """The byte the scrollbar's first row starts at: the bounds' start."""
         self._token_of: list[Token | None] = []
@@ -171,6 +126,8 @@ class RawWidget(QAbstractScrollArea):
             lambda _: self.viewport().update()
         )
         self._syncing = False
+        self._wheel_rest_x = self._wheel_rest_y = 0
+        """What a wheel turned short of a notch, kept for the next turn."""
         self._sync_metrics()
 
     # --- geometry ------------------------------------------------------
@@ -210,7 +167,7 @@ class RawWidget(QAbstractScrollArea):
     def _place_columns(self) -> None:
         """Lay the columns out from the face and the address width."""
         cw = self._char_width
-        self._hex_x = (self._address_digits + 2) * cw
+        self._hex_x = (self._address_chars + 2) * cw
         width, gap = HEX_CELL * cw, self._group_gap
         self._lefts = [
             self._hex_x + c * width + c // HEX_GROUP * gap for c in range(BYTES_PER_ROW)
@@ -218,6 +175,30 @@ class RawWidget(QAbstractScrollArea):
         hex_w = BYTES_PER_ROW * width + (BYTES_PER_ROW - 1) // HEX_GROUP * gap
         self._text_x = self._hex_x + hex_w + 2 * cw
         self._text_w = BYTES_PER_ROW * self._text_width
+
+    @property
+    def _address_chars(self) -> int:
+        """How many characters the address column holds."""
+        if self._addr_of is None:
+            return self._address_digits
+        return self._addr_width
+
+    def set_address_format(
+        self, addr_of: Callable[[int], str] | None, width: int = 0
+    ) -> None:
+        """Spell the address column with ``addr_of``, in a column ``width``
+        characters wide — the window's one ``AddressSpelling``, so the column
+        reads as every other address the window shows. ``None`` goes back to
+        flat hex, as wide as the buffer needs."""
+        self._addr_of, self._addr_width = addr_of, width
+        self._place_columns()
+        self._sync_horizontal()
+        self.viewport().update()
+
+    def _address_text(self, offset: int) -> str:
+        if self._addr_of is None:
+            return f"{offset:0{self._address_digits}X}"
+        return self._addr_of(offset)
 
     @property
     def row_height(self) -> int:
@@ -453,22 +434,20 @@ class RawWidget(QAbstractScrollArea):
                 continue
             covered = [r for r in token_bytes(token) if r < limit]
             for first, last in row_runs(covered):
-                self._chip(painter, self._hex_cell(first, last - first + 1), color)
+                marks.chip(painter, self._hex_cell(first, last - first + 1), color)
             # Unmatched data is chipped in the hex column only: its dot already
             # says it in the text column, and chips there are noise.
             # A token that shows nothing — a table switch, a return — is a
             # tick where it sits rather than an empty chip.
             if token.entry is not None or token.fallback:
-                tick = not face
-                strong = QColor(color)
-                strong.setAlpha(220)
                 for segment in self._text_segments(token, limit):
-                    if tick:
-                        segment = QRectF(segment.left() - 1, segment.top(), 4, rh)
-                    self._chip(painter, segment, strong if tick else color)
+                    if face:
+                        marks.chip(painter, segment, color)
+                    else:
+                        marks.tick(painter, segment, color)
         pointers = [r for r in model.pointer_bytes if 0 <= r < len(model.data)]
         for first, last in row_runs(r for r in pointers if r < shown):
-            self._chip(
+            marks.chip(
                 painter, self._hex_cell(first, last - first + 1), theme.TINT_POINTER
             )
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
@@ -490,13 +469,10 @@ class RawWidget(QAbstractScrollArea):
                 painter.fillRect(self._text_cell(first, span), theme.TINT_SELECTION)
 
         # String boundary rules, in both columns.
-        painter.setPen(QPen(theme.TINT_STRING_RULE, 1))
         for rel in model.string_starts:
             if 0 <= rel < min(shown, len(model.data)):
                 for cell in (self._hex_cell(rel), self._text_cell(rel)):
-                    painter.drawLine(
-                        cell.left(), cell.top(), cell.left(), cell.bottom()
-                    )
+                    marks.rule(painter, cell)
 
         # Addresses and hex, each pair centred in its own cell: the pairs are
         # laid out once for the face, and only placed here.
@@ -508,9 +484,9 @@ class RawWidget(QAbstractScrollArea):
             start = row * BYTES_PER_ROW
             painter.setPen(QPen(dim))
             painter.drawText(
-                QRect(cw, row * rh, self._address_digits * cw + cw, rh),
+                QRect(cw, row * rh, self._address_chars * cw + cw, rh),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                f"{model.offset + start:0{self._address_digits}X}",
+                self._address_text(model.offset + start),
             )
             painter.setPen(QPen(ink))
             top = row * rh + dy
@@ -539,22 +515,8 @@ class RawWidget(QAbstractScrollArea):
                 cut_marks.append(cell)
 
         # A corner notch on every token shown cut short; the tooltip has it all.
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(dim)
         for cell in cut_marks:
-            right, top = cell.right(), cell.top() + 1
-            painter.drawPolygon(
-                [
-                    QPointF(right - 4, top),
-                    QPointF(right, top),
-                    QPointF(right, top + 4),
-                ]
-            )
-
-    @staticmethod
-    def _chip(painter: QPainter, cell: QRect | QRectF, color: QColor) -> None:
-        painter.setBrush(color)
-        painter.drawRoundedRect(QRectF(cell).adjusted(1, 1, -1, -1), 3, 3)
+            marks.notch(painter, cell, dim)
 
     def _measure(
         self, painter: QPainter, text: str, label: bool
@@ -802,9 +764,10 @@ class RawWidget(QAbstractScrollArea):
     def wheelEvent(self, event) -> None:
         delta = event.angleDelta()
         if delta.x() and not delta.y():
+            steps, self._wheel_rest_x = wheel_steps(self._wheel_rest_x, delta.x())
             bar = self.horizontalScrollBar()
-            bar.setValue(bar.value() - delta.x() // 120 * bar.singleStep())
+            bar.setValue(bar.value() - steps * bar.singleStep())
             return
-        steps = -delta.y() // 120
+        steps, self._wheel_rest_y = wheel_steps(self._wheel_rest_y, delta.y())
         sb = self.verticalScrollBar()
-        sb.setValue(sb.value() + steps * 3)
+        sb.setValue(sb.value() - steps * 3)

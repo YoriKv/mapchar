@@ -54,11 +54,10 @@ class EntryClipboardMixin:
             return
         self._copy_entries(entries)
         roots = [e for e in entries if e.parent not in entries]
-        self.undo_stack.beginMacro("Cut entries")
-        for e in roots:
-            if e in self.workspace.entries:
-                self._push_command(EntryCommand(self, e, add=False))
-        self.undo_stack.endMacro()
+        with self._macro("Cut entries"):
+            for e in roots:
+                if e in self.workspace.entries:
+                    self._push_command(EntryCommand(self, e, add=False))
 
     def _duplicate_entries(self, entries: list[Entry]) -> None:
         """A second row over the same region, without touching the clipboard.
@@ -151,10 +150,9 @@ class EntryClipboardMixin:
             else:
                 self.statusBar().showMessage("Nothing to paste here", 4000)
             return
-        self.undo_stack.beginMacro(f"{verb} entries")
-        for entry in placed:
-            self._push_command(EntryCommand(self, entry, add=True))
-        self.undo_stack.endMacro()
+        with self._macro(f"{verb} entries"):
+            for entry in placed:
+                self._push_command(EntryCommand(self, entry, add=True))
         first = next((e for e in placed if e.kind is not EntryKind.BOOKMARK), None)
         if first is not None:
             self._activate_entry(first)

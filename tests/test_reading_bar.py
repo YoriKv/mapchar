@@ -17,8 +17,8 @@ from mapchar.core.block import (
     RangeSource,
 )
 from mapchar.project.projectfile import load_project, save_project
-from mapchar.ui.raw_widget import POINTER_TOKENS
 from mapchar.ui.reading_bar import RANGE
+from mapchar.ui.token_text import POINTER_TOKENS
 from mapchar.ui.widgets import select_data
 from window_helpers import add_block, make_window, open_rom_and_table
 

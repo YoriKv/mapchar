@@ -6,22 +6,22 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
 from mapchar.ui.raw_widget import RawWidget, RowModel
-from mapchar.ui.widgets import ElidedLabel, EscapeCloses
+from mapchar.ui.widgets import CancellableRun, ElidedLabel, EscapeCloses
 from mapchar.ui.window_layout import remember_layout
 
 
-class DecompressWindow(EscapeCloses, QWidget):
+class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
     """The floating view of what the picked scheme yields at the current offset.
 
     Scan walks forward over the whole file one offset at a time, which is long
-    enough to need a way out: Stop sits beside it and is the only control live
-    while a scan runs (:meth:`set_scanning`), so nothing else can be asked of a
-    window whose offset is about to move.
+    enough to need a way out: Run/Stop and the progress line are
+    :class:`~mapchar.ui.widgets.CancellableRun`'s, as in the Search and Scan
+    windows, and :meth:`set_scanning` disables everything else, so nothing can be
+    asked of a window whose offset is about to move.
     """
 
     jump_next = Signal()
     scan_next = Signal()
-    scan_stop = Signal()
     to_block = Signal()
 
     def __init__(self, parent: QWidget | None = None):
@@ -41,7 +41,6 @@ class DecompressWindow(EscapeCloses, QWidget):
         self.scan = QPushButton("Scan")
         self.scan.setToolTip("Walk forward until a structure decompresses whole")
         self.stop = QPushButton("Stop")
-        self.stop.setEnabled(False)
         self.block = QPushButton("To Block…")
         self.block.setToolTip("Make a block over the structure shown")
         row.addWidget(self.next)
@@ -52,21 +51,21 @@ class DecompressWindow(EscapeCloses, QWidget):
         layout.addLayout(row)
         self.next.clicked.connect(self.jump_next)
         self.scan.clicked.connect(self.scan_next)
-        self.stop.clicked.connect(self.scan_stop)
         self.block.clicked.connect(self.to_block)
+        self.bind_run(self.scan, self.stop, self.status, "Scanning")
         self._scanning = False
         self.resize(760, 360)
 
     def set_scanning(self, active: bool) -> None:
-        """Swap the window over to a running scan and back.
+        """Freeze everything a running scan does not drive, and thaw it.
 
-        Stop is the one live control; the structure buttons come back under
-        :meth:`show_result`, which the refresh after the scan calls, so nothing
-        here re-arms a button the new position does not justify.
+        Scan and Stop are :meth:`~mapchar.ui.widgets.CancellableRun.running`'s
+        to swap; what is left is the rest of the window. The structure buttons
+        come back under :meth:`show_result`, which the refresh after the scan
+        calls, so nothing here re-arms a button the new position does not
+        justify.
         """
         self._scanning = active
-        self.stop.setEnabled(active)
-        self.scan.setEnabled(not active)
         self.next.setEnabled(False)
         self.block.setEnabled(False)
         self.raw.setEnabled(not active)

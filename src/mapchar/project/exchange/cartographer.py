@@ -21,8 +21,8 @@ from mapchar.core.block import (
 from mapchar.core.errors import MapcharError
 from mapchar.core.notices import Level, Notice
 from mapchar.core.numbers import format_num, parse_num
-from mapchar.core.table import sanitize_label
-from mapchar.core.text import split_lines
+from mapchar.project.formats.table_native import sanitize_label
+from mapchar.project.formats.textfile import split_lines
 
 
 class CommandFileError(MapcharError):
@@ -380,33 +380,3 @@ def write_command_file(
     if config.write_mode is WriteMode.SLOTTED and not isinstance(src, RangeSource):
         notes.append("slotted write mode is not expressible; Cartographer dumps only")
     return "\n".join(lines) + "\n", notes
-
-
-def shift_config(config: BlockConfig, delta: int) -> BlockConfig:
-    """The same block with every file address moved by ``delta`` bytes.
-
-    Cartographer and Atlas address the file; blocks address the container's
-    payload, so an import subtracts the header and an export adds it back.
-    """
-    from dataclasses import replace
-
-    from mapchar.core.block import PointerListSource
-
-    if not delta:
-        return config
-    src = config.source
-    if isinstance(src, RangeSource | PointerTableSource):
-        src = replace(src, start=src.start + delta, stop=src.stop + delta)
-    elif isinstance(src, PointerListSource):
-        src = replace(src, addresses=tuple(a + delta for a in src.addresses))
-    if (
-        isinstance(src, PointerTableSource | PointerListSource)
-        and src.mapping_id == "linear"
-    ):
-        src = replace(src, offset=src.offset + delta)
-    return replace(
-        config,
-        source=src,
-        bound=(config.bound + delta) if config.bound is not None else None,
-        skips=tuple((a + delta, b + delta) for a, b in config.skips),
-    )

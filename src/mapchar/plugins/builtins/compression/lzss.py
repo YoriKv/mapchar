@@ -52,7 +52,7 @@ Parameters, all optional:
 from __future__ import annotations
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
-from mapchar.plugins.builtins.compression._limits import MAX_OUT
+from mapchar.plugins.builtins.compression._limits import MAX_OUT, stream_error
 from mapchar.plugins.builtins.compression._lz import (
     FlagGroup,
     MatchFinder,
@@ -61,9 +61,6 @@ from mapchar.plugins.builtins.compression._lz import (
 )
 
 _HEADER_SIZES = {"none": 0, "gba": 4, "u16le": 2, "u32le": 4, "u16be": 2, "u24be": 3}
-
-# How many recent positions sharing a min_match-byte prefix the search tests.
-_MAX_CANDIDATES = 96
 
 
 class Lzss(PartialDecompression):
@@ -118,9 +115,6 @@ class Lzss(PartialDecompression):
     @property
     def header_size(self) -> int:
         return _HEADER_SIZES[self.size_header]
-
-    def _fail(self, reason: str) -> ValueError:
-        return ValueError(f"corrupt {self.info.id} stream: {reason}")
 
     def _read_size(self, data: bytes) -> int | None:
         if self.size_header == "gba":
@@ -187,11 +181,12 @@ class Lzss(PartialDecompression):
     def _decode(self, data: bytes, *, partial: bool) -> tuple[bytes, int, bool]:
         head = self.header_size
         if len(data) < head:
-            raise self._fail(f"shorter than the {head}-byte header")
+            raise stream_error(self.info.id, f"shorter than the {head}-byte header")
         if self.magic is not None and data[0] & self.magic_mask != self.magic:
-            raise self._fail(
+            raise stream_error(
+                self.info.id,
                 f"byte {data[0]:#04x} is not a {self.magic:#04x} header"
-                f" (mask {self.magic_mask:#04x})"
+                f" (mask {self.magic_mask:#04x})",
             )
         target = self._read_size(data)
         if target == 0:
@@ -199,11 +194,12 @@ class Lzss(PartialDecompression):
                 # The format's own encoding of an empty payload.
                 return b"", head, True
             # Accepting it would make a run of header-shaped noise a structure.
-            raise self._fail("declared decompressed size is zero")
+            raise stream_error(self.info.id, "declared decompressed size is zero")
         over_cap = target is not None and target > MAX_OUT
         if over_cap and not partial:
-            raise self._fail(
-                f"declares {target:,} bytes, past the {MAX_OUT:,}-byte cap"
+            raise stream_error(
+                self.info.id,
+                f"declares {target:,} bytes, past the {MAX_OUT:,}-byte cap",
             )
         limit = MAX_OUT if target is None else min(target, MAX_OUT)
 
@@ -257,9 +253,10 @@ class Lzss(PartialDecompression):
                     distance = field + self.distance_bias
                     start = len(win) - distance
                     if start < 0:
-                        raise self._fail(
+                        raise stream_error(
+                            self.info.id,
                             f"back reference at output byte {produced:,} reaches "
-                            f"{-start} bytes before the start of the data"
+                            f"{-start} bytes before the start of the data",
                         )
                 copy_from(win, start, length)
                 consumed = src
@@ -268,8 +265,9 @@ class Lzss(PartialDecompression):
         if target is not None and len(out) > target:
             # Not a match to clip: a framing that lands on its size exactly says
             # the flags were not the ones this stream was written with.
-            raise self._fail(
-                f"produced {len(out):,} bytes against a declared {target:,}"
+            raise stream_error(
+                self.info.id,
+                f"produced {len(out):,} bytes against a declared {target:,}",
             )
         if target is None:
             # No end marker and no size: where the buffer stopped is not where a
@@ -277,7 +275,9 @@ class Lzss(PartialDecompression):
             return out, consumed, False
         complete = not over_cap and len(out) == target
         if not complete and not partial:
-            raise self._fail(f"source ended after {len(out):,} of {target:,} bytes")
+            raise stream_error(
+                self.info.id, f"source ended after {len(out):,} of {target:,} bytes"
+            )
         return out, consumed, complete
 
     def _encode(self, data: bytes) -> bytes:
@@ -290,12 +290,7 @@ class Lzss(PartialDecompression):
         out = bytearray(self._write_size(n))
         if not n:
             return bytes(out)
-        finder = MatchFinder(
-            data,
-            min_match=self.min_match,
-            window=self.max_distance,
-            max_candidates=_MAX_CANDIDATES,
-        )
+        finder = MatchFinder(data, min_match=self.min_match, window=self.max_distance)
         group = FlagGroup(
             out, msb_first=self.flags_msb_first, set_means_match=self.set_is_ref
         )

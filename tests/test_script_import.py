@@ -4,9 +4,13 @@ import unicodedata
 
 from helpers import ABC_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
-from mapchar.pipeline.exchange.script_import import apply_script
 from mapchar.pipeline.extract import extract
-from mapchar.project.formats.script import DumpMode, parse_script, write_script
+from mapchar.project.formats.script import (
+    DumpMode,
+    apply_script,
+    parse_script,
+    write_script,
+)
 
 TS = table_set(ABC_TABLE, "main")
 

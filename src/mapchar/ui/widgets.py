@@ -20,12 +20,14 @@ from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QComboBox,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLayout,
     QLayoutItem,
     QLineEdit,
+    QMenu,
     QProgressDialog,
     QPushButton,
     QStyle,
@@ -39,7 +41,9 @@ from PySide6.QtWidgets import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Sequence
+
+    from PySide6.QtWidgets import QDialog, QTableView
 
 T = TypeVar("T")
 
@@ -753,6 +757,93 @@ def select_data(combo: QComboBox, value: object) -> bool:
     return True
 
 
+def wheel_steps(rest: int, delta: int) -> tuple[int, int]:
+    """How many notches a wheel has turned, and what it turned short of one.
+
+    Qt counts a notch as 120 eighths of a degree, and a high-resolution wheel
+    reports less than that at a time. Flooring would swallow half a notch one
+    way and round half a notch up to a whole one the other, so the count
+    truncates towards zero and the remainder is kept for the next turn: pass
+    it back as ``rest``.
+    """
+    total = rest + delta
+    steps = (1 if total >= 0 else -1) * (abs(total) // 120)
+    return steps, total - steps * 120
+
+
+def ok_cancel(dialog: QDialog) -> QDialogButtonBox:
+    """An Ok and Cancel box wired to ``dialog``."""
+    box = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    )
+    box.accepted.connect(dialog.accept)
+    box.rejected.connect(dialog.reject)
+    return box
+
+
+def close_box(dialog: QDialog) -> QDialogButtonBox:
+    """A Close box wired to ``dialog``: Close neither accepts nor rejects, so
+    either signal closes it."""
+    box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    box.accepted.connect(dialog.accept)
+    box.rejected.connect(dialog.reject)
+    return box
+
+
+def column_menu(
+    view: QTableView,
+    headers: Sequence[str],
+    pinned: int,
+    on_toggle: Callable[[int, bool], None] | None = None,
+) -> QMenu:
+    """A checkable entry per column of ``view``, hiding and showing it.
+
+    ``pinned`` is the column the view is for, which stays. ``on_toggle`` is
+    told of every switch, for a view that remembers its columns.
+    """
+    menu = QMenu(view)
+    for column, name in enumerate(headers):
+        action = menu.addAction(name)
+        action.setCheckable(True)
+        action.setChecked(not view.isColumnHidden(column))
+        action.setEnabled(column != pinned)
+        action.toggled.connect(
+            lambda on, c=column: _toggle_column(view, c, on, on_toggle)
+        )
+    return menu
+
+
+def _toggle_column(
+    view: QTableView,
+    column: int,
+    shown: bool,
+    on_toggle: Callable[[int, bool], None] | None,
+) -> None:
+    view.setColumnHidden(column, not shown)
+    if on_toggle is not None:
+        on_toggle(column, shown)
+
+
+def install_column_menu(
+    view: QTableView,
+    headers: Sequence[str],
+    pinned: int,
+    on_toggle: Callable[[int, bool], None] | None = None,
+) -> Callable[[], QMenu]:
+    """Give ``view``'s header a right-click menu of its columns, and hand back
+    what builds it, for a window that opens it from elsewhere."""
+    header = view.horizontalHeader()
+
+    def build() -> QMenu:
+        return column_menu(view, headers, pinned, on_toggle)
+
+    header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    header.customContextMenuRequested.connect(
+        lambda pos: build().exec(header.mapToGlobal(pos))
+    )
+    return build
+
+
 __all__ = [
     "PICKER_WIDTH",
     "CancellableRun",
@@ -766,10 +857,15 @@ __all__ = [
     "ModeToggle",
     "ResultsTable",
     "WrapBar",
+    "close_box",
+    "column_menu",
     "fill_pick",
     "fit_chars",
     "hint_field",
+    "install_column_menu",
     "mono_font",
+    "ok_cancel",
     "select_data",
     "show_elided_tooltips",
+    "wheel_steps",
 ]

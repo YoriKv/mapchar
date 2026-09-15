@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtWidgets import QMessageBox
-
 from mapchar.core.errors import MapcharError
 from mapchar.project.tables import adopt_table, read_table_file
 from mapchar.project.workspace import Entry, EntryKind
@@ -35,15 +33,12 @@ class TablesDockMixin:
             return
         if os.path.exists(path):
             self.table_watcher.addPath(path)
-        if entry.dirty:
-            answer = QMessageBox.question(
-                self,
-                "Table Changed on Disk",
-                f"{entry.name} changed on disk and has edits here. Re-read it? "
-                "Your edits stay on top of it, and win where they overlap.",
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        if entry.dirty and not self._ask(
+            "Table Changed on Disk",
+            f"{entry.name} changed on disk and has edits here. Re-read it? "
+            "Your edits stay on top of it, and win where they overlap.",
+        ):
+            return
         self.reload_table(entry)
 
     def _tables_changed(self) -> None:

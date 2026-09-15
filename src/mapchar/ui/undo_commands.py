@@ -40,7 +40,7 @@ from dataclasses import dataclass, fields
 from PySide6.QtGui import QUndoCommand
 
 from mapchar.core.table import Table
-from mapchar.pipeline.pipeline import FileChange
+from mapchar.pipeline.filechange import FileChange
 from mapchar.project.workspace import Entry, StringState
 
 # QUndoStack only attempts mergeWith between commands whose id() match, and -1
@@ -131,6 +131,39 @@ class _EditContextCommand(_StateCommand):
         return self.window._ensure_edit_context(self.entry, self.view, self.where)
 
 
+class _MergingCommand(_StateCommand):
+    """A command a consecutive sibling of collapses into.
+
+    The tail every merge here shares: take the newer command's half of the pair
+    — its ``redo`` has already run, so that half is the live state — and where
+    the run walked back to what it started from, drop the empty step and, for a
+    command carrying revision tokens, hand the entry back the token it had
+    before. A subclass says only which commands are the same run, in
+    :meth:`_mergeable`.
+    """
+
+    _stamps = False
+    """Whether the state is a ``(value, revision)`` pair whose token is handed
+    back when the step is dropped."""
+
+    def _mergeable(self, other) -> bool:
+        """Whether ``other``, pushed straight after this one, is the same run."""
+        raise NotImplementedError
+
+    def _value(self, state):
+        return state[0] if self._stamps else state
+
+    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
+        if not self._mergeable(other):
+            return False
+        self.after = other.after
+        if self._value(self.after) == self._value(self.before):
+            self.setObsolete(True)
+            if self._stamps:
+                self.window.workspace.stamp(self.entry, self.before[1])
+        return True
+
+
 class EntryCommand(QUndoCommand):
     """Add (or remove) an entry together with its children.
 
@@ -168,7 +201,7 @@ class EntryCommand(QUndoCommand):
         self._do_remove() if self.add else self._do_add()
 
 
-class OffsetCommand(_CurrentEntryCommand):
+class OffsetCommand(_MergingCommand, _CurrentEntryCommand):
     """A view move; consecutive moves in one entry merge."""
 
     def __init__(self, window, entry: Entry, before: int, after: int):
@@ -177,21 +210,16 @@ class OffsetCommand(_CurrentEntryCommand):
     def id(self) -> int:
         return OFFSET_ID
 
-    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
+    def _mergeable(self, other) -> bool:
         # The same-entry check is load-bearing on the unified stack: moves in two
         # entries can sit adjacent and must stay separate steps.
-        if not isinstance(other, OffsetCommand) or other.entry is not self.entry:
-            return False
-        self.after = other.after
-        if self.after == self.before:
-            self.setObsolete(True)  # the run walked back to where it started
-        return True
+        return isinstance(other, OffsetCommand) and other.entry is self.entry
 
     def _apply(self, state: int) -> None:
         self.window.apply_offset(self.entry, state)
 
 
-class StringFieldCommand(_EditContextCommand):
+class StringFieldCommand(_MergingCommand, _EditContextCommand):
     """One field of one string: translation, notes or status.
 
     State is the value paired with the revision token it leaves the entry at, so
@@ -231,23 +259,16 @@ class StringFieldCommand(_EditContextCommand):
     def id(self) -> int:
         return FIELD_ID
 
-    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
-        if (
-            not isinstance(other, StringFieldCommand)
-            or other.entry is not self.entry
-            or other.index != self.index
-            or other.field != self.field
-            or other.run != self.run
-        ):
-            return False
-        # other's redo has already run, so its half of the pair is the live state.
-        self.after = other.after
-        if self.after[0] == self.before[0]:
-            # The run typed its way back to what it started from — drop the empty
-            # step, and hand the entry back the revision it had before it.
-            self.setObsolete(True)
-            self.window.workspace.stamp(self.entry, self.before[1])
-        return True
+    _stamps = True
+
+    def _mergeable(self, other) -> bool:
+        return (
+            isinstance(other, StringFieldCommand)
+            and other.entry is self.entry
+            and other.index == self.index
+            and other.field == self.field
+            and other.run == self.run
+        )
 
     def _apply(self, state) -> None:
         value, revision = state
@@ -287,7 +308,7 @@ class RenameEntryCommand(_InPlaceCommand):
         self.window.apply_entry_name(self.entry, state)
 
 
-class BlockEditCommand(_CurrentEntryCommand):
+class BlockEditCommand(_MergingCommand, _CurrentEntryCommand):
     """A block's name and configuration, changed together in one step.
 
     The string records travel with it: the window stashes the translations before
@@ -305,18 +326,13 @@ class BlockEditCommand(_CurrentEntryCommand):
     def id(self) -> int:
         return BLOCK_ID
 
-    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
-        if (
-            not isinstance(other, BlockEditCommand)
-            or self.field is None
-            or other.entry is not self.entry
-            or other.field != self.field
-        ):
-            return False
-        self.after = other.after
-        if self.after == self.before:
-            self.setObsolete(True)
-        return True
+    def _mergeable(self, other) -> bool:
+        return (
+            isinstance(other, BlockEditCommand)
+            and self.field is not None
+            and other.entry is self.entry
+            and other.field == self.field
+        )
 
     def _apply(self, state: tuple) -> None:
         self.window.apply_block_config(self.entry, *state)
@@ -371,7 +387,7 @@ def _changed(before, after) -> frozenset[str]:
     )
 
 
-class _ValueCommand(_InPlaceCommand):
+class _ValueCommand(_MergingCommand, _InPlaceCommand):
     """One frozen value on an entry, replaced whole, with its revision token.
 
     Consecutive edits of **the same fields** of the same entry merge, so typing a
@@ -381,6 +397,7 @@ class _ValueCommand(_InPlaceCommand):
     """
 
     _id = 0
+    _stamps = True
 
     def __init__(self, window, entry: Entry, before, after, text: str):
         revision = entry.live_revision
@@ -395,18 +412,12 @@ class _ValueCommand(_InPlaceCommand):
     def id(self) -> int:
         return self._id
 
-    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
+    def _mergeable(self, other) -> bool:
         if type(other) is not type(self) or other.entry is not self.entry:
             return False
-        if _changed(self.before[0], self.after[0]) != _changed(
+        return _changed(self.before[0], self.after[0]) == _changed(
             other.before[0], other.after[0]
-        ):
-            return False
-        self.after = other.after
-        if self.after[0] == self.before[0]:
-            self.setObsolete(True)
-            self.window.workspace.stamp(self.entry, self.before[1])
-        return True
+        )
 
     def _apply(self, state) -> None:
         raise NotImplementedError
@@ -517,7 +528,7 @@ class WriteCommand(_InPlaceCommand):
     redoing writes the result once more. The file is read at the moment of each
     and only touched while it still holds the side being left — one changed by
     another program since is left alone and the step says so
-    (:meth:`~mapchar.pipeline.pipeline.FileChange.apply`). In place because a
+    (:meth:`~mapchar.pipeline.filechange.FileChange.apply`). In place because a
     write shows in the Files panel's marks wherever the view is, and one Write
     All can cover files the view is not on.
     """

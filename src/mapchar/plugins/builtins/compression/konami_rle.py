@@ -37,7 +37,11 @@ from __future__ import annotations
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
 from mapchar.plugins.builtins.compression._limits import MAX_BANK
-from mapchar.plugins.builtins.compression._rle import pack_runs
+from mapchar.plugins.builtins.compression._rle import (
+    Packet,
+    pack_runs,
+    unpack_packets,
+)
 
 # Largest byte count one fill or literal control byte can safely encode. 0x7F and
 # 0xFF are reserved in the Contra reading (address change, terminator) and
@@ -48,10 +52,6 @@ _MAX_CHUNK = 0x7E
 # in a literal cost one each plus an amortised control byte, so a run only pays
 # for itself at 3.
 _MIN_FILL_RUN = 3
-# Memory guard for a read with no length behind it: one bank, past any structure
-# a cartridge unpacks in one go. Reaching it without the terminator means the
-# bytes were not a stream.
-_MAX_OUT = MAX_BANK
 
 
 def decompress(
@@ -66,48 +66,33 @@ def decompress(
     ``0xFF`` terminator was reached inside the buffer, making ``consumed`` the
     structure's true byte length — the slot a save-back must fit. Otherwise
     ``consumed`` is the end of the last complete packet, and the read raises
-    unless ``partial`` says a cut-short buffer was expected.
+    unless ``partial`` says a cut-short buffer was expected. Reaching
+    :data:`~mapchar.plugins.builtins.compression._limits.MAX_BANK` of output
+    without the terminator means the bytes were not a stream.
     """
-    out = bytearray()
-    i, n = 0, len(data)
-    consumed = 0
-    complete = False
-    while i < n and len(out) < _MAX_OUT:
-        c = data[i]
-        i += 1
-        if c == 0xFF:  # end (both variants)
-            complete = True
-            consumed = i
-            break
-        if c == 0x7F and not fds:
-            # Contra: PPU address change — consume the 2-byte destination, keep going.
-            if i + 2 > n:  # buffer ends inside the address
-                break
-            i += 2
-            consumed = i
-            continue
-        if c == 0x80 and fds:
-            count = 0x100  # FDS: 256-byte incompressible literal
-        elif c >= 0x80:
-            count = c & 0x7F  # literal copy; Contra 0x80 -> 0 (unused no-op)
-        else:
-            # Fill: value byte repeated c times. In FDS mode 0x7F lands here as a
-            # 127-fill; in Contra mode 0x7F was handled above, so c is <= 0x7E.
-            if i >= n:  # buffer ended before the value byte
-                break
-            out += bytes([data[i]]) * c
-            i += 1
-            consumed = i
-            continue
-        chunk = data[i : i + count]  # shared literal copy for both variants
-        out += chunk
-        if len(chunk) < count:  # buffer ended mid-literal
-            break
-        i += count
-        consumed = i
+    out, consumed, complete = unpack_packets(
+        data, header=lambda d, i: _packet(d, i, fds=fds), max_out=MAX_BANK
+    )
     if not complete and not partial:
         raise ValueError("no 0xFF terminator — not a Konami RLE stream")
-    return bytes(out), consumed, complete
+    return out, consumed, complete
+
+
+def _packet(data: bytes, i: int, *, fds: bool) -> tuple[Packet, int, int]:
+    """One control byte, read as its family reads it."""
+    c = data[i]
+    if c == 0xFF:  # end (both variants)
+        return Packet.END, 0, 1
+    if c == 0x7F and not fds:
+        # Contra: PPU address change — step over the 2-byte destination, keep going.
+        return Packet.SKIP, 0, 3
+    if c == 0x80 and fds:
+        return Packet.LITERAL, 0x100, 1  # FDS: 256-byte incompressible literal
+    if c >= 0x80:
+        return Packet.LITERAL, c & 0x7F, 1  # Contra 0x80 -> 0 (unused no-op)
+    # Fill: value byte repeated c times. In FDS mode 0x7F lands here as a
+    # 127-fill; in Contra mode 0x7F was handled above, so c is <= 0x7E.
+    return Packet.RUN, c, 2
 
 
 def compress(data: bytes) -> bytes:

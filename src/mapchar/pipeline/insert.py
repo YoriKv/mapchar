@@ -7,9 +7,10 @@ output is byte splices over the decompressed buffer; nothing is written here.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from mapchar.core.bits import Bits, align_up, bits_to_bytes
+from mapchar.core.bits import Bits, align_up
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -21,10 +22,12 @@ from mapchar.core.block import (
     block_bound,
 )
 from mapchar.core.errors import EncodeError
+from mapchar.core.mapping import pointer_bytes
 from mapchar.core.table import TableSet
-from mapchar.engines.decode import DecodeRules, EndedBy, decode
+from mapchar.engines.decode import DecodeRules, decode
 from mapchar.engines.encode import encode
 from mapchar.pipeline.extract import strip_artificial
+from mapchar.plugins.registry import mapping_for
 
 
 @dataclass(frozen=True)
@@ -185,8 +188,21 @@ def layout_block(
                         Problem(rec.index, "spans a skip range and cannot be rewritten")
                     )
                 continue
-            room = fixed_len if fixed_len is not None else rec.end - rec.start
-            room = min(room, rec.end - rec.start) if fixed_len is None else room
+            # Never past the extent the block recorded for the string, whatever
+            # the fixed length says: ``out`` is a bytearray, and a slice
+            # assignment longer than the slot would grow the buffer rather than
+            # stop, writing over — or past — the string that follows.
+            extent = rec.end - rec.start
+            room = extent if fixed_len is None else min(fixed_len, extent)
+            if fixed_len is not None and fixed_len > extent:
+                result.problems.append(
+                    Problem(
+                        rec.index,
+                        f"its slot holds {extent} byte(s), "
+                        f"{fixed_len - extent} short of the fixed length",
+                    )
+                )
+                continue
             if len(enc.data) > room:
                 result.problems.append(
                     Problem(
@@ -246,8 +262,6 @@ def layout_block(
 
 def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Splice]:
     """Rewrite every pointer of a packed block to its string's new position."""
-    from mapchar.core.mapping import mapping_for, pointer_bytes
-
     if not config.has_pointers:
         return []
     source = config.source
@@ -288,13 +302,118 @@ def apply_splices(data: bytes, splices: list[Splice]) -> bytes:
     return bytes(out)
 
 
+def room_for(rec: StringRecord, config: BlockConfig | None, bound: int) -> int:
+    """How many bytes ``rec`` may take: its own, the slot a fixed length gives
+    it, or everything up to the block's ``bound``
+    (:func:`~mapchar.core.block.block_bound`) when it is packed."""
+    if config is None:
+        return rec.length
+    if isinstance(config.string_type, FixedLength):
+        return config.string_type.length
+    if config.effective_write_mode is WriteMode.PACKED:
+        return max(bound - rec.start, 0)
+    return rec.byte_length(config.skips)
+
+
+@dataclass(frozen=True)
+class FileBlock:
+    """One block to lay out into a file, as :func:`lay_out_file` needs it.
+
+    ``key`` is whatever the caller identifies the block by and gets back in
+    :attr:`FileLayout.written`; ``label`` names it in a problem. ``payload`` is
+    the buffer the block's own strings address — the file itself, for a block
+    read straight from it, and the decompressed bytes of its slot for one that
+    is not. ``slot`` is that slot, as whatever identifies it paired with the
+    offset in the file the packed stream sits at, or ``None``.
+    """
+
+    key: object
+    label: str
+    config: BlockConfig
+    tables: TableSet
+    strings: list[StringRecord]
+    payload: bytes
+    slot: tuple[object, int] | None = None
+
+
+@dataclass
+class FileLayout:
+    """What laying a file's blocks out came to: the file's new bytes, the buffer
+    each written block reads afterwards (``None`` meaning the file's own), and
+    every reason a block was left out."""
+
+    data: bytes
+    written: dict[object, bytes | None] = field(default_factory=dict)
+    problems: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
+
+
+def lay_out_file(
+    data: bytes,
+    blocks: Sequence[FileBlock],
+    registry=None,
+    *,
+    recompress: Callable[[FileBlock, bytes], tuple[bytes, str | None]],
+) -> FileLayout:
+    """Lay every block of one file out and splice the results into its bytes.
+
+    Several blocks can sit over one compressed slot, and the slot holds one
+    stream: each is laid out into the *same* decompressed buffer and the buffer
+    is compressed once, through ``recompress``. Recompressing per block would
+    have the last splice at the slot's offset replace every earlier one, so one
+    of two blocks written together would silently lose its edits. The slot's
+    bounds and spare-room rule are one slot's, so the first block over it is the
+    one ``recompress`` is asked about.
+
+    A block that will not lay out, and a slot that will not compress, are
+    problems listed against their names; everything else is still laid out, and
+    the caller decides whether a file with problems is written at all.
+    """
+    payloads: dict[tuple[object, int], bytes] = {}
+    members: dict[tuple[object, int], list[FileBlock]] = {}
+    out = FileLayout(data)
+    for block in blocks:
+        base = (
+            payloads.setdefault(block.slot, block.payload) if block.slot else out.data
+        )
+        result = layout_block(base, block.config, block.tables, block.strings, registry)
+        if not result.ok:
+            out.problems += [
+                f"{block.label} #{p.index}: {p.message}" for p in result.problems
+            ]
+            continue
+        if block.slot:
+            payloads[block.slot] = apply_splices(base, result.splices)
+            members.setdefault(block.slot, []).append(block)
+        else:
+            out.data = apply_splices(out.data, result.splices)
+            out.written[block.key] = None
+    for slot, payload in payloads.items():
+        sharing = members.get(slot)
+        if not sharing:
+            continue
+        packed, problem = recompress(sharing[0], payload)
+        if problem:
+            out.problems.append(problem)
+            continue
+        out.data = apply_splices(out.data, [Splice(slot[1], packed)])
+        for block in sharing:
+            out.written[block.key] = payload
+    return out
+
+
 __all__ = [
-    "EndedBy",
+    "FileBlock",
+    "FileLayout",
     "LayoutResult",
     "Problem",
     "Splice",
     "apply_splices",
-    "bits_to_bytes",
     "block_bound",
+    "lay_out_file",
     "layout_block",
+    "room_for",
 ]

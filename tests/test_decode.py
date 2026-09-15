@@ -157,6 +157,15 @@ def test_skip_inside_a_token():
     assert render(r.tokens).startswith("a")
 
 
+def test_skip_inside_an_operand():
+    """An operand reads through the skip like every other read."""
+    ts = table_set("@table main\n$F0=[color],u16\n41=A\n", "main")
+    data = bytes.fromhex("F0 34 FF FF 12 41")
+    r = decode(Bits(data), ts, 0, DecodeRules(skips=((16, 32),)))
+    assert render(r.tokens) == "[color $1234]A"
+    assert r.tokens[0].bit_end == 40
+
+
 def test_labelled_return_with_raw_bytes():
     ts = table_set(
         "@table main\n41=A\n!F0=[sub] @names:*\n@table names\n01=x\n"

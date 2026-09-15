@@ -14,18 +14,13 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
     QDialog,
-    QDialogButtonBox,
-    QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
-    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -33,23 +28,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.bits import format_key, parse_hex
+from mapchar.core.bits import format_key
 from mapchar.core.errors import TableError
 from mapchar.core.table import Entry as TableEntry
 from mapchar.core.table import Table, TokenKind
-from mapchar.engines.relsearch import (
-    DIGIT,
-    HIRAGANA,
-    KATAKANA,
-    LOWER,
-    RUNS,
-    UPPER,
-    entries_from_base,
-)
+from mapchar.engines.relsearch import entries_from_base
 from mapchar.project.formats.table_native import format_entry, parse_entry
 from mapchar.project.workspace import Entry
-from mapchar.ui import settings
-from mapchar.ui.number_fields import OffsetEdit
+from mapchar.ui import as_bool, set_setting_bool, setting_bool, settings
+from mapchar.ui.table_dialogs import FillDialog, ShiftKeysDialog
 from mapchar.ui.table_entry_form import KIND_NAMES, TableEntryForm, describe
 from mapchar.ui.widgets import (
     CompactComboBox,
@@ -59,22 +46,16 @@ from mapchar.ui.widgets import (
     fill_pick,
     fit_chars,
     hint_field,
+    install_column_menu,
     select_data,
     show_elided_tooltips,
 )
 from mapchar.ui.window_layout import remember_layout
 
-ALPHABETS = {
-    "A-Z": UPPER,
-    "a-z": LOWER,
-    "0-9": DIGIT,
-    "あ-ん": HIRAGANA,
-    "ア-ン": KATAKANA,
-}
-"""The Fill dialog's canned runs, by the alphabet each names."""
-
-FILL_TEMPLATES = (*ALPHABETS, "A-Z a-z 0-9")
-CUSTOM = "Custom…"
+LINE_SHOWN_KEY = "table_editor/line_shown"
+"""Whether the form shows the line code, remembered per machine."""
+COLUMNS_KEY = "table_editor/columns"
+"""Which columns the grid shows, remembered per machine."""
 
 KEY, KIND, TEXT, DETAILS, WEIGHT, COMMENT = range(6)
 """The grid's columns."""
@@ -166,9 +147,11 @@ class TableEditor(EscapeCloses, QWidget):
         header.setSectionsClickable(True)
         header.setSortIndicatorShown(True)
         header.setSortIndicator(KEY, Qt.SortOrder.AscendingOrder)
-        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header.customContextMenuRequested.connect(self._on_header_menu)
         header.setToolTip("Click a column to sort by it; right-click to choose columns")
+        self.column_menu = install_column_menu(
+            self.grid, HEADERS, KEY, self._choose_column
+        )
+        """A checkable entry per column; Key stays, being what a row is."""
         header.setSectionResizeMode(TEXT, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(DETAILS, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COMMENT, QHeaderView.ResizeMode.Stretch)
@@ -229,11 +212,9 @@ class TableEditor(EscapeCloses, QWidget):
         self.grid.delete_pressed.connect(self._remove)
         self.rename.clicked.connect(lambda: self.rename_requested.emit(self._entry))
         self.form.line_toggle.toggled.connect(
-            lambda on: settings().setValue("table_editor/line_shown", on)
+            lambda on: set_setting_bool(LINE_SHOWN_KEY, on)
         )
-        self.form.set_line_shown(
-            settings().value("table_editor/line_shown", False, type=bool)
-        )
+        self.form.set_line_shown(setting_bool(LINE_SHOWN_KEY))
         self.form.changed.connect(self._on_form_changed)
         self.form.submitted.connect(self._add)
         self.add.clicked.connect(self._add)
@@ -300,6 +281,12 @@ class TableEditor(EscapeCloses, QWidget):
             self.charset_chosen.emit(self._entry, charset)
 
     # -- the table --------------------------------------------------------------
+
+    @property
+    def entry(self) -> Entry | None:
+        """The workspace entry whose table is being edited; ``None`` with no
+        table open."""
+        return self._entry
 
     def set_entry(self, entry: Entry | None) -> None:
         self._entry = entry
@@ -410,27 +397,12 @@ class TableEditor(EscapeCloses, QWidget):
             shown = chosen if chosen is not None else (column != WEIGHT or weights_used)
             self.grid.setColumnHidden(column, not shown)
 
-    def column_menu(self) -> QMenu:
-        """A checkable entry per column; Key stays, being what a row is."""
-        menu = QMenu(self)
-        for column, name in enumerate(HEADERS):
-            action = menu.addAction(name)
-            action.setCheckable(True)
-            action.setChecked(not self.grid.isColumnHidden(column))
-            action.setEnabled(column != KEY)
-            action.toggled.connect(lambda on, c=column: self._choose_column(c, on))
-        return menu
-
     def _choose_column(self, column: int, shown: bool) -> None:
+        """Remember a column's switch; hiding it is the menu's own doing."""
         self._columns[column] = shown
-        self.grid.setColumnHidden(column, not shown)
         settings().setValue(
-            "table_editor/columns",
-            {str(c): on for c, on in self._columns.items()},
+            COLUMNS_KEY, {str(c): on for c, on in self._columns.items()}
         )
-
-    def _on_header_menu(self, pos: QPoint) -> None:
-        self.column_menu().exec(self.grid.horizontalHeader().mapToGlobal(pos))
 
     def _set_row(self, row: int, e: TableEntry) -> None:
         cells = [
@@ -729,11 +701,11 @@ class _KeyItem(QTableWidgetItem):
 
 
 def _stored_columns() -> dict[int, bool]:
-    stored = settings().value("table_editor/columns", {}) or {}
+    stored = settings().value(COLUMNS_KEY, {}) or {}
     out: dict[int, bool] = {}
     for key, on in dict(stored).items():
         try:
-            out[int(key)] = on in (True, "true", "True", 1, "1")
+            out[int(key)] = as_bool(on)
         except (TypeError, ValueError):
             continue
     return out
@@ -760,101 +732,4 @@ def _next_key(bits: str) -> str:
     return format(value, f"0{len(bits)}b") if value < 1 << len(bits) else bits
 
 
-class ShiftKeysDialog(QDialog):
-    """How far to move the selected keys."""
-
-    def __init__(self, count: int, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setWindowTitle("Shift Keys")
-        form = QFormLayout(self)
-        self.offset = OffsetEdit()
-        self.offset.setToolTip(
-            "Hex, added to every selected key; a leading − subtracts"
-        )
-        form.addRow(f"Add to each of the {count} selected key(s)", self.offset)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
-        self.offset.setFocus()
-
-    def delta(self) -> int | None:
-        return self.offset.value()
-
-
-class FillDialog(QDialog):
-    """A run of characters over consecutive keys, with a look at what it
-    would touch."""
-
-    def __init__(self, table: Table, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setWindowTitle("Fill")
-        self._table = table
-        form = QFormLayout(self)
-        self.template = QComboBox()
-        for name in (*FILL_TEMPLATES, CUSTOM):
-            self.template.addItem(name, name)
-        self.template.setToolTip("The characters, in key order")
-        form.addRow("Characters", self.template)
-        self.custom = hint_field(
-            QLineEdit(),
-            "typed in key order",
-            "The characters, one per key, in key order",
-        )
-        form.addRow("", self.custom)
-        self.first = hint_field(
-            QLineEdit(), "00", "The first key, in hex; its digits set every key's width"
-        )
-        fit_chars(self.first, 6)
-        self.first.setText("00")
-        form.addRow("First key", self.first)
-        self.overwrite = QCheckBox("Overwrite keys that already have entries")
-        form.addRow("", self.overwrite)
-        self.preview = ElidedLabel("")
-        form.addRow(self.preview)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
-        self.template.currentIndexChanged.connect(self._refresh)
-        self.custom.textChanged.connect(self._refresh)
-        self.first.textChanged.connect(self._refresh)
-        self._refresh()
-
-    def chars(self) -> str:
-        choice = self.template.currentData()
-        if choice == CUSTOM:
-            return self.custom.text()
-        return "".join(RUNS[ALPHABETS[part]] for part in choice.split())
-
-    def start(self) -> int | None:
-        digits = self.first.text().strip().replace("$", "")
-        try:
-            value = parse_hex(digits, default=-1)
-        except ValueError:
-            return None
-        return value if value >= 0 else None
-
-    def width(self) -> int:
-        return max(len(self.first.text().strip().replace("$", "")), 2)
-
-    def _refresh(self) -> None:
-        self.custom.setVisible(self.template.currentData() == CUSTOM)
-        chars, start = self.chars(), self.start()
-        if not chars or start is None:
-            self.preview.setText("")
-            return
-        entries = entries_from_base(start, self.width() * 4, "big", chars)
-        taken = sum(e.bits in self._table.entries for e in entries)
-        last = format_key(entries[-1].bits) if entries else ""
-        self.preview.setText(
-            f"{len(entries)} keys, {format_key(entries[0].bits)} to {last}"
-            + (f"; {taken} already have entries" if taken else "")
-        )
-
-
-__all__ = ["ALPHABETS", "FillDialog", "ShiftKeysDialog", "TableEditor"]
+__all__ = ["TableEditor"]

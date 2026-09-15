@@ -153,6 +153,20 @@ def test_columns_hide_and_reorder(qtbot):
 # --- the window ------------------------------------------------------------
 
 
+def test_a_replace_all_that_matched_nothing_leaves_no_undo_step(window, tmp_path):
+    """An empty macro would leave a step that undoes nothing, so the macro is
+    only opened by the first command actually pushed inside it."""
+    data = b"\x41\xfe\x42\x00" + b"\xff" * 4
+    _, block = block_with(window, tmp_path, data, stop=4)
+    before = window.undo_stack.count()
+    window._fr_replace_all("nothing here", "X", True, False)
+    assert window.undo_stack.count() == before
+    # And a run that does match still lands one step.
+    window._fr_replace_all("A", "C", True, False)
+    assert window.undo_stack.count() == before + 1
+    assert block.doc.strings[0].translation == "C[line]\nB[end]"
+
+
 def test_replace_all_is_code_aware_over_block_or_project(window, tmp_path):
     data = b"\x41\xfe\x42\x00\x42\xfe\x41\x00" + b"\xff" * 8
     entry, first = block_with(window, tmp_path, data, stop=8)
@@ -230,7 +244,7 @@ def test_fill_leaves_taken_keys_alone(window, tmp_path):
     window._edit_table_entry(table_entry)
     editor = window.table_editor
     # The dialog says which keys are taken; declined, they are left alone.
-    from mapchar.ui.table_editor import FillDialog
+    from mapchar.ui.table_dialogs import FillDialog
 
     dialog = FillDialog(table_entry.table)
     dialog.template.setCurrentIndex(dialog.template.findData("A-Z"))
@@ -276,39 +290,39 @@ def test_font_sheet_view_and_alphabet_tools(qtbot, tmp_path):
     assert "1 not in font: q" in win.status.text()
 
     # The sheet draws, and a click maps to its glyph.
-    win.sheet_view.repaint()
-    assert win.sheet_view.glyph_at(25, 1) == 1
-    assert win.sheet_view.glyph_at(25, 40) == 5
-    assert win.sheet_view.glyph_at(25, 200) is None
+    win.font_tab.sheet_view.repaint()
+    assert win.font_tab.sheet_view.glyph_at(25, 1) == 1
+    assert win.font_tab.sheet_view.glyph_at(25, 40) == 5
+    assert win.font_tab.sheet_view.glyph_at(25, 200) is None
     win.grid.setChecked(True)
     win._paint()
 
     # Fill from the table, from the picked glyph.
-    win.sheet_view.set_pick(4)
+    win.font_tab.sheet_view.set_pick(4)
     win.set_table_chars("XYZ")
-    win._fill_from_table()
+    win.font_tab._fill_from_table()
     assert (fonts[-1].base, fonts[-1].chars) == (4, "XYZ")
 
     # Shift moves the alphabet one row of glyphs.
-    win._shift(1)
+    win.font_tab._shift(1)
     assert fonts[-1].base == 4
-    win._shift(-1)
+    win.font_tab._shift(-1)
     assert fonts[-1].base == 0
 
     # The measured gap is the user's, not a constant.
-    win.gap.setValue(2)
-    win._measure()
+    win.font_tab.gap.setValue(2)
+    win.font_tab._measure()
     assert fonts[-1].widths[0] == 5
 
-    win._copy_alphabet()
-    win._paste_alphabet()
+    win.font_tab._copy_alphabet()
+    win.font_tab._paste_alphabet()
     assert (fonts[-1].base, fonts[-1].chars) == (0, "ABCD")
 
     # The sheet's own zoom and its tile/row switch.
-    win.sheet_zoom.setValue(4)
-    assert win.sheet_view.scale == 4
-    win.sheet_mode.setCurrentIndex(1)
-    assert win.sheet_view.rows
+    win.font_tab.sheet_zoom.setValue(4)
+    assert win.font_tab.sheet_view.scale == 4
+    win.font_tab.sheet_mode.setCurrentIndex(1)
+    assert win.font_tab.sheet_view.rows
 
 
 def test_fill_with_a_template(qtbot, monkeypatch):
@@ -323,7 +337,7 @@ def test_fill_with_a_template(qtbot, monkeypatch):
     win.font_changed.connect(fonts.append)
     win.set_font(Font(None, 8, 8, 4))
     monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("0-9", True))
-    win._fill_with()
+    win.font_tab._fill_with()
     assert fonts[-1].chars == "0123456789"
 
 
@@ -338,8 +352,8 @@ def test_paste_alphabet_keeps_a_multi_character_override(qtbot):
     fonts: list = []
     win.font_changed.connect(fonts.append)
     win.set_font(Font(None, 8, 8, 16, 0x20, "AB", glyphs={"TH": 0x10}))
-    win._copy_alphabet()
-    win._paste_alphabet()
+    win.font_tab._copy_alphabet()
+    win.font_tab._paste_alphabet()
     f = fonts[-1]
     assert (f.base, f.chars, f.glyphs) == (0x20, "AB", {"TH": 0x10})
 
@@ -609,7 +623,7 @@ def _move_event(viewport, point):
 def test_the_text_column_shows_names_as_labels_and_marks_inside_text():
     from mapchar.core.table import TokenKind
     from mapchar.core.tokens import Token
-    from mapchar.ui.raw_widget import display_text
+    from mapchar.ui.token_text import display_text
 
     def shown(text, kind=None):
         return display_text(Token("0" * 8, 0, 8, _text_entry("0" * 8, text, kind)))

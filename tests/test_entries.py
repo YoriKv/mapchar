@@ -18,7 +18,8 @@ from mapchar.core.block import (
 )
 from mapchar.project.projectfile import entries_from_payload, entries_payload
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.files_panel import STATUS_COL, sorted_entries
+from mapchar.ui.entry_text import sorted_entries
+from mapchar.ui.files_panel import STATUS_COL
 from mapchar.ui.main_window import MainWindow
 from window_helpers import TABLE, add_block, make_window, open_rom_and_table
 
@@ -540,16 +541,16 @@ def test_a_bookmark_snapshots_the_settings_it_was_made_under(window, tmp_path):
 def test_the_decompressed_view_has_a_stop_that_cancels(window, tmp_path):
     view = window.decompress_window
     assert not view.stop.isEnabled()
-    view.set_scanning(True)
-    assert view.stop.isEnabled() and not view.scan.isEnabled()
-    assert not window.files_dock.isEnabled() or True  # frozen by _set_scan_ui
-    window._scan_stop = False
-    view.stop.click()
-    assert window._scan_stop
-    view.set_scanning(False)
-    assert view.scan.isEnabled()
+    with view.running():
+        assert view.stop.isEnabled() and not view.scan.isEnabled()
+        assert not view.cancelled
+        view.stop.click()
+        assert view.cancelled
+        assert not view.progress(1, 2)  # False asks the scan to stop
+    assert view.scan.isEnabled() and not view.stop.isEnabled()
     window._set_scan_ui(True)
     assert not window.menuBar().isEnabled()
+    assert not view.raw.isEnabled()
     window._set_scan_ui(False)
     assert window.menuBar().isEnabled()
 

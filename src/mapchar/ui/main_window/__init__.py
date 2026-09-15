@@ -1,13 +1,15 @@
 """The application main window, split by concern.
 
 :class:`~mapchar.ui.main_window.window.MainWindow` is one class assembled from
-mixins, one per surface it drives — the active entry and the refresh cycle,
-capability gating, the Codecs bar, navigation and the visit trail, the entries
-list and its clipboard, containers, writing and dumping, compression, the Tables
-dock and the Table Editor, the raw view, blocks and bookmarks, the strings view
-and the edits made in it, wrapping, find and replace, search (bytes, relative,
-pointers), the exchange formats, projects, the Preview window, the Fonts dock
-and the Hex dock. They are mixins rather than collaborator objects because they
+mixins, one per surface it drives — the active entry and the refresh cycle, the
+Text tab's viewport, capability gating, the Format and Reading bars, navigation
+and the visit trail, the entries list with its context menu and its clipboard,
+containers, writing and dumping, compression, the Tables dock and the Table
+Editor, the raw view, blocks and bookmarks, the strings view and the edits made
+in it, wrapping,
+find and replace, search (bytes, relative, pointers), the exchange formats,
+projects and their missing files, the menu bar, the Preview window, the Fonts
+dock and the Hex dock. They are mixins rather than collaborator objects because they
 all manipulate the *same* live widgets and the single ``_doc`` on screen;
 splitting that state across objects would buy indirection rather than isolation.
 What the split does buy is a named home for each concern.
@@ -18,9 +20,10 @@ declared once in :data:`~mapchar.core.capabilities.CAPABILITIES` and applied by
 carrying its own "...and not on a block" clause.
 
 ``window.py`` itself is what is left when every surface has one: the widgets and
-docks, the menu bar, the shared undo stack and the guards every command applies
-through, the window title and the project's dirty marker, the file dialogs and
-the error modal. It is the shell the mixins hang off, not one more surface.
+docks with the signals that wire them, the shared undo stack and the guards every
+command applies through, the window title and the project's dirty marker, the
+file dialogs and the error modal. It is the shell the mixins hang off, not one
+more surface.
 
 Only the window class is public; import it from here.
 """

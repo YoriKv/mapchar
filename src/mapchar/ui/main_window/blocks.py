@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
+    FixedLength,
+    Lines,
+    NextPointer,
+    Pascal,
+    PointerListSource,
+    PointerTableSource,
     RangeSource,
     source_span,
     source_start,
@@ -15,9 +22,27 @@ from mapchar.core.block import (
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
 from mapchar.core.table import TokenKind
 from mapchar.project.workspace import Entry, EntryKind
+from mapchar.ui.undo_commands import BlockEditCommand, TableCommand
+
+_BLOCK_EDIT_FIELDS = ("name", "config", "compression_id", "spare_room")
+"""The four things a block is read by, in the order
+:class:`~mapchar.ui.undo_commands.BlockEditCommand` carries them."""
+
+_KIND_NAMES = {
+    RangeSource: "Range",
+    PointerTableSource: "Pointer table",
+    PointerListSource: "Pointer list",
+    EndToken: "End token",
+    FixedLength: "Fixed length",
+    Pascal: "Pascal (length prefix)",
+    NextPointer: "Next pointer",
+    Lines: "Lines",
+}
+"""What the block bar calls a source or string type: the Block dialog's words
+for it, never the class name."""
 
 
-class BlockBarMixin:
+class BlocksMixin:
     """Blocks and bookmarks: creating them, editing them, jumping to them.
 
     A slice of :class:`~mapchar.ui.main_window.window.MainWindow`, reaching the
@@ -57,6 +82,22 @@ class BlockBarMixin:
             self._error(complain)
         return None
 
+    @staticmethod
+    def _block_label(entry: Entry, count: int) -> str:
+        """What the block bar says the block on screen is: its name, how it is
+        read, and how many strings that came to. A block with no configuration
+        has nothing to spell out but its name."""
+        cfg = entry.config
+        if cfg is None:
+            return f"{entry.name}: no reading"
+        return (
+            f"{entry.name}: "
+            f"{_KIND_NAMES.get(type(cfg.source), 'Source')} · "
+            f"{_KIND_NAMES.get(type(cfg.string_type), 'Strings')} · "
+            f"@{cfg.table_id or '-'} · "
+            f"{count} {'string' if count == 1 else 'strings'}"
+        )
+
     def _new_block(self, start: int | None = None, stop: int | None = None) -> None:
         """A block over ``start`` to ``stop`` — the selection, else the view
         onwards — read the way the bars read the view now."""
@@ -95,6 +136,22 @@ class BlockBarMixin:
     def _default_reading(self) -> BlockConfig:
         return BlockConfig(RangeSource(0, 0), EndToken(), self._default_table_id())
 
+    def _push_block_edit(self, entry: Entry, *, field: str | None = None, **changes):
+        """One block edit: the four things a block is read by as they are, with
+        only what ``changes`` names different. Nothing is pushed when nothing
+        moved. ``field`` names the bar control it came from, so a run on one
+        merges into a single step."""
+        unknown = set(changes) - set(_BLOCK_EDIT_FIELDS)
+        if unknown:
+            raise TypeError(f"not part of a block edit: {', '.join(sorted(unknown))}")
+        before = tuple(getattr(entry, name) for name in _BLOCK_EDIT_FIELDS)
+        after = tuple(
+            changes.get(name, value)
+            for name, value in zip(_BLOCK_EDIT_FIELDS, before, strict=True)
+        )
+        if after != before:
+            self._push_command(BlockEditCommand(self, entry, before, after, field))
+
     def apply_block_config(
         self, entry: Entry, name: str, config: BlockConfig, compression_id, spare_room
     ) -> None:
@@ -112,13 +169,12 @@ class BlockBarMixin:
         # The one drop that keeps the translations, so the re-read matches them
         # back onto the new configuration by index.
         self.workspace.drop_document(entry)
-        if entry is self._entry:
-            self._capture_session()
-            self._doc = self._load_document(entry)
-            self._restore_session()
         self.files_panel.refresh_labels()
         self._update_title()
-        self._refresh_view()
+        if entry is self._entry:
+            self._reload_current_document()
+        else:
+            self._refresh_view()
 
     def _new_bookmark(self) -> None:
         """File ▸ New Bookmark: the view position plus the settings it is read
@@ -292,19 +348,29 @@ class BlockBarMixin:
         self._go_to(offset)
 
     def _block_from_region(self, region) -> None:
-        """A block over a scanned region, with its guessed terminator as end token."""
+        """A block over a scanned region, with its guessed terminator as end
+        token — the two together, so undoing the block takes the token with it."""
         tables = self._table_set()
         # An encoding is nobody's to edit: its strings end where it says.
         table_entry = (
             self.workspace.entry_for_table(tables.start.id) if tables else None
         )
-        if table_entry is not None and region.terminator is not None:
-            bits = format(region.terminator, "08b")
-            start = tables.start
-            if bits not in start.entries:
-                from mapchar.core.table import Entry as TableEntry
+        with self._macro("Block from region"):
+            if table_entry is not None and region.terminator is not None:
+                bits = format(region.terminator, "08b")
+                start = table_entry.table
+                # A table that already spells [end] on other bits keeps it;
+                # only a free key and a free label take the guess.
+                if (
+                    start is not None
+                    and bits not in start.entries
+                    and "end" not in start.labels
+                ):
+                    from mapchar.core.table import Entry as TableEntry
 
-                start.add(TableEntry(bits, TokenKind.END, "[end]"))
-                self.workspace.stamp(table_entry)
-                self._tables_changed()
-        self._new_block(region.start, region.end)
+                    after = deepcopy(start)
+                    after.add(TableEntry(bits, TokenKind.END, "[end]"))
+                    self._push_command(
+                        TableCommand(self, table_entry, deepcopy(start), after)
+                    )
+            self._new_block(region.start, region.end)

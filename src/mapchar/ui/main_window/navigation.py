@@ -35,8 +35,6 @@ from PySide6.QtWidgets import (
 from mapchar.core.address import (
     HEX_ID,
     PRESETS_BY_ID,
-    format_address,
-    parse_address,
 )
 from mapchar.core.capabilities import Capability
 from mapchar.project.workspace import Entry
@@ -103,8 +101,8 @@ class NavigationMixin:
         return None if size <= 0 else BankLayout(size, base, first)
 
     def _format_address(self, offset: int) -> str:
-        """``offset`` as the navigation bar spells it."""
-        return format_address(offset, self._address_layout())
+        """``offset`` as every address field spells it."""
+        return self.address_spelling.format(offset)
 
     def _parse_address(self, text: str) -> int | None:
         """Text typed into an address field as a file offset, or ``None``.
@@ -112,7 +110,7 @@ class NavigationMixin:
         A bank layout's own spelling is tried first and a flat hex offset second
         (:func:`~mapchar.core.address.parse_address`).
         """
-        return parse_address(text, self._address_layout())
+        return self.address_spelling.parse(text)
 
     def _sync_address_spelling(self) -> None:
         """Spell every address field — the Reading bar's, the Hex panel's, the

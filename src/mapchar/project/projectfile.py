@@ -11,9 +11,10 @@ from typing import Any
 from mapchar.core.block import Status
 from mapchar.core.errors import MapcharError
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
-from mapchar.core.table import Table, sanitize_id
+from mapchar.core.table import Table
 from mapchar.plugins.aliases import current_config_ids, current_id
 from mapchar.project.formats.script import format_config, parse_config
+from mapchar.project.formats.table_native import sanitize_id
 from mapchar.project.tables import adopt_table
 from mapchar.project.workspace import (
     NAMED_UNIQUELY,
@@ -35,13 +36,6 @@ class ProjectError(MapcharError):
 class LoadedProject:
     entries: list[Entry]
     current: Entry | None
-    strings: dict[int, dict[int, StringState]] = field(default_factory=dict)
-    """Per block entry index, per string index: the saved translation state.
-
-    Also parked on each entry as
-    :attr:`~mapchar.project.workspace.Entry.pending_strings`, which is where a
-    block that is never opened keeps it.
-    """
     warnings: list[str] = field(default_factory=list)
     version: int = PROJECT_VERSION
     """The version the file claims, after any migration walked it forward."""
@@ -222,9 +216,13 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
         if entry.table_overlay:
             d["overlay"] = dict(entry.table_overlay)
         # A table with no file is named nowhere else; one renamed in the app
-        # is named here in place of its file's id.
-        if entry.table is not None and (not entry.path or entry.table_id):
-            d["table"] = entry.table.id
+        # is named here in place of its file's id. Taken from ``table_id``
+        # first, so a rename survives a save made while the file is missing and
+        # no table was ever read.
+        if not entry.path or entry.table_id:
+            table_id = entry.table_id or (entry.table.id if entry.table else None)
+            if table_id:
+                d["table"] = table_id
     session: dict[str, Any] = {}
     if entry.session.table_id:
         session["table_id"] = entry.session.table_id
@@ -297,12 +295,11 @@ def entries_from_payload(text: str) -> list[Entry]:
     parents: list[int | None] = []
     for item in raw:
         try:
-            entry, parent_index, saved = _entry_from(item, "")
+            entry, parent_index = _entry_from(item, "")
         except Exception:  # noqa: BLE001 - a broken record is dropped, never fatal
             entries.append(None)
             parents.append(None)
             continue
-        entry.pending_strings = saved or None
         entries.append(entry)
         parents.append(parent_index)
     for entry, parent_index in zip(entries, parents, strict=True):
@@ -334,12 +331,11 @@ def load_project(path: str) -> LoadedProject:
         )
     base = os.path.dirname(os.path.abspath(path))
     entries: list[Entry] = []
-    strings: dict[int, dict[int, StringState]] = {}
     raw_entries = data.get("entries", [])
     parents: list[int | None] = []
     for i, raw in enumerate(raw_entries):
         try:
-            entry, parent_index, saved_strings = _entry_from(raw, base)
+            entry, parent_index = _entry_from(raw, base)
         except Exception as exc:  # noqa: BLE001 - a broken entry is dropped, never fatal
             warnings.append(f"entry {i} dropped: {exc}")
             entries.append(None)  # type: ignore[arg-type]
@@ -347,16 +343,11 @@ def load_project(path: str) -> LoadedProject:
             continue
         entries.append(entry)
         parents.append(parent_index)
-        if saved_strings:
-            strings[i] = saved_strings
     for entry, parent_index in zip(entries, parents, strict=True):
         if entry is not None and parent_index is not None:
             parent = entries[parent_index] if 0 <= parent_index < len(entries) else None
             entry.parent = parent
     kept = [e for e in entries if e is not None]
-    strings = {
-        kept.index(entries[i]): s for i, s in strings.items() if entries[i] is not None
-    }
     current = None
     ci = data.get("current")
     # ``True`` is an int in Python but never an index a writer meant.
@@ -386,16 +377,13 @@ def load_project(path: str) -> LoadedProject:
     return LoadedProject(
         kept,
         current if current in kept else None,
-        strings,
         warnings,
         version if isinstance(version, int) else PROJECT_VERSION,
         migrated_from,
     )
 
 
-def _entry_from(
-    raw: dict[str, Any], base: str
-) -> tuple[Entry, int | None, dict[int, StringState]]:
+def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
     kind = EntryKind(raw["kind"])
     path = _abs(raw.get("path"), base)
     if path is not None:
@@ -507,9 +495,9 @@ def _entry_from(
             )
         except (KeyError, ValueError):
             continue
-    # On the entry as well as in the load report: until the block is opened and
-    # extracted this is the only place its translations exist, and a save has to
-    # be able to write them back (:func:`_string_records`).
+    # Until the block is opened and extracted this is the only place its
+    # translations exist, and a save has to be able to write them back
+    # (:func:`_string_records`).
     entry.pending_strings = saved or None
     parent = raw.get("parent")
-    return entry, (int(parent) if isinstance(parent, int) else None), saved
+    return entry, (int(parent) if isinstance(parent, int) else None)

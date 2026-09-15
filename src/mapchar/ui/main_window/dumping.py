@@ -29,12 +29,9 @@ class DumpingMixin:
         blocks = [
             e for e in self.workspace.children(file_entry) if e.kind is EntryKind.BLOCK
         ]
-        if (
-            not all_blocks
-            and self._entry is not None
-            and self._entry.kind is EntryKind.BLOCK
-        ):
-            blocks = [self._entry]
+        current = self._current_block()
+        if not all_blocks and current is not None:
+            blocks = [current]
         if not blocks:
             self._error("The file has no blocks.")
             return

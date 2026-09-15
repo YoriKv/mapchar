@@ -45,13 +45,34 @@ class SessionMixin:
             return
         if entry is self._entry and self.workspace.current is entry:
             return
+        # The widgets still show the outgoing entry, so its session is written
+        # back before the switch — not inside the reload below, which would
+        # stamp the view it is leaving onto the entry arriving.
         self._capture_session()
         self._entry = entry
         self.workspace.set_current(entry)
-        self._doc = self._load_document(entry) if entry is not None else None
         # A run of edits in one string ends when the entry does: two commands
         # either side of a switch are two steps, whatever cell they landed in.
         self._edit_run += 1
+        self._reload_current_document(capture=False)
+
+    def _reload_current_document(self, *, capture: bool = True) -> None:
+        """Read the entry on screen again and put the view back where it was.
+
+        Capture the live session, load the document, restore the widgets from
+        the session, refresh once — the tail of :meth:`_activate_entry`, and what
+        anything that drops the current document underneath the view has to do to
+        put one back. The capture is what keeps the view where the user left it:
+        the offset and the open tab live in the widgets, so skipping it re-reads
+        the entry onto whatever its session last held. Only a switch passes
+        ``capture=False``, having already written the *outgoing* entry's session
+        back before it changed hands.
+        """
+        if capture:
+            self._capture_session()
+        self._doc = (
+            self._load_document(self._entry) if self._entry is not None else None
+        )
         self._restore_session()
         self._refresh_view()
 
@@ -145,10 +166,7 @@ class SessionMixin:
 
     def _restore_session(self) -> None:
         entry = self._entry
-        widgets = (self.format_pick, self.resolve_pointers)
-        for w in widgets:
-            w.blockSignals(True)
-        try:
+        with self._bars_quiet():
             self._refresh_table_picks()
             if entry is None:
                 self._offset = 0
@@ -179,9 +197,6 @@ class SessionMixin:
                 if not entry.session.offset or not inside:
                     self._offset = 0 if start is None else start
             self._show_view(entry.session.view)
-        finally:
-            for w in widgets:
-                w.blockSignals(False)
 
     def _capture_session(self) -> None:
         """Write the on-screen entry's live view back into its session.

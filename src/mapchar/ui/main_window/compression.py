@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtWidgets import QApplication
-
 from mapchar.core.block import with_region
 from mapchar.core.capabilities import Capability
 from mapchar.core.document import Document
-from mapchar.pipeline.pipeline import decompress_at, find_next_structure
+from mapchar.pipeline.scan import decompress_at, find_next_structure
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui import DUMP_WINDOW_BYTES
 from mapchar.ui.raw_widget import RowModel
@@ -55,12 +53,12 @@ class CompressionMixin:
         return found if found is not None and found.complete else None
 
     def _refresh_decompress_preview(self, doc: Document, tables) -> None:
-        entry = self._entry
+        block = self._current_block()
         # A block that is *already* read through a scheme is looking at the
         # decompressed bytes, so there is nothing left to preview; anything else
         # is asked of the capability table rather than listed here.
         if not self._can(Capability.COMPRESSION_SCAN) or (
-            entry is not None and entry.kind is EntryKind.BLOCK and entry.compression_id
+            block is not None and block.compression_id
         ):
             self.decompress_window.hide()
             return
@@ -93,36 +91,34 @@ class CompressionMixin:
         if found.consumed > 0:
             self._go_to(self._offset + found.consumed)
 
-    def request_scan_stop(self) -> None:
-        """Abandon a running structure scan. What the Stop button calls."""
-        self._scan_stop = True
-
     def _scan_next_structure(self) -> None:
         """Walk forward to the next complete structure, cancellably.
 
-        The walk itself is :func:`~mapchar.pipeline.pipeline.find_next_structure`,
-        which is Qt-free; all that is left here is pumping the event loop so the
-        Stop button can be clicked, and answering from what the user did.
+        The walk itself is :func:`~mapchar.pipeline.scan.find_next_structure`,
+        which is Qt-free; all that is left here is reporting through the
+        Decompressed view's own run/stop/progress line, which pumps the event
+        loop so Stop stays clickable.
         """
         doc = self._doc
         plugin = self._scheme()
         if doc is None or plugin is None:
             return
-        self._scan_stop = False
+        view = self.decompress_window
+        start = self._offset + 1
+        total = max(doc.size - start, 1)
 
         def tick(at: int) -> bool:
-            self.statusBar().showMessage(f"Scanning… {at:X}")
-            QApplication.processEvents()
-            return self._scan_stop
+            # The scan stops when a tick answers True; the run's progress
+            # answers False for the same thing.
+            return not view.progress(at - start, total)
 
-        # The scan runs inline, pumping the event loop so Stop stays clickable;
-        # everything else is frozen for its duration, since a window whose offset
-        # is about to move cannot answer for anything asked of it meanwhile.
+        # The scan runs inline; everything else is frozen for its duration, since
+        # a window whose offset is about to move cannot answer for anything asked
+        # of it meanwhile.
         self._set_scan_ui(True)
         try:
-            result = find_next_structure(
-                doc.data, plugin, self._offset + 1, on_tick=tick
-            )
+            with view.running():
+                result = find_next_structure(doc.data, plugin, start, on_tick=tick)
         finally:
             self._set_scan_ui(False)
         if result.found is not None:

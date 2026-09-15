@@ -1,4 +1,4 @@
-"""The run/literal packer the byte-oriented RLE schemes here share.
+"""The run/literal packer and unpacker the byte-oriented RLE schemes here share.
 
 PackBits and the Konami RLE family are one encoder wearing two headers. Both walk
 the input once, emit a run of equal bytes as its own packet the moment it is long
@@ -9,11 +9,16 @@ arithmetic — how a header states its count, and how many bytes a packet may ca
 
 A scheme with a *terminator*, or a header before the packets, writes it around the
 call: this produces the packet stream and nothing else.
+
+Reading them back is the same shape again. :func:`unpack_packets` is the loop —
+short-read break, ``consumed`` at the last whole packet, the output cap — and
+each scheme keeps only :class:`Packet`, the reading of one control byte.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import Enum
 
 
 def pack_runs(
@@ -87,3 +92,72 @@ def pack_runs(
             literals += bytes([value]) * run
 
     flush_literals()
+
+
+class Packet(Enum):
+    """What one control byte turned out to be, as its scheme reads it."""
+
+    LITERAL = "literal"
+    """``count`` bytes follow the header and are copied out verbatim."""
+    RUN = "run"
+    """The packet's **last** byte, repeated ``count`` times."""
+    SKIP = "skip"
+    """``advance`` bytes that produce no output: a no-op, or a command the
+    decoder only has to step over to stay in sync."""
+    END = "end"
+    """The terminator: the structure ends, and ``advance`` bytes of it belong to
+    this stream's length."""
+
+
+def unpack_packets(
+    data: bytes,
+    *,
+    header: Callable[[bytes, int], tuple[Packet, int, int]],
+    max_out: int,
+) -> tuple[bytes, int, bool]:
+    """Decode a packet stream; returns ``(output, consumed, complete)``.
+
+    ``header(data, i)`` reads the control byte at ``i`` — never past the end,
+    since the loop only calls it inside the buffer — and answers
+    ``(kind, count, advance)``, where ``advance`` is the packet's own bytes: the
+    header alone for a :attr:`Packet.LITERAL`, the header **and the value** for a
+    :attr:`Packet.RUN`, all of it for a :attr:`Packet.SKIP` or
+    :attr:`Packet.END`. That is the whole of what one scheme differs by.
+
+    The three rules every scheme here shares are the reason this is one loop.
+    ``consumed`` only ever advances to the end of a **whole** packet, so a
+    caller measuring a slot never gets an offset past the buffer. A packet the
+    buffer cuts short stops the decode, a truncated literal still contributing
+    the bytes that did arrive. And ``max_out`` stops the decode at a packet
+    boundary rather than raising: reaching it is a short read, since a scheme
+    that finds its own end has not found it
+    (:mod:`~mapchar.plugins.builtins.compression._limits`).
+    """
+    out = bytearray()
+    i, n = 0, len(data)
+    consumed = 0
+    complete = False
+    while i < n and len(out) < max_out:
+        kind, count, advance = header(data, i)
+        if kind is Packet.END:
+            i += advance
+            consumed = i
+            complete = True
+            break
+        if kind is Packet.RUN:
+            if i + advance > n:  # buffer ended before the value byte
+                break
+            out += bytes([data[i + advance - 1]]) * count
+            i += advance
+        elif kind is Packet.LITERAL:
+            chunk = data[i + advance : i + advance + count]
+            out += chunk
+            i += advance + count
+            if len(chunk) < count:  # buffer ended inside the literal
+                break
+        else:  # SKIP: no output, only the bytes it takes to stay in sync
+            if i + advance > n:
+                break
+            i += advance
+        consumed = i
+    return bytes(out), consumed, complete

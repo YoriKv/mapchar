@@ -29,7 +29,11 @@ from __future__ import annotations
 from mapchar.core.context import KEY_COMPLETE, KEY_CONSUMED, PipelineContext
 from mapchar.plugins.base import PluginInfo, Stage
 from mapchar.plugins.builtins.compression._limits import MAX_OUT
-from mapchar.plugins.builtins.compression._rle import pack_runs
+from mapchar.plugins.builtins.compression._rle import (
+    Packet,
+    pack_runs,
+    unpack_packets,
+)
 
 _MAX_PACKET = 128
 _NOP = 0x80
@@ -47,27 +51,18 @@ def decompress(data: bytes) -> tuple[bytes, int]:
     PackBits has no terminator to find. A truncated literal still contributes
     the bytes that are present, a bounded window routinely slicing mid-packet.
     """
-    out = bytearray()
-    i, n = 0, len(data)
-    consumed = 0
-    while i < n and len(out) < MAX_OUT:
-        control = data[i]
-        if control == _NOP:
-            i += 1
-        elif control < _NOP:
-            count = control + 1
-            chunk = data[i + 1 : i + 1 + count]
-            out += chunk
-            i += 1 + count
-            if len(chunk) < count:  # buffer ended inside the literal
-                break
-        else:
-            if i + 1 >= n:  # buffer ended before the run's value byte
-                break
-            out += bytes([data[i + 1]]) * (257 - control)
-            i += 2
-        consumed = i
-    return bytes(out), consumed
+    out, consumed, _complete = unpack_packets(data, header=_packet, max_out=MAX_OUT)
+    return out, consumed
+
+
+def _packet(data: bytes, i: int) -> tuple[Packet, int, int]:
+    """One control byte, read as the signed count PackBits writes."""
+    control = data[i]
+    if control == _NOP:
+        return Packet.SKIP, 0, 1
+    if control < _NOP:
+        return Packet.LITERAL, control + 1, 1
+    return Packet.RUN, 257 - control, 2
 
 
 def compress(data: bytes) -> bytes:

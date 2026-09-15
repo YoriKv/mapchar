@@ -50,10 +50,10 @@ class SearchWindow(EscapeCloses, CancellableRun, QWidget):
             "shows, with ? for any character; Enter searches",
         )
         fit_chars(self.query, 16)
-        self.width = QComboBox()
-        self.width.addItem("8-bit", (1,))
-        self.width.addItem("16-bit", (2,))
-        self.width.addItem("8 and 16-bit", (1, 2))
+        self.widths = QComboBox()
+        self.widths.addItem("8-bit", (1,))
+        self.widths.addItem("16-bit", (2,))
+        self.widths.addItem("8 and 16-bit", (1, 2))
         self.case_gap = QCheckBox("Case gap")
         self.case_gap.setChecked(True)
         self.case_gap.setToolTip("Upper and lower case may sit at any distance apart")
@@ -63,7 +63,7 @@ class SearchWindow(EscapeCloses, CancellableRun, QWidget):
         self.run = QPushButton("Search")
         self.stop = QPushButton("Stop")
         row.addWidget(self.query, 1)
-        row.addWidget(self.width)
+        row.addWidget(self.widths)
         row.addWidget(self.case_gap)
         row.addWidget(QLabel("Limit"))
         row.addWidget(self.limit)
@@ -101,7 +101,7 @@ class SearchWindow(EscapeCloses, CancellableRun, QWidget):
                 found = relative_search(
                     self._data,
                     query,
-                    widths=self.width.currentData(),
+                    widths=self.widths.currentData(),
                     case_gap=self.case_gap.isChecked(),
                     limit=self.limit.value(),
                     progress=self.progress,

@@ -1,18 +1,22 @@
-"""User and project plugin folders: discovery, presets, trust and issues."""
+"""User and project plugin folders: discovery, presets and issues.
+
+The trust gate over a code plugin is :mod:`mapchar.plugins.trust`, and the
+reference material seeded into the folder is :mod:`mapchar.plugins.examples`.
+"""
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
-import json
 import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from mapchar.core.mapping import Banked
+from mapchar.core.table import Table
 from mapchar.plugins.base import REQUIRED_METHODS, Stage
+from mapchar.plugins.builtins.mappings import Banked
 from mapchar.plugins.registry import Registry, RegistryError
+from mapchar.plugins.trust import TrustStore, digest_of, is_approved
 
 try:
     import tomllib
@@ -53,51 +57,6 @@ class PluginLoadIssue:
 class DiscoveryResult:
     loaded: list[str] = field(default_factory=list)
     issues: list[PluginLoadIssue] = field(default_factory=list)
-
-
-class TrustStore:
-    """Approved SHA-256 digests of code plugins, in a JSON file.
-
-    Trust is keyed on the **content hash**, not the path: approving a plugin
-    approves *that exact code*, so moving or renaming the file keeps trust and
-    editing it does not. A corrupt or unreadable store starts empty rather than
-    crashing — the worst case is re-prompting, never silently trusting.
-    """
-
-    def __init__(self, path: str | None):
-        self.path = path
-        self._digests: set[str] = set()
-        # Paths approved during *this* run, so a plugin author can edit and
-        # refresh a file they already said yes to without a prompt per save.
-        # Empty at every launch, so changed code still prompts across runs.
-        self._session_paths: set[str] = set()
-        if path and os.path.exists(path):
-            try:
-                with open(path, encoding="utf-8-sig") as f:
-                    self._digests = set(json.load(f).get("trusted", []))
-            except (OSError, ValueError):
-                self._digests = set()
-
-    def is_trusted(self, digest: str) -> bool:
-        return digest in self._digests
-
-    def is_session_path(self, path: str) -> bool:
-        """Whether this path was approved earlier in this run (the author loop)."""
-        return path in self._session_paths
-
-    def trust(self, digest: str, path: str | None = None, persist: bool = True) -> None:
-        if path is not None:
-            self._session_paths.add(path)
-        if persist:
-            self._digests.add(digest)
-            self._save()
-
-    def _save(self) -> None:
-        if not self.path:
-            return
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump({"trusted": sorted(self._digests)}, f, indent=2)
 
 
 class ScopedRegistry:
@@ -168,8 +127,15 @@ def discover(
     roots: list[tuple[str, str]],
     trust: TrustStore | None = None,
     confirm: Callable[[str, str], bool] | None = None,
+    table_reader: Callable[[str], Table] | None = None,
 ) -> DiscoveryResult:
-    """Load presets and code plugins from every root's typed subfolders."""
+    """Load presets and code plugins from every root's typed subfolders.
+
+    ``table_reader`` reads one ``.tbl`` charset file into a table. It is passed
+    in rather than imported: reading a table file is ``project``'s job, and
+    ``plugins`` sits under it. Without one, a ``.tbl`` in ``charsets/`` is
+    reported as an issue rather than loaded.
+    """
     result = DiscoveryResult()
     for root, category in roots:
         if not os.path.isdir(root):
@@ -201,7 +167,7 @@ def discover(
                 elif file.endswith(".py"):
                     _load_code(registry, stage, category, full, result, trust, confirm)
                 elif file.endswith(".tbl") and stage is Stage.CHARSET:
-                    _load_charset_table(registry, category, full, result)
+                    _load_charset_table(registry, category, full, result, table_reader)
     return result
 
 
@@ -273,20 +239,24 @@ def _check_declared_stage(data: dict, stage: Stage) -> None:
         )
 
 
-def _load_charset_table(registry, category, path, result) -> None:
+def _load_charset_table(registry, category, path, result, table_reader) -> None:
     from mapchar.core.tokens import plain_text
     from mapchar.plugins.base import PluginInfo
-    from mapchar.project.tables import read_table_file
 
+    if table_reader is None:
+        result.issues.append(
+            PluginLoadIssue(path, "no table reader given; a .tbl charset needs one")
+        )
+        return
     try:
-        tf = read_table_file(path)
+        table = table_reader(path)
     except Exception as exc:  # noqa: BLE001
         result.issues.append(PluginLoadIssue(path, str(exc)))
         return
     pid = os.path.splitext(os.path.basename(path))[0]
     entries = [
         (e.bits, plain_text(e.text))
-        for e in tf.table.entries.values()
+        for e in table.entries.values()
         if e.kind.value == "text"
     ]
 
@@ -303,33 +273,6 @@ def _load_charset_table(registry, category, path, result) -> None:
         result.issues.append(PluginLoadIssue(path, str(exc)))
 
 
-def _is_approved(
-    path: str,
-    digest: str,
-    trust: TrustStore | None,
-    confirm: Callable[[str, str], bool] | None,
-) -> bool:
-    """Trusted already, or approved now (and then remembered). **Default deny.**
-
-    No trust store and no confirm callback means nothing can say yes, so nothing
-    runs: a gate that opens when its keeper is absent is not a gate, and the
-    absent keeper is exactly the headless case — a test, a script, a build that
-    never wired the prompt up.
-    """
-    if trust is not None and trust.is_trusted(digest):
-        return True
-    if trust is not None and trust.is_session_path(path):
-        # The author loop: a path approved earlier this run reloads without a
-        # prompt when its code changes. Across runs the new hash prompts again.
-        trust.trust(digest, path)
-        return True
-    if confirm is not None and confirm(path, digest[:12]):
-        if trust is not None:
-            trust.trust(digest, path)
-        return True
-    return False
-
-
 def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
     try:
         with open(path, "rb") as f:
@@ -337,8 +280,8 @@ def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
     except OSError as exc:
         result.issues.append(PluginLoadIssue(path, str(exc)))
         return
-    digest = hashlib.sha256(source).hexdigest()
-    if not _is_approved(path, digest, trust, confirm):
+    digest = digest_of(source)
+    if not is_approved(path, digest, trust, confirm):
         result.issues.append(
             PluginLoadIssue(
                 path,
@@ -367,66 +310,3 @@ def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
         result.issues.append(PluginLoadIssue(path, f"{type(exc).__name__}: {exc}"))
     finally:
         sys.modules.pop(module_name, None)
-
-
-# The plugin folder's own documentation, seeded beside the typed subfolders.
-# Not a plugin, and ``.md`` is not a suffix discovery loads, so it sits there
-# inertly.
-PLUGIN_README = "README.md"
-
-
-def seed_examples(user_dir: str) -> None:
-    """Refresh the shipped reference material in the plugin root.
-
-    The examples are ``_``-prefixed so discovery ignores them: living
-    documentation a user copies, dropping the underscore, to activate.
-    :data:`PLUGIN_README` is seeded alongside them.
-
-    **A stale copy is replaced**, matched by filename, so the examples describe
-    the version actually running rather than whichever one first created the
-    folder. That cannot take a user's work with it: what they edit is the
-    activated copy under a different name. Files whose contents
-    already match are left alone, so an unchanged folder is not rewritten on
-    every launch.
-
-    Failures are swallowed — reference material is not worth blocking startup
-    over. The ``.py`` examples ship as ``.py.txt`` because frozen builds exclude
-    ``.py`` data files; the suffix is dropped here.
-    """
-    from mapchar import resources
-
-    root = os.path.abspath(user_dir)
-    try:
-        os.makedirs(root, exist_ok=True)
-    except OSError:
-        return
-    _seed_file(resources.resource("data", "plugin-examples", PLUGIN_README), root)
-    for folder in FOLDERS:
-        dest = os.path.join(root, folder)
-        try:
-            os.makedirs(dest, exist_ok=True)
-            entries = list(
-                resources.resource("data", "plugin-examples", folder).iterdir()
-            )
-        except OSError:
-            continue
-        for entry in entries:
-            _seed_file(entry, dest)
-
-
-def _seed_file(entry, dest_dir: str) -> None:
-    """Write one shipped file into ``dest_dir`` unless it is already identical."""
-    dest = os.path.join(dest_dir, entry.name.removesuffix(".txt"))
-    try:
-        shipped = entry.read_text(encoding="utf-8")
-    except (OSError, FileNotFoundError):
-        return
-    try:
-        if os.path.exists(dest):
-            with open(dest, encoding="utf-8") as f:
-                if f.read() == shipped:
-                    return
-        with open(dest, "w", encoding="utf-8", newline="\n") as f:
-            f.write(shipped)
-    except OSError:
-        pass

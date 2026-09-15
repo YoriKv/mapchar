@@ -15,7 +15,7 @@ from mapchar.core.block import BlockConfig, PointerTableSource
 from mapchar.core.table import Entry, TokenKind
 from mapchar.core.tokens import Token, render
 from mapchar.pipeline.view_read import PointerCell, PointerSource
-from mapchar.ui.raw_widget import POINTER_TOKENS, compact_text
+from mapchar.ui.token_text import POINTER_TOKENS, compact_text
 
 PREVIEW_CHARS = 80
 """How much of a pointer's string a line of the Text tab shows."""

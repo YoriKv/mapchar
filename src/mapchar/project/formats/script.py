@@ -21,13 +21,14 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
     Source,
+    Status,
     StringRecord,
     StringType,
     WriteMode,
 )
 from mapchar.core.errors import ScriptError
 from mapchar.core.numbers import format_num, parse_num
-from mapchar.core.text import split_lines
+from mapchar.project.formats.textfile import escape, split_lines, unescape
 
 HEADER = "@mapchar script 1"
 
@@ -52,7 +53,6 @@ class ScriptString:
     end: int
     pointers: tuple[int, ...]
     text: str
-    original: str | None = None
 
 
 @dataclass
@@ -66,7 +66,9 @@ class Script:
 
 
 def _quote(text: str) -> str:
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """``text`` in double quotes, spelled as
+    :func:`~mapchar.project.formats.textfile.escape` spells it."""
+    return '"' + escape(text, '"') + '"'
 
 
 def format_config(config: BlockConfig) -> str:
@@ -186,10 +188,6 @@ _STRING = re.compile(
 _QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
-def _unquote(text: str) -> str:
-    return re.sub(r"\\(.)", r"\1", text)
-
-
 def parse_config(spec: str) -> BlockConfig:
     fields: dict[str, str] = {}
     for word in spec.split():
@@ -273,18 +271,14 @@ def parse_script(text: str, path: str | None = None) -> Script:
     block: ScriptBlock | None = None
     current: ScriptString | None = None
     content: list[str] = []
-    originals: list[str] = []
     seen_header = False
 
     def flush() -> None:
         nonlocal current
         if current is not None:
             current.text = "".join(content)
-            if originals:
-                current.original = "".join(originals)
             current = None
         content.clear()
-        originals.clear()
 
     for n, raw in enumerate(split_lines(text), start=1):
         line = raw
@@ -296,8 +290,6 @@ def parse_script(text: str, path: str | None = None) -> Script:
             seen_header = True
             continue
         if line.startswith("#"):
-            if current is not None:
-                originals.append(line[2:] if line.startswith("# ") else line[1:])
             continue
         if line.startswith("@"):
             flush()
@@ -306,12 +298,12 @@ def parse_script(text: str, path: str | None = None) -> Script:
                 m = _QUOTED.match(rest.strip())
                 if not m:
                     raise ScriptError("@rom needs a quoted path", path, n)
-                script.rom = _unquote(m.group(1))
+                script.rom = unescape(m.group(1))
             elif head == "@table":
                 m = _QUOTED.match(rest.strip())
                 if not m:
                     raise ScriptError("@table needs a quoted path", path, n)
-                script.tables.append(_unquote(m.group(1)))
+                script.tables.append(unescape(m.group(1)))
             elif head == "@block":
                 m = _QUOTED.match(rest.strip())
                 if not m:
@@ -323,7 +315,7 @@ def parse_script(text: str, path: str | None = None) -> Script:
                     raise ScriptError(
                         f"bad block configuration: {exc}", path, n
                     ) from None
-                block = ScriptBlock(_unquote(m.group(1)), config)
+                block = ScriptBlock(unescape(m.group(1)), config)
                 script.blocks.append(block)
             elif head == "@string":
                 sm = _STRING.match(line)
@@ -352,3 +344,52 @@ def parse_script(text: str, path: str | None = None) -> Script:
     if not seen_header:
         raise ScriptError(f"missing {HEADER!r}", path)
     return script
+
+
+# --- applying --------------------------------------------------------------
+
+
+@dataclass
+class ScriptImportReport:
+    applied: int = 0
+    notices: list[str] = field(default_factory=list)
+    new_blocks: list[tuple[str, BlockConfig]] = field(default_factory=list)
+    """Blocks the script carries that the project lacks, with their config."""
+
+
+def apply_script(
+    script: Script, blocks: dict[str, list[StringRecord]]
+) -> ScriptImportReport:
+    """Walk ``script`` into the project's strings, block by block and index by
+    index; what it could not place comes back as notices."""
+    report = ScriptImportReport()
+    for sb in script.blocks:
+        strings = blocks.get(sb.name)
+        if strings is None:
+            if sb.config is not None:
+                report.new_blocks.append((sb.name, sb.config))
+            else:
+                report.notices.append(
+                    f"{sb.name}: not in the project and no configuration"
+                )
+            continue
+        by_index = {s.index: s for s in strings}
+        for ss in sb.strings:
+            rec = by_index.get(ss.index)
+            if rec is None:
+                report.notices.append(f"{sb.name}/{ss.index}: no such string")
+                continue
+            if (ss.start, ss.end) != (rec.start, rec.end):
+                report.notices.append(
+                    f"{sb.name}/{ss.index}: script says ${ss.start:X}-${ss.end:X}, "
+                    f"project has ${rec.start:X}-${rec.end:X}"
+                )
+            if rec.matches_original(ss.text):
+                if rec.translation is not None:
+                    rec.translation = None
+                    rec.status = Status.UNTOUCHED
+            else:
+                rec.translation = ss.text
+                rec.status = Status.EDITED
+            report.applied += 1
+    return report

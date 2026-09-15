@@ -7,14 +7,11 @@ import pytest
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Level
 from mapchar.core.table import TokenKind
-from mapchar.project.formats.table_legacy import (
-    detect_dialect,
-    load_table_text,
-    read_abcde,
-    read_atlas,
-    read_cartographer,
-    read_romjuice,
-)
+from mapchar.project.formats.legacy import detect_dialect, load_table_text
+from mapchar.project.formats.legacy.abcde import read_abcde
+from mapchar.project.formats.legacy.atlas import read_atlas
+from mapchar.project.formats.legacy.cartographer import read_cartographer
+from mapchar.project.formats.legacy.romjuice import read_romjuice
 from mapchar.project.formats.table_native import write_native
 from mapchar.project.tables import read_table_file
 
@@ -52,12 +49,12 @@ def test_romjuice():
     assert any("without a hex key" in n.message for n in tf.notices)
 
 
-def test_romjuice_swap():
-    tf = read_romjuice("41=A\n!F0\n", swap_table="kana")
-    sw = tf.tables[0].entries["11110000"]
-    assert sw.kind is TokenKind.SWITCH and sw.params[0].stop.any
+def test_romjuice_swap_is_dropped_with_a_notice():
+    # A swap names romjuice's *second* table file, which mapchar has no way to
+    # name; romjuice itself ignores the swap when it was given only one.
     tf = read_romjuice("41=A\n!F0\n")
     assert "11110000" not in tf.tables[0].entries
+    assert any("swap entry dropped" in n.message for n in tf.notices)
 
 
 def test_cartographer():
@@ -82,7 +79,7 @@ def test_atlas():
     assert t.entries["11111110"].text == "\\n"
     assert t.entries["11111101"].text == "x\\n"
     assert t.entries["11111111"].label == "END"
-    assert tf.end_marker == "<END>"
+    assert any("hexless end marker" in n.message for n in tf.notices)
     assert len(t.entries) == 4
 
 
@@ -189,8 +186,6 @@ def test_the_shift_jis_fixture_loads_as_cp932_from_disk():
 
 
 def test_abcde_comments_are_kept():
-    from mapchar.project.formats.table_legacy import read_abcde
-
     tf = read_abcde("# the font\n@main\n# letter A\n41=A\n# stray\n\n42=B\n")
     table = tf.table
     assert table.comment == "the font\nstray"

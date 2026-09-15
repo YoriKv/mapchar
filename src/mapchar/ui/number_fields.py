@@ -27,15 +27,16 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.address import AddressLayout, format_address, parse_address
-from mapchar.core.bits import parse_hex
-from mapchar.core.numbers import format_hex_offset, parse_hex_offset
+from mapchar.core.numbers import format_hex_offset, parse_hex, parse_hex_offset
 from mapchar.ui.widgets import fit_chars
 
 ADDRESS_CHARS = 10
 """Room for the longest spelling an address format writes (``$08:000000``,
 ``$C0:FFFF``, ``7FFFFF``), which every address and offset field has."""
 
-_HEX = QRegularExpression(r"\s*(\$|0[xX])?[0-9A-Fa-f_]*\s*")
+HEX_NUMBER = QRegularExpression(r"\s*(\$|0[xX])?[0-9A-Fa-f_]*\s*")
+"""What every field a hex number is typed into accepts while it is typed:
+``$`` or ``0x`` before the digits, ``_`` between them, spaces around them."""
 _ADDRESS = QRegularExpression(r"\s*(\$|0[xX])?[0-9A-Fa-f_]*(:[0-9A-Fa-f_]*)?\s*")
 _OFFSET = QRegularExpression(r"\s*(-?\$?|\$-)?(0[xX])?[0-9A-Fa-f_]*\s*")
 
@@ -65,14 +66,21 @@ def number_spin(
     *,
     value: int | None = None,
     off: bool = False,
+    special: str | None = None,
 ) -> QSpinBox:
-    """A spin box over ``low``–``high`` as wide as ``digits`` digits; with
-    ``off``, its lowest value reads ``off``."""
+    """A spin box over ``low``–``high`` as wide as ``digits`` digits.
+
+    A box whose lowest value means something other than a count says so there
+    rather than in its label (``docs/ui.md``): ``off`` reads ``off``, and
+    ``special`` reads whatever it is given — ``none``, ``fit``, ``box``.
+    """
     spin = QSpinBox()
     spin.setRange(low, high)
     if value is not None:
         spin.setValue(value)
-    if off:
+    if special is not None:
+        spin.setSpecialValueText(special)
+    elif off:
         spin.setSpecialValueText("off")
     return fit_spin(spin, digits)
 
@@ -102,12 +110,17 @@ class HexSpinBox(QSpinBox):
 
 class HexEdit(QLineEdit):
     """A field for one unsigned hex number, padded to ``digits``; blank is
-    ``None``."""
+    ``None``.
 
-    def __init__(self, digits: int, parent: QWidget | None = None):
+    With ``pad`` off, ``digits`` only sets the field's width and what is typed
+    keeps its own — for a number whose digit count means something, as a fill's
+    first key means the width of every key it lays down.
+    """
+
+    def __init__(self, digits: int, parent: QWidget | None = None, *, pad: bool = True):
         super().__init__(parent)
-        self._digits = digits
-        self.setValidator(QRegularExpressionValidator(_HEX, self))
+        self._digits = digits if pad else 0
+        self.setValidator(QRegularExpressionValidator(HEX_NUMBER, self))
         fit_chars(self, digits)
         self.setMaximumWidth(self.minimumWidth())
         self.editingFinished.connect(self._respell)
@@ -239,6 +252,7 @@ class OffsetEdit(QLineEdit):
 
 __all__ = [
     "ADDRESS_CHARS",
+    "HEX_NUMBER",
     "AddressEdit",
     "AddressSpelling",
     "HexEdit",

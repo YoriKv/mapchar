@@ -35,9 +35,9 @@ app.py ─────────────► ui/ ────────�
 |-------------|------|
 | `core/`     | The data model: tables and tokens, strings and blocks, pointers and mappings, fonts and boxes, the pipeline context, notices, errors, capabilities. |
 | `engines/`  | Pure algorithms over the model: decode, encode, relative search, text scan, pointer discovery, layout. No I/O. |
-| `pipeline/` | Runs the byte stages in both directions, extracts blocks into strings, lays strings out for writing, and drives the exchange formats. |
+| `pipeline/` | Runs the byte stages in both directions, extracts blocks into strings, and lays strings out for writing. |
 | `plugins/`  | The plugin API, registry, discovery, trust, detection, and every built-in plugin: containers, compressions, charsets, mappings. |
-| `project/`  | The open-entries model (`workspace.py`), the `.mapchar` file (`projectfile.py`), reading a table file from disk (`tables.py`), and the table-file and script readers and writers (`formats/`). |
+| `project/`  | The open-entries model (`workspace.py`), the `.mapchar` file (`projectfile.py`), reading a table file from disk (`tables.py`), the table-file and script readers and writers (`formats/`), and the other tools' formats (`exchange/`). |
 | `ui/`       | The PySide6 application: `MainWindow`, the raw and strings views, docks, tool windows, dialogs, undo commands, theme. |
 | `app.py`    | Entry point: `QApplication`, theme, plugin folders, trust store, registry, `MainWindow`. |
 | `resources/`| Package data: the plugin examples seeded into the user's folder, the icon font, the app icon. |
@@ -113,14 +113,19 @@ in bytes, which is the unit their results are reported and selected in.
 
 - **`BlockConfig`** — frozen: `source` (`RangeSource`, `PointerTableSource`,
   `PointerListSource`), `string_type` (`EndToken`,
-  `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens)`,
-  `NextPointer`), `strings_per_pointer`, `realign`, `skips`, `line_length`,
-  `start_table_id`, `bound`, `write_mode` (`PACKED`, `SLOTTED`), `fill`.
-- **`StringRecord`** — one string: `index`, `start`, `end` (byte offsets in
-  the decompressed buffer), `pointers: tuple[PointerRef]`, `original:
-  tuple[Token]`, `translation: str | None`, `status`, `notes`. Statuses that
-  derive from the data (`too_long`, `invalid`, `overflows_box`) are computed
-  on demand, never stored.
+  `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens, endian)`,
+  `NextPointer`, `Lines(count)`), `table_id`, `strings_per_pointer`,
+  `realign`, `skips`, `line_length`, `bound`, `write_mode` (`PACKED`,
+  `SLOTTED`), `fill`, and the artificial codes a fixed string is shown with:
+  `show_end`, `end_label`, `line_label`.
+- **`StringRecord`** — one string: `index`, `start_bit`, `end_bit` (bits into
+  the decompressed buffer, with `start`, `end` and `length` derived byte
+  properties), `original: list[Token]`, `pointers: tuple[PointerRef]`,
+  `translation: str | None`, `status`, `notes`, the `notices` reading it
+  raised, and `lines` — the token indices a fixed-line piece starts at.
+  Statuses that derive from the data — *too long*, *invalid*, *overflows
+  box* — are computed on demand, never stored; only *untouched*, *edited* and
+  *review* are a `Status`.
 - **`PointerRef`** — `address`, `size`, `endian`, `mapping_id`, `offset`, and
   the `value` read from disk.
 - **`source_start(source)`** — where a source begins, or `None` when it does
@@ -135,11 +140,21 @@ in bytes, which is the unit their results are reported and selected in.
 
 ### 2.4 Pointers and mappings
 
-`core/mapping.py`: a **`Mapping`** converts `offset ↔ value` given a header
-size and a bank number. Built-ins: `linear`, `lorom`, `hirom`, `gb`, `gba`,
-`banked(bank_size, bank_base)`, `relative` (value = target − pointer
-address). Each implements both directions and declares which pointer sizes
-it supports. Mappings are plugins ([5](#5-the-plugin-system)).
+A **`Mapping`** converts `offset ↔ value` given a bank number and, for a
+relative mapping, the address the pointer itself sits at. Mappings are
+plugins ([5](#5-the-plugin-system)), so the protocol is declared with the
+other stage protocols in `plugins/base.py` and the built-ins — `linear`,
+`lorom`, `hirom`, `gb`, `gba`, `banked(bank_size, bank_base)` and the two NES
+bank layouts it is also registered under (`nes_c000`, `nes_8000_2000`), and
+`relative` (value = target − pointer address) — live in
+`plugins/builtins/mappings.py`. Each implements both directions and declares
+which pointer sizes it supports.
+
+Looking one up by id is the registry's: `resolve_mapping(registry, id)` and
+`mapping_for(source)` in `plugins/registry.py`, which also build the
+parameterised `banked:<base>:<size>` ids on demand. `core/mapping.py` keeps
+only the bytes on either side of the conversion, `read_pointer` and
+`pointer_bytes`.
 
 ### 2.5 Fonts and boxes
 
@@ -154,10 +169,10 @@ They are frozen values whose mutators return new instances.
 |---|---|
 | `context.py` | `PipelineContext`, the `SourceSpan` a joined read publishes, and the `KEY_*` hint names (source files and offset, header size, suggested mapping and table, consumed size, complete, partial decode) |
 | `notices.py` | Non-fatal `Notice`s — message, level, offset, detail, source — carried on the context and on extractions; `notice_lines()` renders one as its message with the detail indented under it |
-| `errors.py` | `Stage`, `PipelineError` (stage, action, plugin, pathway), `TableError`, `EncodeError` |
+| `errors.py` | `MapcharError`, which everything mapchar raises derives from: `Stage`, `PipelineError` (stage, action, plugin, pathway), `LocatedError` and its `TableError` and `ScriptError`, `EncodeError` |
 | `bits.py` | `Bits` windows over a byte buffer, plus the bit/byte/hex conversions, key spelling, alignment and bit reversal every layer shares |
-| `numbers.py` | `parse_num` and `format_num`: the `$hex` spelling tables, scripts and command files share |
-| `text.py` | `split_lines` and the backslash `escape`/`unescape` the file formats share |
+| `numbers.py` | Every way a number is written: `parse_num`/`format_num` for the `$hex` spelling tables, scripts and command files share, and the one hex scanner behind `parse_hex`, `parse_hex_offset`/`format_hex_offset` and `parse_flat_hex`, which the UI's always-hex fields and `address.py` read through |
+| `text.py` | The Unicode model: `nfc`/`nfd`, `is_mark`, `graphemes` and `char_units` (a base character plus its combining marks — one glyph slot), and `fold` for a case- and form-insensitive comparison |
 | `capabilities.py` | `EntryKind → frozenset[Capability]` (raw view, strings view, write, dump, pointers, preview, …) and `supports()` |
 | `address.py` | Offset ↔ `bank:addr` display layouts for the navigation bar |
 
@@ -168,8 +183,8 @@ callback where it can run long.
 
 ### 3.1 Decode
 
-`engines/decode.py` `decode(data, table_set, start_bit, limit_bit, rules) ->
-DecodeResult` is the stack machine of
+`engines/decode.py` `decode(bits, tables, start_bit, rules) -> DecodeResult`
+— the limit is `rules.limit_bit` — is the stack machine of
 [`../abcde/bin2text.md`](../abcde/bin2text.md#replication-notes), built to its
 replication notes rather than to abcde's behaviour:
 
@@ -178,8 +193,8 @@ replication notes rather than to abcde's behaviour:
 - **Step** — in the top frame: a count the frame still has to read from the
   data (a `u8`… stop) is read first, silently, and becomes its counter;
   else check the frame's fallback bits; else longest-prefix match in the
-  frame's table (the trie); else emit one unmatched byte (or the remaining
-  bits when fewer than 8 remain before the limit).
+  frame's table (its length buckets, longest first); else emit one unmatched
+  byte (or the remaining bits when fewer than 8 remain before the limit).
 - **Count** — subtract the token's weight from the top frame's counter and,
   while the frame is `shared`, from the one beneath. A counter at or below
   zero pops the frame.
@@ -214,14 +229,15 @@ searches for the cheapest bit string that **decodes back to the same tokens**:
   a composed `が` meet both a table entry spelling it whole and a pair of
   entries spelling the kana and the dakuten separately, and entry text is
   split the same way. An alias is one more way to reach an entry's bits.
-- **State** — `(position in text, frame stack, forbidden prefixes)`. Frames
-  are keyed by table identity, never file name.
+- **State** — `(position in text, frame stack, forbidden suffixes, silent-switch
+  chain length, end tokens used)`. Frames are keyed by table identity, never
+  file name.
 - **Search** — Dijkstra with an admissible heuristic (the table set's
   minimum bits per character); a state closes when popped, so the result is
   optimal.
 - **Longest-prefix safety** — after emitting an entry that is a proper prefix
-  of a longer entry in the same table, the bits that would complete the
-  longer entry are forbidden as the next emission. This is the constraint
+  of a longer entry in the same table, the suffix that would complete the
+  longer entry is forbidden as the next emission. This is the constraint
   abcde omits.
 - **Fallback bits** are emitted whenever a fallback frame closes, including
   at the end of the string.
@@ -263,10 +279,9 @@ builder turns into entries.
 
 `engines/scan.py` slides a window over the buffer, decodes each window
 through the table set, and scores it: the fraction of bits consumed by text
-entries, plus a capped bonus for dictionary hits on Latin tables (a small
-built-in word list), minus a penalty that grows with the square of the share of
-unmatched data. Regions above a
-threshold merge; each region reports its most frequent candidate terminator
+entries, plus a capped bonus for dictionary hits (a small built-in word
+list), minus a penalty that grows with the square of the share of unmatched
+data. Regions above a threshold merge; each region reports its most frequent candidate terminator
 (the byte most often followed by a fresh text run) and its most frequent
 string-initial byte.
 
@@ -330,13 +345,20 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   show: the bytes in view cut by the reading's string type from the view's own
   first byte, or read as pointers — each with its value and target — and the
   string a target reaches, by the same `decode_one` extraction uses.
+- **Text view** (`pipeline/text_view.py`) turns those tokens into what the Text
+  tab shows: a body, a map from characters to bytes (`TextModel`), and
+  `TextDecode`, which keeps the tokens from one window to the next.
 - **Layout** (`pipeline/insert.py`) turns a block's strings into a byte
   splice: encode each translation (or reuse the original bits when
   untouched), lay the results out in *packed* or *slotted* mode, compute the
   new pointer values through the mappings, and refuse the whole block when
   any string crosses its bound, reporting each offender. Its output is a
   list of `(offset, bytes)` splices over the decompressed buffer plus the
-  pointer splices.
+  pointer splices. `lay_out_file` is a file's worth of that: every block over
+  one file laid out and spliced in, with the blocks sharing a compressed slot
+  laid into one payload and that payload compressed once, since recompressing
+  per block would have the last splice at the slot's offset replace every
+  earlier one.
 - **Slots** (`compress_for_slot`) are the write minus the store, so the checks
   that make one safe hold however the bytes are delivered — through a container
   to a file, or spliced into a parent's buffer by a block. A *bounded* slot
@@ -353,18 +375,10 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   a context of its own, and returns a `ContainerReport` of what it published and
   what it had to assume — reported, never raised, since it is reached precisely
   when an entry did not come out as expected.
-- **Scanning** (`find_next_structure`) walks forward for the next complete
-  structure a scheme can read, with a progress/cancel callback; `decompress_at`
-  is one probe of it, and asks for a partial decode when it is previewing.
-
-### 4.2 Exchange
-
-`pipeline/exchange/` holds the Cartographer and Atlas importers and exporters
-and the native-script importer. They build or consume `BlockConfig` and
-`StringRecord` values and never touch the UI; the mapping tables in
-[script-format.md](script-format.md) are their specification. The text formats
-themselves — the script and translator grammars — are `project/formats/`'s
-(§6.2).
+- **Scanning** (`pipeline/scan.py`) walks forward for the next complete
+  structure a scheme can read (`find_next_structure`), with a progress/cancel
+  callback; `decompress_at` is one probe of it, and asks for a partial decode
+  when it is previewing.
 
 ## 5. The plugin system
 
@@ -374,8 +388,8 @@ celPix's system, with these stages:
 |--------------|---------------------------------|---------------------------|---------------------------------------|
 | Container    | `read(ReadSource, ctx)`         | `write(data, WriteTarget, ctx)` | `describe`, `default_mapping`, `header_size` |
 | Compression  | `decompress(data, ctx)`         | `compress`                | `bind_tree(rom)`                      |
-| Charset      | `entries() -> Iterable[(bits, text)]` | —                   | —                                     |
-| Mapping      | `to_offset(value, header, bank)`, `to_value(offset, header, bank)` | — | `sizes`, `needs_bank`      |
+| Charset      | `entries() -> Iterable[(bits, text)]` | —                   | `aliases()`, `codec`                  |
+| Mapping      | `to_offset(value, bank, ptr_address)`, `to_value(offset, bank, ptr_address)` | — | `sizes`, `needs_bank` |
 
 - **Optional is optional.** Every hook in the last column is reached by
   `getattr` and probed: one that is absent and one that raises mean the same
@@ -384,10 +398,11 @@ celPix's system, with these stages:
   a warning notice naming the plugin; `describe`, which only Container Info
   reads, loses its rows and says so by their absence.
   `plugins/base.py` declares them — `ContainerExtras` for the container's
-  optional half, comments on `Compression` for the scheme's — and
-  `PartialDecompression` is the base class a scheme whose decoder finds its own
-  end inherits both of its methods from, publishing the consumed size and the
-  complete flag the pipeline needs from one `_decode`.
+  optional half, and comment blocks on `Compression`, `Charset` and `Mapping`
+  for those stages' — and `PartialDecompression` is the base class a scheme
+  whose decoder finds its own end inherits both of its methods from, publishing
+  the consumed size and the complete flag the pipeline needs from one
+  `_decode`.
 - **One tier: plugins.** A **preset** is a TOML file naming a built-in engine
   and its parameters, adapted into an ordinary plugin as it loads, so the
   registry holds one kind of thing and a project stores one kind of id.
@@ -401,17 +416,21 @@ celPix's system, with these stages:
   holds the flat, append-only `RENAMED` table — a rename is the new id plus a
   row — and a project's container, compression and mapping ids are walked
   through it as it loads.
-- **Discovery** scans the typed folders of each root in turn —
-  `MAPCHAR_PLUGIN_PATH`, the user folder, then the open project's `plugins/` —
+- **Discovery** (`plugins/discovery.py`) scans the typed folders of each root
+  in turn — `MAPCHAR_PLUGIN_PATH`, the user folder, then the project's
+  `plugins/` —
   labelling everything out of a root "Your plugins" or "Project plugins".
   `_`-prefixed files and unknown folders are ignored, a loose plugin file in a
   root is reported, and every failure becomes a `PluginLoadIssue` rather than
   an exception: a bad preset or a module that raises on import cannot stop
   startup. `ScopedRegistry` is what a module's `register(registry)` receives,
   checking the folder's stage and the required methods and recording an issue
-  instead of raising.
-- **Trust** gates `.py` files only, by SHA-256 of the exact bytes executed,
-  with approved digests in `<AppData>/trusted-plugins.json`. It is
+  instead of raising. A `.tbl` charset is read by the `table_reader` its caller
+  passes in (`app.py` wraps `read_table_file`): reading a table file is
+  `project`'s job, and `plugins` sits under it.
+- **Trust** (`plugins/trust.py`) gates `.py` files only, by SHA-256 of the
+  exact bytes executed, with approved digests in
+  `<AppData>/trusted-plugins.json`. It is
   **default-deny**: with no store and no confirm callback, nothing runs. A
   path approved this run reloads without a prompt when its code changes, and a
   declined plugin's issue is marked `declined` so a refusal stays out of the
@@ -424,10 +443,11 @@ celPix's system, with these stages:
 - **Refresh** (F5) builds a fresh registry and re-reads the current entry, and
   so does opening or closing a project, before the workspace is replaced.
   Documents holding unsaved edits are kept rather than re-read from disk.
-- **Examples**: `resources/data/plugin-examples/` is copied into the user
-  folder at startup — a README and `_`-prefixed examples per folder, rewritten
-  when a shipped one changes, never touching a user's own files. Code examples ship as `.py.txt` because frozen builds
-  exclude `.py` data.
+- **Examples** (`plugins/examples.py`): `resources/data/plugin-examples/` is
+  copied into the user folder at startup — a README and `_`-prefixed examples
+  per folder, rewritten when a shipped one changes, never touching a user's own
+  files. Code examples ship as `.py.txt` because frozen builds exclude `.py`
+  data.
 - Folder → stage: `containers/` (`.py`), `compression/` (`.py`, TOML presets),
   `charsets/` (`.py` and `.tbl` files, which register as a charset named
   after the file), `mappings/` (`.py`, TOML presets).
@@ -483,17 +503,20 @@ Blocks are to files what celPix slices are, with these differences:
 | Module           | Reads                                             | Writes                    |
 |------------------|---------------------------------------------------|---------------------------|
 | `table_native.py`| the native grammar                                | the native grammar        |
-| `table_legacy.py`| romjuice, Cartographer, Atlas and abcde dialects, each with its own tool's rules, into the native model with conversion notices | — |
-| `script.py`      | native scripts                                    | native scripts            |
+| `legacy/`        | romjuice, Cartographer, Atlas and abcde dialects, a module each, following their own tool's rules into the native model with conversion notices | the abcde dialect, which an Atlas export needs |
+| `script.py`      | native scripts, and `apply_script` walks one into a project's blocks | native scripts            |
 | `translator.py`  | TSV, CSV, PO                                      | TSV, CSV, PO              |
+| `textfile.py`    | how a text file is spelled, under all of them: `read_text_any` (the one `open()` of a text file), `split_lines`, `BOM` | the backslash `escape`/`unescape` |
 
 `project/tables.py` wraps the readers for the one job every caller has:
 `read_table_file(path, dialect, registry)` reads the file, parses it in its
-dialect and applies the charset. A `TableFile` holds the file's one `table`,
+dialect and applies the charset. It also names tables: `table_id_for` is the id
+a file without a `@table` line gives its table, and `free_table_id` numbers one
+up (`main_2`) against the ids already taken. A `TableFile` holds the file's one `table`,
 plus the `extra_tables` a legacy conversion made (a romjuice kanji array, an
 abcde file with several `@id` lines), which open as table entries with no
 file. The encoding is
-`core.text.read_text_any`'s decision — UTF-8, else `cp932`, else `latin-1` —
+`textfile.read_text_any`'s decision — UTF-8, else `cp932`, else `latin-1` —
 left on `TableFile.encoding` and, when it is not UTF-8, said in a notice.
 
 A table entry in the Files panel remembers its file path and dialect. In-app
@@ -580,6 +603,17 @@ the state of every block, not only the ones that were looked at. Originals are
 never stored; they are re-decoded from the ROM, and a string whose original
 changed since the project was saved is flagged *review*.
 
+### 6.4 Exchange
+
+`project/exchange/` holds the Cartographer and Atlas importers and exporters.
+They build or consume `BlockConfig` and `StringRecord` values and never touch
+the UI; the mapping tables in [script-format.md](script-format.md) are their
+specification. `addresses.shift_config` is the one place both formats meet:
+they address the *file*, a block addresses the container's payload, so an
+import subtracts the header and an export adds it back. The text formats
+themselves — the script, table and translator grammars — are `project/formats/`'s
+(§6.2).
+
 ## 7. The UI layer
 
 ### 7.1 Composition
@@ -591,18 +625,26 @@ docks read it through `ui/panel.py`'s `WorkspaceTreePanel` — which owns their
 subscription and their row-to-entry lookup — and report intent by signal; every
 other widget outside is handed values and knows nothing of a workspace.
 
+Two things are deliberately outside that rule. The **Table Editor** edits the
+one `Table` the window has no other handle on, in place, and hands back the
+snapshot of it taken before the edit, so the change is still the before/after
+pair an undo step is made of. **Undo commands** (`ui/undo_commands.py`) stamp
+the workspace directly, since they are the window's own and are reached only
+through `_push_command`.
+
 | Concern | Modules in `ui/main_window/` |
 |---|---|
-| Shell | `window.py` (widgets, docks, menus, the undo stack and its guards, the title and dirty marker, file dialogs, alerts) |
+| Shell | `window.py` (widgets, docks, the undo stack and its guards, the title and dirty marker, file dialogs, alerts), `menus.py` (the menu bar) |
 | Active entry and refresh | `session.py`, `refresh.py`, `capability_sync.py` |
+| Text view | `text_view.py` (the Text tab's window, and moving it by lines) |
 | Interpretation and position | `format_bar.py` (the Format and Reading bars, the reading of the entry on screen, the encodings as tables), `navigation.py`, `history.py` |
-| Entries and disk | `opening.py`, `entries.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `dumping.py`, `compression.py`, `plugins.py` |
+| Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `dumping.py`, `compression.py`, `plugins.py` |
 | Tables | `tables_dock.py`, `table_editor.py` |
-| Raw view | `raw_view.py`, `block_bar.py` |
-| Blocks and strings | `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py` |
+| Raw view | `raw_view.py` |
+| Blocks and strings | `blocks.py`, `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py` |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
 | Exchange | `import_export.py` |
-| Projects | `projects.py` |
+| Projects | `projects.py`, `relocate.py` |
 | Preview and fonts | `preview.py`, `fonts.py`, `hex_view.py` |
 
 Widgets outside the mixins: `reading_bar.py` (the Reading bar, loaded from and
@@ -622,9 +664,22 @@ optional framed sections, and `ModeToggle`, side-by-side buttons one of which
 is down),
 `ui/panel.py` (`WorkspaceTreePanel`, which owns a
 dock's workspace subscription and its row-to-entry lookup), `ui/window_layout.py`
-(`WindowLayout` and `remember_layout`), `ui/help_dialogs.py` (the live shortcut
-list and the legend) and `ui/__init__.py` (the `settings()` accessor and the view constants
-`BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
+(`WindowLayout` and `remember_layout`), `ui/find_row.py` (`FindRow`, the find
+field that steps to the next match on Enter and the previous on Shift+Enter),
+`ui/number_fields.py` (`AddressSpelling`, `HexEdit`, `AddressEdit` and the spin
+boxes sized to what they hold), `ui/marks.py` (the chip, tick, rule and notch
+the byte views and the legend both paint), `ui/token_text.py` (what a token
+covers and how it reads on one line, with no Qt), `ui/alphabets.py` (the canned
+runs of characters a fill offers), `ui/glyph_sheet.py` (`GlyphSheet` and
+`GlyphSheetView`), `ui/font_tab.py` (`FontTab`, the Preview window's font
+fields and their sheet), `ui/entry_tree.py` (the Files tree's drags and keys),
+`ui/entry_text.py` (what a Files row says, with no Qt), `ui/skips_picker.py`
+(the Reading bar's skip ranges and their popup), `ui/table_dialogs.py` (Shift
+Keys and Fill), `ui/entry_rows.py` (a code's operand rows and a switch's
+parameter rows), `ui/help_dialogs.py` (the live shortcut
+list and the legend) and `ui/__init__.py` (the `settings()` accessor, the
+`setting_bool`/`set_setting_bool` pair every stored switch is read through, and
+the view constants `BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
 
 ### 7.2 Where UI state lives
 
@@ -635,7 +690,7 @@ list and the legend) and `ui/__init__.py` (the `settings()` accessor and the vie
 | View offset, view tab, a file's reading and Follow pointers, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
 | Container, compression, block configuration, font, box | the `Entry` |
 | Bytes, table set, strings, notices | the `Document` |
-| Address format, Follow selection, theme, window layouts, recent projects | `QSettings` |
+| Address format, last folder used, Follow selection, theme, window layouts, recent projects, and each tool surface's own view toggles | `QSettings` |
 | Undo history, visit trail | the window, for the session |
 
 `SessionMixin._activate_entry` is the single funnel for switching entries:
@@ -662,14 +717,17 @@ A refresh that only **moved** the view — a scroll, a step, a change of
 bounds — passes `moved=True` and leaves the Strings grid alone unless the move
 re-read the block: the grid shows the same strings wherever the view is, and
 filling it is the one part of a refresh that costs by the string. The Text tab
-keeps its decode between windows (`TextDecode`): a window, and the text above
+keeps its decode between windows (`TextDecode`, in `pipeline/text_view.py`):
+a window, and the text above
 it that a step up lays out, are served from the tokens already decoded wherever
 they reach, and only what lies past them is decoded, from the last token
 boundary the decoder can be trusted to have read whole. The raw view lays its hex pairs and token texts out once per face
 (`QStaticText`) and places them; the Hex panel rebuilds its text only when the
 bytes, the window or the address column changed.
 4. **Sync dependent surfaces** — Tables dock, Block bar, Hex panel, Preview,
-   Search results, the window title.
+   Search results, the window title. Each is synced here and nowhere else,
+   unless it sits on a path that never reaches a refresh — a single string row
+   updated in place is the one that does.
 5. **Gate** — `_sync_capabilities()` runs last, including on the nothing-open
    early return.
 
@@ -695,7 +753,10 @@ invariants once, in `_StateCommand`:
 
 - **The guard.** Every apply runs inside the window's `_undo_apply()` context,
   and `_push_command` refuses to push while it is set, so an apply can never
-  push a second command.
+  push a second command. A run of pushes that is one gesture is grouped by the
+  window's `_macro()` rather than by `beginMacro` directly: it honours the same
+  guard, and it defers `beginMacro` until the first push inside it lands, so a
+  run that changed nothing leaves no step that undoes nothing.
 - **Reach.** `_CurrentEntryCommand` switches back to the entry a change was made
   in; `_EditContextCommand` also returns to the view and the row or offset it
   was made at; `_InPlaceCommand` reaches nothing, because a rename, a reorder
@@ -709,7 +770,7 @@ invariants once, in `_StateCommand`:
 
 A write's step (`WriteCommand`) holds, per side, the file's buffer, each written
 block's buffer and string states, and a `FileChange` per file on disk: the run
-of bytes that differed and the file's size, from `pipeline.py`. Applying a side
+of bytes that differed and the file's size, from `pipeline/filechange.py`. Applying a side
 reads the file then and moves it only while it still holds the other side; the
 disk is written by the write itself, so the command's first redo finds its
 files already there and lands the in-memory half alone.
@@ -741,8 +802,9 @@ and Alt+Right to the visit trail's real shortcuts.
 A position is spelled through `core/address.py`: a flat file offset, one of the
 `BANK_PRESETS` console mappings, or three custom bank numbers. One format drives
 every address the UI shows or reads — the navigation bar's offset box, Go to
-Address, the Hex dock and the Reading bar — through the window's one
-`AddressSpelling` (`ui/number_fields.py`), and is remembered per machine.
+Address, the Hex dock, the Reading bar and the raw view's address column —
+through the window's one `AddressSpelling` (`ui/number_fields.py`), and is
+remembered per machine.
 
 ### 7.6 Theme, icons and layout
 
@@ -759,7 +821,7 @@ putting the factory arrangement back behind Panels ▸ Reset Panel Layout.
   [`../release.md`](../release.md).
 - **Tools** — `tools/` holds the development scripts
   [development.md](../development.md) describes: `regen_fixtures.py`,
-  `make_sample_projects.py` and `subset_icon_font.py`.
+  `make_sample_projects.py`, `subset_icon_font.py` and `ui_screenshots.py`.
 - **Tests** — `tests/` is flat, one module per area, with the celPix
   headless setup (offscreen platform, automatic `qt` marking, isolated
   `QSettings`, recorded dialogs). Model-layer tests run without Qt.

@@ -2,10 +2,11 @@
 every mixin needs from it.
 
 What is left when every surface has a module of its own (see the package
-docstring): the widget tree and the four docks, the menu bar, the shared undo
-stack together with the guard and the reach every command applies through, the
-window title and the project's unsaved marker, the file dialogs, and the error
-modal. Not one more surface — the shell the mixins hang off.
+docstring): the widget tree and the four docks with the signals that wire them,
+the shared undo stack together with the guard, the grouping and the reach every
+command applies through, the window title and the project's unsaved marker, the
+file dialogs, and the error modal. Not one more surface — the shell the mixins
+hang off.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import os
 from contextlib import contextmanager
 
 from PySide6.QtCore import QFileSystemWatcher, Qt
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QPalette, QUndoStack
+from PySide6.QtGui import QPalette, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -34,9 +35,10 @@ from mapchar import APP_NAME
 from mapchar.core.address import BANK_PRESETS, HEX_ID
 from mapchar.core.bits import Bits
 from mapchar.core.document import Document
-from mapchar.core.text import read_text_any
+from mapchar.pipeline.text_view import TextDecode
 from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import Registry, default_registry
+from mapchar.project.formats.textfile import read_text_any
 from mapchar.project.workspace import (
     Entry,
     Workspace,
@@ -59,19 +61,21 @@ from mapchar.ui.help_dialogs import (
 )
 from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
-from mapchar.ui.main_window.block_bar import BlockBarMixin
+from mapchar.ui.main_window.blocks import BlocksMixin
 from mapchar.ui.main_window.capability_sync import CapabilitySyncMixin
 from mapchar.ui.main_window.compression import CompressionMixin
 from mapchar.ui.main_window.containers import ContainerMixin
 from mapchar.ui.main_window.dumping import DumpingMixin
 from mapchar.ui.main_window.entries import EntriesMixin
 from mapchar.ui.main_window.entry_clipboard import EntryClipboardMixin
+from mapchar.ui.main_window.files_menu import FilesMenuMixin
 from mapchar.ui.main_window.find_replace import FindReplaceMixin
 from mapchar.ui.main_window.fonts import FontsMixin
 from mapchar.ui.main_window.format_bar import FormatBarMixin
 from mapchar.ui.main_window.hex_view import HexViewMixin
 from mapchar.ui.main_window.history import HistoryMixin
 from mapchar.ui.main_window.import_export import ImportExportMixin
+from mapchar.ui.main_window.menus import MenuBarMixin
 from mapchar.ui.main_window.navigation import CUSTOM_ID, NavigationMixin
 from mapchar.ui.main_window.opening import OpeningMixin
 from mapchar.ui.main_window.plugins import PluginsMixin
@@ -81,12 +85,14 @@ from mapchar.ui.main_window.projects import ProjectMixin
 from mapchar.ui.main_window.raw_view import RawViewMixin
 from mapchar.ui.main_window.refresh import RefreshMixin
 from mapchar.ui.main_window.relative_search import RelativeSearchMixin
+from mapchar.ui.main_window.relocate import RelocateMixin
 from mapchar.ui.main_window.search import SearchMixin
 from mapchar.ui.main_window.session import SessionMixin
 from mapchar.ui.main_window.string_edit import StringEditMixin
 from mapchar.ui.main_window.strings_view import StringsViewMixin
 from mapchar.ui.main_window.table_editor import TableEditorMixin
 from mapchar.ui.main_window.tables_dock import TablesDockMixin
+from mapchar.ui.main_window.text_view import TextViewMixin
 from mapchar.ui.main_window.wrap import WrapMixin
 from mapchar.ui.main_window.writing import WritingMixin
 from mapchar.ui.number_fields import AddressEdit, AddressSpelling, HexEdit
@@ -98,7 +104,7 @@ from mapchar.ui.search_window import SearchWindow
 from mapchar.ui.strings_view import StringsView
 from mapchar.ui.table_editor import TableEditor
 from mapchar.ui.tables_panel import TablesPanel
-from mapchar.ui.text_widget import TextDecode, TextWidget
+from mapchar.ui.text_widget import TextWidget
 from mapchar.ui.widgets import (
     CommandComboBox,
     CompactComboBox,
@@ -112,12 +118,14 @@ from mapchar.ui.window_layout import WindowLayout
 class MainWindow(
     SessionMixin,
     RefreshMixin,
+    TextViewMixin,
     CapabilitySyncMixin,
     FormatBarMixin,
     NavigationMixin,
     HistoryMixin,
     OpeningMixin,
     EntriesMixin,
+    FilesMenuMixin,
     EntryClipboardMixin,
     ContainerMixin,
     WritingMixin,
@@ -127,7 +135,7 @@ class MainWindow(
     TablesDockMixin,
     TableEditorMixin,
     RawViewMixin,
-    BlockBarMixin,
+    BlocksMixin,
     StringsViewMixin,
     StringEditMixin,
     WrapMixin,
@@ -137,9 +145,11 @@ class MainWindow(
     PointerDiscoveryMixin,
     ImportExportMixin,
     ProjectMixin,
+    RelocateMixin,
     PreviewMixin,
     FontsMixin,
     HexViewMixin,
+    MenuBarMixin,
     ThemedIcons,
     QMainWindow,
 ):
@@ -170,6 +180,9 @@ class MainWindow(
         self.project_path: str | None = None
         self._saved_snapshot: str | None = None
         self._applying_undo = False
+        self._macros: list[str | None] = []
+        """The macros :meth:`_macro` has open, outermost first; a text that is
+        still there has not been begun, because nothing has been pushed in it."""
         self._defer_project_modified = False
         """Set over an undo push, so the project's unsaved marker is answered
         once at the end rather than at each choke point the push passes."""
@@ -186,6 +199,8 @@ class MainWindow(
         string — or ``None`` for the whole document
         (:mod:`mapchar.ui.main_window.navigation`)."""
         self._text_trail: list[tuple[int, int, int]] = []
+        """The Text tab's wheel steps down, as ``(from, to, lines)``, so a step
+        up retraces one exactly (:mod:`mapchar.ui.main_window.text_view`)."""
         self._text_decode: TextDecode | None = None
         """The Text tab's tokens, kept from one window to the next."""
         self._text_guess = 0
@@ -196,10 +211,6 @@ class MainWindow(
         self._text_up_guess = 0.0
         """How many bytes back a line of the text above the Text tab's window
         was, the last time one was looked for."""
-        """The Text tab's wheel steps down, as ``(from, to, lines)``, so a step
-        up retraces one exactly (:mod:`mapchar.ui.main_window.refresh`)."""
-        self._scan_stop = False
-        """Set by :meth:`request_scan_stop` to abandon a running structure scan."""
         self._selection: tuple[int, int] | None = None
         self._bars_show: tuple | None = None
         """The entry and reading the bars were last loaded with."""
@@ -207,7 +218,7 @@ class MainWindow(
         """The bytes of the strings last opened as text — a string from the Files
         panel, or a pointer block's in the Strings mode: while the view is
         confined to exactly them, it reads them as text
-        (:mod:`mapchar.ui.main_window.block_bar`)."""
+        (:mod:`mapchar.ui.main_window.blocks`)."""
         self._preview_scheme: str | None = None
         """The compression scheme the Decompressed view previews a file through:
         the one Jump to Source or a bookmark arms, until another entry opens
@@ -322,6 +333,9 @@ class MainWindow(
 
         self.tabs = QTabWidget()
         self.raw = RawWidget()
+        # The raw view's address column is spelled as every other address is.
+        self._sync_raw_addresses()
+        self.address_spelling.changed.connect(self._sync_raw_addresses)
         self.text = TextWidget()
         self.strings = StringsView()
         self.tabs.addTab(self.raw, "Hex")
@@ -443,7 +457,14 @@ class MainWindow(
         self.table_editor.set_charsets(self.workspace.builtin_tables.names())
         self.find_replace = FindReplaceDialog(self)
 
-        # Signals.
+        self._connect_signals()
+
+    def _connect_signals(self) -> None:
+        """Wire every widget the shell owns to the mixin that answers for it.
+
+        One place rather than a trailer on ``_build_widgets``: what a control
+        does is the one thing about it not readable from where it is built.
+        """
         self.files_panel.entry_activated.connect(self._show_entry)
         self.files_panel.string_activated.connect(self._show_string)
         self.files_panel.strings_requested.connect(self._read_block_strings)
@@ -492,7 +513,6 @@ class MainWindow(
         self.scan_window.new_block.connect(self._block_from_region)
         self.decompress_window.jump_next.connect(self._jump_next_structure)
         self.decompress_window.scan_next.connect(self._scan_next_structure)
-        self.decompress_window.scan_stop.connect(self.request_scan_stop)
         self.decompress_window.to_block.connect(self._structure_to_block)
         self.preview_window.font_changed.connect(self._on_font_changed)
         self.preview_window.box_changed.connect(self._on_box_changed)
@@ -527,209 +547,15 @@ class MainWindow(
         self.workspace.on_added.append(self._watch_table)
         self.workspace.on_reset.append(self._rewatch_tables)
 
-    def _build_menus(self) -> None:
-        """The menu bar. Every row carries a mnemonic, and its label follows the
-        capitalisation rule of ``docs/ui.md``; the shortcut guide reads it all
-        back from here (:mod:`mapchar.ui.help_dialogs`)."""
-        bar = self.menuBar()
-
-        def act(menu, text, slot, shortcut=None):
-            a = QAction(text, self)
-            if shortcut:
-                a.setShortcut(QKeySequence(shortcut))
-            a.triggered.connect(slot)
-            menu.addAction(a)
-            return a
-
-        file_menu = bar.addMenu("&File")
-        act(file_menu, "&New Project", self._new_project, "Ctrl+N")
-        act(file_menu, "&Open Project…", self._open_project_dialog, "Ctrl+O")
-        self.recent_menu = file_menu.addMenu("Open &Recent")
-        # Filled each time the File menu opens, not once at build time: the list
-        # changes as projects are opened and saved, and rows go stale on disk.
-        file_menu.aboutToShow.connect(self._rebuild_recent)
-        file_menu.aboutToShow.connect(self._sync_locate_action)
-        act(file_menu, "&Save Project", self._save_project, "Ctrl+S")
-        act(file_menu, "Save Project &As…", self._save_project_as, "Ctrl+Shift+S")
-        self.locate_action = act(
-            file_menu, "Locate Missin&g Files…", lambda: self._relocate_missing()
-        )
-        self.locate_action.setEnabled(False)
-        file_menu.addSeparator()
-        act(file_menu, "Open RO&M…", self._open_rom_dialog, "Ctrl+Shift+O")
-        act(file_menu, "Open &Table…", self._open_table_dialog, "Ctrl+T")
-        act(file_menu, "N&ew Table…", lambda: self._new_table_dialog())
-        act(file_menu, "Open &Font…", self._open_font_dialog)
-        file_menu.addSeparator()
-        # Named where :mod:`mapchar.ui.main_window.capability_sync` gates them:
-        # what each row applies to is declared in the capability table, not here.
-        self.new_block_action = act(
-            file_menu, "New &Block", self._new_block, "Ctrl+Shift+B"
-        )
-        self.new_bookmark_action = act(
-            file_menu, "New Boo&kmark", self._new_bookmark, "Ctrl+B"
-        )
-        self.container_action = act(
-            file_menu, "Edit File &Container…", self._edit_container, "Ctrl+E"
-        )
-        self.dump_action = act(file_menu, "&Dump…", self._dump, "Ctrl+D")
-        file_menu.addSeparator()
-        self.write_action = act(file_menu, "&Write", self._write_current, "Ctrl+W")
-        act(file_menu, "Write A&ll", self._write_all, "Ctrl+Shift+W")
-        file_menu.addSeparator()
-        import_menu = file_menu.addMenu("&Import")
-        self.import_action = import_menu.menuAction()
-        act(import_menu, "&Script…", lambda: self._import("script"))
-        act(import_menu, "&TSV / CSV…", lambda: self._import("delimited"))
-        act(import_menu, "&PO…", lambda: self._import("po"))
-        import_menu.addSeparator()
-        act(
-            import_menu,
-            "&Cartographer Command File…",
-            self._import_cartographer_dialog,
-        )
-        act(import_menu, "&Atlas Script…", self._import_atlas_dialog)
-        export_menu = file_menu.addMenu("E&xport")
-        self.export_action = export_menu.menuAction()
-        act(export_menu, "&TSV…", lambda: self._export("tsv"))
-        act(export_menu, "C&SV…", lambda: self._export("csv"))
-        act(export_menu, "&PO…", lambda: self._export("po"))
-        export_menu.addSeparator()
-        act(export_menu, "&Cartographer Command File…", self._export_cartographer)
-        act(export_menu, "&Atlas Script…", self._export_atlas)
-        file_menu.addSeparator()
-        act(file_menu, "Open &Plugins Folder…", self._open_plugins_folder)
-        act(file_menu, "Refresh Pl&ugins", self._refresh_plugins, "F5")
-        file_menu.addSeparator()
-        act(file_menu, "&Quit", self.close, "Ctrl+Q")
-
-        edit_menu = bar.addMenu("&Edit")
-        undo = self.undo_stack.createUndoAction(self, "&Undo")
-        undo.setShortcut(QKeySequence.StandardKey.Undo)
-        redo = self.undo_stack.createRedoAction(self, "&Redo")
-        redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
-        # Their labels carry the command they would undo; the guide shows the
-        # verb alone.
-        undo.setProperty("guideLabel", "Undo")
-        redo.setProperty("guideLabel", "Redo")
-        edit_menu.addAction(undo)
-        edit_menu.addAction(redo)
-        edit_menu.addSeparator()
-        # Entry Cut/Copy/Paste are scoped to the Files panel rather than to the
-        # window: as window actions they would take Ctrl+C and Ctrl+V away from
-        # every text field in the app. The menu rows still work by click, since
-        # each reads the panel's selection rather than the keyboard focus.
-        for text, slot, key in (
-            ("Cu&t Entry", self._cut_selection, "Ctrl+X"),
-            ("&Copy Entry", self._copy_selection, "Ctrl+C"),
-            ("&Paste Entry", self._paste_selection, "Ctrl+V"),
-            ("D&uplicate Entry", self._duplicate_selection, None),
-        ):
-            a = QAction(text, self)
-            if key:
-                a.setShortcut(QKeySequence(key))
-                a.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-                self.files_panel.addAction(a)
-            a.triggered.connect(slot)
-            edit_menu.addAction(a)
-        edit_menu.addSeparator()
-        self.find_replace_action = act(
-            edit_menu, "&Find and Replace…", self._show_find_replace, "Ctrl+H"
-        )
-        edit_menu.addSeparator()
-        self.string_actions = tuple(
-            act(edit_menu, text, slot)
-            for text, slot in (
-                ("Re&vert Selected Strings", self._revert_selected),
-                ("Toggle Revie&w on Selected", self._toggle_review_selected),
-                ("Copy &Original to Empty Translations", self._copy_originals),
-            )
-        )
-
-        view_menu = bar.addMenu("&View")
-        self.raw_tab_action = act(
-            view_menu, "&Hex", lambda: self._show_view("raw"), "Ctrl+1"
-        )
-        self.text_tab_action = act(
-            view_menu, "Te&xt", lambda: self._show_view("text"), "Ctrl+2"
-        )
-        self.strings_tab_action = act(
-            view_menu, "&Strings", lambda: self._show_view("strings"), "Ctrl+3"
-        )
-        view_menu.addSeparator()
-        act(view_menu, "&Table Editor…", self._show_table_editor, "Ctrl+Shift+T")
-        self.preview_action = act(view_menu, "&Preview…", self._show_preview, "Ctrl+P")
-        view_menu.addSeparator()
-        # One of the two is always the theme in use, so they read as a choice.
-        themes = QActionGroup(self)
-        current = str(self.settings.value("theme", "light"))
-        for attr, text, name in (
-            ("theme_light", "&Light Theme", "light"),
-            ("theme_dark", "&Dark Theme", "dark"),
-        ):
-            action = act(view_menu, text, lambda _=False, n=name: self._set_theme(n))
-            action.setCheckable(True)
-            action.setChecked(name == current)
-            themes.addAction(action)
-            setattr(self, attr, action)
-
-        navigate_menu = bar.addMenu("&Navigate")
-        self._add_history_actions(navigate_menu)
-        self.goto_action = act(
-            navigate_menu, "&Go to Address…", self._go_to_dialog, "Ctrl+G"
-        )
-        navigate_menu.addSeparator()
-        # Gated with the offset box and the steps: they move the same view, and a
-        # row that jumps a document there is not open is a row that does nothing.
-        self.ends_actions = (
-            act(navigate_menu, "&Start of File", self._go_home, None),
-            act(navigate_menu, "&End of File", self._go_end, None),
-        )
-        search_menu = bar.addMenu("&Search")
-        self.search_actions = (
-            act(search_menu, "&Search Window…", self._show_search, "Ctrl+Shift+F"),
-            # Not Ctrl+Shift+S, which is Save Project As…: two window actions on
-            # one sequence is ambiguous to Qt and neither of them then fires.
-            act(search_menu, "S&can for Text…", self._show_scan, "Ctrl+Shift+R"),
-            act(search_menu, "&Find Bytes…", self._find_bytes, "Ctrl+F"),
-            act(
-                search_menu,
-                "Find &Next",
-                lambda: self._find_bytes(again=True),
-                "F3",
-            ),
-            act(
-                search_menu,
-                "Find &Previous",
-                lambda: self._find_bytes(again=True, backwards=True),
-                "Shift+F3",
-            ),
-        )
-        search_menu.addSeparator()
-        # Gated on its own, not with the row above: the others read bytes, and
-        # this one needs a block's strings to look for pointers *to*.
-        self.pointers_action = act(
-            search_menu, "Find P&ointers…", self._find_pointers, "Ctrl+Shift+P"
-        )
-
-        panels_menu = bar.addMenu("&Panels")
-        for dock, text in (
-            (self.files_dock, "&Files"),
-            (self.tables_dock, "&Tables"),
-            (self.fonts_dock, "F&onts"),
-            (self.hex_dock, "&Hex"),
-        ):
-            toggle = dock.toggleViewAction()
-            toggle.setText(text)
-            panels_menu.addAction(toggle)
-        panels_menu.addSeparator()
-        act(panels_menu, "&Reset Panel Layout", self._reset_layout)
-
-        help_menu = bar.addMenu("&Help")
-        act(help_menu, "&Shortcuts…", self._show_shortcuts, "F1")
-        act(help_menu, "&Legend…", self._show_legend)
-        act(help_menu, "&About", self._about)
-        self._rebuild_recent()
+    def _sync_raw_addresses(self, *_) -> None:
+        """Spell the raw view's address column the way every other address the
+        window shows is spelled; flat hex is left to the view, which sizes the
+        column to the file."""
+        spelling = self.address_spelling
+        if spelling.layout is None:
+            self.raw.set_address_format(None)
+        else:
+            self.raw.set_address_format(spelling.format, len(spelling.format(0)))
 
     def _reset_layout(self) -> None:
         """Panels ▸ Reset Panel Layout: the arrangement a fresh install has.
@@ -784,6 +610,27 @@ class MainWindow(
         finally:
             self._applying_undo = False
 
+    @contextmanager
+    def _macro(self, text: str):
+        """Group every command pushed inside into one undo step.
+
+        A no-op while an apply is running, for the same reason
+        :meth:`_push_command` refuses to push then: an apply must leave the stack
+        exactly as it found it. ``beginMacro`` is deferred until the first push
+        actually lands, so a run that changes nothing — an import with nothing to
+        import, a replace-all with no match, a wrap that rewrapped nothing —
+        leaves no dead step behind.
+        """
+        if self._applying_undo:
+            yield
+            return
+        self._macros.append(text)
+        try:
+            yield
+        finally:
+            if self._macros.pop() is None:  # something was pushed, so it opened
+                self.undo_stack.endMacro()
+
     def _push_command(self, command) -> None:
         """Push onto the session stack (``push()`` runs the command's redo).
 
@@ -809,6 +656,12 @@ class MainWindow(
         """
         if self._applying_undo:
             return
+        # The first push inside a macro is what opens it — outermost first — so
+        # a macro that ends up pushing nothing costs no step at all.
+        for i, text in enumerate(self._macros):
+            if text is not None:
+                self.undo_stack.beginMacro(text)
+                self._macros[i] = None
         self._defer_project_modified = True
         try:
             self.undo_stack.push(command)
@@ -904,8 +757,8 @@ class MainWindow(
         """Which encoding to re-read ``path`` as, or ``None`` to give up.
 
         The offered default is whichever of the two actually decodes the whole
-        file (:func:`~mapchar.core.text.read_text_any`), so the likely answer is
-        one Return away and the other is still one click away.
+        file (:func:`~mapchar.project.formats.textfile.read_text_any`), so the
+        likely answer is one Return away and the other is still one click away.
         """
         try:
             _, likely = read_text_any(path)

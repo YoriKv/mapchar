@@ -209,14 +209,44 @@ class Charset(Protocol):
         """``(bits, text)`` pairs; text is literal, not script form."""
         ...
 
+    # Optional, both reached by ``getattr`` and probed, so one that is absent
+    # and one that raises mean the same thing and neither costs a table load:
+    # def aliases(self) -> Iterable[tuple[str, str]]
+    #     ``(text, bits)`` pairs the encoder accepts for a code whose own text
+    #     is something else — the yen sign reaching Shift-JIS ``5C`` while
+    #     ``5C`` still decodes as a backslash. Absent is no aliases.
+    # codec: str
+    #     The Python codec this charset is, which is how wide its NUL is: two
+    #     bytes in UTF-16, four in UTF-32. Absent is one byte.
+
 
 class Mapping(Protocol):
+    """Pointer value to payload offset and back.
+
+    Offsets are into the header-less payload, so a mapping never sees the
+    container's header: ``bank`` supplies what a short pointer leaves out and
+    ``ptr_address`` is where the pointer itself sits, for the relative kinds.
+    Both are keyword-or-positional with a default, so a mapping that ignores
+    them is still called the one way.
+    """
+
     info: PluginInfo
-    sizes: tuple[int, ...]
 
-    def to_offset(self, value: int, header: int, bank: int) -> int | None: ...
+    def to_offset(
+        self, value: int, bank: int = 0, ptr_address: int = 0
+    ) -> int | None: ...
 
-    def to_value(self, offset: int, header: int, bank: int) -> int: ...
+    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int: ...
+
+    # Optional, both read by ``getattr`` with a default, so a mapping that
+    # declares neither still resolves:
+    # sizes: tuple[int, ...]
+    #     The pointer widths in bytes this mapping accepts; absent offers every
+    #     width the block does.
+    # needs_bank: bool
+    #     Whether a short pointer needs a bank supplied alongside it. Absent is
+    #     read as True by the reading bar, which is the safe way round: the
+    #     field is offered rather than hidden from a mapping that needs it.
 
 
 REQUIRED_METHODS: dict[Stage, tuple[str, ...]] = {

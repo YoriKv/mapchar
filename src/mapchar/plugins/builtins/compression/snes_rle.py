@@ -41,7 +41,7 @@ from __future__ import annotations
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
 from mapchar.plugins.builtins.compression._limits import MAX_BANK
-from mapchar.plugins.builtins.compression._rle import pack_runs
+from mapchar.plugins.builtins.compression._rle import Packet, pack_runs, unpack_packets
 
 # Output bytes one packet can carry, literal or run: (L + 1) over a 7-bit L.
 _MAX_PACKET = 128
@@ -52,11 +52,6 @@ _MIN_RUN = 2
 # rather than as a packet, which is exactly why the encoder may not write one.
 _TERMINATOR = b"\xff\xff"
 _MAX_RUN_OF_TERMINATOR_BYTE = 127
-# Memory guard for a read with no length behind it: one SNES bank, the
-# conventional cap on an uncompressed structure. Hitting it stops the decode at
-# the last packet boundary, which for RLE1 then reads as "no terminator": a
-# stream that expands this far without ending is not one.
-_MAX_OUT = MAX_BANK
 
 
 def decompress(
@@ -75,39 +70,32 @@ def decompress(
     ``partial`` is set — a bounded view window routinely cuts a stream short, and
     the prefix it did decode is what the view wants to show.
 
+    The read is bounded by one bank of output
+    (:data:`~mapchar.plugins.builtins.compression._limits.MAX_BANK`), which for
+    RLE1 then reads as "no terminator": a stream that expands that far without
+    ending is not one.
+
     ``consumed`` counts through the terminator for a complete RLE1 read, making it
     the structure's true length — the slot a save-back must fit. Otherwise it is
     the end of the last *whole* packet, the only boundary a cut-short buffer
     offers; a half-delivered literal still contributes the bytes that did arrive.
     """
-    out = bytearray()
-    i, n = 0, len(data)
-    consumed = 0
-    complete = False
-    while i < n and len(out) < _MAX_OUT:
-        if terminated and data[i : i + 2] == _TERMINATOR:
-            i += 2
-            consumed = i
-            complete = True
-            break
-        header = data[i]
-        if header & 0x80:  # run: the next byte, (L + 1) times
-            if i + 1 >= n:  # buffer ended before the value byte
-                break
-            out += bytes([data[i + 1]]) * ((header & 0x7F) + 1)
-            i += 2
-        else:  # literal: the next (L + 1) bytes
-            count = header + 1
-            chunk = data[i + 1 : i + 1 + count]
-            out += chunk
-            i += 1 + count
-            if len(chunk) < count:  # buffer ended inside the literal
-                break
-        consumed = i
-
+    out, consumed, complete = unpack_packets(
+        data, header=lambda d, i: _packet(d, i, terminated=terminated), max_out=MAX_BANK
+    )
     if terminated and not complete and not partial:
         raise ValueError("no $FF $FF terminator — not an RLE1 stream")
-    return bytes(out), consumed, complete
+    return out, consumed, complete
+
+
+def _packet(data: bytes, i: int, *, terminated: bool) -> tuple[Packet, int, int]:
+    """One ``CLLLLLLL`` header, or the terminator standing where one would be."""
+    if terminated and data[i : i + 2] == _TERMINATOR:
+        return Packet.END, 0, 2
+    header = data[i]
+    if header & 0x80:  # run: the next byte, (L + 1) times
+        return Packet.RUN, (header & 0x7F) + 1, 2
+    return Packet.LITERAL, header + 1, 1  # literal: the next (L + 1) bytes
 
 
 def _run_limit(value: int) -> int:
