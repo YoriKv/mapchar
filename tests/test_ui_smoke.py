@@ -598,6 +598,36 @@ def test_project_reads_clean_until_the_session_moves(window, tmp_path):
     assert window.workspace.current is not None
 
 
+def test_opening_a_project_reads_its_blocks(window, tmp_path):
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._activate_entry(file_entry)
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    window._new_project()
+    assert window.open_project(str(proj))
+    file_entry, block = window.workspace.entries[:2]
+    # The file is the one on screen, yet the block is read and counted.
+    assert window._entry is file_entry
+    assert texts(block.doc.strings) == ["AB[end]", "BA[end]"]
+    assert window.files_panel._items[id(block)].text(0) == "b  (2)"
+    assert not window._project_dirty()
+
+
+def test_opening_a_project_leaves_a_missing_files_blocks_unread(window, tmp_path):
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._activate_entry(file_entry)
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    Path(str(file_entry.path)).unlink()
+    window._new_project()
+    assert window.open_project(str(proj))
+    assert window.workspace.entries[1].doc is None
+
+
 def test_saving_a_project_offers_to_write_the_unsaved_edits(window, tmp_path):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
     file_entry = open_rom_and_table(window, tmp_path, data)

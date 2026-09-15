@@ -183,6 +183,7 @@ class ProjectMixin:
         self._remember_dir(path)
         self._add_recent(path)
         self._refresh_table_picks()
+        self._read_blocks()
         if loaded.warnings:
             TextDialog("Project Notices", "\n".join(loaded.warnings), self).exec()
         self._activate_entry(
@@ -213,6 +214,32 @@ class ProjectMixin:
         if missing:
             self._relocate_missing(prompt_summary=True)
         return True
+
+    def _read_blocks(self) -> None:
+        """Read every block the session has not, so the Files panel counts its
+        strings before it is opened.
+
+        A block over a file that is not on disk is left for Locate, and one
+        whose file fails to read is tried once, not once per block.
+        """
+        gone = set(missing_paths(self.workspace))
+        failed: set[int] = set()
+        with self.files_panel.labels_held():
+            for entry in self.workspace.of_kind(EntryKind.BLOCK):
+                parent = entry.parent
+                if (
+                    entry.doc is not None
+                    or entry.config is None
+                    or entry.missing
+                    or parent is None
+                    or id(parent) in failed
+                    or any(p in gone for p in parent.paths)
+                ):
+                    continue
+                if self._load_document(parent) is None:
+                    failed.add(id(parent))
+                    continue
+                self._block_strings(entry)
 
     def _sync_locate_action(self) -> None:
         """Arm File ▸ Locate Missing Files… only when there is one to locate.
@@ -266,6 +293,7 @@ class ProjectMixin:
             relocated += 1
         self._sync_locate_action()
         self._refresh_table_picks()
+        self._read_blocks()
         self.files_panel.rebuild()
         self._activate_entry(self.workspace.current)
         remaining = len(missing_paths(self.workspace))

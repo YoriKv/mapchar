@@ -3,6 +3,8 @@ under each block, its strings."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
@@ -275,6 +277,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         """The blocks open to their strings, by entry id, so a rebuild — a row
         added, removed or reordered — puts them back open."""
         self._string_keys: dict[int, object] = {}
+        self._labels_held = False
         """What each block's string rows were built from, so a refresh that
         changed nothing about the strings leaves the rows alone."""
         self.filter.textChanged.connect(self._apply_filter)
@@ -595,8 +598,22 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
             self.tree.blockSignals(blocked)
 
     def refresh_labels(self) -> None:
+        if self._labels_held:
+            return
         for entry in self.workspace.entries:
             self._update_item(entry)
+
+    @contextmanager
+    def labels_held(self) -> Iterator[None]:
+        """Refresh the labels once, on the way out, rather than at every
+        :meth:`refresh_labels` inside — for a pass that reads many blocks."""
+        held = self._labels_held
+        self._labels_held = True
+        try:
+            yield
+        finally:
+            self._labels_held = held
+            self.refresh_labels()
 
     # -- selection ------------------------------------------------------
 

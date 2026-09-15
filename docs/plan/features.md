@@ -129,7 +129,8 @@ the preview system in [preview.md](preview.md).
     none; a missing file shows a warning mark instead;
   - `●` for unsaved edits;
   - a string count and a status summary on blocks (edited / too long /
-    review);
+    review), there from the start: opening a project, and locating its
+    missing files, reads every block over a file that is on disk;
   - a joined-file count and a container tag on files;
   - **?** (file missing) or **!** (read notices), washing the row amber.
 - **Tooltips** give paths, container, offset and length, the start table, and
