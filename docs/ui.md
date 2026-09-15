@@ -51,6 +51,25 @@ No layout's minimum size may be set by text or a count that varies.
 - The file size, selection and view-only notice sit at the **status bar's
   right end**, not in the navigation row.
 
+## Numbers and addresses
+
+`src/mapchar/ui/number_fields.py` holds the fields every number is typed into.
+
+- **A count is as wide as what it holds**, not its maximum: `number_spin` and
+  `fit_spin` fix a spin box to the digits it is expected to hold — a pointer
+  size one, a stride two, a string count four — so a range reaching a million
+  does not make a field for tens a million wide.
+- **An address is an `AddressEdit`**: one width (`ADDRESS_CHARS`), spelled as
+  the navigation bar's address format spells a position — flat six-digit hex or
+  a bank layout's `$BB:AAAA` — and read in that spelling first and flat hex
+  second. The window's one `AddressSpelling` follows the format, and every
+  address field re-spells what it shows when the format changes; a list of
+  addresses does the same. Finished typing is re-spelled.
+- **An offset is an `OffsetEdit`**: the addresses' width, in hex with `$`
+  optional and a leading `-` to subtract, shown as `1F0` or `-10`.
+- **Any other hex number** — a fill byte, a bank, the Custom bank fields — is a
+  `HexEdit` or `HexSpinBox`, upper case and padded to its digits.
+
 ## Cut-short text reads in full
 
 Wherever text can be cut short, hovering it shows the whole of it, ahead of any

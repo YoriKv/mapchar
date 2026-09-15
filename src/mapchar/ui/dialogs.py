@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QMessageBox,
     QPlainTextEdit,
@@ -21,8 +20,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.numbers import format_num, parse_num
+from mapchar.core.numbers import format_hex_offset
 from mapchar.project.formats.script import DumpMode
+from mapchar.ui.number_fields import OffsetEdit
 from mapchar.ui.widgets import ResultsTable, show_elided_tooltips
 
 
@@ -188,15 +188,15 @@ class PointerSearchDialog(QDialog):
         if selected is not None:
             self.scope.addItem(f"The selected string only (#{selected})", True)
         form.addRow("Look for", self.scope)
-        self.offset_from = QLineEdit("0")
-        self.offset_to = QLineEdit("0")
-        self.offset_step = QLineEdit("1")
+        self.offset_from = OffsetEdit(0)
+        self.offset_to = OffsetEdit(0)
+        self.offset_step = OffsetEdit(1)
         for field, what in (
             (self.offset_from, "The first offset a pointer may be based on"),
             (self.offset_to, "The last offset a pointer may be based on"),
             (self.offset_step, "How far apart the offsets tried are"),
         ):
-            field.setToolTip(f"{what}: decimal or $hex, with a leading - to subtract")
+            field.setToolTip(f"{what}, in hex, with a leading - to subtract")
         form.addRow("Offset from", self.offset_from)
         form.addRow("Offset to", self.offset_to)
         form.addRow("Offset step", self.offset_step)
@@ -212,14 +212,12 @@ class PointerSearchDialog(QDialog):
 
     def _numbers(self) -> tuple[int, int, int] | None:
         """The three offset fields, or ``None`` if one of them does not read."""
-        try:
-            return (
-                parse_num(self.offset_from.text().strip() or "0"),
-                parse_num(self.offset_to.text().strip() or "0"),
-                parse_num(self.offset_step.text().strip() or "1"),
-            )
-        except ValueError:
-            return None
+        numbers = (
+            self.offset_from.value(0),
+            self.offset_to.value(0),
+            self.offset_step.value(1),
+        )
+        return None if None in numbers else numbers
 
     def offsets(self) -> tuple[int, ...]:
         """The offsets to try, both ends included.
@@ -241,8 +239,8 @@ class PointerSearchDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Find Pointers",
-                "The offset range is not made of numbers. Write decimal or "
-                "$hex values, with a leading - to subtract.",
+                "The offset range is not made of numbers. Write hex values, "
+                "with a leading - to subtract.",
             )
             return
         super().accept()
@@ -274,7 +272,7 @@ class DiscoveryDialog(QDialog):
                 c.mapping_id,
                 str(c.size),
                 c.endian,
-                format_num(c.offset),
+                format_hex_offset(c.offset),
                 str(c.explained),
                 str(c.stride),
                 f"{c.addresses[0]:X}–{c.addresses[-1]:X}" if c.addresses else "",

@@ -344,8 +344,10 @@ The exploration surface, the equivalent of celPix's tile canvas.
   position if that is inside it.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
   bank fields), an address box, Home, page and row steps, **−B / +B** byte
-  steps, and End. A view narrower than its rows scrolls sideways. The format is remembered per machine and drives the address
-  box, **Go to Address** and the Hex panel's address column alike. **Back /
+  steps, and End. A view narrower than its rows scrolls sideways. The format is remembered per machine and drives every address:
+  the address box, **Go to Address**, the Hex panel's address column and fields,
+  and the Reading bar's start, stop, bound and pointer addresses. Offsets are
+  typed in hex, with a leading `-` to subtract. **Back /
   Forward** (Alt+Left / Alt+Right, or the browser buttons on a mouse) walk a
   trail of the entries visited.
 - **The keys work wherever the focus is** — a picked table or a clicked row

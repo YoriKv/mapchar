@@ -69,7 +69,7 @@ def test_an_unreadable_offset_range_refuses_to_close(qtbot, monkeypatch):
         QMessageBox, "warning", staticmethod(lambda *a, **k: said.append(a[2]))
     )
     dialog = PointerSearchDialog(3, None, None)
-    dialog.offset_to.setText("ffff")  # hex wants a $
+    dialog.offset_to.setText("1-2")
     dialog.accept()
     assert dialog.result() != PointerSearchDialog.DialogCode.Accepted
     assert said and "not made of numbers" in said[0]

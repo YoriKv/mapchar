@@ -717,8 +717,9 @@ and Alt+Right to the visit trail's real shortcuts.
 
 A position is spelled through `core/address.py`: a flat file offset, one of the
 `BANK_PRESETS` console mappings, or three custom bank numbers. One format drives
-the navigation bar's offset box, Go to Address and the Hex dock's address
-column, and is remembered per machine.
+every address the UI shows or reads — the navigation bar's offset box, Go to
+Address, the Hex dock and the Reading bar — through the window's one
+`AddressSpelling` (`ui/number_fields.py`), and is remembered per machine.
 
 ### 7.6 Theme, icons and layout
 

@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -89,6 +88,7 @@ from mapchar.ui.main_window.table_editor import TableEditorMixin
 from mapchar.ui.main_window.tables_dock import TablesDockMixin
 from mapchar.ui.main_window.wrap import WrapMixin
 from mapchar.ui.main_window.writing import WritingMixin
+from mapchar.ui.number_fields import AddressEdit, AddressSpelling, HexEdit
 from mapchar.ui.preview_window import PreviewWindow
 from mapchar.ui.raw_widget import RawWidget
 from mapchar.ui.reading_bar import ReadingBar
@@ -104,7 +104,6 @@ from mapchar.ui.widgets import (
     ElidedLabel,
     ModeToggle,
     WrapBar,
-    fit_chars,
 )
 from mapchar.ui.window_layout import WindowLayout
 
@@ -263,7 +262,9 @@ class MainWindow(
         tables_dock.raise_()
         self.fonts_dock = fonts_dock
 
-        self.hex_panel = HexPanel()
+        # How every address field spells a position; the address format sets it.
+        self.address_spelling = AddressSpelling(self)
+        self.hex_panel = HexPanel(self.address_spelling)
         hex_dock = QDockWidget("Hex", self)
         hex_dock.setObjectName("hex_dock")
         hex_dock.setWidget(self.hex_panel)
@@ -300,7 +301,7 @@ class MainWindow(
         )
         layout.addWidget(format_bar)
         self.format_bar = format_bar
-        self.reading_bar = ReadingBar()
+        self.reading_bar = ReadingBar(self.address_spelling)
         self.reading_bar.set_mappings(self.registry.ids(Stage.MAPPING))
         layout.addWidget(self.reading_bar)
         self._reset_builtin_tables()
@@ -327,11 +328,7 @@ class MainWindow(
         nav = QWidget()
         nl = QHBoxLayout(nav)
         nl.setContentsMargins(0, 0, 0, 0)
-        self.offset_box = QLineEdit()
-        # Room for the longest spelling a format writes ($C0:FFFF, 7FFFFF), and
-        # no more: the steps beside it want the width.
-        fit_chars(self.offset_box, 9)
-        self.offset_box.setMaximumWidth(self.offset_box.minimumWidth())
+        self.offset_box = AddressEdit(self.address_spelling)
         self.offset_box.setPlaceholderText("address")
         self.offset_box.setToolTip("The view's position; type an address and Enter")
         # How a position is spelled: a flat file offset, one of the console
@@ -349,16 +346,26 @@ class MainWindow(
         self.custom_bank_row = QWidget()
         cb = QHBoxLayout(self.custom_bank_row)
         cb.setContentsMargins(0, 0, 0, 0)
-        self.bank_size_box = QLineEdit("8000")
-        self.addr_base_box = QLineEdit("8000")
-        self.bank_base_box = QLineEdit("0")
-        for label, box, tip in (
-            ("Bank size", self.bank_size_box, "Bytes of ROM per bank, in hex"),
-            ("at", self.addr_base_box, "In-bank address of a bank's first byte"),
-            ("from bank", self.bank_base_box, "Bank number of the file's first byte"),
+        self.bank_size_box = HexEdit(4)
+        self.addr_base_box = HexEdit(4)
+        self.bank_base_box = HexEdit(2)
+        for label, box, value, tip in (
+            ("Bank size", self.bank_size_box, 0x8000, "Bytes of ROM per bank"),
+            (
+                "at",
+                self.addr_base_box,
+                0x8000,
+                "In-bank address of a bank's first byte",
+            ),
+            (
+                "from bank",
+                self.bank_base_box,
+                0,
+                "Bank number of the file's first byte",
+            ),
         ):
-            box.setMaximumWidth(64)
-            box.setToolTip(tip)
+            box.set_value(value)
+            box.setToolTip(f"{tip}, in hex")
             cb.addWidget(QLabel(label))
             cb.addWidget(box)
         nl.addWidget(self.address_pick)
@@ -455,7 +462,7 @@ class MainWindow(
         self.offset_box.returnPressed.connect(self._on_offset_typed)
         self.address_pick.currentIndexChanged.connect(self._on_address_format)
         for box in (self.bank_size_box, self.addr_base_box, self.bank_base_box):
-            box.editingFinished.connect(self._refresh_view)
+            box.editingFinished.connect(self._on_custom_bank)
         self._restore_address_format()
         self.strings.row_selected.connect(self._on_string_row)
         self.strings.translation_edited.connect(self._on_translation_edited)

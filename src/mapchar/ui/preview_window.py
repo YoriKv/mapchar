@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -31,6 +30,7 @@ from mapchar.engines.relsearch import HIRAGANA, KATAKANA, RUNS
 from mapchar.ui import theme
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
+from mapchar.ui.number_fields import number_spin
 from mapchar.ui.widgets import (
     ElidedLabel,
     EscapeCloses,
@@ -316,9 +316,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         self.next.setToolTip("Next page")
         self.next.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self._bake_icons()
-        self.zoom = QSpinBox()
-        self.zoom.setRange(1, 8)
-        self.zoom.setValue(3)
+        self.zoom = number_spin(1, 8, 1, value=3)
         self.grid = QPushButton("Grid")
         self.grid.setCheckable(True)
         self.grid.setToolTip("Rule the box in pixels")
@@ -362,23 +360,16 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         pr.addWidget(self.font_path, 1)
         pr.addWidget(self.font_browse)
         ff.addRow("Sheet (PNG)", pr)
-        self.cell_w = QSpinBox()
-        self.cell_w.setRange(1, 64)
-        self.cell_h = QSpinBox()
-        self.cell_h.setRange(1, 64)
-        self.columns = QSpinBox()
-        self.columns.setRange(1, 256)
-        self.base = QSpinBox()
-        self.base.setRange(0, 65535)
+        self.cell_w = number_spin(1, 64, 2)
+        self.cell_h = number_spin(1, 64, 2)
+        self.columns = number_spin(1, 256, 2)
+        self.base = number_spin(0, 65535, 3)
         self.chars = hint_field(
             QLineEdit(), "characters in glyph order from the base glyph"
         )
-        self.space = QSpinBox()
-        self.space.setRange(0, 64)
-        self.missing = QSpinBox()
-        self.missing.setRange(-1, 65535)
-        self.transparent = QSpinBox()
-        self.transparent.setRange(-1, 255)
+        self.space = number_spin(0, 64, 2)
+        self.missing = number_spin(-1, 65535, 3)
+        self.transparent = number_spin(-1, 255, 3)
         self.transparent.setToolTip(
             "Which palette index is transparent; -1 takes the top-left pixel's colour"
         )
@@ -388,9 +379,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         )
         self.fixed = QPushButton("Fixed Width")
         self.fixed.setToolTip("Give every glyph the cell's full width")
-        self.gap = QSpinBox()
-        self.gap.setRange(0, 16)
-        self.gap.setValue(1)
+        self.gap = number_spin(0, 16, 2, value=1)
         self.gap.setToolTip("Pixels added after the last inked column when measuring")
         ff.addRow("Cell width", self.cell_w)
         ff.addRow("Cell height", self.cell_h)
@@ -428,9 +417,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         # alphabet — so neither sets the window's minimum width on its own.
         tools = QHBoxLayout()
         alphabet = QHBoxLayout()
-        self.sheet_zoom = QSpinBox()
-        self.sheet_zoom.setRange(1, 8)
-        self.sheet_zoom.setValue(3)
+        self.sheet_zoom = number_spin(1, 8, 1, value=3)
         self.sheet_mode = QComboBox()
         self.sheet_mode.addItem("Select tile", False)
         self.sheet_mode.addItem("Select row", True)
@@ -485,20 +472,13 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         # Box tab.
         box_tab = QWidget()
         bf = QFormLayout(box_tab)
-        self.box_w = QSpinBox()
-        self.box_w.setRange(1, 1024)
-        self.box_h = QSpinBox()
-        self.box_h.setRange(1, 1024)
-        self.line_h = QSpinBox()
-        self.line_h.setRange(1, 128)
-        self.spacing = QSpinBox()
-        self.spacing.setRange(-8, 32)
-        self.lines = QSpinBox()
-        self.lines.setRange(0, 64)
-        self.origin_x = QSpinBox()
-        self.origin_x.setRange(0, 1024)
-        self.origin_y = QSpinBox()
-        self.origin_y.setRange(0, 1024)
+        self.box_w = number_spin(1, 1024, 3)
+        self.box_h = number_spin(1, 1024, 3)
+        self.line_h = number_spin(1, 128, 2)
+        self.spacing = number_spin(-8, 32, 2)
+        self.lines = number_spin(0, 64, 2)
+        self.origin_x = number_spin(0, 1024, 3)
+        self.origin_y = number_spin(0, 1024, 3)
         for label, w in (
             ("Width", self.box_w),
             ("Height", self.box_h),

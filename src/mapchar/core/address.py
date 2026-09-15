@@ -121,6 +121,10 @@ class SplitBankLayout:
         return None if beyond is None else self.split + beyond
 
 
+AddressLayout = BankLayout | SplitBankLayout
+"""A way of spelling a file offset as ``bank:address``."""
+
+
 @dataclass(frozen=True)
 class BankPreset:
     id: str
@@ -179,3 +183,28 @@ BANK_PRESETS: tuple[BankPreset, ...] = (
 )
 
 PRESETS_BY_ID: dict[str, BankPreset] = {p.id: p for p in BANK_PRESETS}
+
+
+def format_address(offset: int, layout: AddressLayout | None = None) -> str:
+    """``offset`` spelled under ``layout``, or as flat hex without one."""
+    return format_hex(offset) if layout is None else layout.format(offset)
+
+
+def parse_address(text: str, layout: AddressLayout | None = None) -> int | None:
+    """Text as a file offset, or ``None`` for blank text or text nothing reads.
+
+    ``layout``'s own spelling is tried first and a flat hex offset second, so a
+    ``$C0:8000`` and a bare ``008000`` both land somewhere sensible under a
+    HiROM mapping.
+    """
+    if layout is not None:
+        offset = layout.parse(text)
+        if offset is not None:
+            return offset
+    digits = text.strip().removeprefix("$").removeprefix("0x").removeprefix("0X")
+    if not digits or not all(c in "0123456789abcdefABCDEF_" for c in digits):
+        return None
+    try:
+        return int(digits, 16)
+    except ValueError:
+        return None

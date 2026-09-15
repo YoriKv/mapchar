@@ -18,10 +18,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.bits import parse_hex
 from mapchar.ui import BYTES_PER_ROW, DUMP_WINDOW_BYTES, settings, theme
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
+from mapchar.ui.number_fields import AddressEdit, AddressSpelling
 from mapchar.ui.widgets import fit_chars, hint_field, mono_font
 
 FOLLOW_SELECTION_KEY = "hex/follow_selection"
@@ -89,7 +89,9 @@ class HexPanel(ThemedIcons, QWidget):
     find_requested = Signal(str, bool)
     """The find field's text, and whether to search backwards."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self, spelling: AddressSpelling | None = None, parent: QWidget | None = None
+    ):
         super().__init__(parent)
         self._data: bytes = b""
         self._offset = 0
@@ -115,10 +117,10 @@ class HexPanel(ThemedIcons, QWidget):
         # Every field keeps room to show what it holds however narrow the dock
         # gets; the dock's own minimum width follows from them.
         self.goto = hint_field(
-            QLineEdit(), "address", "An address to scroll the dump to, then Enter"
+            AddressEdit(spelling),
+            "address",
+            "An address to scroll the dump to, then Enter",
         )
-        fit_chars(self.goto, 8)
-        self.goto.setMaximumWidth(110)
         self.find = hint_field(
             QLineEdit(),
             'hex bytes or "text"',
@@ -149,9 +151,9 @@ class HexPanel(ThemedIcons, QWidget):
         top.addWidget(self.follow)
         bottom = QHBoxLayout()
         self.at_label = QLabel("At")
-        self.at = hint_field(QLineEdit(), "offset", "The offset to overtype at, in hex")
-        fit_chars(self.at, 8)
-        self.at.setMaximumWidth(110)
+        self.at = hint_field(
+            AddressEdit(self.goto.spelling), "address", "The address to overtype at"
+        )
         self.bytes = hint_field(
             QLineEdit(),
             "hex bytes",
@@ -259,7 +261,7 @@ class HexPanel(ThemedIcons, QWidget):
                 )
             self.view.setPlainText("\n".join(lines))
         if self._selection:
-            self.at.setText(f"{self._selection[0]:X}")
+            self.at.set_value(self._selection[0])
         # The caret is placed on the selection **only when the selection moved**.
         # Every edit in the window re-renders this panel, and re-seating the caret
         # each time is what made an overtype run impossible: the second digit of a
@@ -328,18 +330,17 @@ class HexPanel(ThemedIcons, QWidget):
             self.find_requested.emit(text, backwards)
 
     def _on_goto(self) -> None:
-        try:
-            self.go_to_requested.emit(parse_hex(self.goto.text()))
-        except ValueError:
-            pass
+        offset = self.goto.value()
+        if offset is not None:
+            self.go_to_requested.emit(offset)
 
     def _on_apply(self) -> None:
+        at = self.at.value()
         try:
-            at = parse_hex(self.at.text())
             data = bytes.fromhex(self.bytes.text().replace("$", "").replace(",", " "))
         except ValueError:
             return
-        if data:
+        if at is not None and data:
             self.overtype_requested.emit(at, data)
 
 

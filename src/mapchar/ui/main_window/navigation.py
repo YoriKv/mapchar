@@ -32,8 +32,12 @@ from PySide6.QtWidgets import (
     QTextEdit,
 )
 
-from mapchar.core.address import HEX_ID, PRESETS_BY_ID, format_hex
-from mapchar.core.bits import parse_hex
+from mapchar.core.address import (
+    HEX_ID,
+    PRESETS_BY_ID,
+    format_address,
+    parse_address,
+)
 from mapchar.core.capabilities import Capability
 from mapchar.project.workspace import Entry
 from mapchar.ui import BYTES_PER_ROW
@@ -93,41 +97,39 @@ class NavigationMixin:
         """
         from mapchar.core.address import BankLayout
 
-        try:
-            size = parse_hex(self.bank_size_box.text())
-            base = parse_hex(self.addr_base_box.text())
-            first = parse_hex(self.bank_base_box.text())
-        except ValueError:
-            return None
+        size = self.bank_size_box.value() or 0
+        base = self.addr_base_box.value() or 0
+        first = self.bank_base_box.value() or 0
         return None if size <= 0 else BankLayout(size, base, first)
 
     def _format_address(self, offset: int) -> str:
         """``offset`` as the navigation bar spells it."""
-        layout = self._address_layout()
-        return format_hex(offset) if layout is None else layout.format(offset)
+        return format_address(offset, self._address_layout())
 
     def _parse_address(self, text: str) -> int | None:
         """Text typed into an address field as a file offset, or ``None``.
 
-        A bank layout's own spelling is tried first and a flat hex offset second,
-        so a ``$C0:8000`` and a bare ``008000`` both land somewhere sensible
-        under a HiROM mapping.
+        A bank layout's own spelling is tried first and a flat hex offset second
+        (:func:`~mapchar.core.address.parse_address`).
         """
-        layout = self._address_layout()
-        if layout is not None:
-            offset = layout.parse(text)
-            if offset is not None:
-                return offset
-        try:
-            return parse_hex(text)
-        except ValueError:
-            return None
+        return parse_address(text, self._address_layout())
+
+    def _sync_address_spelling(self) -> None:
+        """Spell every address field — the Reading bar's, the Hex panel's, the
+        offset box — under the format the picker and Custom fields make."""
+        self.address_spelling.set_layout(self._address_layout())
 
     def _on_address_format(self) -> None:
         """The picker moved: remember it, show or hide Custom, and re-render."""
         chosen = self.address_pick.currentData()
         self.settings.setValue(ADDRESS_FORMAT_KEY, chosen)
         self.custom_bank_row.setVisible(chosen == CUSTOM_ID)
+        self._sync_address_spelling()
+        self._refresh_view()
+
+    def _on_custom_bank(self) -> None:
+        """A Custom bank field was finished: re-spell and re-render."""
+        self._sync_address_spelling()
         self._refresh_view()
 
     def _restore_address_format(self) -> None:
@@ -147,6 +149,7 @@ class NavigationMixin:
         finally:
             self.address_pick.blockSignals(False)
         self.custom_bank_row.setVisible(self.address_pick.currentData() == CUSTOM_ID)
+        self._sync_address_spelling()
 
     # -- the view's bounds ----------------------------------------------------
     def _view_range(self) -> tuple[int, int]:
@@ -265,7 +268,7 @@ class NavigationMixin:
         offset = self._parse_address(self.offset_box.text())
         if offset is None:
             self.statusBar().showMessage("Not an address this format can read", 3000)
-            self.offset_box.setText(self._format_address(self._offset))
+            self.offset_box.set_value(self._offset)
             return
         self._go_to(offset)
 

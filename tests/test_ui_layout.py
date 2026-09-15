@@ -65,6 +65,27 @@ def test_the_reading_bar_wraps_rather_than_widening_the_window(window):
     assert bar.heightForWidth(400) > bar.heightForWidth(2000)
 
 
+def test_a_count_is_as_wide_as_what_it_holds_not_its_maximum(window):
+    """A spin box that may reach a million but holds tens is no wider than the
+    tens; every address and offset field is one width."""
+    bar = window.reading_bar
+    assert bar.ptr_size.width() < bar.ptr_stride.width() < bar.count.width()
+    assert bar.count.maximumWidth() < bar.count.sizeHint().width()
+    widths = {
+        field.maximumWidth()
+        for field in (
+            bar.start,
+            bar.stop,
+            bar.bound,
+            bar.ptr_offset,
+            window.offset_box,
+            window.hex_panel.goto,
+            window.hex_panel.at,
+        )
+    }
+    assert len(widths) == 1
+
+
 def test_tool_windows_stay_usable_at_their_smallest(window):
     """None of them can be made smaller than the controls in it need, and none
     needs more than a small screen has."""

@@ -10,12 +10,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from mapchar.engines.relsearch import Hit, relative_search
+from mapchar.ui.number_fields import number_spin
 from mapchar.ui.widgets import (
     CancellableRun,
     ElidedLabel,
@@ -57,9 +57,7 @@ class SearchWindow(EscapeCloses, CancellableRun, QWidget):
         self.case_gap = QCheckBox("Case gap")
         self.case_gap.setChecked(True)
         self.case_gap.setToolTip("Upper and lower case may sit at any distance apart")
-        self.limit = QSpinBox()
-        self.limit.setRange(1, 1000000)
-        self.limit.setValue(500)
+        self.limit = number_spin(1, 1_000_000, 5, value=500)
         self.limit.setSingleStep(500)
         self.limit.setToolTip("How many hits to keep before stopping")
         self.run = QPushButton("Search")

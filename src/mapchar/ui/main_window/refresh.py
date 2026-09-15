@@ -90,7 +90,7 @@ class RefreshMixin:
             self.raw.set_model(None)
             self.strings.set_rows([])
             self.nav_status.setText("")
-            self.offset_box.setText("")
+            self.offset_box.set_value(None)
             self._update_title()
             self._sync_capabilities()
             self._sync_steps()
@@ -105,7 +105,7 @@ class RefreshMixin:
         ):
             self._bounds = None
         self.whole_action.setEnabled(self._bounds is not None)
-        self.offset_box.setText(self._format_address(self._offset))
+        self.offset_box.set_value(self._offset)
         if not moved:
             self._sync_bars()
         tables = self._table_set()

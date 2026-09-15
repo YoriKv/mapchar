@@ -16,8 +16,11 @@ from mapchar.core.address import (
     PRESETS_BY_ID,
     BankLayout,
     SplitBankLayout,
+    format_address,
+    parse_address,
 )
-from mapchar.core.block import RangeSource
+from mapchar.core.block import PointerListSource, RangeSource
+from mapchar.core.numbers import format_hex_offset, parse_hex_offset
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.main_window.navigation import CUSTOM_ID
 from window_helpers import add_block, make_window, open_rom_and_table
@@ -151,6 +154,64 @@ def test_the_chosen_format_is_remembered(window, tmp_path, qtbot, monkeypatch):
     window.address_pick.setCurrentIndex(window.address_pick.findData("gb"))
     other = make_window(qtbot, monkeypatch)
     assert other.address_pick.currentData() == "gb"
+
+
+def test_an_address_reads_its_layout_then_flat_hex():
+    lorom = PRESETS_BY_ID["snes-lorom"].layout
+    assert format_address(0x10) == "000010"
+    assert format_address(0x10, lorom) == "$00:8010"
+    assert parse_address("$00:8010", lorom) == 0x10
+    assert parse_address("$10", lorom) == 0x10
+    assert parse_address("0x10") == 0x10
+    for unreadable in ("", "  ", "-10", "zz", "$00:8010"):
+        assert parse_address(unreadable) is None, unreadable
+
+
+def test_an_offset_is_signed_hex_with_an_optional_dollar():
+    assert [parse_hex_offset(t) for t in ("1F0", "$1F0", "-10", "-$10", "$-10")] == [
+        0x1F0,
+        0x1F0,
+        -0x10,
+        -0x10,
+        -0x10,
+    ]
+    assert format_hex_offset(0x1F0) == "1F0" and format_hex_offset(-0x10) == "-10"
+    for unreadable in ("", "-", "$", "1-2", "zz"):
+        with pytest.raises(ValueError):
+            parse_hex_offset(unreadable)
+
+
+def test_every_address_field_follows_the_address_format(window, tmp_path):
+    """The Reading bar's and the Hex panel's addresses are spelled as the
+    navigation bar spells a position, and re-spelled when its format changes."""
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", RangeSource(0x10, 0x20))
+    window._activate_entry(block)
+    bar, panel = window.reading_bar, window.hex_panel
+    assert (bar.start.text(), bar.stop.text()) == ("000010", "000020")
+    window.address_pick.setCurrentIndex(window.address_pick.findData("snes-lorom"))
+    assert (bar.start.text(), bar.stop.text()) == ("$00:8010", "$00:8020")
+    panel.goto.setText("$00:8004")
+    panel.goto.editingFinished.emit()
+    assert panel.goto.text() == "$00:8004" and panel.goto.value() == 4
+    bar.stop.setText("$00:8018")
+    bar.stop.editingFinished.emit()
+    assert block.config.source.stop == 0x18
+    window.address_pick.setCurrentIndex(window.address_pick.findData("hex"))
+    assert (bar.stop.text(), panel.goto.text()) == ("000018", "000004")
+
+
+def test_a_pointer_list_is_spelled_in_the_address_format(window, tmp_path):
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", PointerListSource((2, 4), 2))
+    window._activate_entry(block)
+    bar = window.reading_bar
+    assert bar.ptr_addresses.text() == "000002, 000004"
+    window.address_pick.setCurrentIndex(window.address_pick.findData("snes-lorom"))
+    assert bar.ptr_addresses.text() == "$00:8002, $00:8004"
+    bar.ptr_addresses.setText("$00:8002, 6")
+    bar.ptr_addresses.editingFinished.emit()
+    assert block.config.source.addresses == (2, 6)
 
 
 # --- the key filter --------------------------------------------------------
