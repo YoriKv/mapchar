@@ -158,14 +158,14 @@ def test_replace_all_is_code_aware_over_block_or_project(window, tmp_path):
     entry, first = block_with(window, tmp_path, data, stop=8)
     second = add_block(window, entry, "b2", RangeSource(0, 4))
     window._activate_entry(first)
-    assert first.doc.strings[0].original_text() == "A[line]B[end]"
+    assert first.doc.strings[0].original_text() == "A[line]\nB[end]"
 
     # "line" is inside a code and must not be touched.
     window._fr_replace_all("line", "X", True, False)
     assert first.doc.strings[0].translation is None
 
     window._fr_replace_all("[line]", "[end]", True, False)
-    assert first.doc.strings[0].translation == "A[end]B[end]"
+    assert first.doc.strings[0].translation == "A[end]\nB[end]"
     assert second.doc is None or not [
         r for r in (second.doc.strings or []) if r.translation
     ]
@@ -175,8 +175,8 @@ def test_replace_all_is_code_aware_over_block_or_project(window, tmp_path):
 
     # Project scope reaches the block that was never opened.
     window._fr_replace_all("A", "C", True, True)
-    assert first.doc.strings[0].translation == "C[line]B[end]"
-    assert second.doc.strings[0].translation == "C[line]B[end]"
+    assert first.doc.strings[0].translation == "C[line]\nB[end]"
+    assert second.doc.strings[0].translation == "C[line]\nB[end]"
     # Every block it touched has unsaved edits, and the lot undoes as one step:
     # both blocks go back to the untranslated state they were in together.
     assert first.dirty and second.dirty

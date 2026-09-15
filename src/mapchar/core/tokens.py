@@ -30,6 +30,8 @@ class Token:
     fallback: bool = False
     """Bits a frame consumed silently: the fallback bits that closed it, or
     the count that opened it. Shown as nothing."""
+    newline: bool = False
+    """The block's line code: a line break follows it wherever it is shown."""
 
     def encoded_bits(self) -> str:
         """Every bit this token stands for, operands included."""
@@ -74,6 +76,13 @@ def escape_text(text: str) -> str:
 
 
 def render_token(token: Token) -> str:
+    text = _render(token)
+    if token.newline and not text.endswith("\n"):
+        return text + "\n"
+    return text
+
+
+def _render(token: Token) -> str:
     entry = token.entry
     if token.fallback:
         return ""

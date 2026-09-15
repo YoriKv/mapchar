@@ -5,6 +5,7 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
+    Lines,
     Pascal,
     PointerListSource,
     RangeSource,
@@ -35,6 +36,14 @@ def test_strings_per_pointer():
         TS,
     )
     assert texts(ex) == ["A[end]B[end]", "C[end]"]
+
+
+def test_lines():
+    """Two line codes per string; an end token ends one early."""
+    data = bytes.fromhex("41 FE 42 FE 43 FE 00 41 FE")
+    ex = extract(data, BlockConfig(RangeSource(0, 9), Lines(2), "main"), TS)
+    assert texts(ex) == ["A[line]\nB[line]\n", "C[line]\n[end]", "A[line]\n"]
+    assert [(s.start, s.end) for s in ex.strings] == [(0, 4), (4, 7), (7, 9)]
 
 
 def test_realign():

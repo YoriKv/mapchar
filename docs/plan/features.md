@@ -502,9 +502,16 @@ as a **Range** of end-token strings — rather than every control at once.
   - **Length prefix** — a `1–4`-byte prefix, little- or big-endian when wider
     than one byte, counting bytes or token weights (**Counts tokens**);
   - **Next pointer** — at the next pointer's target (pointer sources only;
-    the last string ends at an end token or `stop`).
+    the last string ends at an end token or `stop`);
+  - **Lines** — after `N` line codes, or earlier at an end token: a message
+    the game reads as a fixed number of terminated lines, with no end of its
+    own. A translation must hold exactly `N`.
 - **Ends per string** — how many end tokens one string runs through before
   it ends (Cartographer's strings per pointer).
+- **Line code** — `[line]`, or the block's own label (`line_label=` in the
+  config line). A token that is this code, or whose table text ends in it,
+  renders with a line break after it everywhere text is shown, so table text
+  needs no `\n` for it; the break is dropped on insert as any line break is.
 - **Realign** — after each end token, round the position up to a multiple of
   `M` plus `O`.
 - **Skip ranges** — `from → to` pairs: reading a string's bytes reaches `from`

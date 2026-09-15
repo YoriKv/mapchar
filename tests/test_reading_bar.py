@@ -10,6 +10,7 @@ from helpers import pointer_rom
 from mapchar.core.block import (
     BlockConfig,
     FixedLength,
+    Lines,
     NextPointer,
     Pascal,
     PointerTableSource,
@@ -433,6 +434,19 @@ def test_a_length_prefix_wider_than_a_byte_has_a_byte_order(window, tmp_path):
     assert block.config.string_type == Pascal(2, False, "big")
     bar.pascal_tokens.setChecked(True)
     assert block.config.string_type == Pascal(2, True, "big")
+
+
+def test_lines_shows_a_count(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", RangeSource(0x10, 0x15))
+    window.show()
+    bar = window.reading_bar
+    assert not bar._groups["lines"].isVisibleTo(window)
+    select_data(bar.string_type, "lines")
+    assert bar._groups["lines"].isVisibleTo(window)
+    assert not bar._groups["spp"].isVisibleTo(window)
+    bar.lines.setValue(8)
+    assert block.config.string_type == Lines(8)
 
 
 def test_the_writing_section_says_what_a_blank_bound_and_automatic_mean(

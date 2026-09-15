@@ -64,7 +64,7 @@ carries no meaning.
 0041=あ
 %01=x
 /FF=[end]
-FE=[line]\n
+FE=[line]
 $F0=[color],u8
 !F1=[item] @items:1
 !F2=[name] @names:*
@@ -153,7 +153,9 @@ is:
   (`40=[FB]\n＊「`) and is then matched as a code by the encoder too.
 - In table text and in scripts, a literal bracket is written `\[` or `\]`.
   The other escapes are `\n` (a line break: emitted after the token on dump,
-  ignored on insert, so dumps stay re-insertable) and `\\`.
+  ignored on insert, so dumps stay re-insertable) and `\\`. A block's line
+  code — `[line]` unless the block names another — breaks the line without
+  one, so `FE=[line]` and `80=A[line]` need no `\n`.
 - Text is NFC: an entry's text is composed when the file loads and written
   back composed. The encoder compares text decomposed, so a table that spells
   `が` in one entry and one that spells it as `か` plus a separate dakuten code

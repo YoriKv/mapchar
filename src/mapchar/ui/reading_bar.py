@@ -43,6 +43,7 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
+    Lines,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -72,7 +73,7 @@ _SOURCE_NAMES = {
     LIST: "Pointer list",
 }
 
-END, FIXED_LENGTH, PASCAL, NEXT = "end", "fixed", "pascal", "next"
+END, FIXED_LENGTH, PASCAL, NEXT, LINES = "end", "fixed", "pascal", "next", "lines"
 """The string types, as the String type picker's data."""
 
 SECTIONS = {
@@ -92,6 +93,7 @@ SECTIONS = {
         "stop_at_end",
         "pascal",
         "spp",
+        "lines",
         "realign",
         "skips",
         "line_length",
@@ -338,8 +340,10 @@ class ReadingBar(WrapBar):
             ("Fixed length", FIXED_LENGTH),
             ("Length prefix", PASCAL),
             ("Next pointer", NEXT),
+            ("Lines", LINES),
         ):
             self.string_type.addItem(label, data)
+        self.lines = number_spin(1, 1000, 2)
         self.fixed_length = number_spin(1, 1_000_000, 3)
         self.stop_at_end = QCheckBox("Stop at end token")
         self.stop_at_end.setToolTip("End earlier at an end token")
@@ -436,6 +440,7 @@ class ReadingBar(WrapBar):
                 (self.spp,),
                 "End tokens one string runs through before it ends",
             ),
+            ("lines", "Lines", (self.lines,), "Line codes one string holds"),
             (
                 "realign",
                 "Realign",
@@ -495,6 +500,7 @@ class ReadingBar(WrapBar):
             ("fixed_length", self.fixed_length),
             ("pascal_width", self.pascal_width),
             ("spp", self.spp),
+            ("lines", self.lines),
             ("realign_m", self.realign_m),
             ("realign_o", self.realign_o),
             ("line_length", self.line_length),
@@ -618,6 +624,9 @@ class ReadingBar(WrapBar):
                 self.pascal_tokens.setChecked(st.counts_tokens)
             elif isinstance(st, NextPointer):
                 kind = NEXT
+            elif isinstance(st, Lines):
+                kind = LINES
+                self.lines.setValue(st.count)
             self.string_type.setCurrentIndex(self.string_type.findData(kind))
             self.spp.setValue(config.strings_per_pointer)
             self.realign_m.setValue(config.realign[0])
@@ -723,6 +732,7 @@ class ReadingBar(WrapBar):
             "stop_at_end": st == FIXED_LENGTH,
             "pascal": st == PASCAL,
             "spp": st == END,
+            "lines": st == LINES,
             "realign": True,
             "line_length": st == FIXED_LENGTH,
             "show_end": st == FIXED_LENGTH,
@@ -826,6 +836,8 @@ class ReadingBar(WrapBar):
             )
         if st == NEXT and self._pointers:
             return NextPointer()
+        if st == LINES:
+            return Lines(self.lines.value())
         return EndToken()
 
     def spare_room_rule(self) -> str:

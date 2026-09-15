@@ -7,6 +7,7 @@ and encode engines run over a table set, never over a file.
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -238,6 +239,24 @@ class Entry:
     @property
     def is_end(self) -> bool:
         return self.kind is TokenKind.END
+
+    def is_newline(self, label: str) -> bool:
+        """Whether this entry is the line code ``[label]``: a code with that
+        label, or text that ends in it. Every rendering breaks the line after
+        such a token, without a ``\\n`` in its text."""
+        if not label:
+            return False
+        if self.kind is TokenKind.CODE:
+            return self.text == label
+        if self.kind in (TokenKind.TEXT, TokenKind.END, TokenKind.SWITCH):
+            return _line_code(label).search(self.text) is not None
+        return False
+
+
+@functools.lru_cache(maxsize=16)
+def _line_code(label: str) -> re.Pattern[str]:
+    """``[label]`` at the end of a text, line-break escapes aside."""
+    return re.compile(r"\[" + re.escape(label) + r"\](?:\\n)*$")
 
 
 def sanitize_id(text: str) -> str:

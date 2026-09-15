@@ -10,6 +10,7 @@ from mapchar.core.block import (
     EndToken,
     Extraction,
     FixedLength,
+    Lines,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -225,11 +226,14 @@ def _decode_pascal(bits, config, tables, start, stop_bit, st: Pascal):
 
 def _rules(config: BlockConfig, limit_bit: int, end_terminated: bool) -> DecodeRules:
     m, o = config.realign
+    st = config.string_type
     return DecodeRules(
         end_terminated=end_terminated,
         limit_bit=limit_bit,
         skips=tuple((a * 8, b * 8) for a, b in config.skips),
         realign=(m * 8, o * 8),
+        line_label=config.line_label,
+        max_lines=st.count if isinstance(st, Lines) else 0,
     )
 
 
@@ -268,6 +272,9 @@ def decode_one(
         return _decode_fixed(bits, config, tables, start, limit)
     if isinstance(st, Pascal):
         return _decode_pascal(bits, config, tables, start, stop_bit, st)
+    if isinstance(st, Lines):
+        r = decode(bits, tables, start, _rules(config, stop_bit, True))
+        return r.tokens, r.end_bit, r.notices
     return _decode_terminated(bits, config, tables, start, stop_bit)
 
 

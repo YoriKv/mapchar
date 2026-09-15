@@ -48,10 +48,11 @@ done well.[end]
   block, its byte extent on disk (exclusive end), and the addresses of every
   pointer that reaches it (none for a range source).
 - **Content lines** between `@string` directives are the string's text. Line
-  breaks are joined with nothing; a `\n` in a token's table text is what puts
-  a line break after it on dump, so `[line]` codes end lines and the text
-  re-imports unchanged. A content line starting with `@`, `#` or `\` is
-  written `\@`, `\#`, `\\`.
+  breaks are joined with nothing; a line break follows the block's line code
+  (`[line]`, [features.md](features.md#blocks)) and any token whose table
+  text holds `\n`, so `[line]` codes end lines and the text re-imports
+  unchanged. A content line starting with `@`, `#` or `\` is written `\@`,
+  `\#`, `\\`.
 - **Comment lines** inside a string are the **original** when the dump was
   made with *both*; import ignores them.
 - **Dump modes** — *originals* (content is the original decode), *translations*

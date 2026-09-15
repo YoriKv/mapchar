@@ -56,7 +56,8 @@ class Shown:
     lines stay where they were. Unknown is what matched no entry, shown
     ``[$XX]`` — or ``[%bits]`` for a tail shorter than a byte.
 
-    An end token ends its line, whether or not its table text breaks it.
+    An end token ends its line, whether or not its table text breaks it; so
+    does the block's line code, which renders with its break.
     """
 
     codes: bool = True

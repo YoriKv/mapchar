@@ -190,6 +190,9 @@ replication notes rather than to abcde's behaviour:
 - **End** — an end token ends the string in end-terminated rules, after
   which realignment applies. `strings_per_pointer` runs the machine that
   many times, restarting in the start table.
+- **Lines** — a token that is the rules' `line_label` code (`[line]`) is
+  marked `newline`, and renders with a line break; with `max_lines` set (the
+  *Lines* string type) the string ends after that many.
 - **Limits** — the tighter of the string rule's limit and the block's
   bound. Reaching the end of data ends the string with a notice, never an
   error.

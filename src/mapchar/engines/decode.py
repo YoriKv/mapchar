@@ -35,6 +35,7 @@ class EndedBy(Enum):
     LIMIT = "limit"
     DATA = "data"
     RETURN = "return"
+    LINES = "lines"
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,10 @@ class DecodeRules:
     """``(from_bit, to_bit)``: reading ``from_bit`` continues at ``to_bit``."""
     realign: tuple[int, int] = (0, 0)
     """``(multiple, offset)`` in bits, applied after an end token."""
+    line_label: str = "line"
+    """The block's line code; a token that is one renders with a line break."""
+    max_lines: int = 0
+    """Stop after this many line codes (0: never)."""
 
 
 @dataclass
@@ -87,6 +92,7 @@ def decode(
     root = _Frame(tables.start.id, tables.start, Stop(), False, None)
     stack: list[_Frame] = [root]
     pos = _follow_skips(start_bit, skips)
+    lines = 0
 
     def window(at: int, n: int) -> str:
         """``n`` bits from ``at``, spliced across skip ranges, cut at the limit."""
@@ -185,7 +191,12 @@ def decode(
                         offset=start // 8,
                     )
                 )
-        tokens.append(Token(entry.bits, start, pos, entry, operands, frame.table_id))
+        newline = entry.is_newline(rules.line_label)
+        tokens.append(
+            Token(
+                entry.bits, start, pos, entry, operands, frame.table_id, newline=newline
+            )
+        )
 
         # 4. Count the match in this frame, and beneath it while shared.
         _count(stack, entry.weight)
@@ -198,6 +209,11 @@ def decode(
         if entry.kind is TokenKind.END and rules.end_terminated:
             pos = _realign(pos, rules.realign)
             return DecodeResult(tokens, pos, EndedBy.END_TOKEN, notices)
+        if newline:
+            lines += 1
+            if rules.max_lines and lines >= rules.max_lines:
+                _pop_finished(stack)
+                return DecodeResult(tokens, pos, EndedBy.LINES, notices)
         if entry.kind is TokenKind.SWITCH:
             _pop_finished(stack)
             # Innermost last, so the first parameter runs first.

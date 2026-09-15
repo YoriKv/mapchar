@@ -14,6 +14,7 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
+    Lines,
     Pascal,
     StringRecord,
     WriteMode,
@@ -95,6 +96,8 @@ def encode_string(
         elif isinstance(st, Pascal):
             payload = encode(text, tables, end_terminated=False)
             body = _pascal(payload.data, st, payload, text, tables)
+        elif isinstance(st, Lines):
+            body = _encode_lines(text, config, tables, st)
         else:
             result = encode(
                 text, tables, end_terminated=True, ends=config.strings_per_pointer
@@ -105,6 +108,22 @@ def encode_string(
     except EncodeError as exc:
         return Encoded(rec.index, b"", Problem(rec.index, str(exc)))
     return Encoded(rec.index, body)
+
+
+def _encode_lines(text: str, config: BlockConfig, tables: TableSet, st: Lines) -> bytes:
+    """A string of ``st.count`` line codes: the game reads that many lines, so
+    the translation must hold exactly as many, whatever else it holds."""
+    r = encode(text, tables, end_terminated=False)
+    rules = DecodeRules(
+        end_terminated=False, limit_bit=len(r.bits), line_label=config.line_label
+    )
+    lines = sum(t.newline for t in decode(Bits(r.data), tables, 0, rules).tokens)
+    if lines != st.count:
+        raise EncodeError(
+            f"the translation holds {lines} [{config.line_label}] code(s); "
+            f"the block reads {st.count} per string"
+        )
+    return r.data
 
 
 def _encode_fixed(text: str, config: BlockConfig, tables: TableSet) -> bytes:

@@ -7,6 +7,7 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
+    Lines,
     RangeSource,
     WriteMode,
 )
@@ -43,6 +44,12 @@ def test_config_roundtrip():
     spec = format_config(cfg)
     assert parse_config(spec) == cfg
     assert "type=fixed:8:stop" in spec and "mode=slotted" in spec
+
+
+def test_lines_config():
+    cfg = BlockConfig(RangeSource(0, 8), Lines(8), "main", line_label="br")
+    spec = format_config(cfg)
+    assert "type=lines:8" in spec and parse_config(spec) == cfg
 
 
 def test_write_and_parse():

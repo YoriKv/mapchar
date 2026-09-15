@@ -5,6 +5,7 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
+    Lines,
     Pascal,
     PointerListSource,
     RangeSource,
@@ -85,6 +86,16 @@ def test_pascal():
     )
     res, out = relayout(data, cfg, TS, {0: "A"})
     assert res.ok and out == bytes.fromhex("01 41 01 43 EE")
+
+
+def test_lines():
+    data = bytes.fromhex("41 FE 42 FE 43 FE 41 FE")
+    cfg = BlockConfig(RangeSource(0, 8), Lines(2), "main", fill=0xEE)
+    res, out = relayout(data, cfg, TS, {0: "B[line]\n[line]"})
+    assert res.ok and out == bytes.fromhex("42 FE FE EE 43 FE 41 FE")
+    res, out = relayout(data, cfg, TS, {1: "A[line]"})
+    assert not res.ok
+    assert "holds 1 [line] code(s); the block reads 2" in res.problems[0].message
 
 
 def test_untouched_strings_write_original_bytes():

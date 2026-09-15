@@ -9,6 +9,7 @@ from mapchar.core.bits import Bits
 from mapchar.core.block import (
     EndToken,
     FixedLength,
+    Lines,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -60,6 +61,7 @@ _KIND_NAMES = {
     FixedLength: "Fixed length",
     Pascal: "Pascal (length prefix)",
     NextPointer: "Next pointer",
+    Lines: "Lines",
 }
 """What the block bar calls a source or string type: the Block dialog's words
 for it, never the class name."""

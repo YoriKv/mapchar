@@ -31,7 +31,23 @@ def run(ab_entry: str, data: bytes = DATA, **rules) -> tuple[str, EndedBy]:
 
 
 def test_plain_text():
-    assert run("AB=[line]") == ("[line]foobar[line]cat", EndedBy.DATA)
+    assert run("AB=[line]") == ("[line]\nfoobar[line]\ncat", EndedBy.DATA)
+
+
+def test_the_line_code_breaks_the_line_once():
+    """The block's line code renders with a line break, by label: text that
+    ends in it too, and only one break where the table text already holds one."""
+    assert run("AB=x[line]")[0] == "x[line]\nfoobar" + "x[line]\ncat"
+    assert run("AB=[line]\\n")[0] == "[line]\nfoobar[line]\ncat"
+    assert run("AB=[line]", line_label="br")[0] == "[line]foobar[line]cat"
+    assert run("AB=[br]", line_label="br")[0] == "[br]\nfoobar[br]\ncat"
+    assert run("AB=[line]", line_label="")[0] == "[line]foobar[line]cat"
+
+
+def test_max_lines_ends_the_string():
+    text, ended = run("AB=[line]", max_lines=2)
+    assert (text, ended) == ("[line]\nfoobar[line]\n", EndedBy.LINES)
+    assert run("AB=[line]", max_lines=3) == ("[line]\nfoobar[line]\ncat", EndedBy.DATA)
 
 
 def test_raw_count_switch():

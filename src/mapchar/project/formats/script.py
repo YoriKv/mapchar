@@ -14,6 +14,7 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
+    Lines,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -112,6 +113,8 @@ def format_config(config: BlockConfig) -> str:
         )
     elif isinstance(st, NextPointer):
         parts.append("type=next")
+    elif isinstance(st, Lines):
+        parts.append(f"type=lines:{st.count}")
     parts.append(f"table={config.table_id}")
     if config.strings_per_pointer != 1:
         parts.append(f"spp={config.strings_per_pointer}")
@@ -234,6 +237,8 @@ def parse_config(spec: str) -> BlockConfig:
         )
     elif type_spec[0] == "next":
         string_type = NextPointer()
+    elif type_spec[0] == "lines":
+        string_type = Lines(int(type_spec[1]))
     else:
         raise ValueError(f"unknown string type {type_spec[0]!r}")
     realign = (0, 0)

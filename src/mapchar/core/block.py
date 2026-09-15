@@ -110,7 +110,14 @@ class NextPointer:
     """The string ends at the next pointer's target."""
 
 
-StringType = EndToken | FixedLength | Pascal | NextPointer
+@dataclass(frozen=True)
+class Lines:
+    """The string ends after ``count`` line codes, or at an end token."""
+
+    count: int = 1
+
+
+StringType = EndToken | FixedLength | Pascal | NextPointer | Lines
 
 
 class WriteMode(Enum):
