@@ -69,7 +69,7 @@ def load_table_text(
     """Load a table file in the given dialect, or the detected one."""
     if dialect is None:
         dialect, _ = detect_dialect(text)
-    default_id = _id_from_path(path)
+    default_id = table_id_for(path)
     if dialect == "native":
         return parse_native(text, path, default_id)
     readers: dict[str, Callable[..., TableFile]] = {
@@ -85,13 +85,24 @@ def load_table_text(
     return result
 
 
-def _id_from_path(path: str | None) -> str:
+def table_id_for(path: str | None) -> str:
+    """The name a table file without a ``@table`` line gives its table."""
     if not path:
         return "table"
     name = path.replace("\\", "/").rsplit("/", 1)[-1]
     if "." in name:
         name = name.rsplit(".", 1)[0]
     return sanitize_id(name) or "table"
+
+
+def free_table_id(table_id: str, taken) -> str:
+    """``table_id``, numbered up (``main_2``) until it is not in ``taken``."""
+    if table_id not in taken:
+        return table_id
+    n = 2
+    while f"{table_id}_{n}" in taken:
+        n += 1
+    return f"{table_id}_{n}"
 
 
 _CODE_IN_TEXT = re.compile(r"\[([^\[\]]+)\]")
@@ -262,7 +273,7 @@ def read_romjuice(
         except TableError as exc:
             note(n, f"{exc.message}; entry dropped")
 
-    tables = [table]
+    extra: list[Table] = []
     for tid, refs in kanji.items():
         base = refs[0][1]
         kt = Table(tid)
@@ -272,8 +283,8 @@ def read_romjuice(
                 kt.add(Entry(format(b, "08b"), TokenKind.TEXT, legacy_text(text_value)))
         if not kt.entries:
             notices.append(Notice(f"kanji table {tid} has no entries", Level.WARNING))
-        tables.append(kt)
-    return TableFile(tables, notices, "romjuice")
+        extra.append(kt)
+    return TableFile(table, notices, "romjuice", extra)
 
 
 # --- Cartographer PR3 -----------------------------------------------------
@@ -319,7 +330,7 @@ def read_cartographer(
         else:
             raise TableError("line must start with a hex digit, '/' or '$'", path, n)
         _add_or_note(table, entry, n, notices)
-    return TableFile([table], notices, "cartographer")
+    return TableFile(table, notices, "cartographer")
 
 
 def _even_key(key: str, path: str | None, n: int) -> str:
@@ -393,7 +404,7 @@ def read_atlas(
             raise TableError("not a table entry", path, n)
         bits = _even_key(key, path, n)
         _add_or_note(table, Entry(bits, TokenKind.TEXT, legacy_text(value)), n, notices)
-    result = TableFile([table], notices, "atlas")
+    result = TableFile(table, notices, "atlas")
     result.end_marker = end_marker
     return result
 
@@ -457,7 +468,12 @@ def read_abcde(
         current.add(entry)
     if not tables:
         tables.append(Table(default_id))
-    return TableFile(tables, notices, "abcde")
+    first, *extra = tables
+    for t in extra:
+        notices.append(
+            Notice(f"table {t.id!r} split from the file into its own entry", Level.INFO)
+        )
+    return TableFile(first, notices, "abcde", extra)
 
 
 def _abcde_switch(

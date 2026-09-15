@@ -62,7 +62,7 @@ class RelativeSearchMixin:
             )
             == QMessageBox.StandardButton.Yes
         ):
-            table = next(t for t in target.tables if t.id == table_id)
+            table = target.table
             added = 0
             for entry in entries:
                 if entry.bits not in table.entries:

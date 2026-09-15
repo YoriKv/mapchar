@@ -42,11 +42,17 @@ _PARAM = re.compile(
 
 @dataclass
 class TableFile:
-    """The result of loading one file: its tables in order, plus notices."""
+    """The result of loading one file: its table, plus notices."""
 
-    tables: list[Table]
+    table: Table
     notices: list[Notice] = field(default_factory=list)
     dialect: str = "native"
+    extra_tables: list[Table] = field(default_factory=list)
+    """Tables a legacy conversion made beyond the file's own.
+
+    A romjuice kanji entry generates a table, and an abcde file may hold several;
+    each becomes a table entry of its own, with no file until it is saved.
+    """
     encoding: str = "utf-8"
     """The encoding the file was decoded as; a legacy table is often
     ``cp932`` (:func:`mapchar.core.text.read_text_any` decides)."""
@@ -57,6 +63,11 @@ class TableFile:
     script dumped for that table has to spell it the same way; no other dialect
     sets this.
     """
+
+    @property
+    def tables(self) -> list[Table]:
+        """The file's own table, then every extra one."""
+        return [self.table, *self.extra_tables]
 
 
 def is_native(text: str) -> bool:
@@ -72,17 +83,11 @@ def is_native(text: str) -> bool:
 def parse_native(
     text: str, path: str | None = None, default_id: str = "table"
 ) -> TableFile:
-    tables: list[Table] = []
-    current: Table | None = None
+    """The one table a native file holds, named ``default_id`` unless a
+    ``@table`` line names it."""
+    table = Table(default_id)
     seen_header = False
-
-    def table_for_entries(line_no: int) -> Table:
-        nonlocal current
-        if current is None:
-            current = Table(default_id)
-            tables.append(current)
-        return current
-
+    named = False
     for n, raw in enumerate(split_lines(text), start=1):
         line = raw.rstrip("\n")
         stripped = line.strip()
@@ -101,14 +106,14 @@ def parse_native(
                 arg = nfc(arg)
                 if not ID_PATTERN.fullmatch(arg):
                     raise TableError(f"invalid table id {arg!r}", path, n)
-                if any(t.id == arg for t in tables):
-                    raise TableError(f"table {arg!r} defined twice", path, n)
-                current = Table(arg)
-                tables.append(current)
+                if named:
+                    raise TableError("a table file holds one table", path, n)
+                table.id = arg
+                named = True
             elif keyword == "charset":
                 if not arg:
                     raise TableError("@charset needs a name", path, n)
-                table_for_entries(n).charset = arg
+                table.charset = arg
             elif keyword == "mapchar":
                 raise TableError("header repeated", path, n)
             else:
@@ -119,12 +124,12 @@ def parse_native(
         except ValueError as exc:
             raise TableError(str(exc), path, n) from None
         try:
-            table_for_entries(n).add(entry)
+            table.add(entry)
         except TableError as exc:
             raise TableError(exc.message, path, n) from None
     if not seen_header:
         raise TableError(f"missing {HEADER!r} header", path)
-    return TableFile(tables)
+    return TableFile(table)
 
 
 def parse_key(key: str) -> str:
@@ -241,15 +246,11 @@ def format_entry(entry: Entry) -> str:
     return f"!{key}={entry.text} {params}"
 
 
-def write_native(tables: list[Table]) -> str:
-    lines = [HEADER]
-    for table in tables:
-        lines.append("")
-        lines.append(f"@table {table.id}")
-        if table.charset != "none":
-            lines.append(f"@charset {table.charset}")
-        for entry in table.sorted_entries():
-            lines.append(format_entry(entry))
+def write_native(table: Table) -> str:
+    lines = [HEADER, f"@table {table.id}"]
+    if table.charset != "none":
+        lines.append(f"@charset {table.charset}")
+    lines.extend(format_entry(entry) for entry in table.sorted_entries())
     return "\n".join(lines) + "\n"
 
 

@@ -12,7 +12,7 @@ from mapchar.core.table import Table, TokenKind
 from mapchar.pipeline.extract import extract
 from mapchar.project.projectfile import load_project, project_dict, save_project
 from mapchar.project.tables import (
-    adopt_tables,
+    adopt_table,
     capture_overlay,
     fold_overlay,
     overlay_of,
@@ -368,31 +368,33 @@ def _abc_table(text: str = "A") -> Table:
     return table
 
 
-def test_an_overlay_is_what_the_tables_say_over_what_the_file_said():
-    file_tables = [_abc_table()]
-    live = [_abc_table("Z")]
-    live[0].add(TableEntry("01000010", TokenKind.TEXT, "B"))
-    live[0].remove("00000000")
-    assert overlay_of(file_tables, live) == {
-        "main": {"01000001": "41=Z", "01000010": "42=B", "00000000": None}
+def test_an_overlay_is_what_the_table_says_over_what_the_file_said():
+    live = _abc_table("Z")
+    live.add(TableEntry("01000010", TokenKind.TEXT, "B"))
+    live.remove("00000000")
+    assert overlay_of(_abc_table(), live) == {
+        "01000001": "41=Z",
+        "01000010": "42=B",
+        "00000000": None,
     }
-    # A table the file has not got at all is carried whole.
-    assert overlay_of([], [_abc_table()]) == {
-        "main": {"01000001": "41=A", "00000000": "/00=[end]"}
+    # A table with no file is carried whole.
+    assert overlay_of(None, _abc_table()) == {
+        "01000001": "41=A",
+        "00000000": "/00=[end]",
     }
-    assert overlay_of(file_tables, [_abc_table()]) == {}
+    assert overlay_of(_abc_table(), _abc_table()) == {}
 
 
 def test_a_table_entry_carries_its_edits_over_a_save_and_lays_them_back(tmp_path):
     """The promise of the overlay: the table file on disk is untouched, and the
     project puts the edits back over it when it is read again."""
     entry = Entry(EntryKind.TABLE, "main.tbl", str(tmp_path / "main.tbl"))
-    adopt_tables(entry, [_abc_table()])
+    adopt_table(entry, _abc_table())
     assert entry.table_overlay == {}
-    entry.tables[0].add(TableEntry("01000010", TokenKind.TEXT, "B"))
-    entry.tables[0].remove("00000000")
+    entry.table.add(TableEntry("01000010", TokenKind.TEXT, "B"))
+    entry.table.remove("00000000")
     capture_overlay(entry)
-    assert entry.table_overlay == {"main": {"01000010": "42=B", "00000000": None}}
+    assert entry.table_overlay == {"01000010": "42=B", "00000000": None}
 
     proj = tmp_path / "p.mapchar"
     save_project(str(proj), [entry], None)
@@ -401,41 +403,38 @@ def test_a_table_entry_carries_its_edits_over_a_save_and_lays_them_back(tmp_path
     assert back.table_overlay == entry.table_overlay
     # Reading the file again lays them straight back on: the file still says A
     # and [end], the entry says A and B.
-    adopt_tables(back, [_abc_table()])
-    assert sorted(back.tables[0].entries) == ["01000001", "01000010"]
-    assert back.table_overlay == entry.table_overlay  # unspent until Save Table
+    adopt_table(back, _abc_table())
+    assert sorted(back.table.entries) == ["01000001", "01000010"]
+    assert back.table_overlay == entry.table_overlay  # unspent until Save As File
 
 
 def test_a_table_with_no_file_is_carried_whole_and_read_back(tmp_path):
     entry = Entry(EntryKind.TABLE, "new.tbl", None, dialect="native")
-    entry.tables = [_abc_table()]
+    entry.table = _abc_table()
     capture_overlay(entry)
     proj = tmp_path / "p.mapchar"
     save_project(str(proj), [entry], None)
+    # Nothing to read: the load makes the table from its name and the overlay.
     back = load_project(str(proj)).entries[0]
-    adopt_tables(back, [])  # nothing to read: the overlay is the whole table
-    assert [t.id for t in back.tables] == ["main"]
-    assert back.tables[0].entries["01000001"].text == "A"
+    assert back.table.id == "main" and back.file_table is None
+    assert back.table.entries["01000001"].text == "A"
 
 
 def test_folding_the_overlay_empties_it(tmp_path):
     entry = Entry(EntryKind.TABLE, "main.tbl", str(tmp_path / "main.tbl"))
-    adopt_tables(entry, [_abc_table()])
-    entry.tables[0].add(TableEntry("01000010", TokenKind.TEXT, "B"))
+    adopt_table(entry, _abc_table())
+    entry.table.add(TableEntry("01000010", TokenKind.TEXT, "B"))
     capture_overlay(entry)
-    fold_overlay(entry)  # what Save As Native leaves behind
+    fold_overlay(entry)  # what Save As File leaves behind
     assert entry.table_overlay == {}
-    assert sorted(t.entries for t in entry.file_tables) == sorted(
-        t.entries for t in entry.tables
-    )
+    assert entry.file_table.entries == entry.table.entries
 
 
 def test_a_line_the_overlay_can_no_longer_parse_is_skipped(tmp_path):
     entry = Entry(EntryKind.TABLE, "main.tbl", str(tmp_path / "main.tbl"))
-    entry.table_overlay = {"main": {"01000010": "nonsense!!"}, "?bad id": {}}
-    adopt_tables(entry, [_abc_table()])
-    assert sorted(entry.tables[0].entries) == ["00000000", "01000001"]
-    assert [t.id for t in entry.tables] == ["main"]
+    entry.table_overlay = {"01000010": "nonsense!!"}
+    adopt_table(entry, _abc_table())
+    assert sorted(entry.table.entries) == ["00000000", "01000001"]
 
 
 def test_a_bookmark_can_never_be_the_restored_current_entry(tmp_path):

@@ -556,7 +556,8 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
             lines.append("double-click to jump")
         if entry.kind is EntryKind.TABLE:
             lines.append(f"dialect: {entry.dialect or 'native'}")
-            lines.append("tables: " + ", ".join(t.id for t in entry.tables))
+            if entry.table is not None:
+                lines.append(f"table: @{entry.table.id}")
         if entry.dirty:
             lines.append("unsaved edits")
         if why:

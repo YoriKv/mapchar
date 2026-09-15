@@ -289,7 +289,7 @@ def test_table_editor_shift_and_fill(window, tmp_path, monkeypatch):
     from mapchar.core.table import Table
 
     table = Table("t")
-    entry = Entry(EntryKind.TABLE, "t.tbl", None, dialect="native", tables=[table])
+    entry = Entry(EntryKind.TABLE, "t.tbl", None, dialect="native", table=table)
     window._push_add(entry)
     editor = window.table_editor
     editor.set_entry(entry)
@@ -497,7 +497,7 @@ def test_table_reload_and_container_info(window, tmp_path, monkeypatch):
     assert str(tbl) in window.table_watcher.files()
     tbl.write_text(TABLE + "43=C\n")
     window.reload_table(table_entry)
-    assert "01000011" in table_entry.tables[0].entries
+    assert "01000011" in table_entry.table.entries
     shown = []
     from mapchar.ui.dialogs import TextDialog
 
@@ -773,6 +773,7 @@ ALWAYS_ON = frozenset(
     {
         "Open ROM…",
         "Open Table…",
+        "New Table…",
         "Open Font…",
         "Write All",
         "New Project",
@@ -1142,7 +1143,7 @@ def test_a_dialog_nobody_arranged_for_answers_itself(window):
 
 def test_an_in_app_table_edit_is_carried_by_the_project(window, tmp_path):
     """A table edit changes the project, never the table file: the file other
-    tools read keeps saying what it said until Save Table folds the overlay in."""
+    tools read keeps saying what it said until Save As File folds the overlay in."""
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
     open_rom_and_table(window, tmp_path, data)
     table_entry = window.workspace.of_kind(EntryKind.TABLE)[0]
@@ -1153,9 +1154,9 @@ def test_an_in_app_table_edit_is_carried_by_the_project(window, tmp_path):
     editor.set_entry(table_entry)
     editor.new_line.setText("43=C")
     editor._add()
-    assert "01000011" in table_entry.tables[0].entries
+    assert "01000011" in table_entry.table.entries
     assert tbl.read_text() == on_disk  # the file is untouched
-    assert table_entry.table_overlay == {"main": {"01000011": "43=C"}}
+    assert table_entry.table_overlay == {"01000011": "43=C"}
 
     # The edit is project state, so the project reads unsaved until it is saved.
     proj = tmp_path / "p.mapchar"
@@ -1169,16 +1170,16 @@ def test_an_in_app_table_edit_is_carried_by_the_project(window, tmp_path):
     window._new_project()
     assert window.open_project(str(proj))
     back = window.workspace.of_kind(EntryKind.TABLE)[0]
-    assert {"01000011", "01000100"} <= set(back.tables[0].entries)
+    assert {"01000011", "01000100"} <= set(back.table.entries)
 
     # A reload from disk picks up what changed there and keeps the edits on top.
     tbl.write_text(on_disk + "45=E\n")
     window.reload_table(back)
-    keys = set(back.tables[0].entries)
+    keys = set(back.table.entries)
     assert "01000101" in keys and {"01000011", "01000100"} <= keys
     assert back.table_overlay  # still unspent
 
-    # Save As Native writes them out, and the overlay is spent.
+    # Save As File writes them out, and the overlay is spent.
     window._save_table_entry(back)
     assert back.table_overlay == {}
     assert "43=C" in tbl.read_text()
@@ -1200,7 +1201,70 @@ def test_a_table_with_no_file_is_saved_whole_in_the_project(window, tmp_path):
     assert window.open_project(str(proj))
     back = window.workspace.entry_for_table("extra")
     assert back is not None and back.path is None
-    assert back.tables[0].entries["01000001"].text == "A"
+    assert back.table.entries["01000001"].text == "A"
+
+
+# --- new tables ----------------------------------------------------------------
+
+
+def test_new_table_writes_an_empty_native_file_and_opens_it(
+    window, tmp_path, monkeypatch
+):
+    from mapchar.project.formats.table_native import HEADER
+
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    (tmp_path / "sub").mkdir()
+    path = tmp_path / "sub" / "main.tbl"
+    monkeypatch.setattr(window, "_pick_save", lambda *a, **k: str(path))
+    entry = window._new_table_dialog()
+    # Named for its file, numbered up past the table already called that.
+    assert entry is not None and entry.table.id == "main_2"
+    assert path.read_text() == f"{HEADER}\n@table main_2\n"
+    assert window.table_editor._entry is entry
+    # From a menu the start table stays as it was.
+    assert window.table_pick.currentData() == "main"
+    errors = []
+    monkeypatch.setattr(window, "_error", errors.append)
+    assert window._new_table_dialog() is None and "already open" in errors[0]
+
+
+def test_the_start_table_pick_ends_in_new_table(window, tmp_path, monkeypatch):
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    pick = window.table_pick
+    assert pick.itemText(pick.count() - 1) == "New Table…"
+    monkeypatch.setattr(window, "_pick_save", lambda *a, **k: "")
+    pick.setCurrentIndex(pick.count() - 1)
+    assert pick.currentData() == "main"  # cancelled: the choice before stays
+    kana = tmp_path / "kana.tbl"
+    monkeypatch.setattr(window, "_pick_save", lambda *a, **k: str(kana))
+    pick.setCurrentIndex(pick.count() - 1)
+    assert pick.currentData() == "kana" and kana.exists()
+    assert pick.itemText(pick.count() - 1) == "New Table…"
+    # The Tables dock lists one row per table and marks the start table.
+    rows = window.tables_panel.tree
+    assert [rows.topLevelItem(i).text(0) for i in range(2)] == ["@main", "@kana"]
+    window.tables_panel._on_double(rows.topLevelItem(0), 0)
+    assert pick.currentData() == "main"
+
+
+def test_new_table_is_on_the_files_menus(window, tmp_path):
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    table = window.workspace.table_entries()[0]
+    for entry in (None, table):
+        labels = [a.text() for a in window._build_files_menu(entry).actions()]
+        assert "New Ta&ble…" in labels
+
+
+def test_a_legacy_file_of_several_tables_opens_as_an_entry_each(window, tmp_path):
+    tbl = tmp_path / "multi.tbl"
+    tbl.write_text("@main\n41=A\n!F0=<[k]>,<@kana>:1\n@kana\n01=カ\n", "utf-8")
+    entry = window.open_table(str(tbl), "abcde")
+    assert entry.table.id == "main" and "00000001" not in entry.table.entries
+    kana = window.workspace.entry_for_table("kana")
+    assert kana is not None and kana.path is None
+    assert kana.table.entries["00000001"].text == "カ"
+    window.undo_stack.undo()  # one step takes both
+    assert window.workspace.table_entries() == []
 
 
 # --- Open Recent -------------------------------------------------------------

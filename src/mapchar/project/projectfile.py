@@ -11,8 +11,10 @@ from typing import Any
 from mapchar.core.block import Status
 from mapchar.core.errors import MapcharError
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
+from mapchar.core.table import Table, sanitize_id
 from mapchar.plugins.aliases import current_config_ids, current_id
 from mapchar.project.formats.script import format_config, parse_config
+from mapchar.project.tables import adopt_table
 from mapchar.project.workspace import (
     NAMED_UNIQUELY,
     Entry,
@@ -214,9 +216,12 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
         if entry.dialect:
             d["dialect"] = entry.dialect
         # The in-app edits, never the table file itself: a file another tool
-        # reads keeps saying what it said until Save Table folds these in.
+        # reads keeps saying what it said until Save As File folds these in.
         if entry.table_overlay:
-            d["overlay"] = {k: dict(v) for k, v in entry.table_overlay.items()}
+            d["overlay"] = dict(entry.table_overlay)
+        # A table with no file is named nowhere else.
+        if not entry.path and entry.table is not None:
+            d["table"] = entry.table.id
     session: dict[str, Any] = {}
     if entry.session.table_id:
         session["table_id"] = entry.session.table_id
@@ -427,16 +432,19 @@ def _entry_from(
     if kind is EntryKind.TABLE:
         entry.dialect = raw.get("dialect")
         # Kept until the file has been read, which is what it is laid over
-        # (:func:`~mapchar.project.tables.adopt_tables`). A table entry with no
-        # file is carried whole here, so the overlay is all there is of it.
+        # (:func:`~mapchar.project.tables.adopt_table`).
+        overlay = raw.get("overlay")
         entry.table_overlay = {
-            str(table_id): {
-                str(bits): None if line is None else str(line)
-                for bits, line in rows.items()
-            }
-            for table_id, rows in (raw.get("overlay") or {}).items()
-            if isinstance(rows, dict)
+            str(bits): None if line is None else str(line)
+            for bits, line in (overlay if isinstance(overlay, dict) else {}).items()
         }
+        if not path:
+            # No file to read: the overlay is all there is of the table.
+            try:
+                table = Table(str(raw.get("table") or sanitize_id(entry.name)))
+            except MapcharError:
+                table = Table("table")
+            adopt_table(entry, table, from_file=False)
     if kind is EntryKind.BLOCK and isinstance(raw.get("box"), dict):
         b = raw["box"]
         origin = b.get("origin", [0, 0])

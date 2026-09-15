@@ -215,12 +215,12 @@ def test_font_box_and_table_edits_undo_in_one_step(window, tmp_path):
 
     table_entry = window.workspace.table_entries()[0]
     window._edit_table_entry(table_entry)
-    was = deepcopy(table_entry.tables[0].entries)
+    was = deepcopy(table_entry.table.entries)
     window.table_editor.new_line.setText("44=D")
     window.table_editor._add()
-    assert "01000100" in table_entry.tables[0].entries
+    assert "01000100" in table_entry.table.entries
     window.undo_stack.undo()
-    assert set(table_entry.tables[0].entries) == set(was)
+    assert set(table_entry.table.entries) == set(was)
 
 
 def test_fill_leaves_taken_keys_alone(window, tmp_path, monkeypatch):
@@ -239,7 +239,7 @@ def test_fill_leaves_taken_keys_alone(window, tmp_path, monkeypatch):
     editor._fill_dialog()
     assert "left alone" in editor.status.text()
     # 41=A, 42=B and 43=C were there already and keep their own text.
-    assert table_entry.tables[0].entries["01000010"].text == "B"
+    assert table_entry.table.entries["01000010"].text == "B"
 
 
 def test_draft_reports_bytes_used_and_the_room(window, tmp_path):
@@ -400,15 +400,15 @@ def test_a_table_keeps_its_identity_through_undo(window, tmp_path):
     block_with(window, tmp_path, data, stop=2)
     table_entry = window.workspace.table_entries()[0]
     window._edit_table_entry(table_entry)
-    table = table_entry.tables[0]
+    table = table_entry.table
     window.table_editor.new_line.setText("44=D")
     window.table_editor._add()
     assert "01000100" in table.entries
     window.undo_stack.undo()
-    assert table_entry.tables[0] is table
+    assert table_entry.table is table
     assert "01000100" not in table.entries
     window.undo_stack.redo()
-    assert table_entry.tables[0] is table and "01000100" in table.entries
+    assert table_entry.table is table and "01000100" in table.entries
 
 
 # --- the raw view's text column --------------------------------------------

@@ -30,9 +30,9 @@ class EntriesMixin:
     """
 
     def _add_memory_table(self, table: Table, name: str) -> Entry:
-        entry = Entry(EntryKind.TABLE, name, None, dialect="native", tables=[table])
+        entry = Entry(EntryKind.TABLE, name, None, dialect="native", table=table)
         # No file behind it, so every entry is overlay: the project carries the
-        # whole table until a Save As Native gives it one.
+        # whole table until a Save As File gives it one.
         capture_overlay(entry)
         self._push_add(entry)
         self.workspace.stamp(entry)
@@ -51,7 +51,11 @@ class EntriesMixin:
         its configuration, but nothing can decode the bytes again until the
         table is back, so the removal has to say so before it happens.
         """
-        going = {t.id for e in entries if e.kind is EntryKind.TABLE for t in e.tables}
+        going = {
+            e.table.id
+            for e in entries
+            if e.kind is EntryKind.TABLE and e.table is not None
+        }
         if not going:
             return []
         return [
@@ -231,6 +235,7 @@ class EntriesMixin:
         if entry is None:
             menu.addAction("Open RO&M…", self._open_rom_dialog)
             menu.addAction("Open &Table…", self._open_table_dialog)
+            menu.addAction("New Ta&ble…", lambda: self._new_table_dialog())
             paste = menu.addAction("&Paste", lambda: self._paste_entries(None))
             paste.setEnabled(self._clipboard_entries_available())
             return menu
@@ -269,8 +274,9 @@ class EntriesMixin:
         if entry.kind is EntryKind.TABLE:
             menu.addAction("&Edit…", lambda: self._edit_table_entry(entry))
             menu.addAction(
-                "Save &As Native…", lambda: self._save_table_entry(entry, ask=True)
+                "Save &As File…", lambda: self._save_table_entry(entry, ask=True)
             )
+            menu.addAction("New Ta&ble…", lambda: self._new_table_dialog())
         menu.addSeparator()
         menu.addAction("&Write", lambda: self._write_entry(entry))
         if entry.kind is EntryKind.BLOCK:

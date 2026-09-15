@@ -90,7 +90,12 @@ from mapchar.ui.strings_view import StringsView
 from mapchar.ui.table_editor import TableEditor
 from mapchar.ui.tables_panel import TablesPanel
 from mapchar.ui.text_widget import TextDecode, TextWidget
-from mapchar.ui.widgets import CompactComboBox, ElidedLabel, fit_chars
+from mapchar.ui.widgets import (
+    CommandComboBox,
+    CompactComboBox,
+    ElidedLabel,
+    fit_chars,
+)
 from mapchar.ui.window_layout import WindowLayout
 
 
@@ -248,8 +253,9 @@ class MainWindow(
         codecs.setMovable(False)
         self.container_pick = CompactComboBox()
         self._fill_container_pick()
-        self.table_pick = CompactComboBox()
+        self.table_pick = CommandComboBox("New Table…")
         self.table_pick.addItem("(no table)", None)
+        self.table_pick.add_command_row()
         self.compression_pick = CompactComboBox()
         self._fill_compression_pick()
         codecs.addWidget(QLabel(" Container "))
@@ -392,10 +398,10 @@ class MainWindow(
         self.files_panel.paste_requested.connect(self._paste_entries)
         self.files_panel.duplicate_requested.connect(self._duplicate_entries)
         self.tables_panel.table_chosen.connect(self._choose_table)
-        self.tables_panel.edit_requested.connect(self._edit_table_entry)
         self.fonts_panel.edit_requested.connect(self._edit_font_entry)
         self.container_pick.currentIndexChanged.connect(self._on_chain_changed)
-        self.table_pick.currentIndexChanged.connect(self._on_table_pick)
+        self.table_pick.chosen.connect(self._on_table_pick)
+        self.table_pick.command.connect(lambda: self._new_table_dialog(start=True))
         self.block_edit.clicked.connect(self._edit_block)
         self.block_dump.clicked.connect(self._dump)
         self.raw.offset_requested.connect(self._go_to)
@@ -475,12 +481,13 @@ class MainWindow(
         act(file_menu, "&Save Project", self._save_project, "Ctrl+S")
         act(file_menu, "Save Project &As…", self._save_project_as, "Ctrl+Shift+S")
         self.locate_action = act(
-            file_menu, "Locat&e Missing Files…", lambda: self._relocate_missing()
+            file_menu, "Locate Missin&g Files…", lambda: self._relocate_missing()
         )
         self.locate_action.setEnabled(False)
         file_menu.addSeparator()
         act(file_menu, "Open RO&M…", self._open_rom_dialog, "Ctrl+Shift+O")
         act(file_menu, "Open &Table…", self._open_table_dialog, "Ctrl+T")
+        act(file_menu, "N&ew Table…", lambda: self._new_table_dialog())
         act(file_menu, "Open &Font…", self._open_font_dialog)
         file_menu.addSeparator()
         # Named where :mod:`mapchar.ui.main_window.capability_sync` gates them:

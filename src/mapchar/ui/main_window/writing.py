@@ -22,7 +22,7 @@ class WritingMixin:
         """The Files panel's Write: one entry, or an explanation why not.
 
         A bookmark and a table are not the same kind of "cannot": a bookmark has
-        no bytes of its own at all, and a table is written with Save As Native
+        no bytes of its own at all, and a table is written with Save As File
         rather than through the pipeline. Silence made both read as a bug.
         """
         if entry.kind is EntryKind.BOOKMARK:
@@ -34,7 +34,7 @@ class WritingMixin:
         if entry.kind is EntryKind.TABLE:
             self._error(
                 f"{entry.name} is a table file. Its in-app edits are written with "
-                "Save As Native…, not through the ROM's write path."
+                "Save As File…, not through the ROM's write path."
             )
             return
         if entry.kind is EntryKind.FONT:

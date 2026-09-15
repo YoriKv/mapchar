@@ -13,7 +13,7 @@ from mapchar.core.font import Font
 from mapchar.plugins.registry import SIGNATURE_HEAD
 from mapchar.project.formats.script import HEADER as SCRIPT_HEADER
 from mapchar.project.formats.table_native import HEADER as TABLE_HEADER
-from mapchar.project.tables import adopt_tables, read_table_file
+from mapchar.project.tables import adopt_table, read_table_file
 from mapchar.project.workspace import Entry, EntryKind
 
 
@@ -69,8 +69,14 @@ class OpeningMixin:
             self._error(f"Table id(s) already loaded: {', '.join(sorted(clash))}")
             return None
         entry = Entry(EntryKind.TABLE, os.path.basename(path), path, dialect=tf.dialect)
-        adopt_tables(entry, tf.tables, tf.notices)
+        adopt_table(entry, tf.table, tf.notices)
+        self.undo_stack.beginMacro(f"Open {entry.name}")
         self._push_add(entry)
+        # A table file holds one table; the others a legacy conversion made are
+        # entries of their own, with no file until they are saved.
+        for extra in tf.extra_tables:
+            self._add_memory_table(extra, f"{extra.id}.tbl")
+        self.undo_stack.endMacro()
         if tf.notices:
             self.statusBar().showMessage(
                 f"{entry.name}: {len(tf.notices)} conversion notice(s);"
@@ -78,8 +84,8 @@ class OpeningMixin:
                 6000,
             )
         self._refresh_table_picks()
-        if self.table_pick.currentData() is None and tf.tables:
-            self._choose_table(tf.tables[0].id)
+        if self.table_pick.currentData() is None:
+            self._choose_table(tf.table.id)
         return entry
 
     def _open_font_dialog(self) -> None:

@@ -7,7 +7,7 @@ import os
 from PySide6.QtWidgets import QMessageBox
 
 from mapchar.core.errors import MapcharError
-from mapchar.project.tables import adopt_tables, read_table_file
+from mapchar.project.tables import adopt_table, read_table_file
 from mapchar.project.workspace import Entry, EntryKind
 
 
@@ -63,7 +63,7 @@ class TablesDockMixin:
             return
         # The in-app edits are laid back over the file's new contents rather
         # than dropped: a reload picks up what changed on disk, not a revert.
-        adopt_tables(entry, tf.tables, tf.notices)
+        adopt_table(entry, tf.table, tf.notices)
         entry.dialect = tf.dialect
         if not entry.table_overlay:
             self.workspace.mark_saved(entry)

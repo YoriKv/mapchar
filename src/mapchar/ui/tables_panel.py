@@ -1,10 +1,10 @@
-"""The Tables dock: registered table files and the tables inside each."""
+"""The Tables dock: the registered tables, one per table file."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QHeaderView, QTreeWidgetItem, QWidget
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QIcon, QPalette, QPixmap
+from PySide6.QtWidgets import QHeaderView, QStyle, QTreeWidgetItem, QWidget
 
 from mapchar.project.workspace import Workspace
 from mapchar.ui.glyphs import Glyph
@@ -15,14 +15,12 @@ from mapchar.ui.widgets import show_elided_tooltips
 
 class TablesPanel(ThemedIcons, WorkspaceTreePanel):
     table_chosen = Signal(str)
-    """Double-clicked a table id: make it the start table."""
-    edit_requested = Signal(object)
-    """Double-clicked a table file entry."""
+    """Double-clicked a table: make it the start table."""
 
     def __init__(self, workspace: Workspace, parent: QWidget | None = None):
         super().__init__(workspace, parent)
         self.tree.setHeaderLabels(["Table", "Entries"])
-        self.tree.setRootIsDecorated(True)
+        self.tree.setRootIsDecorated(False)
         # The name gives way when the dock narrows; the counts keep their room.
         header = self.tree.header()
         header.setStretchLastSection(False)
@@ -40,27 +38,24 @@ class TablesPanel(ThemedIcons, WorkspaceTreePanel):
     def rebuild(self) -> None:
         self.tree.clear()
         for entry in self.workspace.table_entries():
-            # The file row counts every entry of its tables, so the column says
-            # one thing all the way down; the dialect is the tooltip's.
-            total = sum(len(table.entries) for table in entry.tables)
-            top = QTreeWidgetItem([entry.name, str(total)])
-            top.setData(0, Qt.ItemDataRole.UserRole, ("entry", id(entry)))
-            top.setToolTip(
-                0,
-                f"{entry.path or entry.name}\ndialect: {entry.dialect or 'native'}"
-                "\ndouble-click to edit",
-            )
-            self.tree.addTopLevelItem(top)
-            for table in entry.tables:
+            table = entry.table
+            where = f"{entry.path or entry.name}\ndialect: {entry.dialect or 'native'}"
+            if table is None:
+                item = QTreeWidgetItem([entry.name, ""])
+                item.setToolTip(0, f"{where}\nnot loaded")
+            else:
                 item = QTreeWidgetItem([f"@{table.id}", str(len(table.entries))])
-                item.setData(0, Qt.ItemDataRole.UserRole, ("table", table.id))
                 if table.id == self._start_id:
                     item.setIcon(0, self._start_icon())
-                    item.setToolTip(0, "The start table")
+                    item.setToolTip(0, f"{where}\nthe start table")
                 else:
-                    item.setToolTip(0, "Double-click to make it the start table")
-                top.addChild(item)
-            top.setExpanded(True)
+                    # A blank of the mark's size, so every name starts in line.
+                    item.setIcon(0, self._blank_icon())
+                    item.setToolTip(
+                        0, f"{where}\ndouble-click to make it the start table"
+                    )
+            item.setData(0, Qt.ItemDataRole.UserRole, id(entry))
+            self.tree.addTopLevelItem(item)
 
     def _start_icon(self):
         """The start table's mark, in the accent."""
@@ -71,14 +66,19 @@ class TablesPanel(ThemedIcons, WorkspaceTreePanel):
             group=QPalette.ColorGroup.Active,
         )
 
+    def _blank_icon(self) -> QIcon:
+        size = self.tree.iconSize()
+        if not size.isValid():
+            extent = self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize)
+            size = QSize(extent, extent)
+        blank = QPixmap(size)
+        blank.fill(Qt.GlobalColor.transparent)
+        return QIcon(blank)
+
     def _bake_icons(self) -> None:
         self.rebuild()
 
     def _on_double(self, item: QTreeWidgetItem, column: int) -> None:
-        kind, value = item.data(0, Qt.ItemDataRole.UserRole)
-        if kind == "table":
-            self.table_chosen.emit(value)
-            return
-        entry = self.workspace.entry_by_id(value)
-        if entry is not None:
-            self.edit_requested.emit(entry)
+        entry = self.entry_of(item)
+        if entry is not None and entry.table is not None:
+            self.table_chosen.emit(entry.table.id)

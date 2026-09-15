@@ -63,7 +63,8 @@ the preview system in [preview.md](preview.md).
 - **Left column:** the **Files** dock on top. Below it, **Tables** and
   **Fonts** share one tabbed dock.
 - **Right column:** the editing surface, top to bottom:
-  - the **Codecs** bar (container, compression, start table);
+  - the **Codecs** bar (container, compression, start table — whose last row,
+    **New Table…**, makes a new table and picks it);
   - the **Block** bar, shown on a block: source, string type, mapping, and a
     string counter;
   - the central view, three tabs: **Hex**, **Text** and **Strings**;
@@ -99,6 +100,11 @@ the preview system in [preview.md](preview.md).
 - **File ▸ Open Table…** registers a table file. Its dialect is detected from
   the header line, or asked for when there is none (see
   [table-format.md](table-format.md#legacy-dialects)).
+- **File ▸ New Table…** writes an empty native table file where the user
+  picks, registers it and opens it in the Table Editor. The table is named
+  after the file, numbered up (`main_2`) past a loaded table of that name. The
+  Codecs bar's start table list and the Files panel's context menu offer it
+  too; from the start table list the new table becomes the start table.
 - **File ▸ Open Font…** registers a glyph sheet.
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
@@ -148,8 +154,9 @@ the preview system in [preview.md](preview.md).
 - **Reorder** by drag or Alt+Up/Down. **Sort by** Name, Type or (blocks)
   Offset.
 - **Context menu**, by kind: New Block… / from Selection, New Bookmark,
-  Rename, Edit…, Edit File Container…, Container Info…, Write, Dump…,
-  Export ▸, Show in File Manager, Remove.
+  Rename, Edit…, Edit File Container…, Container Info…, Save As File…, New
+  Table…, Write, Dump…, Export ▸, Show in File Manager, Remove. Empty space
+  offers Open ROM…, Open Table…, New Table… and Paste.
 - **Cut / Copy / Paste / Duplicate** act on entries (references plus
   settings), never on bytes. The clipboard carries absolute paths, so entries
   paste into another mapchar window.
@@ -160,19 +167,23 @@ the preview system in [preview.md](preview.md).
 
 ## Tables
 
-- **Tables dock** lists registered table files and the tables inside each
-  (`@table` ids). The start table of the current entry is marked.
+- **One table per file** — a table file holds one table, named by its
+  `@table` line or else after the file.
+- **Tables dock** lists one row per table, `@id` and its entry count, with the
+  file and dialect in the tooltip. The start table of the current entry is
+  marked; double-click makes a table the start table.
 - **Dialects** — the native grammar loads directly. romjuice, Cartographer,
   Atlas and abcde files load through their dialect and are shown converted;
-  **Save As Native** writes the conversion out. Conversion notices (dropped
-  duplicates, renamed labels, generated kanji tables) are listed once per
-  file.
+  **Save As File** writes the conversion out in the native grammar. A legacy
+  file that yields several tables opens as one entry per table, the extra
+  ones with no file. Conversion notices (dropped duplicates, renamed labels,
+  generated kanji tables, split tables) are listed once per file.
 - **Charsets** — a table can sit on a built-in charset (ASCII, Latin-1,
   Shift-JIS as CP932, EUC-JP as JIS X 0213, UTF-8, UTF-16) and only list its
   overrides. A table file that is not UTF-8 is read as `cp932`, else
   `latin-1`, and says which in a notice.
-- **Table Editor** (View ▸ Table Editor…) edits a table over a live view of
-  the bytes:
+- **Table Editor** (View ▸ Table Editor…) edits one table entry's table over
+  a live view of the bytes, titled with its `@id` and file:
   - a grid of one row per key: its line in the native grammar, edited as
     text, beside what that line means (kind, operands, switches);
   - **Add** — a typed entry line; the raw view's **Add to Table…** prefills it
@@ -189,7 +200,7 @@ the preview system in [preview.md](preview.md).
     fuller detail in its tooltip.
 - **Where the edits live** — in the project, as an overlay of the entries
   added, changed and removed over the file, so the table file on disk keeps
-  saying what it said for every other tool that reads it. **Save As Native**
+  saying what it said for every other tool that reads it. **Save As File**
   writes them out and spends the overlay. A table with no file of its own —
   from a relative search, or from **Add from selection** — is carried whole by
   the project the same way.
@@ -444,7 +455,7 @@ The editing surface, opened on a block.
 - **File ▸ Write (Ctrl+W)** writes the current block; **Write All
   (Ctrl+Shift+W)** writes every block with edits; the Files panel writes one
   entry. An entry that cannot be written says why: a bookmark has no bytes of
-  its own, a table file is written with **Save As Native…**, a glyph sheet is
+  its own, a table file is written with **Save As File…**, a glyph sheet is
   never written to, and a view-only entry names the stage that has no way
   back.
 - **Blocks over one compressed region write together** — they are laid out

@@ -22,9 +22,19 @@ ASCII_TABLE = "@table main\n@charset ascii\n/00=[end]\n"
 """The ASCII charset with an end token, for tests whose data is plain text."""
 
 
+def native_files(body: str) -> list[str]:
+    """Native table bodies as the files they stand for, header added: each
+    ``@table`` line starts another file."""
+    return [
+        HEADER + "\n" + part
+        for part in re.split(r"(?m)^(?=@table )", body)
+        if part.strip()
+    ]
+
+
 def tables_from(body: str) -> dict[str, Table]:
-    """Parse native table text (header added) into ``{id: Table}``."""
-    tables = parse_native(HEADER + "\n" + body).tables
+    """Parse native table text into ``{id: Table}``, a file per ``@table``."""
+    tables = [parse_native(text).table for text in native_files(body)]
     registry = default_registry()
     for t in tables:
         apply_charset(t, registry)

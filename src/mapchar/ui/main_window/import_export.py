@@ -67,8 +67,8 @@ class ImportExportMixin:
                 table_path = os.path.normpath(os.path.join(base, block.table_file))
                 table_entry = self.open_table(table_path, "abcde")
                 table_id = block.table_id
-                if table_id is None and table_entry is not None and table_entry.tables:
-                    table_id = table_entry.tables[0].id
+                if table_id is None and table_entry is not None and table_entry.table:
+                    table_id = table_entry.table.id
                 if table_id is None:
                     notices.append(f"{block.name}: no table; block skipped")
                     continue
@@ -155,12 +155,11 @@ class ImportExportMixin:
         path = self._pick_save("Export Atlas Script", f"{entry.name}.txt", "*.txt")
         if not path:
             return
-        table_files = {}
-        for e in self.workspace.table_entries():
-            if any(t.id in tables.tables for t in e.tables):
-                table_files[e.name if e.name.endswith(".tbl") else e.name + ".tbl"] = [
-                    t for t in e.tables if t.id in tables.tables
-                ]
+        table_files = {
+            e.name if e.name.endswith(".tbl") else e.name + ".tbl": e.table
+            for e in self.workspace.table_entries()
+            if e.table is not None and e.table.id in tables.tables
+        }
         export = write_atlas(
             entry.name, entry.config, entry.doc.strings, tables, table_files
         )

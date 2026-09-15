@@ -7,6 +7,7 @@ import os
 from mapchar.core.capabilities import Capability, supports
 from mapchar.core.notices import notice_lines
 from mapchar.core.table import Table
+from mapchar.project.formats.table_legacy import free_table_id, table_id_for
 from mapchar.project.formats.table_native import write_native
 from mapchar.project.tables import capture_overlay, fold_overlay
 from mapchar.project.workspace import Entry
@@ -32,7 +33,6 @@ class TableEditorMixin:
             table_entry = self._add_memory_table(table, "new.tbl")
             self._choose_table("main")
         self._edit_table_entry(table_entry)
-        self.table_editor.select_table(self.table_pick.currentData())
         from mapchar.core.bits import bytes_to_bits
 
         self.table_editor.prefill(bytes_to_bits(self._doc.data[s : min(e, s + 4)]))
@@ -51,8 +51,6 @@ class TableEditorMixin:
         if entry is not None and not supports(entry.kind, Capability.TABLE_EDIT):
             return
         self.table_editor.set_entry(entry)
-        if entry is not None and self.table_pick.currentData():
-            self.table_editor.select_table(self.table_pick.currentData())
         notices = entry.notices if entry else ()
         if notices:
             # The status line has room for one line, so the messages go there and
@@ -67,41 +65,37 @@ class TableEditorMixin:
         self.table_editor.show()
         self.table_editor.raise_()
 
-    def _on_table_edited(self, entry: Entry, before: list) -> None:
+    def _on_table_edited(self, entry: Entry, before: Table) -> None:
         """One Table Editor change, as one undo step.
 
-        The editor has already mutated the tables and hands over what they
-        held before, so the command is a plain before/after pair.
+        The editor has already mutated the table and hands over what it held
+        before, so the command is a plain before/after pair.
         """
         from copy import deepcopy
 
-        self._push_command(TableCommand(self, entry, before, deepcopy(entry.tables)))
+        self._push_command(TableCommand(self, entry, before, deepcopy(entry.table)))
 
-    def apply_tables(self, entry: Entry, tables: list, revision: int) -> None:
-        """Put ``tables`` back on the entry, each ``Table`` keeping its identity.
+    def apply_table(self, entry: Entry, snapshot: Table, revision: int) -> None:
+        """Put ``snapshot`` back on the entry, its ``Table`` keeping its identity.
 
-        Contents are restored rather than the objects swapped out: the editor
-        and the views hold the same ``Table`` objects, and the command keeps
+        Contents are restored rather than the object swapped out: the editor
+        and the views hold the same ``Table`` object, and the command keeps
         holding the state it was handed, which must not be edited in place.
         """
         from copy import deepcopy
 
-        live = {t.id: t for t in entry.tables}
-        restored = []
-        for snapshot in tables:
-            table = live.get(snapshot.id)
-            if table is None:
-                restored.append(deepcopy(snapshot))
-                continue
+        table = entry.table
+        if table is None:
+            entry.table = deepcopy(snapshot)
+        else:
+            table.id = snapshot.id
             table.charset = snapshot.charset
             for bits in list(table.entries):
                 table.remove(bits)
             for table_entry in snapshot.entries.values():
                 table.add(table_entry)
-            restored.append(table)
-        entry.tables = restored
         # Re-measured against the file rather than accumulated, so an undo and a
-        # redo leave the project holding exactly what the tables now say.
+        # redo leave the project holding exactly what the table now says.
         capture_overlay(entry)
         self.workspace.stamp(entry, revision)
         if self.table_editor._entry is entry:
@@ -109,14 +103,14 @@ class TableEditorMixin:
         self._tables_changed()
 
     def _save_table_entry(self, entry: Entry | None, ask: bool = False) -> None:
-        if entry is None:
+        if entry is None or entry.table is None:
             return
         path = entry.path
         if ask or not path or entry.dialect != "native":
-            path = self._pick_save("Save Table as Native", path or "", "Tables (*.tbl)")
+            path = self._pick_save("Save Table As File", path or "", "Tables (*.tbl)")
             if not path:
                 return
-        if not self._write_text(path, write_native(entry.tables)):
+        if not self._write_text(path, write_native(entry.table)):
             return
         entry.path = path
         entry.dialect = "native"
@@ -126,3 +120,27 @@ class TableEditorMixin:
         self.files_panel.refresh_labels()
         self.tables_panel.rebuild()
         self.statusBar().showMessage(f"Saved {path}", 4000)
+
+    def _new_table_dialog(self, *, start: bool = False) -> Entry | None:
+        """Write an empty native table file where the user picks, and register it.
+
+        The table is named after the file, numbered up past a loaded table of the
+        same name. ``start`` makes it the start table; either way it opens in the
+        Table Editor, which is where an empty table is filled.
+        """
+        path = self._pick_save("New Table", "new.tbl", "Tables (*.tbl)")
+        if not path:
+            return None
+        if self.workspace.find_table(path) is not None:
+            self._error(f"{os.path.basename(path)} is already open as a table.")
+            return None
+        table = Table(free_table_id(table_id_for(path), self.workspace.tables()))
+        if not self._write_text(path, write_native(table)):
+            return None
+        entry = self.open_table(path, "native")
+        if entry is None:
+            return None
+        if start:
+            self._choose_table(table.id)
+        self._edit_table_entry(entry)
+        return entry

@@ -45,40 +45,36 @@ class AtlasExport:
 # --- tables in the abcde dialect ------------------------------------------
 
 
-def write_abcde_tables(tables: list[Table]) -> str:
-    lines: list[str] = []
-    for table in tables:
-        lines.append(f"@{table.id}")
-        for e in table.sorted_entries():
-            key = format_key(e.bits)
-            weight = f"<{e.weight}>" if e.weight != 1 else ""
-            if e.kind is TokenKind.TEXT:
-                lines.append(f"{key}{weight}={_abcde_text(e.text)}")
-            elif e.kind is TokenKind.END:
-                lines.append(f"/{key}{weight}={_abcde_text(e.text)}")
-            elif e.kind is TokenKind.RETURN:
-                lines.append(f"!{key}{weight}=,-1")
-            elif e.kind is TokenKind.CODE:
-                n = sum(o.bits for o in e.operands) // 8
-                lines.append(f"!{key}{weight}=<[{e.text}]>,{n}")
-            else:
-                params = []
-                for p in e.params:
-                    if p.table_id == "return":
-                        params.append("-1")
-                        continue
-                    m = p.stop.spec(any_marker="0")
-                    if p.table_id == "raw":
-                        params.append(m + ("+" if p.shared else ""))
-                    elif p.table_id == "bits":
-                        params.append(f"<binary>:{m}" + ("+" if p.shared else ""))
-                    else:
-                        params.append(
-                            f"<@{p.table_id}>:{m}" + ("+" if p.shared else "")
-                        )
-                label = f"<{_abcde_text(e.text)}>" if e.text else ""
-                lines.append(f"!{key}{weight}={label}," + ",".join(params))
-        lines.append("")
+def write_abcde_table(table: Table) -> str:
+    lines = [f"@{table.id}"]
+    for e in table.sorted_entries():
+        key = format_key(e.bits)
+        weight = f"<{e.weight}>" if e.weight != 1 else ""
+        if e.kind is TokenKind.TEXT:
+            lines.append(f"{key}{weight}={_abcde_text(e.text)}")
+        elif e.kind is TokenKind.END:
+            lines.append(f"/{key}{weight}={_abcde_text(e.text)}")
+        elif e.kind is TokenKind.RETURN:
+            lines.append(f"!{key}{weight}=,-1")
+        elif e.kind is TokenKind.CODE:
+            n = sum(o.bits for o in e.operands) // 8
+            lines.append(f"!{key}{weight}=<[{e.text}]>,{n}")
+        else:
+            params = []
+            for p in e.params:
+                if p.table_id == "return":
+                    params.append("-1")
+                    continue
+                m = p.stop.spec(any_marker="0")
+                if p.table_id == "raw":
+                    params.append(m + ("+" if p.shared else ""))
+                elif p.table_id == "bits":
+                    params.append(f"<binary>:{m}" + ("+" if p.shared else ""))
+                else:
+                    params.append(f"<@{p.table_id}>:{m}" + ("+" if p.shared else ""))
+            label = f"<{_abcde_text(e.text)}>" if e.text else ""
+            lines.append(f"!{key}{weight}={label}," + ",".join(params))
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -134,29 +130,18 @@ def write_atlas(
     config: BlockConfig,
     strings: list[StringRecord],
     tables: TableSet,
-    table_files: dict[str, list[Table]],
+    table_files: dict[str, Table],
 ) -> AtlasExport:
     """An Atlas script plus abcde-dialect tables that insert the block."""
     notices: list[str] = []
     out = [f"// mapchar: {block_name}"]
-    # abcde loads one table per file unless told otherwise, so a file that
-    # holds several tables is split into one file per table.
-    split: dict[str, list[Table]] = {}
-    for name, ts in table_files.items():
-        if len(ts) <= 1:
-            split[name] = ts
-        else:
-            stem = name.rsplit(".", 1)[0]
-            for t in ts:
-                split[f"{stem}_{t.id}.tbl"] = [t]
-    files = {name: write_abcde_tables(ts) for name, ts in split.items()}
+    files = {name: write_abcde_table(table) for name, table in table_files.items()}
     var_by_id: dict[str, str] = {}
-    for n, (name, ts) in enumerate(split.items()):
+    for n, (name, table) in enumerate(table_files.items()):
         var = f"Table_{n}"
         out.append(f"#VAR({var}, TABLE)")
         out.append(f'#ADDTBL("{name}", {var})')
-        if ts:
-            var_by_id[ts[0].id] = var
+        var_by_id[table.id] = var
     start_var = var_by_id.get(tables.start.id)
     if start_var:
         out.append(f"#ACTIVETBL({start_var})")

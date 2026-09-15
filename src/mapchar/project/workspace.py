@@ -69,23 +69,23 @@ class Entry:
     """Blocks: the text box strings are previewed in, when bound to a font."""
     dialect: str | None = None
     """Tables: the dialect the file was read with."""
-    tables: list[Table] = field(default_factory=list)
-    """Tables: the loaded logical tables, the file's plus the overlay."""
-    file_tables: list[Table] = field(default_factory=list)
+    table: Table | None = None
+    """Tables: the loaded table, the file's plus the overlay; ``None`` until read."""
+    file_table: Table | None = None
     """Tables: what the file alone gave, before any in-app edit.
 
     The baseline :func:`~mapchar.project.tables.overlay_of` measures the overlay
-    against, kept apart from :attr:`tables` so the file on disk stays the file
-    on disk. Empty for a table entry with no file, whose every entry is
+    against, kept apart from :attr:`table` so the file on disk stays the file on
+    disk. ``None`` for a table entry with no file, whose every entry is
     therefore an addition the project carries whole.
     """
-    table_overlay: dict[str, dict[str, str | None]] = field(default_factory=dict)
-    """Tables: the in-app edits over the file, per table id.
+    table_overlay: dict[str, str | None] = field(default_factory=dict)
+    """Tables: the in-app edits over the file.
 
-    Per table id, per entry key: the entry's line in the native grammar for one
-    added or changed, and ``None`` for one removed. It is what the project file
-    stores instead of rewriting the table file, so a file other tools read keeps
-    working; **Save Table** folds it back in and empties it.
+    Per entry key: the entry's line in the native grammar for one added or
+    changed, and ``None`` for one removed. It is what the project file stores
+    instead of rewriting the table file, so a file other tools read keeps
+    working; **Save As File** folds it back in and empties it.
     """
     notices: tuple[Notice, ...] = ()
     """Tables: what reading the file had to say about it.
@@ -197,9 +197,9 @@ class Workspace:
         return next((e for e in self.entries if id(e) == key), None)
 
     def entry_for_table(self, table_id: str) -> Entry | None:
-        """The table entry one of whose tables is ``table_id``."""
+        """The table entry whose table is ``table_id``."""
         for e in self.of_kind(EntryKind.TABLE):
-            if any(t.id == table_id for t in e.tables):
+            if e.table is not None and e.table.id == table_id:
                 return e
         return None
 
@@ -220,11 +220,11 @@ class Workspace:
 
     def tables(self) -> dict[str, Table]:
         """Every loaded table by id, across table entries."""
-        out: dict[str, Table] = {}
-        for e in self.of_kind(EntryKind.TABLE):
-            for t in e.tables:
-                out[t.id] = t
-        return out
+        return {
+            e.table.id: e.table
+            for e in self.of_kind(EntryKind.TABLE)
+            if e.table is not None
+        }
 
     # --- lifecycle -----------------------------------------------------
 

@@ -16,7 +16,7 @@ from mapchar.project.projectfile import (
     project_dict,
     save_project,
 )
-from mapchar.project.tables import adopt_tables, read_table_file
+from mapchar.project.tables import adopt_table, read_table_file
 from mapchar.project.workspace import Entry, EntryKind, missing_paths, relocate_path
 from mapchar.ui.dialogs import TextDialog
 
@@ -158,15 +158,12 @@ class ProjectMixin:
         self._doc = None
         self._load_project_plugins(path)  # its plugins/ folder, before anything reads
         for e in loaded.entries:
-            if e.kind is not EntryKind.TABLE:
-                continue
-            if not e.path:
-                # No file behind it: the overlay is the whole table.
-                adopt_tables(e, [])
+            # A table with no file was completed by the load: nothing to read.
+            if e.kind is not EntryKind.TABLE or not e.path:
                 continue
             try:
                 tf = read_table_file(e.path, e.dialect, self.registry)
-                adopt_tables(e, tf.tables, tf.notices)
+                adopt_table(e, tf.table, tf.notices)
                 e.dialect = tf.dialect
             except (OSError, MapcharError) as exc:
                 e.missing = True
@@ -294,7 +291,7 @@ class ProjectMixin:
         if entry.kind is EntryKind.TABLE and entry.path:
             try:
                 tf = read_table_file(entry.path, entry.dialect, self.registry)
-                adopt_tables(entry, tf.tables, tf.notices)
+                adopt_table(entry, tf.table, tf.notices)
                 entry.dialect = tf.dialect
             except (OSError, MapcharError) as exc:
                 entry.missing = True

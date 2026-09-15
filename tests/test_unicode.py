@@ -102,9 +102,9 @@ def test_a_table_id_may_be_kana_or_kanji():
     assert sanitize_id("カタカナ") == "カタカナ"
     # Decomposed on the way in, composed as the id.
     assert Table(nfd("がぎ")).id == "がぎ"
-    tf = parse_native(native("@table かんじ\n41=亜\n@table main\n!42=[k] @かんじ:1\n"))
-    assert [t.id for t in tf.tables] == ["かんじ", "main"]
-    assert tf.tables[1].entries["01000010"].params[0].table_id == "かんじ"
+    assert parse_native(native("@table かんじ\n41=亜\n")).table.id == "かんじ"
+    main = parse_native(native("@table main\n!42=[k] @かんじ:1\n")).table
+    assert main.entries["01000010"].params[0].table_id == "かんじ"
 
 
 # --- files ------------------------------------------------------------------

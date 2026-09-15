@@ -91,7 +91,7 @@ Entries are compared by identity. Blocks, bindings and undo commands hold
   `return`), `stop: Stop` (a weighted `count`, `fallback` bits, or neither —
   which `Stop.any` reports), `shared: bool`.
 - **`TableSet`** — the start table plus the closure of tables its switches
-  reach, resolved by id from the loaded files. It is what decode and encode
+  reach, resolved by id from the loaded files, one table each. It is what decode and encode
   run over.
 - **`Token`** — one decoded unit: `entry` (or `None` for unmatched data),
   `bits`, `bit_start`, `operands: tuple[int]`, `text` (the rendered form,
@@ -472,29 +472,32 @@ Blocks are to files what celPix slices are, with these differences:
 
 `project/tables.py` wraps the readers for the one job every caller has:
 `read_table_file(path, dialect, registry)` reads the file, parses it in its
-dialect and applies each table's charset. The encoding is
+dialect and applies the charset. A `TableFile` holds the file's one `table`,
+plus the `extra_tables` a legacy conversion made (a romjuice kanji array, an
+abcde file with several `@id` lines), which open as table entries with no
+file. The encoding is
 `core.text.read_text_any`'s decision — UTF-8, else `cp932`, else `latin-1` —
 left on `TableFile.encoding` and, when it is not UTF-8, said in a notice.
 
 A table entry in the Files panel remembers its file path and dialect. In-app
 edits live in the project as an **overlay** of added, changed and removed
 entries over the file, so an unchanged file on disk keeps working for other
-tools; **Save Table** folds the overlay into a native file.
+tools; **Save As File** folds the overlay into a native file.
 
 `project/tables.py` owns the overlay as well as the reading, because they are
-two halves of one thing. What the file gave is kept on the entry as
-`file_tables`, the edits as `table_overlay` (per table id, per entry key: the
+two halves of one thing. The live table is the entry's `table`; what the file
+gave is kept as `file_table`, the edits as `table_overlay` (per entry key: the
 entry's line in the native grammar, or `null` for one removed):
 
 | Function | When |
 |-------------------|------------------------------------------------------------|
-| `adopt_tables`    | a read: the file's tables become the baseline, and the overlay goes straight back over them — so a **Reload** picks up what changed on disk without discarding the user's edits |
-| `capture_overlay` | an edit: the overlay is re-measured from the tables, never accumulated, so an undo and a redo leave the project holding exactly what they now say |
-| `fold_overlay`    | **Save Table**: the file now says it, so the overlay is spent |
+| `adopt_table`     | a read: the file's table becomes the baseline, and the overlay goes straight back over it — so a **Reload** picks up what changed on disk without discarding the user's edits |
+| `capture_overlay` | an edit: the overlay is re-measured from the table, never accumulated, so an undo and a redo leave the project holding exactly what it now says |
+| `fold_overlay`    | **Save As File**: the file now says it, so the overlay is spent |
 
 A table entry with no file — one made from a relative search or from Add from
-Selection — has an empty baseline, so its every entry is overlay and the project
-carries the whole table.
+Selection, or split from a legacy file — has no baseline, so its every entry is
+overlay and the project carries the whole table, with its id as `table`.
 
 ### 6.3 The `.mapchar` file
 
@@ -529,8 +532,10 @@ and aliases for renamed plugin ids.
       "offset": 4096 },
     { "kind": "table", "name": "main.tbl", "path": "tables/main.tbl",
       "dialect": "native",                           // opt
-      "overlay": {"main": {"01000011": "43=C",       // opt, the in-app edits
-                           "00000000": null}} },     //   a line, or null=removed
+      "overlay": {"01000011": "43=C",                // opt, the in-app edits
+                  "00000000": null} },               //   a line, or null=removed
+    { "kind": "table", "name": "kanji.tbl",          // no path: no file
+      "table": "kanji", "overlay": {…} },            //   its id, and all of it
     { "kind": "font", "name": "font.png", "path": "font.png",
       "font": { "cell": [8, 8], "columns": 16, "base": 0, "chars": "ABC…",
                 "glyphs": {"[heart]": 96}, "widths": [8, 6, …],

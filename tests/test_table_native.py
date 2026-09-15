@@ -4,7 +4,6 @@ import unicodedata
 
 import pytest
 
-from helpers import tables_from
 from mapchar.core.bits import format_key
 from mapchar.core.errors import TableError
 from mapchar.core.table import Stop, TokenKind
@@ -31,12 +30,9 @@ $F0=[color],u8
 !F1=[item] @items:1
 !F2=[name] @names:*
 41<2>=weighted
-@table items
-01=Herb
-!FF=return
-@table names
-02=Erdrick
 """
+
+ITEMS = f"{HEADER}\n@table items\n01=Herb\n!FF=return\n"
 
 
 def test_header_detection():
@@ -49,9 +45,8 @@ def test_parse_sample():
     with pytest.raises(TableError, match="duplicate key"):
         parse_native(SAMPLE)
     text = SAMPLE.replace("41<2>=weighted\n", "43<2>=weighted\n")
-    tables = {t.id: t for t in parse_native(text).tables}
-    main = tables["main"]
-    assert set(tables) == {"main", "items", "names"}
+    main = parse_native(text).table
+    assert main.id == "main"
     assert main.entries["01000001"].text == "A"
     assert main.entries["0000000001000001"].text == "あ"
     assert main.entries["01"].text == "x"
@@ -65,7 +60,7 @@ def test_parse_sample():
     assert item.params[0].table_id == "items" and item.params[0].stop == Stop(count=1)
     assert main.entries["11110010"].params[0].stop.any
     assert main.entries["01000011"].weight == 2
-    assert tables["items"].entries["11111111"].kind is TokenKind.RETURN
+    assert parse_native(ITEMS).table.entries["11111111"].kind is TokenKind.RETURN
     assert main.labels["end"] is end
     assert main.labels["line"] is main.entries["11111110"]
 
@@ -125,13 +120,22 @@ def test_errors_carry_line_numbers():
         parse_native(HEADER + "\n$01=[a],1\n$02=[a],1\n")
 
 
+def test_one_file_holds_one_table():
+    with pytest.raises(TableError, match="holds one table") as info:
+        parse_native(f"{HEADER}\n@table main\n41=A\n@table items\n01=B\n")
+    assert info.value.line == 4
+    # Without a @table line the table is named for the file; one may come late.
+    assert parse_native(f"{HEADER}\n41=A\n", default_id="font").table.id == "font"
+    late = parse_native(f"{HEADER}\n41=A\n@table main\n", default_id="font")
+    assert late.table.id == "main" and "01000001" in late.table.entries
+
+
 def test_roundtrip_through_writer():
     text = SAMPLE.replace("41<2>=weighted\n", "43<2>=weighted\n")
-    tables = list(tables_from(text.split("\n", 1)[1]).values())
-    out = write_native(tables)
-    again = {t.id: t for t in parse_native(out).tables}
-    for tid, table in again.items():
-        assert table.entries == tables_from(text.split("\n", 1)[1])[tid].entries
+    table = parse_native(text).table
+    out = write_native(table)
+    assert parse_native(out).table.entries == table.entries
+    assert out.startswith(f"{HEADER}\n@table main\n")
     assert "!F1=[item] @items:1" in out
     assert "$F0=[color],u8" in out
     assert "43<2>=weighted" in out
@@ -143,20 +147,19 @@ def test_format_key_spells_whole_nibbles_as_hex():
 
 
 def test_a_kana_table_id_round_trips_through_the_writer():
-    body = "@table かんじ\n41=亜\n@table main\n!42=[k] @かんじ:1\n"
-    tables = parse_native(HEADER + "\n" + body).tables
-    out = write_native(tables)
-    assert "@table かんじ" in out and "@かんじ:1" in out
-    again = parse_native(out).tables
-    assert [t.id for t in again] == ["かんじ", "main"]
+    kanji = parse_native(f"{HEADER}\n@table かんじ\n41=亜\n").table
+    main = parse_native(f"{HEADER}\n@table main\n!42=[k] @かんじ:1\n").table
+    assert "@table かんじ" in write_native(kanji)
+    assert "@かんじ:1" in write_native(main)
+    assert parse_native(write_native(kanji)).table.id == "かんじ"
 
 
 def test_decomposed_entry_text_is_written_back_composed():
     decomposed = unicodedata.normalize("NFD", "が")
     assert len(decomposed) == 2
-    tables = parse_native(f"{HEADER}\n@table main\n41={decomposed}\n").tables
-    assert tables[0].entries["01000001"].text == "が"
-    assert write_native(tables).endswith("41=が\n")
+    table = parse_native(f"{HEADER}\n@table main\n41={decomposed}\n").table
+    assert table.entries["01000001"].text == "が"
+    assert write_native(table).endswith("41=が\n")
 
 
 @pytest.mark.parametrize("bad", ["@table かん じ", "@table a b"])

@@ -129,7 +129,13 @@ def test_abcde():
     assert pascal.kind is TokenKind.SWITCH and pascal.params[0].shared
     assert main.entries["00000100"].weight == 2
     assert tables["upper"].entries["01000001"].text == "A"
-    out = write_native(tf.tables)
+    # The file's first table is its own; the rest are split into entries.
+    assert tf.table is main and [t.id for t in tf.extra_tables] == [
+        "ItemNames",
+        "upper",
+    ]
+    assert sum("split" in n.message for n in tf.notices) == 2
+    out = write_native(main)
     assert "!AB=[Item_Name:] @ItemNames:1 @bits:2 @raw:3" in out
     assert "!AD=[x] return" in out and "!AC= @raw:*" in out
 
@@ -148,9 +154,9 @@ def test_japanese_table_ids_keep_their_own_names():
     # so two Japanese names of the same length collided.
     tf = read_abcde("@かんじ\n41=亜\n@カタカナ\n42=ア\n")
     assert [t.id for t in tf.tables] == ["かんじ", "カタカナ"]
-    assert not tf.notices
-    out = write_native(tf.tables)
-    assert "@table かんじ" in out and "@table カタカナ" in out
+    assert not any("renamed" in n.message for n in tf.notices)
+    assert "@table かんじ" in write_native(tf.table)
+    assert "@table カタカナ" in write_native(tf.extra_tables[0])
 
 
 def test_a_shift_jis_table_file_reads_as_cp932(tmp_path):
@@ -178,5 +184,5 @@ def test_the_shift_jis_fixture_loads_as_cp932_from_disk():
     texts = {e.text for e in tf.tables[0].entries.values()}
     assert {"A", "あ", "い", "ア", "イ", "漢", "「」"} <= texts
     # Written back out, the table is UTF-8 and says the same thing.
-    out = write_native(tf.tables)
+    out = write_native(tf.table)
     assert "8ABA=漢" in out and out.encode("utf-8").decode("utf-8") == out

@@ -133,7 +133,7 @@ A block imported from a command file dumps the same strings in native form.
 **Export** writes, for a block, an Atlas script that abcde's Atlas module
 inserts ([`../abcde/atlas.md`](../abcde/atlas.md)):
 
-- `#VAR`/`#ADDTBL` for each table file, written in the abcde dialect next to
+- `#VAR`/`#ADDTBL` for each table, one file each, written in the abcde dialect next to
   the script, with paths relative to the script; a table id goes out as it is,
   since abcde's `@id` accepts any line without angle brackets, and abcde
   NFD-normalises both the `@id` and the `<@id>:` that names it, so they still

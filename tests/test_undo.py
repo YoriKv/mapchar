@@ -83,8 +83,8 @@ def test_an_undone_table_edit_reads_clean_again(window, tmp_path):
     _, block = _block(window, tmp_path)
     table_entry = window.workspace.entry_for_table("main")
     window.workspace.mark_saved(table_entry)
-    before = deepcopy(table_entry.tables)
-    table_entry.tables[0].add(TableEntry("01000011", TokenKind.TEXT, "C"))
+    before = deepcopy(table_entry.table)
+    table_entry.table.add(TableEntry("01000011", TokenKind.TEXT, "C"))
     window._on_table_edited(table_entry, before)
     assert table_entry.dirty
     window.undo_stack.undo()
@@ -263,14 +263,14 @@ def test_undo_and_redo_of_a_table_edit_take_the_overlay_with_them(window, tmp_pa
     holds exactly what the tables say in either direction."""
     _block(window, tmp_path)
     table_entry = window.workspace.entry_for_table("main")
-    before = deepcopy(table_entry.tables)
-    table_entry.tables[0].add(TableEntry("01000011", TokenKind.TEXT, "C"))
+    before = deepcopy(table_entry.table)
+    table_entry.table.add(TableEntry("01000011", TokenKind.TEXT, "C"))
     window._on_table_edited(table_entry, before)
-    assert table_entry.table_overlay == {"main": {"01000011": "43=C"}}
+    assert table_entry.table_overlay == {"01000011": "43=C"}
     window.undo_stack.undo()
     assert table_entry.table_overlay == {}
     window.undo_stack.redo()
-    assert table_entry.table_overlay == {"main": {"01000011": "43=C"}}
+    assert table_entry.table_overlay == {"01000011": "43=C"}
 
 
 def test_binding_a_font_from_the_files_panel_is_an_undo_step(window, tmp_path):

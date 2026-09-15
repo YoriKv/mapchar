@@ -38,13 +38,15 @@ Directives:
 | Directive           | Meaning                                                                             |
 |---------------------|-------------------------------------------------------------------------------------|
 | `@mapchar table 1`  | Header. The first non-blank, non-comment line of every native file; `1` is the grammar version. |
-| `@table id`         | Starts a logical table named `id`. Entries before the first `@table` belong to a table named after the file. |
-| `@charset name`     | The built-in charset the current table sits on ([Charsets](#charsets)).             |
+| `@table id`         | Names the file's table `id`. Optional; a file without one names its table after the file. |
+| `@charset name`     | The built-in charset the table sits on ([Charsets](#charsets)).                      |
 
-`id` is `[\w.-]+` — letters and digits of any script, `_`, `.` and `-`, so
-`@table かんじ` names a table after what is in it — and is unique across every
-loaded file. A file may hold any number of tables. Line order carries no
-meaning inside a table.
+A table file holds exactly one table, as it does for every other tool: a
+second `@table` line is an error. `id` is `[\w.-]+` — letters and digits of
+any script, `_`, `.` and `-`, so `@table かんじ` names a table after what is
+in it — and is unique across every loaded file. Switch entries name tables by
+`id`, so renaming a file that has a `@table` line breaks nothing. Line order
+carries no meaning.
 
 ```
 @mapchar table 1
@@ -60,6 +62,12 @@ FE=[line]\n
 $F0=[color],u8
 !F1=[item] @items:1
 !F2=[name] @names:*
+```
+
+and, in `items.tbl`:
+
+```
+@mapchar table 1
 @table items
 01=Herb
 !FF=return
@@ -231,8 +239,9 @@ Loading fails with a line number for:
 
 - a missing or unknown header;
 - a line that is neither blank, a comment, a directive, nor a valid entry;
-- the same bits twice in one table, in any notation;
-- the same label twice in one table;
+- a second `@table` line;
+- the same bits twice in the table, in any notation;
+- the same label twice in the table;
 - a switch parameter naming a table that no loaded file defines (checked
   after all files load);
 - `return` anywhere but last among a switch entry's parameters.
@@ -248,8 +257,11 @@ abcde; `$KEY=label,N` means Cartographer; `!HEX`/`@HEX=N,BASE` mean
 romjuice; `*HEX` and `/text` mean Atlas) and confirmed by the user when the
 guess is ambiguous. Each dialect follows its own tool's parsing rules from
 [`../table-dialects.md`](../table-dialects.md) and converts to the native
-model. Conversion never writes the source file; **Save As Native** writes a
-new one.
+model. Conversion never writes the source file; **Save As File** writes a
+new one. A legacy file that yields more than one table — a romjuice kanji
+array, or an abcde file with several `@id` lines — loads its first table from
+the file; each other table becomes a table entry of its own with no file,
+until **Save As File** gives it one.
 
 | Legacy form                          | Native form                                                             |
 |--------------------------------------|-------------------------------------------------------------------------|
@@ -260,13 +272,13 @@ new one.
 | Atlas `!XX`, `@XX` (dakuten)         | Dropped, with a notice                                                  |
 | Cartographer `$HEX=label,N`          | `$HEX=[label],N`; whitespace in `label` becomes `_`                     |
 | romjuice `$HEX=N`                    | `$HEX=[raw_HEX],N`                                                      |
-| romjuice `@HEX=N,BASE`               | `!HEX=[kanji_BASE] @kanji_BASE:N`, plus a generated table `kanji_BASE` holding `b=text` for every 2-byte entry `BASE+b` of the source table |
+| romjuice `@HEX=N,BASE`               | `!HEX=[kanji_BASE] @kanji_BASE:N`, plus a generated table `kanji_BASE`, its own entry, holding `b=text` for every 2-byte entry `BASE+b` of the source table |
 | romjuice `!HEX` in table 1, table 2  | `!HEX=[swap] @table2:*` in table 1; `!HEX=return` in table 2. romjuice's swap persists across strings; the conversion does not, and says so |
 | romjuice duplicate keys              | first wins, the rest are dropped with a notice                          |
 | romjuice `\r`                        | `\n`                                                                    |
 | A file that is not UTF-8             | read as `cp932`, else `latin-1`, with a notice naming the encoding       |
 | abcde's NFD text                     | composed to NFC, as all table text is                                   |
-| abcde `@id`                          | `@table id`                                                             |
+| abcde `@id`                          | `@table id`; a second `@id` starts a table split into its own entry, with a notice |
 | abcde `%bits`, `KEY<w>`              | unchanged                                                               |
 | abcde `!KEY=<label>,params`          | `!KEY=[label] params` with `<@id>:N` → `@id:N`, bare `N` → `@raw:N`, `<binary>:N` → `@bits:N`, `0` → `:*`, `-1` → `return`, `$hex`/`%bin` → `:$hex`/`:%bin`, `+` kept |
 | abcde unlabelled `!KEY=,params`      | `!KEY= params`: a silent switch                                          |

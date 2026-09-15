@@ -98,12 +98,13 @@ class PluginsMixin:
         self._fill_compression_pick()
         kept = self._drop_clean_documents()
         for e in self.workspace.table_entries():
-            # The file's own tables as well as the live ones: they are the
-            # baseline the project's overlay is measured against, so a charset
-            # applied to one and not the other would read as a user edit.
-            for t in (*e.tables, *e.file_tables):
-                t.charset_applied = False
-                apply_charset(t, self.registry)
+            # The file's own table as well as the live one: it is the baseline
+            # the project's overlay is measured against, so a charset applied to
+            # one and not the other would read as a user edit.
+            for t in (e.table, e.file_table):
+                if t is not None:
+                    t.charset_applied = False
+                    apply_charset(t, self.registry)
         if self._entry is not None:
             self._doc = self._load_document(self._entry)
             self._restore_session()

@@ -7,7 +7,6 @@ from copy import deepcopy
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -33,13 +32,10 @@ from mapchar.engines.relsearch import (
 from mapchar.project.formats.table_native import format_entry, format_key, parse_entry
 from mapchar.project.workspace import Entry
 from mapchar.ui.widgets import (
-    CompactComboBox,
     ElidedLabel,
     EscapeCloses,
-    fill_pick,
     fit_chars,
     hint_field,
-    select_data,
     show_elided_tooltips,
 )
 from mapchar.ui.window_layout import remember_layout
@@ -56,10 +52,10 @@ ALPHABETS = {
 
 class TableEditor(EscapeCloses, QWidget):
     changed = Signal(object, object)
-    """The table entry whose tables changed, and its tables as they were.
+    """The table entry whose table changed, and its table as it was.
 
     The window turns the pair into one undo step; the editor itself mutates
-    the tables in place.
+    the table in place.
     """
     save_requested = Signal(object)
 
@@ -72,13 +68,8 @@ class TableEditor(EscapeCloses, QWidget):
         self._entry: Entry | None = None
         self._table: Table | None = None
         layout = QVBoxLayout(self)
-        top = QHBoxLayout()
         self.title = ElidedLabel("No table")
-        self.table_pick = CompactComboBox()
-        top.addWidget(self.title, 1)
-        top.addWidget(QLabel("Table"))
-        top.addWidget(self.table_pick)
-        layout.addLayout(top)
+        layout.addWidget(self.title)
         self.grid = QTableWidget(0, 2)
         self.grid.setHorizontalHeaderLabels(["Entry line", "Meaning"])
         self.grid.horizontalHeader().setStretchLastSection(True)
@@ -112,7 +103,6 @@ class TableEditor(EscapeCloses, QWidget):
         layout.addLayout(row)
         self.status = ElidedLabel("")
         layout.addWidget(self.status)
-        self.table_pick.currentIndexChanged.connect(self._fill)
         self.add.clicked.connect(self._add)
         self.new_line.returnPressed.connect(self._add)
         self.remove.clicked.connect(self._remove)
@@ -125,34 +115,23 @@ class TableEditor(EscapeCloses, QWidget):
 
     def set_entry(self, entry: Entry | None) -> None:
         self._entry = entry
-        tables = entry.tables if entry is not None else []
-        self.title.setText(entry.name if entry is not None else "No table")
-        fill_pick(self.table_pick, [(t.id, t.id) for t in tables], None, False)
+        if entry is None or entry.table is None:
+            self.title.setText(entry.name if entry is not None else "No table")
+        else:
+            self.title.setText(f"@{entry.table.id} · {entry.name}")
         self._fill()
-
-    def select_table(self, table_id: str) -> None:
-        select_data(self.table_pick, table_id)
 
     def prefill(self, key_bits: str) -> None:
         self.new_line.setText(f"{format_key(key_bits)}=")
         self.new_line.setFocus()
 
-    def _snapshot(self) -> list[Table]:
-        """The entry's tables as they are now, to undo back to."""
-        return deepcopy(self._entry.tables) if self._entry is not None else []
-
-    def _current_table(self) -> Table | None:
-        if self._entry is None:
-            return None
-        tid = self.table_pick.currentData()
-        for t in self._entry.tables:
-            if t.id == tid:
-                return t
-        return None
+    def _snapshot(self) -> Table | None:
+        """The entry's table as it is now, to undo back to."""
+        return deepcopy(self._table)
 
     def _fill(self) -> None:
         self._filling = True
-        self._table = self._current_table()
+        self._table = self._entry.table if self._entry is not None else None
         self.grid.setRowCount(0)
         if self._table is not None:
             entries = self._table.sorted_entries()

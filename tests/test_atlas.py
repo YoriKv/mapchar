@@ -8,7 +8,7 @@ from mapchar.core.block import BlockConfig, EndToken, PointerTableSource, RangeS
 from mapchar.pipeline.exchange.atlas import (
     atlas_text,
     read_atlas,
-    write_abcde_tables,
+    write_abcde_table,
     write_atlas,
 )
 from mapchar.pipeline.exchange.cartographer import (
@@ -25,10 +25,12 @@ TS = table_set(BODY, "main")
 
 
 def test_abcde_tables_roundtrip():
-    text = write_abcde_tables(list(tables_from(BODY).values()))
-    assert "!F1=<[item]>,<@items>:1" in text and "!FF=,-1" in text
+    tables = tables_from(BODY)
+    text = write_abcde_table(tables["main"])
+    items = write_abcde_table(tables["items"])
+    assert "!F1=<[item]>,<@items>:1" in text and "!FF=,-1" in items
     assert "!F0=<[color]>,1" in text and "/00=[end]" in text and "FE=[line]\\n" in text
-    back = {t.id: t for t in read_abcde(text).tables}
+    back = {tid: read_abcde(x).table for tid, x in (("main", text), ("items", items))}
     assert back["main"].entries["11110001"].params[0].table_id == "items"
     assert back["items"].entries["11111111"].kind.value == "return"
 
@@ -49,14 +51,14 @@ def test_write_and_read_atlas_script(registry):
     ex = extract(data, cfg, TS, registry)
     ex.strings[0].translation = "AB[color $03]C[end]"
     export = write_atlas(
-        "D", cfg, ex.strings, TS, {"main.tbl": list(TS.tables.values())}
+        "D", cfg, ex.strings, TS, {f"{t.id}.tbl": t for t in TS.tables.values()}
     )
     s = export.script
-    assert '#ADDTBL("main_main.tbl", Table_0)' in s and "#ACTIVETBL(Table_0)" in s
-    assert '#ADDTBL("main_items.tbl", Table_1)' in s
+    assert '#ADDTBL("main.tbl", Table_0)' in s and "#ACTIVETBL(Table_0)" in s
+    assert '#ADDTBL("items.tbl", Table_1)' in s
     assert '#SMA("LINEAR")' in s and "#JMP($10, $18)" in s
     assert "#W16($0)\nAB[color]<$03>C[end]" in s and "#W16($2)\nC[end]" in s
-    assert "@main" in export.tables["main_main.tbl"]
+    assert "@main" in export.tables["main.tbl"]
     back = read_atlas(s)
     assert [(a.text, a.pointers) for a in back.strings] == [
         ("AB[color]<$03>C[end]".replace("<$03>", "[$03]"), (0,)),
@@ -87,7 +89,7 @@ def test_atlas_export_inserts_like_mapchar(tmp_path, registry):
     assert res.ok
     expected = apply_splices(data, res.splices)
     export = write_atlas(
-        "D", cfg, ex.strings, TS, {"main.tbl": list(TS.tables.values())}
+        "D", cfg, ex.strings, TS, {f"{t.id}.tbl": t for t in TS.tables.values()}
     )
     for name, text in export.tables.items():
         (tmp_path / name).write_text(text)

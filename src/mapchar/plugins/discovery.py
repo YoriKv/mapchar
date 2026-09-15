@@ -286,8 +286,7 @@ def _load_charset_table(registry, category, path, result) -> None:
     pid = os.path.splitext(os.path.basename(path))[0]
     entries = [
         (e.bits, plain_text(e.text))
-        for t in tf.tables
-        for e in t.entries.values()
+        for e in tf.table.entries.values()
         if e.kind.value == "text"
     ]
 

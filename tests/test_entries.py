@@ -524,7 +524,7 @@ def test_write_on_a_bookmark_or_table_explains_itself(window, tmp_path, monkeypa
     window._write_entry(window.workspace.of_kind(EntryKind.TABLE)[0])
     assert len(said) == 2
     assert "saved position" in said[0]
-    assert "Save As Native" in said[1]
+    assert "Save As File" in said[1]
 
 
 def test_a_bookmark_snapshots_the_settings_it_was_made_under(window, tmp_path):

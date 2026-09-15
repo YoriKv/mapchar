@@ -36,6 +36,7 @@ class CodecsBarMixin:
             [(f"@{tid}", tid) for tid in self.workspace.tables()],
             "(no table)",
         )
+        self.table_pick.add_command_row()
         self.tables_panel.set_start_table(self.table_pick.currentData())
 
     def _choose_table(self, table_id: str) -> None:

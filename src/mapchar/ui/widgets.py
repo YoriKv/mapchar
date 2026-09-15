@@ -13,7 +13,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, TypeVar
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -133,6 +133,57 @@ class CompactComboBox(QComboBox):
             )
             return True
         return super().event(event)
+
+
+_COMMAND = "\x00command"
+"""The datum of a :class:`CommandComboBox`'s command row; no choice carries it."""
+
+
+class CommandComboBox(CompactComboBox):
+    """A picker whose last row runs a command (``New Table…``) instead of
+    being a choice.
+
+    Choosing the row never shows it: the choice before it stays current and
+    :attr:`command` fires. :attr:`chosen` stands in for ``currentIndexChanged``,
+    firing for a real choice only. A refill clears the row, so the filler puts it
+    back with :meth:`add_command_row`.
+    """
+
+    chosen = Signal()
+    command = Signal()
+
+    def __init__(
+        self, label: str, width: int = PICKER_WIDTH, parent: QWidget | None = None
+    ):
+        super().__init__(width, parent)
+        self._label = label
+        self._shown = -1
+        self.currentIndexChanged.connect(self._on_index)
+
+    def add_command_row(self) -> None:
+        was_blocked = self.blockSignals(True)
+        self.insertSeparator(self.count())
+        self.addItem(self._label, _COMMAND)
+        self.blockSignals(was_blocked)
+
+    def setCurrentIndex(self, index: int) -> None:  # noqa: N802 - Qt override
+        # A change made with signals blocked never reaches _on_index, so the
+        # choice to fall back to is recorded here too.
+        super().setCurrentIndex(index)
+        # Read back rather than taken from ``index``: the command a change set off
+        # may have refilled the list and chosen something else meanwhile.
+        if self.currentData() != _COMMAND:
+            self._shown = self.currentIndex()
+
+    def _on_index(self, index: int) -> None:
+        if self.itemData(index) == _COMMAND:
+            was_blocked = self.blockSignals(True)
+            super().setCurrentIndex(self._shown)
+            self.blockSignals(was_blocked)
+            self.command.emit()
+            return
+        self._shown = index
+        self.chosen.emit()
 
 
 class ElidedLabel(QLabel):
@@ -534,6 +585,7 @@ def select_data(combo: QComboBox, value: object) -> bool:
 __all__ = [
     "PICKER_WIDTH",
     "CancellableRun",
+    "CommandComboBox",
     "CompactComboBox",
     "ElidedLabel",
     "EscapeCloses",

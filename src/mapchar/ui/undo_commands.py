@@ -39,6 +39,7 @@ from dataclasses import fields
 
 from PySide6.QtGui import QUndoCommand
 
+from mapchar.core.table import Table
 from mapchar.project.workspace import Entry
 
 # QUndoStack only attempts mergeWith between commands whose id() match, and -1
@@ -416,7 +417,7 @@ class BoxCommand(_ValueCommand):
 
 
 class TableCommand(_InPlaceCommand):
-    """One Table Editor change: the entry's tables before and after it.
+    """One Table Editor change: the entry's table before and after it.
 
     Never merges. One gesture — a line edited, a fill, a shift, a removal — is
     one step, and each re-decodes every view reading that table. In place because
@@ -424,7 +425,7 @@ class TableCommand(_InPlaceCommand):
     the view is not on.
     """
 
-    def __init__(self, window, entry: Entry, before: list, after: list):
+    def __init__(self, window, entry: Entry, before: Table, after: Table):
         revision = entry.live_revision
         super().__init__(
             window,
@@ -435,8 +436,8 @@ class TableCommand(_InPlaceCommand):
         )
 
     def _apply(self, state) -> None:
-        tables, revision = state
-        self.window.apply_tables(self.entry, tables, revision)
+        table, revision = state
+        self.window.apply_table(self.entry, table, revision)
 
 
 class PointerCommand(_CurrentEntryCommand):
