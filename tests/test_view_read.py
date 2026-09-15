@@ -94,3 +94,28 @@ def test_a_new_block_keeps_its_reading_s_kind_over_the_region():
     assert with_region(table, 4, 8).source == PointerTableSource(4, 8, 3, 4, "big")
     listed = BlockConfig(PointerListSource((1, 2), 2), EndToken(), "t")
     assert with_region(listed, 4, 8).source == PointerTableSource(4, 8, 2, 2)
+
+
+def test_a_pointer_s_string_is_read_for_a_bounded_preview():
+    from mapchar.pipeline.view_read import PREVIEW_BYTES
+
+    cfg = BlockConfig(PointerTableSource(0, 0, 2, 2), EndToken(), "ascii")
+    data = b"A" * (PREVIEW_BYTES * 2)
+    tokens, cut = target_string(Bits(data), cfg, _ascii(), 0)
+    assert len(tokens) == PREVIEW_BYTES and cut
+    ended = b"A" * (PREVIEW_BYTES - 1) + b"\x00"
+    tokens, cut = target_string(Bits(ended), cfg, _ascii(), 0)
+    assert len(tokens) == PREVIEW_BYTES and not cut
+
+
+def test_a_view_s_pointer_window_holds_as_many_pointers_as_asked():
+    from mapchar.pipeline.view_read import pointer_window
+
+    table = PointerTableSource(4, 20, 2, 3)
+    assert pointer_window(table, 0, 1) == 6  # the first pointer, at 4
+    assert pointer_window(table, 5, 2) == 12  # the ones at 7 and 10
+    assert pointer_window(table, 0, 6) == 21  # the last starts at 19
+    assert pointer_window(table, 0, 7) is None  # only six start before 20
+    listed = PointerListSource((30, 10, 20), 2)
+    assert pointer_window(listed, 11, 2) == 32
+    assert pointer_window(listed, 11, 3) is None

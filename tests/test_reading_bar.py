@@ -153,3 +153,21 @@ def test_new_block_from_selection_starts_from_the_bars(window, tmp_path):
     assert block.config.source == PointerTableSource(0, 4, 2, 2)
     assert window.mode_toggle.value() is True
     assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+
+
+def test_a_preview_is_read_once_and_marked_where_it_was_cut():
+    from mapchar.core.table import Entry, TokenKind
+    from mapchar.core.tokens import Token
+    from mapchar.ui.pointer_tokens import preview_reader
+
+    reads: list[int] = []
+
+    def read(target: int):
+        reads.append(target)
+        return [Token("", 0, 8, Entry("", TokenKind.TEXT, "Hi"))], target == 2
+
+    seen: dict[int, str] = {}
+    preview = preview_reader(read, seen)
+    assert preview(1) == "Hi" and preview(2) == "Hi…" and preview(None) == ""
+    assert preview_reader(read, seen)(1) == "Hi" and reads == [1, 2]
+    assert preview_reader(None)(1) == ""

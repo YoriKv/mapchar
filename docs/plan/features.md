@@ -251,7 +251,11 @@ and Strings tabs read again at once.
     target and the string;
   - the **Text** tab shows a line per pointer: its address, its value, where it
     points and, resolved, the string there;
-  - a line step in Text is a pointer.
+  - a line step in Text is a pointer;
+  - a pointer's string is read for at most 256 bytes past its target and shown
+    with a trailing `…` when that cut it short, so a pointer into anything but
+    text does not read to the end of the file; each target is read once while
+    the data, the reading and the table stay the same.
 - **Strings** — the bytes are text through the format, cut into strings by the
   reading's string type from the view's first byte: at end tokens, every
   fixed length, or by a Pascal prefix. What only means something at a block's

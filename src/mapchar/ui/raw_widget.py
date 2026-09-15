@@ -604,11 +604,27 @@ class RawWidget(QAbstractScrollArea):
                 laid,
             )
             return False
-        cut = False
-        while len(text) > 1 and drawn * MIN_SQUEEZE > room:
-            text = text[:-1]
+        # As many characters as fit condensed: guessed from the width so far,
+        # since the ink runs about even with the count, then settled a
+        # character at a time from there rather than from the end of a preview
+        # that runs to eighty.
+        whole = text
+        keep = max(
+            1, min(len(whole) - 1, int(len(whole) * room / (drawn * MIN_SQUEEZE)))
+        )
+        text = whole[:keep]
+        advance, drawn = self._measure(painter, text, label)
+        while keep > 1 and drawn * MIN_SQUEEZE > room:
+            keep -= 1
+            text = whole[:keep]
             advance, drawn = self._measure(painter, text, label)
-            cut = True
+        while keep < len(whole):
+            more = self._measure(painter, whole[: keep + 1], label)
+            if more[1] * MIN_SQUEEZE > room:
+                break
+            keep += 1
+            text, (advance, drawn) = whole[:keep], more
+        cut = keep < len(whole)
         squeeze = min(1.0, room / drawn) if drawn > 0 else 1.0
         painter.save()
         painter.setClipRect(cell)
