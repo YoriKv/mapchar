@@ -43,7 +43,6 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
-    FixedSource,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -64,12 +63,11 @@ from mapchar.ui.number_fields import (
 )
 from mapchar.ui.widgets import CompactComboBox, WrapBar, fit_chars, hint_field
 
-RANGE, FIXED, TABLE, LIST = "range", "fixed", "table", "list"
+RANGE, TABLE, LIST = "range", "table", "list"
 """The source kinds, as the Source picker's data."""
 
 _SOURCE_NAMES = {
     RANGE: "Range",
-    FIXED: "Fixed strings",
     TABLE: "Pointer table",
     LIST: "Pointer list",
 }
@@ -78,14 +76,7 @@ END, FIXED_LENGTH, PASCAL, NEXT = "end", "fixed", "pascal", "next"
 """The string types, as the String type picker's data."""
 
 SECTIONS = {
-    "Source": (
-        "source_kind",
-        "start",
-        "stop",
-        "count",
-        "length",
-        "ptr_addresses",
-    ),
+    "Source": ("source_kind", "start", "stop", "ptr_addresses"),
     "Pointers": (
         "ptr_size",
         "ptr_stride",
@@ -97,6 +88,7 @@ SECTIONS = {
     "Strings": (
         "string_type",
         "fixed_length",
+        "count",
         "stop_at_end",
         "pascal",
         "spp",
@@ -294,8 +286,6 @@ class SkipsPicker(CompactComboBox):
 def source_kind(config: BlockConfig) -> str:
     """A configuration's source kind, as the Source picker names it."""
     source = config.source
-    if isinstance(source, FixedSource):
-        return FIXED
     if isinstance(source, PointerTableSource):
         return TABLE
     if isinstance(source, PointerListSource):
@@ -325,7 +315,6 @@ class ReadingBar(WrapBar):
         self.start = AddressEdit(self.spelling)
         self.stop = AddressEdit(self.spelling)
         self.count = number_spin(1, 1_000_000, 4)
-        self.length = number_spin(1, 1_000_000, 3)
         self.ptr_size = number_spin(1, 4, 1)
         self.ptr_stride = number_spin(1, 4096, 2)
         self.ptr_endian = QComboBox()
@@ -399,8 +388,6 @@ class ReadingBar(WrapBar):
             ("source_kind", "", (self.source_kind,), "Where the strings are"),
             ("start", "Start", (self.start,), "The first byte"),
             ("stop", "Stop", (self.stop,), "The first byte past the region"),
-            ("count", "Count", (self.count,), "How many strings"),
-            ("length", "Length", (self.length,), "Bytes in every string"),
             ("ptr_size", "Size", (self.ptr_size,), "Bytes in a pointer"),
             (
                 "ptr_stride",
@@ -435,6 +422,7 @@ class ReadingBar(WrapBar):
             ),
             ("string_type", "Ends at", (self.string_type,), "How a string ends"),
             ("fixed_length", "Length", (self.fixed_length,), "Bytes in every string"),
+            ("count", "Count", (self.count,), "How many strings; sets Stop"),
             ("stop_at_end", "", (self.stop_at_end,), None),
             (
                 "pascal",
@@ -499,9 +487,8 @@ class ReadingBar(WrapBar):
         self.ptr_mapping.lineEdit().editingFinished.connect(
             lambda: self._edited("ptr_mapping")
         )
+        self.count.valueChanged.connect(self._on_count)
         for name, spin in (
-            ("count", self.count),
-            ("length", self.length),
             ("ptr_size", self.ptr_size),
             ("ptr_stride", self.ptr_stride),
             ("ptr_bank", self.ptr_bank),
@@ -604,10 +591,6 @@ class ReadingBar(WrapBar):
             if isinstance(s, RangeSource):
                 self.start.set_value(s.start)
                 self.stop.set_value(s.stop)
-            elif isinstance(s, FixedSource):
-                self.start.set_value(s.start)
-                self.count.setValue(s.count)
-                self.length.setValue(s.length)
             else:
                 if isinstance(s, PointerTableSource):
                     self.start.set_value(s.start)
@@ -651,9 +634,27 @@ class ReadingBar(WrapBar):
                 max(self.spare_room.findData(spare_room), 0)
             )
             self.spare_room.setEnabled(compressed)
+            self._show_count()
         finally:
             self._loading = False
         self._sync()
+
+    def _show_count(self) -> None:
+        """Say how many fixed-length strings the range holds."""
+        start, stop = self.start.value(), self.stop.value()
+        length = self.fixed_length.value()
+        if start is None or stop is None or length < 1:
+            return
+        self.count.setValue(max((stop - start) // length, 1))
+
+    def _on_count(self) -> None:
+        """A count typed in moves Stop to hold that many strings."""
+        if self._loading:
+            return
+        start = self.start.value()
+        if start is not None:
+            self.stop.set_value(start + self.count.value() * self.fixed_length.value())
+        self._edited("count")
 
     def show_default(self) -> None:
         """Show :data:`DEFAULT_READING`, for when no entry has one of its own."""
@@ -677,7 +678,7 @@ class ReadingBar(WrapBar):
 
     def _fill_kinds(self, current: str) -> None:
         self.source_kind.clear()
-        kinds = (TABLE, LIST) if self._pointers else (RANGE, FIXED)
+        kinds = (TABLE, LIST) if self._pointers else (RANGE,)
         for kind in kinds:
             self.source_kind.addItem(_SOURCE_NAMES[kind], kind)
         self.source_kind.setCurrentIndex(max(self.source_kind.findData(current), 0))
@@ -688,23 +689,27 @@ class ReadingBar(WrapBar):
     def _edited(self, name: str) -> None:
         if self._loading:
             return
+        if name in ("start", "stop", "fixed_length"):
+            self._loading = True
+            try:
+                self._show_count()
+            finally:
+                self._loading = False
         self._sync()
         self.edited.emit(name)
 
     def _sync(self) -> None:
         kind = self.source_kind.currentData()
-        fixed = kind == FIXED
         pointers, block = self._pointers, self._block
         st = self.string_type.currentData()
         was = self.string_type.blockSignals(True)
         self.string_type.model().item(3).setEnabled(pointers)
         self.string_type.blockSignals(was)
         shown = {
-            "source_kind": True,
+            # Text has one kind of source, so there is nothing to pick.
+            "source_kind": pointers,
             "start": block and kind != LIST,
             "stop": block and kind in (RANGE, TABLE),
-            "count": block and fixed,
-            "length": fixed,
             "ptr_size": pointers,
             "ptr_stride": kind == TABLE,
             "ptr_endian": pointers,
@@ -712,14 +717,15 @@ class ReadingBar(WrapBar):
             "ptr_offset": pointers,
             "ptr_bank": pointers and self._needs_bank(),
             "ptr_addresses": block and kind == LIST,
-            "string_type": not fixed,
-            "fixed_length": st == FIXED_LENGTH and not fixed,
-            "stop_at_end": st == FIXED_LENGTH or fixed,
-            "pascal": st == PASCAL and not fixed,
-            "spp": st == END and not fixed,
+            "string_type": True,
+            "fixed_length": st == FIXED_LENGTH,
+            "count": block and kind == RANGE and st == FIXED_LENGTH,
+            "stop_at_end": st == FIXED_LENGTH,
+            "pascal": st == PASCAL,
+            "spp": st == END,
             "realign": True,
-            "line_length": st == FIXED_LENGTH or fixed,
-            "show_end": st == FIXED_LENGTH or fixed,
+            "line_length": st == FIXED_LENGTH,
+            "show_end": st == FIXED_LENGTH,
             "skips": block,
             "bound": block,
             "write_mode": block,
@@ -729,7 +735,7 @@ class ReadingBar(WrapBar):
         for name, visible in shown.items():
             self._groups[name].setVisible(visible)
         self.pascal_endian.setVisible(self.pascal_width.value() > 1)
-        auto = default_write_mode(self._pointers, fixed, bool(self.skips.value()))
+        auto = default_write_mode(self._pointers, bool(self.skips.value()))
         self.write_mode.setItemText(0, f"Automatic ({auto.value})")
         for title, names in SECTIONS.items():
             hidden = self._string_view and title in _NOT_STRING_VIEW
@@ -772,10 +778,7 @@ class ReadingBar(WrapBar):
             "offset": getattr(old, "offset", 0) if offset is None else offset,
             "bank": self.ptr_bank.value(),
         }
-        if kind == FIXED:
-            count = self.count.value() if self._block else getattr(old, "count", 1)
-            source = FixedSource(start, count, self.length.value())
-        elif kind == TABLE:
+        if kind == TABLE:
             source = PointerTableSource(
                 start, stop, stride=self.ptr_stride.value(), **pointer
             )
@@ -794,7 +797,7 @@ class ReadingBar(WrapBar):
             source = RangeSource(start, stop)
         changes = {
             "source": source,
-            "string_type": self._string_type(fixed=kind == FIXED),
+            "string_type": self._string_type(),
             "table_id": table_id,
             "strings_per_pointer": self.spp.value(),
             "realign": (self.realign_m.value(), self.realign_o.value()),
@@ -811,10 +814,8 @@ class ReadingBar(WrapBar):
             }
         return replace(base, **changes)
 
-    def _string_type(self, *, fixed: bool) -> StringType:
+    def _string_type(self) -> StringType:
         st = self.string_type.currentData()
-        if fixed:
-            return FixedLength(self.length.value(), self.stop_at_end.isChecked())
         if st == FIXED_LENGTH:
             return FixedLength(self.fixed_length.value(), self.stop_at_end.isChecked())
         if st == PASCAL:
@@ -835,7 +836,7 @@ def source_kind_for(kind: str | None, pointers: bool) -> str:
     """``kind`` when it reads the way asked, else that way's first kind."""
     if pointers:
         return kind if kind in (TABLE, LIST) else TABLE
-    return kind if kind in (RANGE, FIXED) else RANGE
+    return RANGE
 
 
 def _or(value: int | None, default: int) -> int:

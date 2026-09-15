@@ -8,7 +8,6 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
-    FixedSource,
     PointerListSource,
     PointerTableSource,
     RangeSource,
@@ -61,9 +60,6 @@ def test_a_view_cuts_strings_by_the_reading_s_string_type():
     run = decode_strings(data, fixed, _ascii())
     assert run.starts == [0, 16, 32]
     assert render(run.tokens) == "ABCDEF"
-    # Fixed strings cut by their own length, whatever the string type says.
-    source = BlockConfig(FixedSource(0, 1, 3), EndToken(), "ascii")
-    assert decode_strings(data, source, _ascii()).starts == [0, 24]
 
 
 def test_pointer_cells_are_every_stride_from_the_table_s_start():
@@ -88,8 +84,6 @@ def test_a_new_block_keeps_its_reading_s_kind_over_the_region():
     base = BlockConfig(RangeSource(0, 0), EndToken(), "t", skips=((1, 2),), bound=9)
     assert with_region(base, 4, 8).source == RangeSource(4, 8)
     assert with_region(base, 4, 8).skips == () and with_region(base, 4, 8).bound is None
-    fixed = BlockConfig(FixedSource(0, 1, 3), EndToken(), "t")
-    assert with_region(fixed, 4, 11).source == FixedSource(4, 2, 3)
     table = BlockConfig(PointerTableSource(0, 0, 3, 4, "big"), EndToken(), "t")
     assert with_region(table, 4, 8).source == PointerTableSource(4, 8, 3, 4, "big")
     listed = BlockConfig(PointerListSource((1, 2), 2), EndToken(), "t")

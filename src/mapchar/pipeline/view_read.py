@@ -16,7 +16,6 @@ from mapchar.core.bits import Bits
 from mapchar.core.block import (
     BlockConfig,
     FixedLength,
-    FixedSource,
     Pascal,
     PointerListSource,
     PointerTableSource,
@@ -69,9 +68,6 @@ def _view_cut(config: BlockConfig | None) -> BlockConfig | None:
     if config is None:
         return None
     string_type = config.string_type
-    if isinstance(config.source, FixedSource):
-        stop = isinstance(string_type, FixedLength) and string_type.stop_at_end
-        string_type = FixedLength(config.source.length, stop)
     if not isinstance(string_type, FixedLength | Pascal):
         return None
     return replace(

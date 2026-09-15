@@ -46,7 +46,7 @@ done well.[end]
   configuration alone.
 - **`@string N at $start-$end ptr $addr…`** — one string: its index in the
   block, its byte extent on disk (exclusive end), and the addresses of every
-  pointer that reaches it (none for range and fixed sources).
+  pointer that reaches it (none for a range source).
 - **Content lines** between `@string` directives are the string's text. Line
   breaks are joined with nothing; a `\n` in a token's table text is what puts
   a line break after it on dump, so `[line]` codes end lines and the text

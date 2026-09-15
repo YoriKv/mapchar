@@ -294,7 +294,7 @@ def write_command_file(
     table_id: str | None = None,
 ) -> tuple[str, list[str]]:
     """A Cartographer command file for a block, and what it could not express."""
-    from mapchar.core.block import FixedSource, Pascal, PointerListSource, WriteMode
+    from mapchar.core.block import Pascal, PointerListSource, WriteMode
 
     lines: list[str] = []
     notes: list[str] = []
@@ -306,8 +306,6 @@ def write_command_file(
     src = config.source
     st = config.string_type
     fixed_len = config.fixed_length
-    if isinstance(src, FixedSource) and not isinstance(st, FixedLength):
-        notes.append("fixed-string source written as a RAW range of one string")
     if isinstance(st, Pascal):
         notes.append("Pascal strings have no Cartographer form; written as NORMAL")
     if fixed_len is not None:
@@ -326,13 +324,8 @@ def write_command_file(
                 lines.append("#LINE END: No")
     else:
         lines.append("#TYPE: NORMAL")
-    if isinstance(src, RangeSource | FixedSource):
-        start = src.start
-        stop = (
-            src.stop
-            if isinstance(src, RangeSource)
-            else src.start + src.count * src.length
-        )
+    if isinstance(src, RangeSource):
+        start, stop = src.start, src.stop
         lines.append("#METHOD: RAW")
         lines.append(f"#SCRIPT START: ${start:X}")
         lines.append(f"#SCRIPT STOP: ${stop:X}")
@@ -380,9 +373,7 @@ def write_command_file(
         lines.append(f"#TABLE ID: {table_id}")
     lines.append("#COMMENTS: No")
     lines.append("#END BLOCK")
-    if config.write_mode is WriteMode.SLOTTED and not isinstance(
-        src, RangeSource | FixedSource
-    ):
+    if config.write_mode is WriteMode.SLOTTED and not isinstance(src, RangeSource):
         notes.append("slotted write mode is not expressible; Cartographer dumps only")
     return "\n".join(lines) + "\n", notes
 
@@ -395,15 +386,13 @@ def shift_config(config: BlockConfig, delta: int) -> BlockConfig:
     """
     from dataclasses import replace
 
-    from mapchar.core.block import FixedSource, PointerListSource
+    from mapchar.core.block import PointerListSource
 
     if not delta:
         return config
     src = config.source
     if isinstance(src, RangeSource | PointerTableSource):
         src = replace(src, start=src.start + delta, stop=src.stop + delta)
-    elif isinstance(src, FixedSource):
-        src = replace(src, start=src.start + delta)
     elif isinstance(src, PointerListSource):
         src = replace(src, addresses=tuple(a + delta for a in src.addresses))
     if (

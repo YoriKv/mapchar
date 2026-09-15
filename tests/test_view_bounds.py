@@ -14,7 +14,6 @@ from helpers import pointer_rom
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
-    FixedSource,
     PointerListSource,
     PointerTableSource,
     RangeSource,
@@ -46,7 +45,6 @@ def _shown(window):
 
 def test_source_span_is_the_bytes_the_source_itself_occupies():
     assert source_span(RangeSource(0x10, 0x20)) == (0x10, 0x20)
-    assert source_span(FixedSource(0x10, 3, 8)) == (0x10, 0x28)
     assert source_span(PointerTableSource(0x40, 0x48, 2, 2)) == (0x40, 0x48)
     # A pointer list spans its pointers, from the lowest to the end of the highest.
     assert source_span(PointerListSource((0x30, 0x20), size=2)) == (0x20, 0x32)

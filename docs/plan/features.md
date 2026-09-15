@@ -207,12 +207,23 @@ the preview system in [preview.md](preview.md).
   - a header with the **Table** picker (every loaded table, to switch between
     them without the dock), the **Charset** picker (`none` or any registered
     charset; choosing one moves the table onto it keeping its own entries and
-    edits, as one undo step) and a **filter** (Ctrl+F) matching key, text or
-    comment, under which the file and, for a converted table, its dialect
-    are named;
-  - a **grid** of one row per key — Key, Kind, Text, Details (what the entry
-    does, in words: `reads u8, u16`, `@items ×1, then return`), Weight,
-    Comment — whose Text and Comment cells are edited in place;
+    edits, as one undo step), **Rename Table…** (a new `@id`; every switch
+    parameter, block and reading that named the old one follows, as one undo
+    step, and the project carries the new id until Save As File writes it)
+    and a **filter** (Ctrl+F) matching key, text or comment, under which the
+    file and, for a converted table, its dialect are named;
+  - a **grid** of one row per key — Key, Kind, Text (a code as `[label]`, as
+    the dump shows it), Details (what the entry does, in words: `reads u8,
+    u16`, `@items ×1, then return`), Weight, Comment — whose Text and Comment
+    cells are edited in place, and whose other cells open their control in
+    the form on double-click. A click on a header sorts by that column (Key
+    by width, then bits); a right-click chooses which columns show, kept
+    between runs. Weight, left to itself, shows only when the table weights
+    something;
+  - a **sample** line under the grid: what the bytes of the form's key decode
+    to in the file on screen, through the table being edited, read on from
+    where they are first found — or, for bytes the raw view sent, from where
+    they were;
   - an **entry form** under the grid, loaded from the selected row or blank
     for a new one: the key as hex or, for a width that is not whole digits,
     bits, with its width read out; the kind as a picker (Text, End, Code,
@@ -222,9 +233,12 @@ the preview system in [preview.md](preview.md).
     the table (loaded ones, `raw`, `bits`), how it stops (until the string
     ends, a count, a count read from the data as `u8`…`u32be`, until given
     bytes or bits) and whether its matches count towards the parent (`+`) —
-    with **then return** after them; the comment; and the **Line** the form
-    spells in the native grammar, which also works the other way: a line
-    typed or pasted into it fills the form. A problem with the entry — or a
+    with **then return** after them; the comment; and, behind a **Line**
+    disclosure kept between runs, the line the form spells in the native
+    grammar, which also works the other way: a line typed or pasted into it
+    fills the form. Weight shows for a code or a switch, for an entry that
+    is weighted, and for every entry of a table that weights something. A
+    problem with the entry — or a
     word on one that is valid but probably not meant, such as a switch whose
     text has no brackets — is said under the form before **Add** (or
     **Apply**, when a row is being edited) puts it in the table. After an
@@ -233,8 +247,9 @@ the preview system in [preview.md](preview.md).
     order; **New** clears it. With several rows selected the form waits:
     only **Remove** (Del) and **Shift Keys…** apply, and Remove asks nothing,
     being one undo step;
-  - the raw view's **Add to Table…** opens the form on the selected bytes as
-    the key;
+  - the raw view's **Add to Table…** opens the form on the first selected
+    byte as the key, saying where it is, and queues the rest one entry each:
+    every Add moves on to the next byte, then to the next key as usual;
   - **Shift Keys…** moves the selected entries' keys by a constant, typed as
     an offset;
   - **Fill…** — templates: `A–Z`, `a–z`, `0–9`, the three together, `あ-ん`,
@@ -243,6 +258,9 @@ the preview system in [preview.md](preview.md).
     entries, which are left alone unless **Overwrite** is ticked (a whole
     standard encoding is a **charset** on the table, not a fill);
   - every change is one undo step and re-decodes every view using the table;
+  - **Save** writes a native table back to its file, and only that: a
+    converted table or one with no file needs **Save As File…**, which asks
+    where;
   - the status line carries what reading the file had to report — a conversion
     from a legacy dialect, an encoding that is not UTF-8 — with each notice's
     fuller detail in its tooltip.
@@ -457,30 +475,30 @@ the bars read the view, and opens it on its strings; from then on the bars are
 its settings (see [Reading the bytes](#reading-the-bytes)). The Reading bar
 shows the settings below that the mode, source kind and string type use, in
 four framed sections that sit side by side while there is room: **Source**
-(the kind, start, stop, count, length, pointer addresses), **Pointers** (size,
-stride, endian, mapping, offset, bank), **Strings** (string type and what it
-takes, strings per pointer, realign, skip ranges, lines, Show `[end]`) and
-**Writing** (bound, write mode, fill byte, spare room). A file has no addresses
-of its own, so its bar leaves out start, stop, count, pointer addresses, skip
+(the kind, start, stop, pointer addresses), **Pointers** (size, stride,
+endian, mapping, offset, bank), **Strings** (string type and what it takes,
+strings per pointer, realign, skip ranges, lines, Show `[end]`) and **Writing**
+(bound, write mode, fill byte, spare room). A file has no addresses of its
+own, so its bar leaves out start, stop, count, pointer addresses, skip
 ranges and the Writing section; a section with nothing to show is hidden. With
 nothing open the bars are disabled and show the default reading — a file read
 as a **Range** of end-token strings — rather than every control at once.
 
-- **Source** — where the strings come from; the Pointers mode offers the two
-  pointer kinds, the Strings mode the other two:
+- **Source** — where the strings come from; the Pointers mode picks between
+  the two pointer kinds, and the Strings mode has one, so shows no picker:
   - **Range** — `start` to `stop` (exclusive), read as consecutive strings;
   - **Pointer table** — `start`, `stop`, pointer `size`, `stride` (size plus
     space), `endian`, `mapping` (listed by name), an `offset` added to each
     value, and a `bank`, shown only for a mapping that reads one; strings are
     read at each target;
   - **Pointer list** — explicit pointer addresses, one per line, with the
-    same pointer fields;
-  - **Fixed strings** — `start`, `count`, `length`; each string is exactly
-    `length` bytes.
+    same pointer fields.
 - **String type** — how a string ends:
   - **End token** — at the first end token of the table set;
   - **Fixed length** — after `length` bytes, or earlier at an end token when
-    **Stop at end token** is on;
+    **Stop at end token** is on. On a range this is the fixed-string block
+    of other tools, and a **Count** beside the length says how many strings
+    the range holds and, typed into, moves `stop` to hold that many;
   - **Length prefix** — a `1–4`-byte prefix, little- or big-endian when wider
     than one byte, counting bytes or token weights (**Counts tokens**);
   - **Next pointer** — at the next pointer's target (pointer sources only;
@@ -501,8 +519,8 @@ as a **Range** of end-token strings — rather than every control at once.
   Selection** adds one over the selected bytes.
 - **Table** — the start table: a loaded table or an encoding, picked in the
   Table list; the table set follows from it.
-- **Fixed-line layout** — for fixed strings, an optional `line length` that
-  splits each string into lines marked with a `[line]` code.
+- **Fixed-line layout** — for fixed-length strings, an optional `line length`
+  that splits each string into lines marked with a `[line]` code.
 - **Bound** — the exclusive end address strings may not cross on write;
   defaults to `stop`, or to the last string's end for pointer sources, and
   the field's placeholder shows which.
@@ -592,7 +610,7 @@ The editing surface, opened on a block.
   - **Packed** (default with pointers) — strings are laid end to end from the
     block's first string address, each pointer is rewritten to its string's
     new position, and leftover space up to the bound gets the fill byte;
-  - **Slotted** (default without pointers, and always for fixed strings) —
+  - **Slotted** (default without pointers, and always with skip ranges) —
     every string stays at its address and may use up to its original extent
     (the gap to the next string, or its fixed length), padded with the fill
     byte.
@@ -789,4 +807,4 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Files panel | Up/Down open the row · Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
 | Tool windows | Esc close · Enter run the query |
-| Table Editor | Enter put the entry in the table · Del remove the selected entries · Ctrl+F filter · double-click edit a Text or Comment cell |
+| Table Editor | Enter put the entry in the table · Del remove the selected entries · Ctrl+F filter · double-click edit a Text or Comment cell, or open any other in the form · click a header to sort, right-click to choose columns |

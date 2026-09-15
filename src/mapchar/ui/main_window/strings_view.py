@@ -8,7 +8,7 @@ from collections import Counter
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMenu
 
-from mapchar.core.block import FixedLength, FixedSource, Status, WriteMode
+from mapchar.core.block import FixedLength, Status, WriteMode
 from mapchar.core.document import Document
 from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
@@ -230,8 +230,6 @@ class StringsViewMixin:
             return rec.length
         if isinstance(cfg.string_type, FixedLength):
             return cfg.string_type.length
-        if isinstance(cfg.source, FixedSource):
-            return cfg.source.length
         if cfg.effective_write_mode is WriteMode.PACKED:
             return max(bound - rec.start, 0)
         return rec.byte_length(cfg.skips)

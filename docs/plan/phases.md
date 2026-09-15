@@ -33,7 +33,7 @@ Edit strings beside the original and write them back in place.
 - The encode engine with round-trip verification.
 - The Strings view: columns, statuses, code completion, byte readout,
   filter, find and replace, selection sync with the raw view and Hex panel.
-- Write in *slotted* and *packed* modes over range and fixed sources; the
+- Write in *slotted* and *packed* modes over range and pointer sources; the
   Hex panel's overtype editing; Write / Write All; undo for text and hex
   edits; unsaved tracking and the project prompts.
 - Native script import; TSV/CSV and PO export and import.

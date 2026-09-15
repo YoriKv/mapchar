@@ -112,7 +112,7 @@ in bytes, which is the unit their results are reported and selected in.
 `core/block.py`:
 
 - **`BlockConfig`** — frozen: `source` (`RangeSource`, `PointerTableSource`,
-  `PointerListSource`, `FixedSource`), `string_type` (`EndToken`,
+  `PointerListSource`), `string_type` (`EndToken`,
   `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens)`,
   `NextPointer`), `strings_per_pointer`, `realign`, `skips`, `line_length`,
   `start_table_id`, `bound`, `write_mode` (`PACKED`, `SLOTTED`), `fill`.
@@ -503,8 +503,8 @@ tools; **Save As File** folds the overlay into a native file.
 two halves of one thing. The live table is the entry's `table`; what the file
 gave is kept as `file_table`, the edits as `table_overlay` (per entry key: the
 entry's lines in the native grammar — its comment lines, then its own — or
-`null` for one removed), and a charset chosen in place of the file's as
-`table_charset`:
+`null` for one removed), a charset chosen in place of the file's as
+`table_charset`, and an id given in place of the file's as `table_id`:
 
 | Function | When |
 |-------------------|------------------------------------------------------------|
@@ -553,6 +553,7 @@ and aliases for renamed plugin ids.
     { "kind": "table", "name": "main.tbl", "path": "tables/main.tbl",
       "dialect": "native",                           // opt
       "charset": "shift-jis",                        // opt, in place of the file's
+      "table": "font",                               // opt, an id in place of the file's
       "overlay": {"01000011": "# the letter C\n43=C", // opt, the in-app edits
                   "00000000": null} },               //   its lines, or null=removed
     { "kind": "table", "name": "kanji.tbl",          // no path: no file

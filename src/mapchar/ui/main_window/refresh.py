@@ -9,7 +9,6 @@ from mapchar.core.bits import Bits
 from mapchar.core.block import (
     EndToken,
     FixedLength,
-    FixedSource,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -55,7 +54,6 @@ _ALIGN_LOOKAHEAD = 16
 
 _KIND_NAMES = {
     RangeSource: "Range",
-    FixedSource: "Fixed strings",
     PointerTableSource: "Pointer table",
     PointerListSource: "Pointer list",
     EndToken: "End token",

@@ -5,7 +5,6 @@ from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
-    FixedSource,
     Pascal,
     PointerListSource,
     RangeSource,
@@ -60,7 +59,7 @@ def test_packed_realign():
 def test_fixed_strings_and_lines():
     data = bytes.fromhex("41 42 43 41 42 43")
     cfg = BlockConfig(
-        FixedSource(0, 2, 3), FixedLength(3), "main", line_length=2, fill=0xEE
+        RangeSource(0, 6), FixedLength(3), "main", line_length=2, fill=0xEE
     )
     # Line codes are dump formatting; the string is one fixed-length run.
     res, out = relayout(data, cfg, TS, {0: "B[line]\nC"})

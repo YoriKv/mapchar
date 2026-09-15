@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.block import (
-    FixedSource,
     PointerListSource,
     PointerTableSource,
     RangeSource,
@@ -592,8 +591,6 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         source = entry.config.source
         if isinstance(source, RangeSource):
             return f"{source.start:X}–{source.stop:X}"
-        if isinstance(source, FixedSource):
-            return f"{source.count} × {source.length:X} at {source.start:X}"
         if isinstance(source, PointerTableSource):
             return f"pointer table {source.start:X}–{source.stop:X}"
         if isinstance(source, PointerListSource):

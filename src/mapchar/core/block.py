@@ -19,15 +19,6 @@ class RangeSource:
 
 
 @dataclass(frozen=True)
-class FixedSource:
-    """``count`` strings of exactly ``length`` bytes from ``start``."""
-
-    start: int
-    count: int
-    length: int
-
-
-@dataclass(frozen=True)
 class PointerRef:
     address: int
     size: int
@@ -59,7 +50,7 @@ class PointerListSource:
     bank: int = 0
 
 
-Source = RangeSource | FixedSource | PointerTableSource | PointerListSource
+Source = RangeSource | PointerTableSource | PointerListSource
 
 
 def source_start(source: Source | None) -> int | None:
@@ -80,7 +71,7 @@ def source_start(source: Source | None) -> int | None:
 def source_span(source: Source | None) -> tuple[int, int] | None:
     """The bytes a source itself occupies, as ``(start, stop)``, or ``None``.
 
-    The range read for a range or fixed source, the table for a pointer table,
+    The range read for a range source, the table for a pointer table,
     and for a pointer list the stretch from its lowest pointer to the end of its
     highest — the pointers, never the strings they reach. An empty source says
     nothing.
@@ -91,8 +82,6 @@ def source_span(source: Source | None) -> tuple[int, int] | None:
         if not source.addresses:
             return None
         span = (min(source.addresses), max(source.addresses) + source.size)
-    elif isinstance(source, FixedSource):
-        span = (source.start, source.start + source.count * source.length)
     else:
         span = (source.start, source.stop)
     return span if span[1] > span[0] else None
@@ -162,24 +151,20 @@ class BlockConfig:
         """The byte length every string has, when they all have one."""
         if isinstance(self.string_type, FixedLength):
             return self.string_type.length
-        if isinstance(self.source, FixedSource):
-            return self.source.length
         return None
 
     @property
     def effective_write_mode(self) -> WriteMode:
         if self.write_mode is not None:
             return self.write_mode
-        return default_write_mode(
-            self.has_pointers, isinstance(self.source, FixedSource), bool(self.skips)
-        )
+        return default_write_mode(self.has_pointers, bool(self.skips))
 
 
-def default_write_mode(pointers: bool, fixed: bool, skips: bool) -> WriteMode:
+def default_write_mode(pointers: bool, skips: bool) -> WriteMode:
     """The write mode a block without one of its own gets: packed with
-    pointers, slotted without — and slotted for fixed strings or skip ranges,
-    which make the text non-contiguous, so packing cannot lay it out."""
-    if fixed or skips:
+    pointers, slotted without — and slotted with skip ranges, which make the
+    text non-contiguous, so packing cannot lay it out."""
+    if skips:
         return WriteMode.SLOTTED
     return WriteMode.PACKED if pointers else WriteMode.SLOTTED
 
@@ -188,16 +173,13 @@ def with_region(config: BlockConfig, start: int, stop: int) -> BlockConfig:
     """``config`` read over bytes ``start`` to ``stop``: what a new block made
     from a reading and a selection is.
 
-    The source keeps its kind — the fixed strings that fit, the pointers of a
-    table in that stretch, a list's pointers as a table of them — and what
-    named addresses of the old region (skip ranges, the bound) goes with it.
+    The source keeps its kind — the pointers of a table in that stretch, a
+    list's pointers as a table of them — and what named addresses of the old
+    region (skip ranges, the bound) goes with it.
     """
     s = config.source
     source: Source
-    if isinstance(s, FixedSource):
-        length = max(s.length, 1)
-        source = FixedSource(start, max(1, (stop - start) // length), length)
-    elif isinstance(s, PointerTableSource):
+    if isinstance(s, PointerTableSource):
         source = replace(s, start=start, stop=stop)
     elif isinstance(s, PointerListSource):
         source = PointerTableSource(

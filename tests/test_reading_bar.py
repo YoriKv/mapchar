@@ -45,8 +45,9 @@ def test_with_nothing_open_the_bar_shows_a_plain_range_reading(window, tmp_path)
     sections = bar.sections
 
     def default() -> None:
+        # A file's text has one source kind and no addresses: nothing to show.
         assert bar.source_kind.currentData() == RANGE
-        assert sections["Source"].isVisibleTo(window)
+        assert not sections["Source"].isVisibleTo(window)
         assert sections["Strings"].isVisibleTo(window)
         assert not sections["Pointers"].isVisibleTo(window)
         assert not sections["Writing"].isVisibleTo(window)
@@ -54,6 +55,7 @@ def test_with_nothing_open_the_bar_shows_a_plain_range_reading(window, tmp_path)
     default()
     entry = open_rom_and_table(window, tmp_path, ROM)
     add_block(window, entry, "b", PointerTableSource(0, 4, 1, 1))
+    assert sections["Source"].isVisibleTo(window)
     assert sections["Pointers"].isVisibleTo(window)
     # The last entry closed leaves the default reading, not the block's.
     for open_entry in list(window.workspace.entries):
@@ -445,3 +447,27 @@ def test_the_writing_section_says_what_a_blank_bound_and_automatic_mean(
     add_block(window, entry, "r", RangeSource(0x10, 0x15))
     assert bar.write_mode.itemText(0) == "Automatic (slotted)"
     assert bar.bound.placeholderText() == window.address_spelling.format(0x15)
+
+
+def test_fixed_length_strings_on_a_range_have_a_count_that_sets_stop(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", RangeSource(0x10, 0x16))
+    window.show()
+    bar = window.reading_bar
+    assert not bar._groups["count"].isVisibleTo(window)
+    select_data(bar.string_type, "fixed")
+    bar.fixed_length.setValue(3)
+    assert bar._groups["count"].isVisibleTo(window) and bar.count.value() == 2
+    bar.count.setValue(3)
+    assert block.config.source == RangeSource(0x10, 0x19)
+    assert block.config.string_type == FixedLength(3)
+    assert [s.start for s in block.doc.strings] == [0x10, 0x13, 0x16]
+
+
+def test_a_script_s_fixed_source_reads_as_a_range_of_fixed_strings():
+    from mapchar.project.formats.script import format_config, parse_config
+
+    cfg = parse_config("source=fixed start=$10 count=3 length=8 table=main")
+    assert cfg.source == RangeSource(0x10, 0x28)
+    assert cfg.string_type == FixedLength(8)
+    assert "source=range" in format_config(cfg)

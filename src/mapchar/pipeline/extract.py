@@ -10,7 +10,6 @@ from mapchar.core.block import (
     EndToken,
     Extraction,
     FixedLength,
-    FixedSource,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -77,8 +76,6 @@ def extract(
     source = config.source
     if isinstance(source, RangeSource):
         return _extract_range(bits, config, tables, source)
-    if isinstance(source, FixedSource):
-        return _extract_fixed(bits, config, tables, source)
     if isinstance(source, PointerTableSource | PointerListSource):
         return _extract_pointers(bits, config, tables, source, registry)
     raise TypeError(f"unknown source {source!r}")
@@ -258,24 +255,6 @@ def _extract_range(
             StringRecord(len(strings), start, record_end, tokens, notices=res_notices)
         )
         pos = record_end
-    return Extraction(strings, notices)
-
-
-def _extract_fixed(
-    bits: Bits, config: BlockConfig, tables: TableSet, source: FixedSource
-) -> Extraction:
-    strings: list[StringRecord] = []
-    notices: list[Notice] = []
-    for i in range(source.count):
-        start = (source.start + i * source.length) * 8
-        if start >= bits.length:
-            notices.append(
-                Notice(f"only {i} of {source.count} strings fit in the data")
-            )
-            break
-        limit = min(start + source.length * 8, bits.length)
-        tokens, _, res_notices = _decode_fixed(bits, config, tables, start, limit)
-        strings.append(StringRecord(i, start, limit, tokens, notices=res_notices))
     return Extraction(strings, notices)
 
 
