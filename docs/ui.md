@@ -81,6 +81,11 @@ tooltip the control has of its own.
   `help_dialogs.DISPLAY_ONLY`, the keys and gestures no menu row carries; a
   key handled outside a menu is added there. An action whose label changes at
   runtime sets a `guideLabel` property.
+- **Help ▸ Legend…** is `help_dialogs.LEGEND`: every colour and mark the Hex
+  and Text views, the Hex panel and the Strings view draw, each beside a
+  swatch painted from the same `theme` colour the view uses. A new tint or
+  mark in a view is added there; the test suite holds that every `theme`
+  tint and ink appears in it.
 - Icon-only buttons wear the bundled icon font's arrows and always have a
   tooltip naming their key.
 

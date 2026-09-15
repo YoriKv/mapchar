@@ -49,7 +49,12 @@ from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.fonts_panel import FontsPanel
 from mapchar.ui.glyphs import Glyph
-from mapchar.ui.help_dialogs import AboutDialog, ShortcutGuide, shortcut_sections
+from mapchar.ui.help_dialogs import (
+    AboutDialog,
+    LegendDialog,
+    ShortcutGuide,
+    shortcut_sections,
+)
 from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.main_window.block_bar import BlockBarMixin
@@ -666,6 +671,7 @@ class MainWindow(
 
         help_menu = bar.addMenu("&Help")
         act(help_menu, "&Shortcuts…", self._show_shortcuts, "F1")
+        act(help_menu, "&Legend…", self._show_legend)
         act(help_menu, "&About", self._about)
         self._rebuild_recent()
 
@@ -915,6 +921,10 @@ class MainWindow(
         without a second edit.
         """
         ShortcutGuide(shortcut_sections(self), self).exec()
+
+    def _show_legend(self) -> None:
+        """Help ▸ Legend…: what every colour and mark in the views means."""
+        LegendDialog(self).exec()
 
     def _about(self) -> None:
         AboutDialog(self).exec()

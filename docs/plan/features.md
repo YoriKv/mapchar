@@ -624,8 +624,9 @@ in the game. It is described in [preview.md](preview.md).
 **Help ▸ Shortcuts… (F1)** shows the live list in two balanced columns, one
 section per menu, built from the menu bar plus the keys and mouse gestures no
 menu row can carry (the Hex and Text views, the Strings view, the Files and Hex panels, the
-tool windows). **Help ▸ About** gives the version, author, homepage and
-licenses.
+tool windows). **Help ▸ Legend…** explains every colour and mark the Hex and
+Text views, the Hex panel and the Strings view draw, each beside a swatch.
+**Help ▸ About** gives the version, author, homepage and licenses.
 
 | Area | Keys |
 |---|---|

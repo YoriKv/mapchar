@@ -1,4 +1,4 @@
-"""The Help menu's two modal dialogs: the shortcut guide and About.
+"""The Help menu's modal dialogs: the shortcut guide, the legend and About.
 
 A hand-written list of keys is wrong the day after a shortcut moves, and nothing
 tells you. So the guide is assembled from the **menu bar** — one section per
@@ -16,14 +16,23 @@ An action whose label is rebuilt at runtime — Undo and Redo carry the name of 
 command they would undo — sets a ``guideLabel`` property to pin what the guide
 calls it.
 
+The legend (:data:`LEGEND`) is the other kind of thing a menu cannot hold: every
+colour and mark the Hex and Text views, the Hex panel and the Strings view draw,
+each beside a swatch painted the way the view paints it, from the same
+:mod:`~mapchar.ui.theme` colours — so a tint that changes changes here too.
+
 :func:`shortcut_sections` is separated from the dialog so the mapping can be
 tested without opening a modal, which the offscreen platform can never answer.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence, QPixmap
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import TypeVar
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -38,6 +47,11 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar import APP_NAME, __version__, resources
+from mapchar.ui import theme
+from mapchar.ui.widgets import mono_font
+
+_S = TypeVar("_S", bound="tuple[str, Sequence]")
+"""A titled section — its rows are whatever the page lays out."""
 
 AUTHOR = "Epi"
 HOMEPAGE = "https://github.com/YoriKv/mapchar"
@@ -96,6 +110,106 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ),
 )
 """Keys and gestures no menu action carries, by the surface they belong to."""
+
+
+@dataclass(frozen=True)
+class Swatch:
+    """One legend sample, painted as the views paint it.
+
+    ``tint`` is a chip behind ``text``; ``ink`` colours the text (the palette's
+    text colour when ``None``); ``mark`` is one of the marks that are not a
+    chip — ``"tick"`` for a token that prints nothing, ``"rule"`` for a string
+    boundary, ``"notch"`` for text cut short; ``small`` draws the text in the
+    label face and ``dim`` in the dimmed ink.
+    """
+
+    text: str = ""
+    tint: QColor | None = None
+    ink: QColor | None = None
+    mark: str = ""
+    small: bool = False
+    dim: bool = False
+
+
+LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
+    (
+        "Hex View",
+        (
+            (Swatch("A"), "Text a table entry matched"),
+            (
+                Swatch("line", tint=theme.TINT_CODE, small=True),
+                "A control code, shown by its label",
+            ),
+            (Swatch("end", tint=theme.TINT_END, small=True), "An end token"),
+            (
+                Swatch("kanji", tint=theme.TINT_SWITCH, small=True),
+                "A table switch or return, or bits read by a table's fallback",
+            ),
+            (
+                Swatch(tint=theme.TINT_SWITCH, mark="tick"),
+                "A switch or return that prints nothing",
+            ),
+            (
+                Swatch("·", tint=theme.TINT_RAW, dim=True),
+                "Bytes no table matches",
+            ),
+            (
+                Swatch("1F", tint=theme.TINT_POINTER),
+                "A pointer to one of the block's strings",
+            ),
+            (Swatch("A", tint=theme.TINT_SELECTION), "The selected bytes"),
+            (Swatch("A", mark="rule"), "Where the block starts a string"),
+            (Swatch("s↵"), "A line break inside a run of text"),
+            (Swatch("s▪"), "A code inside a run of text"),
+            (
+                Swatch("Abc", mark="notch"),
+                "Text cut short to fit; hover for the whole",
+            ),
+            (Swatch("0100", dim=True), "The row's address"),
+        ),
+    ),
+    (
+        "Text View",
+        (
+            (Swatch("[line]"), "A code, by its label; a newline code ends the line"),
+            (Swatch("A", tint=theme.TINT_SELECTION), "The selected bytes"),
+        ),
+    ),
+    (
+        "Hex Panel",
+        (
+            (Swatch("A", tint=theme.TINT_SELECTION), "The selected bytes"),
+            (Swatch("."), "A byte with no printable ASCII"),
+        ),
+    ),
+    (
+        "Strings View",
+        (
+            (Swatch("untouched"), "No translation yet"),
+            (Swatch("edited"), "A translation typed here"),
+            (
+                Swatch("review", ink=theme.WARNING_INK),
+                "A translation imported with a request for review",
+            ),
+            (
+                Swatch("too long", ink=theme.ERROR_INK),
+                "More bytes than the string has room for",
+            ),
+            (
+                Swatch("invalid", ink=theme.ERROR_INK),
+                "Something the tables cannot encode",
+            ),
+            (
+                Swatch("overflows", ink=theme.ERROR_INK),
+                "The text does not fit the entry's box",
+            ),
+            (Swatch("12 / 16"), "Bytes the string encodes to, and its room"),
+            (Swatch("↵"), "A line break in the Original or Translation"),
+            (Swatch("1F"), "The address of a pointer to the string"),
+        ),
+    ),
+)
+"""Every colour and mark the views draw, by the surface that draws it."""
 
 
 def _key_text(action: QAction) -> str:
@@ -162,21 +276,29 @@ def shortcut_sections(window) -> list[tuple[str, list[tuple[str, str]]]]:
     return sections
 
 
+def _heading(title: str) -> QLabel:
+    heading = QLabel(title)
+    font = heading.font()
+    font.setBold(True)
+    heading.setFont(font)
+    return heading
+
+
+def _rule() -> QFrame:
+    rule = QFrame()
+    rule.setFrameShape(QFrame.Shape.HLine)
+    rule.setFrameShadow(QFrame.Shadow.Sunken)
+    return rule
+
+
 def _section_widget(title: str, entries: list[tuple[str, str]]) -> QWidget:
     """One titled two-column section: names on the left, keys on the right."""
     box = QWidget()
     layout = QVBoxLayout(box)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(2)
-    heading = QLabel(title)
-    font = heading.font()
-    font.setBold(True)
-    heading.setFont(font)
-    layout.addWidget(heading)
-    rule = QFrame()
-    rule.setFrameShape(QFrame.Shape.HLine)
-    rule.setFrameShadow(QFrame.Shadow.Sunken)
-    layout.addWidget(rule)
+    layout.addWidget(_heading(title))
+    layout.addWidget(_rule())
     grid = QGridLayout()
     grid.setContentsMargins(0, 0, 0, 0)
     grid.setHorizontalSpacing(18)
@@ -194,15 +316,93 @@ def _section_widget(title: str, entries: list[tuple[str, str]]) -> QWidget:
     return box
 
 
-def balanced_columns(
-    sections: list[tuple[str, list[tuple[str, str]]]], count: int = 2
-) -> list[list[tuple[str, list[tuple[str, str]]]]]:
+class SwatchWidget(QWidget):
+    """A :class:`Swatch`, painted as the Hex view paints the thing it stands for:
+    the mono face on the palette's base, a rounded chip, a tick, a rule, a notch."""
+
+    def __init__(self, swatch: Swatch, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.swatch = swatch
+        self._font = mono_font()
+        self._label_font = mono_font()
+        self._label_font.setPointSize(8)
+        metrics = self.fontMetrics()
+        self.setFixedSize(metrics.horizontalAdvance("0") * 11, metrics.height() + 6)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
+        swatch = self.swatch
+        painter = QPainter(self)
+        pal = self.palette()
+        painter.fillRect(self.rect(), pal.base())
+        ink = pal.text().color()
+        dim = QColor(ink)
+        dim.setAlpha(140)
+        cell = QRectF(self.rect())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        if swatch.tint is not None and swatch.mark != "tick":
+            painter.setBrush(swatch.tint)
+            painter.drawRoundedRect(cell.adjusted(1, 1, -1, -1), 3, 3)
+        if swatch.mark == "tick":
+            strong = QColor(swatch.tint or ink)
+            strong.setAlpha(220)
+            painter.setBrush(strong)
+            painter.drawRoundedRect(
+                QRectF(cell.center().x() - 2, cell.top() + 1, 4, cell.height() - 2),
+                3,
+                3,
+            )
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        if swatch.mark == "rule":
+            painter.setPen(QPen(theme.TINT_STRING_RULE, 1))
+            x = cell.left() + 3
+            painter.drawLine(QPointF(x, cell.top()), QPointF(x, cell.bottom()))
+        if swatch.text:
+            painter.setFont(self._label_font if swatch.small else self._font)
+            colour = swatch.ink if swatch.ink is not None else ink
+            painter.setPen(QPen(dim if swatch.dim else colour))
+            painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, swatch.text)
+        if swatch.mark == "notch":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(dim)
+            right, top = cell.right(), cell.top() + 1
+            painter.drawPolygon(
+                [
+                    QPointF(right - 4, top),
+                    QPointF(right, top),
+                    QPointF(right, top + 4),
+                ]
+            )
+        painter.end()
+
+
+def _legend_section(title: str, entries: tuple[tuple[Swatch, str], ...]) -> QWidget:
+    """One titled section of the legend: swatches on the left, meanings beside."""
+    box = QWidget()
+    layout = QVBoxLayout(box)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(2)
+    layout.addWidget(_heading(title))
+    layout.addWidget(_rule())
+    grid = QGridLayout()
+    grid.setContentsMargins(0, 0, 0, 0)
+    grid.setHorizontalSpacing(12)
+    grid.setVerticalSpacing(3)
+    grid.setColumnStretch(1, 1)
+    for row, (swatch, meaning) in enumerate(entries):
+        grid.addWidget(SwatchWidget(swatch), row, 0)
+        grid.addWidget(QLabel(meaning), row, 1)
+    layout.addLayout(grid)
+    return box
+
+
+def balanced_columns(sections: Sequence[_S], count: int = 2) -> list[list[_S]]:
     """Split sections across ``count`` columns, keeping each column's height even.
 
     Sections stay whole and in order; each goes to whichever column is shortest
     so far, so one long menu does not leave the other column nearly empty.
     """
-    columns: list[list[tuple[str, list[tuple[str, str]]]]] = [[] for _ in range(count)]
+    columns: list[list[_S]] = [[] for _ in range(count)]
     heights = [0] * count
     for section in sections:
         target = heights.index(min(heights))
@@ -211,32 +411,31 @@ def balanced_columns(
     return columns
 
 
-class ShortcutGuide(QDialog):
-    """Help ▸ Shortcuts…: every key the app answers to, in one modal page."""
+class _ScrolledPage(QDialog):
+    """A modal page of sections in balanced columns, scrolled, with Close.
 
-    def __init__(
-        self,
-        sections: list[tuple[str, list[tuple[str, str]]]],
-        parent: QWidget | None = None,
-    ) -> None:
+    Scrolled rather than sized to fit: the lists grow with the app, and a short
+    screen must still be able to reach the button.
+    """
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"{APP_NAME} — Shortcuts")
+        self.setWindowTitle(f"{APP_NAME} — {title}")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
+    def _lay_out(self, columns: list[list[QWidget]]) -> None:
         body = QWidget()
-        columns = QHBoxLayout(body)
-        columns.setContentsMargins(12, 12, 12, 12)
-        columns.setSpacing(28)
-        for column in balanced_columns(sections):
+        lanes = QHBoxLayout(body)
+        lanes.setContentsMargins(12, 12, 12, 12)
+        lanes.setSpacing(28)
+        for column in columns:
             lane = QVBoxLayout()
             lane.setSpacing(14)
-            for title, entries in column:
-                lane.addWidget(_section_widget(title, entries))
+            for section in column:
+                lane.addWidget(section)
             lane.addStretch(1)
-            columns.addLayout(lane)
+            lanes.addLayout(lane)
 
-        # Scrolled rather than sized to fit: the list grows with the app, and a
-        # short screen must still be able to reach the button.
         scroll = QScrollArea()
         scroll.setWidget(body)
         scroll.setWidgetResizable(True)
@@ -249,8 +448,8 @@ class ShortcutGuide(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(scroll)
         layout.addWidget(buttons)
-        # Opened at the width the two columns need, so a new action cannot push
-        # the text under a horizontal scrollbar; the vertical one it will have is
+        # Opened at the width the columns need, so a new row cannot push the
+        # text under a horizontal scrollbar; the vertical one it will have is
         # allowed for. The height is a starting size, never a limit.
         margins = layout.contentsMargins()
         width = (
@@ -263,6 +462,36 @@ class ShortcutGuide(QDialog):
         self.resize(
             min(width, screen.width()),
             min(body.sizeHint().height() + 60, 640, screen.height()),
+        )
+
+
+class ShortcutGuide(_ScrolledPage):
+    """Help ▸ Shortcuts…: every key the app answers to, in one modal page."""
+
+    def __init__(
+        self,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__("Shortcuts", parent)
+        self._lay_out(
+            [
+                [_section_widget(title, entries) for title, entries in column]
+                for column in balanced_columns(sections)
+            ]
+        )
+
+
+class LegendDialog(_ScrolledPage):
+    """Help ▸ Legend…: every colour and mark the views draw, with a swatch."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__("Legend", parent)
+        self._lay_out(
+            [
+                [_legend_section(title, entries) for title, entries in column]
+                for column in balanced_columns(LEGEND)
+            ]
         )
 
 
@@ -326,8 +555,12 @@ class AboutDialog(QDialog):
 
 __all__ = [
     "DISPLAY_ONLY",
+    "LEGEND",
     "AboutDialog",
+    "LegendDialog",
     "ShortcutGuide",
+    "Swatch",
+    "SwatchWidget",
     "balanced_columns",
     "shortcut_sections",
     "submenus",

@@ -853,6 +853,7 @@ ALWAYS_ON = frozenset(
         "Hex",
         "Reset Panel Layout",
         "Shortcuts…",
+        "Legend…",
         "About",
     }
 )
@@ -1053,6 +1054,39 @@ def test_the_shortcut_guide_is_built_from_the_window(window):
     guide = ShortcutGuide(shortcut_sections(window), window)
     assert guide.width() > 0
     guide.close()
+
+
+def test_the_legend_shows_every_colour_the_views_draw(window):
+    """A tint added to the theme is a tint the legend has to explain."""
+    from PySide6.QtGui import QColor
+
+    from mapchar.ui import theme
+    from mapchar.ui.help_dialogs import LEGEND, LegendDialog, SwatchWidget
+
+    shown = {
+        colour.name(QColor.NameFormat.HexArgb)
+        for _title, entries in LEGEND
+        for swatch, _meaning in entries
+        for colour in (swatch.tint, swatch.ink)
+        if colour is not None
+    }
+    drawn = {
+        getattr(theme, name).name(QColor.NameFormat.HexArgb)
+        for name in dir(theme)
+        if name.startswith("TINT_") or name.endswith("_INK")
+    }
+    assert drawn - shown == {theme.TINT_STRING_RULE.name(QColor.NameFormat.HexArgb)}
+    assert any(
+        swatch.mark == "rule" for _t, entries in LEGEND for swatch, _m in entries
+    )
+    assert all(meaning for _t, entries in LEGEND for _s, meaning in entries)
+    legend = LegendDialog(window)
+    assert legend.width() > 0
+    swatches = legend.findChildren(SwatchWidget)
+    assert len(swatches) == sum(len(entries) for _t, entries in LEGEND)
+    for swatch in swatches:
+        swatch.grab()  # paints every kind of mark without a screen
+    legend.close()
 
 
 def test_walking_the_menus_for_the_guide_leaves_every_submenu_alive(window):

@@ -594,7 +594,7 @@ widens to its longest item),
 `ui/panel.py` (`WorkspaceTreePanel`, which owns a
 dock's workspace subscription and its row-to-entry lookup), `ui/window_layout.py`
 (`WindowLayout` and `remember_layout`), `ui/help_dialogs.py` (the live shortcut
-list) and `ui/__init__.py` (the `settings()` accessor and the view constants
+list and the legend) and `ui/__init__.py` (the `settings()` accessor and the view constants
 `BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
 
 ### 7.2 Where UI state lives
