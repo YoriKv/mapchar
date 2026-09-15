@@ -48,9 +48,11 @@ class TablesDockMixin:
 
     def _tables_changed(self) -> None:
         """A table's entries changed: every document extracts again, and the
-        Tables dock and the views catch up."""
+        Tables dock, the table counts and the views catch up."""
         self.workspace.invalidate_extractions()
         self.tables_panel.rebuild()
+        self._refresh_table_picks()
+        self.files_panel.refresh_labels()
         self._refresh_view()
 
     def reload_table(self, entry: Entry) -> None:
@@ -67,6 +69,5 @@ class TablesDockMixin:
         entry.dialect = tf.dialect
         if not entry.table_overlay:
             self.workspace.mark_saved(entry)
-        self._refresh_table_picks()
         self._tables_changed()
         self.statusBar().showMessage(f"Reloaded {entry.name}", 4000)

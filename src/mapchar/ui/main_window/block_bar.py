@@ -256,7 +256,7 @@ class BlockBarMixin:
     def _show_string(self, entry: Entry, index: int) -> None:
         """A string clicked under its block in the Files panel: the block on
         screen, the view confined to that string's bytes, and the string
-        selected everywhere a string can be."""
+        selected in the Strings grid, with no bytes selected in the view."""
         self._activate_entry(entry)
         rec = self._string(entry, index)
         if entry is not self._entry or rec is None:
@@ -264,7 +264,9 @@ class BlockBarMixin:
         self._set_bounds((rec.start, rec.end))
         self.strings.select_index(index)
         self._on_string_row(index)
-        self._on_selection(rec.start, rec.end)
+        # The view is already that string alone, so nothing in it is selected.
+        self.raw.set_selection(0, 0)
+        self._on_selection(0, 0)
 
     def _read_block_strings(self, entry: Entry) -> None:
         """The Files panel opened a block the session has not read: read it, so
@@ -299,5 +301,5 @@ class BlockBarMixin:
                 table_entry = self.workspace.entry_for_table(start.id)
                 if table_entry is not None:
                     self.workspace.stamp(table_entry)
-                self._refresh_view()
+                self._tables_changed()
         self._new_block(region.start, region.end)

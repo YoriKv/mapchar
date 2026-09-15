@@ -63,8 +63,9 @@ the preview system in [preview.md](preview.md).
 - **Left column:** the **Files** dock on top. Below it, **Tables** and
   **Fonts** share one tabbed dock.
 - **Right column:** the editing surface, top to bottom:
-  - the **Codecs** bar (container, compression, start table — whose last row,
-    **New Table…**, makes a new table and picks it);
+  - the **Codecs** bar (container, compression, start table — each table
+    listed with its entry count, and the last row, **New Table…**, making a
+    new table and picking it);
   - the **Block** bar, shown on a block: source, string type, mapping, and a
     string counter;
   - the central view, three tabs: **Hex**, **Text** and **Strings**;
@@ -131,6 +132,7 @@ the preview system in [preview.md](preview.md).
   - a string count and a status summary on blocks (edited / too long /
     review), there from the start: opening a project, and locating its
     missing files, reads every block over a file that is on disk;
+  - an entry count on tables;
   - a joined-file count and a container tag on files;
   - **?** (file missing) or **!** (read notices), washing the row amber.
 - **Tooltips** give paths, container, offset and length, the start table, and
@@ -141,7 +143,7 @@ the preview system in [preview.md](preview.md).
   Up/Down apply. A block's row confines the view to its source, from its
   start — the range, the fixed strings, the pointer table, or the stretch a
   pointer list's pointers lie in — and a string's row confines it to that
-  string's bytes, selected in every view (see [Raw view](#raw-view)). A
+  string's bytes, with none of them selected (see [Raw view](#raw-view)). A
   string row's context menu is its block's.
 - **Filter box** (Ctrl+F) matches every typed word in any order. A matching
   child keeps its parent visible, and a block one of whose strings matches

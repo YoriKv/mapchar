@@ -271,7 +271,8 @@ def test_a_string_row_confines_the_view_to_that_string(window, tmp_path):
     assert window._entry is block
     assert window._bounds == (3, 6)
     assert window._offset == 3
-    assert window._selection == (3, 6)
+    # The view is that string alone, so none of its bytes are selected.
+    assert window._selection is None and window.raw.selection() is None
     assert window.strings.selected_indices() == [1]
     assert len(window.raw._model.data) == 3
     # The row clicked is the one selected, not the block's.

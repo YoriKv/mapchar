@@ -628,6 +628,20 @@ def test_opening_a_project_leaves_a_missing_files_blocks_unread(window, tmp_path
     assert window.workspace.entries[1].doc is None
 
 
+def test_tables_show_their_entry_count(window, tmp_path):
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    table_entry = window.workspace.table_entries()[0]
+    assert window.files_panel._items[id(table_entry)].text(0) == "main.tbl  (3)"
+    assert window.table_pick.itemText(window.table_pick.findData("main")) == (
+        "@main  (3)"
+    )
+    window._edit_table_entry(table_entry)
+    window.table_editor.new_line.setText("44=D")
+    window.table_editor._add()
+    assert window.files_panel._items[id(table_entry)].text(0) == "main.tbl  (4) ●"
+    assert window.table_pick.currentText() == "@main  (4)"
+
+
 def test_saving_a_project_offers_to_write_the_unsaved_edits(window, tmp_path):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
     file_entry = open_rom_and_table(window, tmp_path, data)

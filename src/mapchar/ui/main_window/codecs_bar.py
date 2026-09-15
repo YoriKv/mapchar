@@ -33,7 +33,10 @@ class CodecsBarMixin:
     def _refresh_table_picks(self) -> None:
         fill_pick(
             self.table_pick,
-            [(f"@{tid}", tid) for tid in self.workspace.tables()],
+            [
+                (f"@{tid}  ({len(table.entries)})", tid)
+                for tid, table in self.workspace.tables().items()
+            ],
             "(no table)",
         )
         self.table_pick.add_command_row()

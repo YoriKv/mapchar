@@ -470,6 +470,8 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         extra = ""
         if entry.kind is EntryKind.BLOCK:
             extra = self._block_extra(entry)
+        if entry.kind is EntryKind.TABLE and entry.table is not None:
+            extra = f"  ({len(entry.table.entries)})"
         if entry.kind is EntryKind.FILE:
             bits = []
             if entry.extra_paths:
