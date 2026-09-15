@@ -80,10 +80,10 @@ Thanks to the following projects that I used as reference for this tool, and for
 the accumulated community knowledge this project represents. No code was copied
 or used from these projects directly.
 
-- **Cartographer**
-- **Atlas**
-- **abcde**
-- **romjuice**
+- **[Cartographer](https://www.romhacking.net/utilities/647/)**
+- **[Atlas](https://www.romhacking.net/utilities/224/)**
+- **[abcde](https://www.romhacking.net/utilities/1392/)**
+- **[romjuice](https://www.romhacking.net/utilities/234/)**
 
 ## AI Use Disclaimer
 
