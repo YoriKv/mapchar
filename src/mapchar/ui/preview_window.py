@@ -85,11 +85,11 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         self.zoom = number_spin(1, 8, 1, value=3)
         self.grid = QPushButton("Grid")
         self.grid.setCheckable(True)
-        self.grid.setToolTip("Rule the box in pixels")
+        self.grid.setToolTip("Draw a pixel grid (zoom 3 or more)")
         self.zoom.setToolTip("Pixels on screen per pixel of the box")
         self.wrap = QPushButton("Wrap Translation")
         self.wrap.setToolTip(
-            "Break the selected strings' translations into lines that fit the box"
+            "Re-break the selected translations to fit the box (needs a newline code)"
         )
         self.copy = QPushButton("Copy Image")
         self.copy.setToolTip("Put the page as drawn on the clipboard")
@@ -103,7 +103,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         row.addWidget(self.copy)
         pv.addLayout(row)
         self.readout = ElidedLabel("")
-        self.readout.setToolTip("What the draft encodes to, against the room it has")
+        self.readout.setToolTip("Bytes the draft encodes to, of the room it has")
         pv.addWidget(self.readout)
         self.tabs.addTab(preview, "Preview")
 

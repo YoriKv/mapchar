@@ -183,12 +183,9 @@ class PointerSearchDialog(QDialog):
         self.offset_from = OffsetEdit(0)
         self.offset_to = OffsetEdit(0)
         self.offset_step = OffsetEdit(1)
-        for field, what in (
-            (self.offset_from, "The first offset a pointer may be based on"),
-            (self.offset_to, "The last offset a pointer may be based on"),
-            (self.offset_step, "How far apart the offsets tried are"),
-        ):
-            field.setToolTip(f"{what}, in hex, with a leading - to subtract")
+        self.offset_from.setToolTip("First offset tried, in hex; - to subtract")
+        self.offset_to.setToolTip("Last offset tried, in hex; - to subtract")
+        self.offset_step.setToolTip("Gap between the offsets tried, in hex")
         form.addRow("Offset from", self.offset_from)
         form.addRow("Offset to", self.offset_to)
         form.addRow("Offset step", self.offset_step)

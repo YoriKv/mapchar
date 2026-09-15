@@ -300,7 +300,7 @@ class MainWindow(
             "Read the bytes as text; on a block, show its strings"
         )
         self.mode_toggle.button(True).setToolTip(
-            "Read the bytes as pointers to strings; on a block, show its pointers"
+            "Read the bytes as pointers; on a block, show its pointer table"
         )
         self.resolve_pointers = QCheckBox("Follow pointers")
         format_bar.add_group(
@@ -312,7 +312,7 @@ class MainWindow(
         self.resolve_group = format_bar.add_group(
             "",
             self.resolve_pointers,
-            tip="Show where each pointer points, and the string there",
+            tip="Show the string each pointer points to",
         )
         layout.addWidget(format_bar)
         self.format_bar = format_bar
@@ -326,6 +326,7 @@ class MainWindow(
         bl.setContentsMargins(0, 0, 0, 0)
         self.block_label = ElidedLabel("")
         self.block_dump = QPushButton("Dump…")
+        self.block_dump.setToolTip("Write the block's strings to a script file")
         bl.addWidget(self.block_label, 1)
         bl.addWidget(self.block_dump)
         self.block_bar = block_bar
@@ -348,7 +349,7 @@ class MainWindow(
         nl.setContentsMargins(0, 0, 0, 0)
         self.offset_box = AddressEdit(self.address_spelling)
         self.offset_box.setPlaceholderText("address")
-        self.offset_box.setToolTip("The view's position; type an address and Enter")
+        self.offset_box.setToolTip("The view's address; Enter goes there")
         # How a position is spelled: a flat file offset, one of the console
         # mapping presets, or the three numbers beside the picker
         # (mapchar.core.address).
@@ -358,8 +359,7 @@ class MainWindow(
             self.address_pick.addItem(preset.name, preset.id)
         self.address_pick.addItem("Custom bank…", CUSTOM_ID)
         self.address_pick.setToolTip(
-            "How addresses are written: a flat file offset, a console\n"
-            "mapping, or bank numbers of your own."
+            "Address format: file offset, a console mapping, or custom banks"
         )
         self.custom_bank_row = QWidget()
         cb = QHBoxLayout(self.custom_bank_row)
@@ -393,14 +393,14 @@ class MainWindow(
         # stay words, since the font has no mark that says "byte" or "page".
         steps: list[QPushButton] = []
         for text, glyph, delta, tip in (
-            ("Home", None, "home", "Start of file (Home)"),
+            ("Home", None, "home", "Start of the view (Home)"),
             ("Pg Up", None, "page-up", "Page up (PgUp)"),
             ("", Glyph.ARROW_UP, "row-up", "Row up, or a line in Text (Up)"),
             ("−B", None, -1, "Byte back (Left or −)"),
             ("+B", None, 1, "Byte forward (Right or +)"),
             ("", Glyph.ARROW_DOWN, "row-down", "Row down, or a line in Text (Down)"),
             ("Pg Dn", None, "page-down", "Page down (PgDn)"),
-            ("End", None, "end", "End of file (End)"),
+            ("End", None, "end", "End of the view (End)"),
         ):
             b = QPushButton(text)
             b.setToolTip(tip)

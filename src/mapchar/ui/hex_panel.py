@@ -125,7 +125,7 @@ class HexPanel(QWidget):
         self.goto = hint_field(
             AddressEdit(spelling),
             "address",
-            "An address to scroll the dump to, then Enter",
+            "Move the view to this address (Enter)",
         )
         # The same field and arrows as the window's Find bar; a search from
         # here is the window's current search too.
@@ -133,8 +133,7 @@ class HexPanel(QWidget):
         self.find = self.find_row.field
         self.follow = QCheckBox("Follow selection")
         self.follow.setToolTip(
-            "Scroll the dump to whatever is selected in the raw view.\n"
-            "Off, the dump stays where you left it."
+            "Start the dump at the selection; off, at the view's position"
         )
         self.follow.setChecked(setting_bool(FOLLOW_SELECTION_KEY, True))
         top.addWidget(QLabel("Go to"))
@@ -150,7 +149,7 @@ class HexPanel(QWidget):
         self.bytes = hint_field(
             QLineEdit(),
             "hex bytes",
-            "Hex bytes to write at that offset; Enter or Overtype applies them",
+            "Hex bytes to write at that address (Enter)",
         )
         fit_chars(self.bytes, 12)
         self.apply = QPushButton("Overtype")

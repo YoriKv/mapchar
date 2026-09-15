@@ -42,7 +42,7 @@ class ScanWindow(EscapeCloses, CancellableRun, QWidget):
         self.threshold.setSingleStep(0.05)
         self.threshold.setValue(0.6)
         self.threshold.setToolTip(
-            "How much of a window must read as text under the start table"
+            "Minimum text-likeness score, 0 to 1, for a window to count"
         )
         self.run = QPushButton("Scan")
         self.stop = QPushButton("Stop")

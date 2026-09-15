@@ -31,6 +31,7 @@ class MenuBarMixin:
         act(file_menu, "&New Project", self._new_project, "Ctrl+N")
         act(file_menu, "&Open Project…", self._open_project_dialog, "Ctrl+O")
         self.recent_menu = file_menu.addMenu("Open &Recent")
+        self.recent_menu.setToolTipsVisible(True)  # each row's tooltip is its path
         # Filled each time the File menu opens, not once at build time: the list
         # changes as projects are opened and saved, and rows go stale on disk.
         file_menu.aboutToShow.connect(self._rebuild_recent)
@@ -160,6 +161,7 @@ class MenuBarMixin:
             setattr(self, attr, action)
 
         navigate_menu = bar.addMenu("&Navigate")
+        navigate_menu.setToolTipsVisible(True)  # Back and Forward name their target
         self._add_history_actions(navigate_menu)
         self.goto_action = act(
             navigate_menu, "&Go to Address…", self._go_to_dialog, "Ctrl+G"

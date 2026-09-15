@@ -98,7 +98,7 @@ class HistoryMixin:
                 else f"Nothing to go {way.lower()} to"
             )
             button = "Mouse 4" if delta < 0 else "Mouse 5"
-            action.setToolTip(f"{where}\nAlso {button} (the browser {way} button)")
+            action.setToolTip(f"{where} ({button})")
 
     def _history_target(self, delta: int) -> Visit | None:
         """The visit ``delta`` steps along the trail, or ``None`` at that end."""

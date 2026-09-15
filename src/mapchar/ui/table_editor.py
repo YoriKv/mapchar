@@ -114,7 +114,7 @@ class TableEditor(EscapeCloses, QWidget):
         # -- which table, on what ---------------------------------------------
         head = WrapBar()
         self.table_pick = CompactComboBox(220)
-        self.table_pick.setToolTip("The table being edited; every loaded table is here")
+        self.table_pick.setToolTip("The loaded table to edit")
         head.add_group("Table", self.table_pick)
         self.charset_pick = CompactComboBox(150)
         self.charset_pick.setToolTip(
@@ -124,13 +124,13 @@ class TableEditor(EscapeCloses, QWidget):
         head.add_group("Charset", self.charset_pick)
         self.rename = QPushButton("Rename Table…")
         self.rename.setToolTip(
-            "Give the table another id; every switch that names it follows"
+            "Change the table's id; switches and blocks that name it follow"
         )
         head.add_group("", self.rename)
         self.filter = hint_field(
             QLineEdit(),
             "Filter…",
-            "Show only the entries whose key or text has this (Ctrl+F)",
+            "Show only entries whose key, text or comment has this (Ctrl+F)",
         )
         self.filter.setClearButtonEnabled(True)
         fit_chars(self.filter, 12)
@@ -165,8 +165,7 @@ class TableEditor(EscapeCloses, QWidget):
         layout.addWidget(self.grid, 1)
         self.sample = ElidedLabel("")
         self.sample.setToolTip(
-            "What the bytes of the form's key decode to in the file on screen, "
-            "from where they are first found"
+            "The key's bytes decoded from where they occur in the file"
         )
         layout.addWidget(self.sample)
 
@@ -177,7 +176,7 @@ class TableEditor(EscapeCloses, QWidget):
         self.add = QPushButton("Add")
         self.add.setToolTip("Put the entry in the table (Enter)")
         self.new = QPushButton("New")
-        self.new.setToolTip("Clear the form for an entry that is not in the table yet")
+        self.new.setToolTip("Clear the form for a new entry")
         self.remove = QPushButton("Remove")
         self.remove.setToolTip("Remove the selected entries (Del in the grid)")
         self.shift = QPushButton("Shift Keys…")
@@ -185,9 +184,9 @@ class TableEditor(EscapeCloses, QWidget):
         self.fill = QPushButton("Fill…")
         self.fill.setToolTip("Lay a run of characters over consecutive keys")
         self.save = QPushButton("Save")
-        self.save.setToolTip("Write the table back to its file, in the native grammar")
+        self.save.setToolTip("Write the table back to its file")
         self.save_as = QPushButton("Save As File…")
-        self.save_as.setToolTip("Write the table to a file of your choosing")
+        self.save_as.setToolTip("Write the table to a new file")
         for button in (self.add, self.new, self.remove):
             row.addWidget(button)
         row.addStretch(1)
@@ -493,7 +492,7 @@ class TableEditor(EscapeCloses, QWidget):
         self.add.setToolTip(
             "Select one row to edit it, or none to add an entry"
             if several
-            else "Put the entry back in the table as the form has it (Enter)"
+            else "Apply the form to the selected entry (Enter)"
             if editing
             else "Put the entry in the table (Enter)"
         )

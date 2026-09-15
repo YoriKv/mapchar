@@ -37,7 +37,7 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         layout.addWidget(self.raw, 1)
         row = QHBoxLayout()
         self.next = QPushButton("Jump to Next")
-        self.next.setToolTip("Move the view to the next offset the scheme accepts")
+        self.next.setToolTip("Move to the byte after the structure shown")
         self.scan = QPushButton("Scan")
         self.scan.setToolTip("Walk forward until a structure decompresses whole")
         self.stop = QPushButton("Stop")

@@ -104,7 +104,7 @@ tooltip the control has of its own.
 
 - **Esc closes a tool window** (`EscapeCloses`), as it closes a dialog; an
   open cell editor or popup spends its own Esc first.
-- **Enter runs** a tool window's query field; Find and Replace's default button
+- **Enter runs** the Search window's query field; Find and Replace's default button
   is Find Next. A find field (`find_row.FindRow`, the Find bar's and the Hex
   panel's) finds the next match on Enter and the previous on Shift+Enter.
 - **Help ▸ Shortcuts… (F1)** is built from the menu bar plus

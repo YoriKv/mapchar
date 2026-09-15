@@ -29,7 +29,7 @@ class ShiftKeysDialog(QDialog):
         form = QFormLayout(self)
         self.offset = OffsetEdit()
         self.offset.setToolTip(
-            "Hex, added to every selected key; a leading − subtracts"
+            "Hex, added to every selected key; a leading - subtracts"
         )
         form.addRow(f"Add to each of the {count} selected key(s)", self.offset)
         form.addRow(ok_cancel(self))

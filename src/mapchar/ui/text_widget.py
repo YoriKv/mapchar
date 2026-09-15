@@ -80,22 +80,17 @@ class TextWidget(QWidget):
         self.bar.valueChanged.connect(self._on_bar_value)
         self._placing = False
         self.wrap = QCheckBox("Wrap")
-        self.wrap.setToolTip(
-            "Fold long lines to the window's width.\n"
-            "Off, a line ends only where a token's line break says it does."
-        )
+        self.wrap.setToolTip("Wrap long lines to the window's width")
         self.wrap.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.show_codes = self._toggle(
             "Show codes",
-            "Show the bracketed codes — [end], [line], [color 3] — where they\n"
-            "fall in the text. Off, a code shows as nothing; a line break\n"
-            "after one stays.",
+            "Show codes like [end] or [color 3] in the text; "
+            "hidden, their line breaks stay",
             SHOW_CODES_KEY,
         )
         self.show_unknown = self._toggle(
             "Show unknown",
-            "Show the bytes no table entry matches, as [$XX].\n"
-            "Off, an unmatched byte shows as nothing.",
+            "Show bytes no table entry matches, as [$XX]",
             SHOW_UNKNOWN_KEY,
         )
         self.note = QLabel("")

@@ -75,10 +75,12 @@ class FontTab(QWidget):
             QLineEdit(), "characters in glyph order from the base glyph"
         )
         self.space = number_spin(0, 64, 2, special="none")
+        self.space.setToolTip("Pixels a space advances; none: the space glyph's width")
         self.missing = number_spin(-1, 65535, 3, special="box")
         self.transparent = number_spin(-1, 255, 3, special="top-left")
         self.transparent.setToolTip(
-            "Which palette index is transparent; top-left takes that pixel's colour"
+            "Transparent palette index; top-left, or an RGB sheet, "
+            "takes that pixel's colour"
         )
         self.measure = QPushButton("Measure Widths")
         self.measure.setToolTip(
@@ -105,10 +107,11 @@ class FontTab(QWidget):
         ff.addRow("Widths", wr)
         self.glyph_map = QTableWidget(0, 2)
         self.glyph_map.setHorizontalHeaderLabels(["Text or [code]", "Glyph"])
+        self.glyph_map.setToolTip("Draw a text or [code] as one glyph, by its index")
         self.glyph_map.horizontalHeader().setStretchLastSection(True)
         show_elided_tooltips(self.glyph_map)
         self.glyph_add = QPushButton("Add Mapping")
-        self.glyph_add.setToolTip("A row that draws a text or [code] as one glyph")
+        self.glyph_add.setToolTip("Add a row mapping a text or [code] to one glyph")
         add_row = QHBoxLayout()
         add_row.addWidget(self.glyph_add)
         add_row.addStretch(1)
@@ -125,6 +128,7 @@ class FontTab(QWidget):
         tools = QHBoxLayout()
         alphabet = QHBoxLayout()
         self.sheet_zoom = number_spin(1, 8, 1, value=3)
+        self.sheet_zoom.setToolTip("Pixels on screen per pixel of the sheet")
         self.sheet_mode = QComboBox()
         self.sheet_mode.addItem("Select tile", False)
         self.sheet_mode.addItem("Select row", True)
@@ -145,8 +149,10 @@ class FontTab(QWidget):
             button.setToolTip("Move the whole alphabet one row of glyphs")
         self.copy_alphabet = QPushButton("Copy Alphabet")
         self.paste_alphabet = QPushButton("Paste Alphabet")
-        for button in (self.copy_alphabet, self.paste_alphabet):
-            button.setToolTip("The alphabet as 20=A lines, one glyph per line")
+        self.copy_alphabet.setToolTip("Copy the alphabet as 20=A lines")
+        self.paste_alphabet.setToolTip(
+            "Set the alphabet from 20=A lines on the clipboard"
+        )
         tools.addWidget(QLabel("Sheet"))
         tools.addWidget(self.sheet_mode)
         tools.addWidget(QLabel("Zoom"))

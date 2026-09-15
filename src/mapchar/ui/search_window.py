@@ -54,6 +54,7 @@ class SearchWindow(EscapeCloses, CancellableRun, QWidget):
         self.widths.addItem("8-bit", (1,))
         self.widths.addItem("16-bit", (2,))
         self.widths.addItem("8 and 16-bit", (1, 2))
+        self.widths.setToolTip("Bytes per character code")
         self.case_gap = QCheckBox("Case gap")
         self.case_gap.setChecked(True)
         self.case_gap.setToolTip("Upper and lower case may sit at any distance apart")

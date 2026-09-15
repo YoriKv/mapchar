@@ -143,7 +143,7 @@ class Swatch:
     text colour when ``None``); ``mark`` is one of the marks that are not a
     chip — ``"tick"`` for a token that prints nothing, ``"rule"`` for a string
     boundary, ``"notch"`` for text cut short; ``small`` draws the text in the
-    label face and ``dim`` in the dimmed ink.
+    label face and its ink, and ``dim`` in the dimmed ink.
     """
 
     text: str = ""
@@ -170,15 +170,17 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
             ),
             (
                 Swatch(tint=theme.TINT_SWITCH, mark="tick"),
-                "A token that prints nothing: a silent switch or return, or bits read by a table's fallback",
+                "A token that prints nothing: a silent switch or return, "
+                "or bits read by a table's fallback",
             ),
             (
-                Swatch("·", tint=theme.TINT_RAW, dim=True),
-                "Bytes no table matches",
+                Swatch("FF", tint=theme.TINT_RAW),
+                "Bytes no table matches; a dim · in the text column",
             ),
             (
                 Swatch("1F", tint=theme.TINT_POINTER),
-                "A pointer to one of the block's strings; its text shows →address, or the string with Follow Pointers on",
+                "A pointer to one of the block's strings; its text is →address, "
+                "or the string with Follow Pointers on",
             ),
             (Swatch("A", tint=theme.TINT_SELECTION), "The selected bytes"),
             (Swatch("A", mark="rule"), "Where the block starts a string"),
@@ -195,7 +197,10 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
         "Text View",
         (
             (Swatch("[line]"), "A code, by its label; a newline code ends the line"),
-            (Swatch("[$FF]"), "A byte no table matches; [%bits] for a tail shorter than a byte"),
+            (
+                Swatch("[$FF]"),
+                "A byte no table matches; [%bits] for a tail shorter than a byte",
+            ),
         ),
     ),
     (
@@ -226,7 +231,10 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
                 Swatch("overflows box", ink=theme.ERROR_INK),
                 "The text does not fit the entry's box",
             ),
-            (Swatch("12 / 16"), "Bytes the string encodes to, and its room; coloured like the status"),
+            (
+                Swatch("12 / 16"),
+                "Bytes the string encodes to, and its room; coloured like the status",
+            ),
             (Swatch("↵"), "A line break in the Original or Translation"),
             (Swatch("1F"), "The addresses of the pointers to the string"),
         ),
@@ -365,17 +373,16 @@ class SwatchWidget(QWidget):
         if swatch.tint is not None and swatch.mark != "tick":
             marks.chip(painter, cell, swatch.tint)
         if swatch.mark == "tick":
-            marks.tick(
-                painter,
-                QRectF(cell.center().x() - 1, cell.top(), 4, cell.height()),
-                swatch.tint or ink,
-            )
+            marks.tick(painter, cell.adjusted(3, 0, 0, 0), swatch.tint or ink)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         if swatch.mark == "rule":
             marks.rule(painter, cell.adjusted(3, 0, 0, 0))
         if swatch.text:
             painter.setFont(self._label_font if swatch.small else self._font)
             colour = swatch.ink if swatch.ink is not None else ink
+            if swatch.small:  # a label's ink, as the Hex view draws one
+                colour = QColor(colour)
+                colour.setAlpha(200)
             painter.setPen(QPen(dim if swatch.dim else colour))
             painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, swatch.text)
         if swatch.mark == "notch":

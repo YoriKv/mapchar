@@ -590,8 +590,7 @@ The editing surface, opened on a block.
   and, when a preview font is bound, **overflows box**.
 - **Editing** — the Translation cell is a multi-line editor:
   - typing edits text; `[` opens code completion listing the table set's
-    codes with their operand shapes; Ctrl+Return (or Return) commits and Esc
-    cancels;
+    codes with their operand shapes; Return commits and Esc cancels;
   - **Shift+Return** writes the block's newline code — the code carrying the
     *newline* effect, else `[line]` — never a line break, which the script
     grammar drops;
@@ -819,12 +818,13 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Area | Keys |
 |---|---|
 | File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh Plugins · Ctrl+Q Quit |
-| Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Return commit cell |
+| Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace |
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
 | Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
-| Find bar | Enter next · Shift+Enter previous |
-| Files panel | Up/Down open the row · Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |
+| Find bar | Enter next · Shift+Enter previous · Esc closes Find and Replace |
+| Strings view | F2, double-click or typing edit the cell · Enter commit · Shift+Enter newline code · [ complete a code · Esc cancel |
+| Files panel | Up/Down or double-click open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename · right-click menu |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
-| Tool windows | Esc close · Enter run the query |
-| Table Editor | Enter put the entry in the table · Del remove the selected entries · Ctrl+F filter · double-click edit a Text or Comment cell, or open any other in the form · click a header to sort, right-click to choose columns |
+| Tool windows | Esc close · Enter run the Search window's query · double-click a result to jump |
+| Table Editor | Enter put the entry in the table · Del remove the selected entries · Ctrl+F filter · F2 or double-click edit a Text or Comment cell, double-click opens any other in the form · click a header to sort, right-click to choose columns |

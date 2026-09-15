@@ -211,6 +211,11 @@ class ReadingBar(WrapBar):
         self.spare_room = QComboBox()
         self.spare_room.addItem("Fill", "fill")
         self.spare_room.addItem("Keep", "keep")
+        for at, tip in (
+            (0, "Pad the freed tail with the fill byte"),
+            (1, "Leave the freed tail as it was"),
+        ):
+            self.spare_room.setItemData(at, tip, Qt.ItemDataRole.ToolTipRole)
 
         groups = {}
         for name, label, widgets, tip in (
@@ -270,13 +275,14 @@ class ReadingBar(WrapBar):
                 "realign",
                 "Realign",
                 (self.realign_m, QLabel("+"), self.realign_o),
-                "After each end token, round up to a multiple plus an offset",
+                "After each end token, round the next start up to a multiple "
+                "+ offset, in bytes",
             ),
             (
                 "line_length",
                 "Lines",
                 (self.line_length,),
-                "Split fixed strings into lines this long",
+                "Split fixed strings into lines this many bytes long",
             ),
             ("show_end", "", (self.show_end,), None),
             ("skips", "Skips", (self.skips,), None),
@@ -292,8 +298,7 @@ class ReadingBar(WrapBar):
                 "spare_room",
                 "Spare room",
                 (self.spare_room,),
-                "What a shorter re-compression leaves in its slot "
-                "(compressed blocks only)",
+                "After a shorter re-compression: fill the slot's tail, or keep it",
             ),
         ):
             groups[name] = (label, widgets, tip)

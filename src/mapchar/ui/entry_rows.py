@@ -164,7 +164,9 @@ class ParamRow(QWidget):
             )
         self.stop.setToolTip("When reading goes back")
         self.count = number_spin(1, 9999, 4, value=1)
+        self.count.setToolTip("Weighted matches to read before going back")
         self.operand = QComboBox()
+        self.operand.setToolTip("The operand whose value is the count")
         for spec in COUNT_SPECS:
             self.operand.addItem(spec, spec)
         self.bytes = hint_field(QLineEdit(), "FF", "The bytes, in hex")
@@ -180,10 +182,7 @@ class ParamRow(QWidget):
             STOP_BITS: self.bits,
         }
         self.shared = QCheckBox("counts here too (+)")
-        self.shared.setToolTip(
-            "Its matches also count towards the table that switched here\n"
-            "(a Pascal string whose count covers the switched-to text)"
-        )
+        self.shared.setToolTip("Its matches also count in the table that switched here")
         self.drop = _drop_button("Remove this parameter")
         row.addWidget(self.table)
         row.addWidget(self.stop)
@@ -279,7 +278,6 @@ class RowList(QWidget):
         self.box.setSpacing(2)
         self.add = QPushButton(add_label)
         self.add.setFlat(True)
-        self.add.setToolTip(f"{add_label} after the last")
         bottom = QHBoxLayout()
         bottom.setContentsMargins(0, 0, 0, 0)
         bottom.addWidget(self.add)
