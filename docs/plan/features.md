@@ -147,8 +147,9 @@ the preview system in [preview.md](preview.md).
   Up/Down apply. A block's row confines the view to its source, from its
   start — the range, the fixed strings, the pointer table, or the stretch a
   pointer list's pointers lie in — and a string's row confines it to that
-  string's bytes, with none of them selected (see [Raw view](#raw-view)). A
-  string row's context menu is its block's.
+  string's bytes, with none of them selected (see [Raw view](#raw-view)),
+  read as text even when the block reads pointers. A string row's context
+  menu is its block's.
 - **Filter box** (Ctrl+F) matches every typed word in any order. A matching
   child keeps its parent visible, and a block one of whose strings matches
   opens to show it.
@@ -239,8 +240,12 @@ and Strings tabs read again at once.
   table, else as ASCII. A table the reading names that is not loaded shows as
   `@id (not loaded)`.
 - **Mode** — **Strings** or **Pointers**, side by side, one of them down.
-  Switching turns the source to the other mode's kind and keeps every other
-  setting; the Reading bar shows only the sections and settings the mode uses.
+  On a file, switching turns the source to the other mode's kind and keeps
+  every other setting; switching back restores the source and string type the
+  file had in that mode, for as long as the session lasts. A block keeps the
+  mode it was made with: on a block the toggle only shows it, and every other
+  setting stays editable. The Reading bar shows only the sections and settings
+  the mode uses.
 - **Pointers** — the bytes are pointers: the source becomes a pointer table (or
   list), the Reading bar adds its **Pointers** section, and beside the mode
   comes **Resolve pointers**, remembered per entry. On a file the pointers are

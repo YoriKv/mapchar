@@ -63,7 +63,8 @@ Rules:
   (`path`, `extra_paths`, block `offset`/`length`); its chain
   (`container_id`, `compression_id`); its `BlockConfig`; its
   `EntrySession` (a file's reading — a `BlockConfig` whose source has no
-  addresses — its table, Resolve pointers, view position); kind-specific state (table
+  addresses — its table, Resolve pointers, view position, and the reading its
+  last switch of mode set aside, which is not saved); kind-specific state (table
   edits, font map, box); the `notices` its file's last read produced; and
   session-only state (the lazily loaded `doc`, revision tokens).
 - **`core.document.Document`** — the interpreted, mutable model the UI binds

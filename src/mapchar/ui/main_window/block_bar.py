@@ -207,11 +207,14 @@ class BlockBarMixin:
     def _show_string(self, entry: Entry, index: int) -> None:
         """A string clicked under its block in the Files panel: the block on
         screen, the view confined to that string's bytes, and the string
-        selected in the Strings grid, with no bytes selected in the view."""
+        selected in the Strings grid, with no bytes selected in the view. The
+        string's bytes are text, so a pointer block's view reads them as such
+        for as long as it is confined to them."""
         self._activate_entry(entry)
         rec = self._string(entry, index)
-        if entry is not self._entry or rec is None:
+        if entry is not self._entry or rec is None or self._doc is None:
             return
+        self._string_bounds = (max(0, rec.start), min(rec.end, self._doc.size))
         self._set_bounds((rec.start, rec.end))
         self.strings.select_index(index)
         self._on_string_row(index)

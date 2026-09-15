@@ -156,6 +156,7 @@ class SessionMixin:
                 return
             # A preview is armed for the entry it was armed on, not the next.
             self._preview_scheme = None
+            self._string_bounds = None
             self._load_reading_bar()
             self._offset = entry.session.offset
             # A block opens on its source: the view is confined to it, and the

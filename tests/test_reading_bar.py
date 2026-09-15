@@ -7,7 +7,9 @@ import pytest
 
 from helpers import pointer_rom
 from mapchar.core.block import (
+    BlockConfig,
     FixedLength,
+    NextPointer,
     PointerTableSource,
     RangeSource,
 )
@@ -89,24 +91,34 @@ def test_a_block_setting_applies_as_it_changes_and_undoes(window, tmp_path):
     assert len(block.doc.strings) == 2
 
 
-def test_pointers_turn_a_block_into_a_pointer_table_read_through_its_format(
-    window, tmp_path
-):
+def test_a_block_keeps_its_mode_and_edits_its_other_settings(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
-    block = add_block(window, entry, "b", RangeSource(0, 4))
-    _pointers(window)
+    block = add_block(window, entry, "b", PointerTableSource(0, 4, 1, 1))
+    toggle = window.mode_toggle
+    assert toggle.value() is True and not toggle.isEnabled()
+    toggle.button(False).click()
     assert block.config.source == PointerTableSource(0, 4, 1, 1)
-    assert block.config.table_id == "main"
-    assert window.format_pick.currentData() == "main"
     bar = window.reading_bar
     bar.ptr_size.setValue(2)
     bar.ptr_stride.setValue(2)
     assert block.config.source == PointerTableSource(0, 4, 2, 2)
     assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
-    # Back to strings, the region reads as text again.
-    window.mode_toggle.button(False).click()
-    assert block.config.source == RangeSource(0, 4)
-    assert block.config.table_id == "main"
+    # A file's mode is still the user's to switch.
+    window._activate_entry(entry)
+    assert toggle.isEnabled()
+
+
+def test_a_pointer_block_s_string_opened_alone_reads_as_text(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))
+    window._show_string(block, 0)
+    assert "".join(t.text() for t in window.raw._model.tokens) == "AB[end]"
+    window._show_view("text")
+    assert window.text.edit.toPlainText().startswith("AB")
+    # Back on its whole source, the block's view is its pointers again.
+    window._view_source(block)
+    window._show_view("raw")
+    assert window.raw._model.tokens[0].table_id == POINTER_TOKENS
 
 
 def test_a_file_read_as_pointers_shows_where_each_points(window, tmp_path):
@@ -171,3 +183,18 @@ def test_a_preview_is_read_once_and_marked_where_it_was_cut():
     assert preview(1) == "Hi" and preview(2) == "Hi…" and preview(None) == ""
     assert preview_reader(read, seen)(1) == "Hi" and reads == [1, 2]
     assert preview_reader(None)(1) == ""
+
+
+def test_switching_a_file_to_strings_and_back_restores_its_pointers(window, tmp_path):
+    rom = tmp_path / "game.smc"
+    rom.write_bytes(bytes(0x10000))
+    entry = window.open_rom(str(rom))
+    assert window._suggested_mapping() not in (None, "linear")
+    config = BlockConfig(
+        PointerTableSource(0, 0, 2, 4, "big", "linear", 3, 1), NextPointer(), "ascii"
+    )
+    window._read_file_as(entry, config, entry.session)
+    window.mode_toggle.button(False).click()
+    assert isinstance(entry.session.config.source, RangeSource)
+    window.mode_toggle.button(True).click()
+    assert entry.session.config == config

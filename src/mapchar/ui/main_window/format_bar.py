@@ -3,6 +3,8 @@ strings or pointers, and how they are cut, all applied as they change."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from mapchar.core.block import BlockConfig, EndToken, RangeSource
 from mapchar.core.errors import MapcharError
 from mapchar.core.table import TableSet
@@ -82,8 +84,15 @@ class FormatBarMixin:
         self._sync_mode(cfg.has_pointers)
 
     def _sync_mode(self, pointers: bool) -> None:
-        """Show the mode, and the controls only pointers have."""
+        """Show the mode, and the controls only pointers have. A block's mode is
+        what it was made with, so on a block the toggle only shows it."""
+        entry = self._entry
+        block = entry is not None and entry.kind is EntryKind.BLOCK
         self.mode_toggle.set_value(pointers)
+        self.mode_toggle.setEnabled(not block)
+        self.mode_toggle.setToolTip(
+            "A block reads as strings or pointers from when it is made" if block else ""
+        )
         self.resolve_group.setVisible(pointers)
 
     def _default_table_id(self) -> str:
@@ -120,6 +129,10 @@ class FormatBarMixin:
         )
 
     def _reads_pointers(self) -> bool:
+        """Whether the Hex and Text tabs show pointers: the reading has them,
+        and the view is not one string's bytes, which are text."""
+        if self._string_bounds is not None and self._bounds == self._string_bounds:
+            return False
         cfg = self._reading()
         return cfg is not None and cfg.has_pointers
 
@@ -175,8 +188,33 @@ class FormatBarMixin:
 
     def _on_mode(self, pointers: bool) -> None:
         """Strings or pointers: the source turns to the other kind, keeping
-        every other setting, and the table reads the strings either way."""
-        self.reading_bar.set_pointers(pointers)
+        every other setting, and the table reads the strings either way.
+
+        One mode cannot hold the other's source, so the reading switched away
+        from is set aside on the entry, and switching back takes up its source
+        and string type again rather than rebuilding them from the bar.
+        """
+        entry, base = self._entry, self._reading()
+        if (
+            entry is None
+            or base is None
+            or entry.kind is EntryKind.BLOCK
+            or base.has_pointers == pointers
+        ):
+            self._sync_mode(base is not None and base.has_pointers)
+            return
+        back = entry.session.set_aside
+        entry.session.set_aside = base
+        if back is not None and back.has_pointers == pointers:
+            block = entry.kind is EntryKind.BLOCK
+            self.reading_bar.load(
+                replace(base, source=back.source, string_type=back.string_type),
+                block=block,
+                spare_room=entry.spare_room,
+                compressed=block and bool(entry.compression_id),
+            )
+        else:
+            self.reading_bar.set_pointers(pointers)
         self._sync_mode(pointers)
         self._on_reading_edited("mode")
 
