@@ -41,7 +41,7 @@ def test_workspace_children_and_close():
     ws.set_current(b)
     removed = ws.close(f)
     assert set(removed) == {f, b, b2} and ws.entries == [t, g]
-    assert ws.current is t
+    assert ws.current is g  # the same group, not the table that follows
     ws.stamp(g)
     assert g.dirty
     ws.mark_saved(g)
@@ -198,6 +198,21 @@ def test_close_takes_the_next_entry_then_the_previous():
     ws.set_current(c)
     ws.close(c)
     assert ws.current is a  # nothing follows, so the one before it
+
+
+def test_close_keeps_to_the_group_then_falls_back_to_string_data():
+    ws = Workspace()
+    f = ws.add(Entry(EntryKind.FILE, "f", "/tmp/f"))
+    b = ws.add(Entry(EntryKind.BLOCK, "b", "/tmp/f", parent=f))
+    t1, t2 = (ws.add(Entry(EntryKind.TABLE, n, f"/tmp/{n}")) for n in ("t1", "t2"))
+    ws.set_current(b)
+    ws.close(b)
+    assert ws.current is f  # a table follows, but the file is the same group
+    ws.set_current(t1)
+    ws.close(t1)
+    assert ws.current is t2
+    ws.close(t2)
+    assert ws.current is f  # no table left, so String Data
 
 
 def test_replace_resets_empty_then_adds_each_and_sets_current_last():

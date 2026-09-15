@@ -122,7 +122,8 @@ the preview system in [preview.md](preview.md).
 
 ## The Files panel
 
-- **Grouping** — rows are grouped under **ROMs**, **Tables** and **Fonts**.
+- **Grouping** — rows are grouped under **String Data**, **Tables** and
+  **Fonts**.
   Blocks and bookmarks nest under their file, and a block opens to its
   strings: one row each, `index  text`, the text on one line and cut short
   with `…`; the tooltip has the string's address and its whole text. The rows
@@ -148,8 +149,9 @@ the preview system in [preview.md](preview.md).
   start — the range, the fixed strings, the pointer table, or the stretch a
   pointer list's pointers lie in — and a string's row confines it to that
   string's bytes, with none of them selected (see [Raw view](#raw-view)),
-  read as text even when the block reads pointers. A string row's context
-  menu is its block's.
+  read as text even when the block reads pointers: the mode shows **Strings**
+  and the Reading bar only its **Strings** and **Writing** sections. A string
+  row's context menu is its block's.
 - **Filter box** (Ctrl+F) matches every typed word in any order. A matching
   child keeps its parent visible, and a block one of whose strings matches
   opens to show it.
@@ -171,7 +173,10 @@ the preview system in [preview.md](preview.md).
 - **Remove (Del)** asks once for the whole selection and names child blocks
   and bookmarks, unsaved edits being discarded, and blocks reading through a
   removed table: they keep their translations, but cannot be re-read or written
-  until the table is loaded again.
+  until the table is loaded again. When the current entry goes, the nearest
+  row of the same group takes its place — after the hole, else before it —
+  so removing a block never puts a table in the hex and text panels; failing
+  that, a String Data entry.
 
 ## Tables
 
@@ -243,9 +248,11 @@ and Strings tabs read again at once.
   On a file, switching turns the source to the other mode's kind and keeps
   every other setting; switching back restores the source and string type the
   file had in that mode, for as long as the session lasts. A block keeps the
-  mode it was made with: on a block the toggle only shows it, and every other
-  setting stays editable. The Reading bar shows only the sections and settings
-  the mode uses.
+  mode it was made with: on a block the toggle shows it, its pressed button
+  plainly down, but does not switch, and every other setting stays editable.
+  The Reading bar shows only the sections and settings the mode uses — in
+  Pointers mode the **Strings** section too, since it shapes what Resolve
+  pointers shows.
 - **Pointers** — the bytes are pointers: the source becomes a pointer table (or
   list), the Reading bar adds its **Pointers** section, and beside the mode
   comes **Resolve pointers**, remembered per entry. On a file the pointers are

@@ -1,5 +1,5 @@
-"""The Files panel: ROMs with their blocks and bookmarks, tables, fonts — and
-under each block, its strings."""
+"""The Files panel: String Data — files with their blocks and bookmarks —
+tables, fonts, and under each block, its strings."""
 
 from __future__ import annotations
 
@@ -38,8 +38,12 @@ from mapchar.ui.widgets import show_elided_tooltips
 if TYPE_CHECKING:
     from mapchar.core.block import StringRecord
 
-GROUPS = {EntryKind.FILE: "ROMs", EntryKind.TABLE: "Tables", EntryKind.FONT: "Fonts"}
-# The row markers: a glyph in a palette role. ROMs and fonts sit under their
+GROUPS = {
+    EntryKind.FILE: "String Data",
+    EntryKind.TABLE: "Tables",
+    EntryKind.FONT: "Fonts",
+}
+# The row markers: a glyph in a palette role. Files and fonts sit under their
 # own group headings and carry no mark; a bookmark wears the accent.
 MARKERS: dict[EntryKind, tuple[Glyph, QPalette.ColorRole]] = {
     EntryKind.BLOCK: (Glyph.GRID_ROWS, QPalette.ColorRole.Text),

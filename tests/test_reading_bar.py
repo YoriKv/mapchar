@@ -95,7 +95,9 @@ def test_a_block_keeps_its_mode_and_edits_its_other_settings(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
     block = add_block(window, entry, "b", PointerTableSource(0, 4, 1, 1))
     toggle = window.mode_toggle
-    assert toggle.value() is True and not toggle.isEnabled()
+    assert toggle.value() is True and toggle.locked()
+    assert window.reading_bar.sections["Pointers"].isVisibleTo(window)
+    assert window.reading_bar.sections["Strings"].isVisibleTo(window)
     toggle.button(False).click()
     assert block.config.source == PointerTableSource(0, 4, 1, 1)
     bar = window.reading_bar
@@ -105,7 +107,7 @@ def test_a_block_keeps_its_mode_and_edits_its_other_settings(window, tmp_path):
     assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
     # A file's mode is still the user's to switch.
     window._activate_entry(entry)
-    assert toggle.isEnabled()
+    assert not toggle.locked()
 
 
 def test_a_pointer_block_s_string_opened_alone_reads_as_text(window, tmp_path):
@@ -113,12 +115,22 @@ def test_a_pointer_block_s_string_opened_alone_reads_as_text(window, tmp_path):
     block = add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))
     window._show_string(block, 0)
     assert "".join(t.text() for t in window.raw._model.tokens) == "AB[end]"
+    # Shown as strings, with only the settings that shape a string.
+    sections = window.reading_bar.sections
+    assert window.mode_toggle.value() is False
+    assert not window.resolve_group.isVisibleTo(window)
+    assert sections["Strings"].isVisibleTo(window)
+    assert not sections["Source"].isVisibleTo(window)
+    assert not sections["Pointers"].isVisibleTo(window)
     window._show_view("text")
     assert window.text.edit.toPlainText().startswith("AB")
     # Back on its whole source, the block's view is its pointers again.
     window._view_source(block)
     window._show_view("raw")
     assert window.raw._model.tokens[0].table_id == POINTER_TOKENS
+    assert window.mode_toggle.value() is True
+    assert sections["Source"].isVisibleTo(window)
+    assert sections["Pointers"].isVisibleTo(window)
 
 
 def test_a_file_read_as_pointers_shows_where_each_points(window, tmp_path):

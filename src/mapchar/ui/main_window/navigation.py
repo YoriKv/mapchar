@@ -177,6 +177,7 @@ class NavigationMixin:
         if bounds == self._bounds and inside:
             return
         self._bounds = bounds
+        self._sync_view_mode()
         if inside:
             self._refresh_view(moved=True)
         else:

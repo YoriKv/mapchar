@@ -84,16 +84,30 @@ class FormatBarMixin:
         self._sync_mode(cfg.has_pointers)
 
     def _sync_mode(self, pointers: bool) -> None:
-        """Show the mode, and the controls only pointers have. A block's mode is
-        what it was made with, so on a block the toggle only shows it."""
+        """Show the mode, and the controls it uses. A block's mode is what it
+        was made with, so on a block the toggle only shows it; and one string's
+        bytes are text, so a string's view shows Strings with only the settings
+        that shape a string."""
         entry = self._entry
         block = entry is not None and entry.kind is EntryKind.BLOCK
-        self.mode_toggle.set_value(pointers)
-        self.mode_toggle.setEnabled(not block)
+        string_view = self._in_string_view()
+        shown = pointers and not string_view
+        self.mode_toggle.set_value(shown)
+        self.mode_toggle.set_locked(block)
         self.mode_toggle.setToolTip(
             "A block reads as strings or pointers from when it is made" if block else ""
         )
-        self.resolve_group.setVisible(pointers)
+        self.reading_bar.show_string_view(string_view)
+        self.resolve_group.setVisible(shown)
+
+    def _sync_view_mode(self) -> None:
+        """Show the mode again after the view's bounds changed."""
+        cfg = self._reading()
+        self._sync_mode(cfg is not None and cfg.has_pointers)
+
+    def _in_string_view(self) -> bool:
+        """Whether the view is confined to exactly the string last opened alone."""
+        return self._string_bounds is not None and self._bounds == self._string_bounds
 
     def _default_table_id(self) -> str:
         loaded = self.workspace.loaded_tables()
@@ -131,7 +145,7 @@ class FormatBarMixin:
     def _reads_pointers(self) -> bool:
         """Whether the Hex and Text tabs show pointers: the reading has them,
         and the view is not one string's bytes, which are text."""
-        if self._string_bounds is not None and self._bounds == self._string_bounds:
+        if self._in_string_view():
             return False
         cfg = self._reading()
         return cfg is not None and cfg.has_pointers

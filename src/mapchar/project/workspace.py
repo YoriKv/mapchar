@@ -149,6 +149,10 @@ NAMED_UNIQUELY = (EntryKind.BLOCK, EntryKind.BOOKMARK)
 """The kinds :func:`free_name` applies to; a file or table row keeps the name
 of its file."""
 
+STRING_DATA = frozenset({EntryKind.FILE, EntryKind.BLOCK})
+"""The Files panel's String Data group: the entries the hex and text panels
+show."""
+
 
 def normalize_path(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
@@ -283,23 +287,31 @@ class Workspace:
                 self.entries.remove(e)
                 self._fire(self.on_removed, e)
         if self.current in removed:
-            self.set_current(self._neighbour(anchor))
+            self.set_current(self._neighbour(anchor, entry.kind))
         return removed
 
-    def _neighbour(self, anchor: int) -> Entry | None:
+    def _neighbour(self, anchor: int, kind: EntryKind) -> Entry | None:
         """Where ``current`` goes when the entry holding it closed: the nearest
-        showable row after the hole, else the nearest before it.
+        showable row of the same group after the hole, else the nearest before
+        it, else a String Data entry.
 
         The row that took the closed one's place is the one the eye is already
         on; falling back to the end of the list only happens when nothing
-        follows. Bookmarks are skipped — they can never be current.
+        follows. The group is kept because the views show one kind of thing:
+        closing a block must not swap the hex and text panels for a table.
+        Bookmarks are skipped — they can never be current.
         """
+        group = STRING_DATA if kind in STRING_DATA else {kind}
         after = self.entries[anchor:]
-        before = reversed(self.entries[:anchor])
-        return next(
-            (e for e in after if e.kind is not EntryKind.BOOKMARK),
-            next((e for e in before if e.kind is not EntryKind.BOOKMARK), None),
-        )
+        before = list(reversed(self.entries[:anchor]))
+        for kinds in (group, STRING_DATA):
+            found = next(
+                (e for e in after if e.kind in kinds),
+                next((e for e in before if e.kind in kinds), None),
+            )
+            if found is not None:
+                return found
+        return None
 
     def reorder(self, entry: Entry, new_index: int) -> None:
         group = [entry] + self.children(entry)

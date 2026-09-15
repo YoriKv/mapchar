@@ -91,6 +91,10 @@ SECTIONS = {
 }
 """The bar's sections, in order, and the controls each gathers."""
 
+_NOT_ONE_STRING = ("Source", "Pointers")
+"""The sections about where a block's strings are, which a view of one string's
+bytes does not show."""
+
 _HEX = QRegularExpression(r"\s*\$?[0-9A-Fa-f_]*\s*")
 _NUMBER = QRegularExpression(r"\s*(-?\$|\$-)?[0-9A-Fa-f]*\s*")
 
@@ -143,6 +147,7 @@ class ReadingBar(WrapBar):
         self._loading = False
         self._pointers = False
         self._block = False
+        self._string_view = False
         self._groups: dict[str, QWidget] = {}
         self.sections: dict[str, QWidget] = {}
 
@@ -485,7 +490,15 @@ class ReadingBar(WrapBar):
         for name, visible in shown.items():
             self._groups[name].setVisible(visible)
         for title, names in SECTIONS.items():
-            self.sections[title].setVisible(any(shown[n] for n in names))
+            hidden = self._string_view and title in _NOT_ONE_STRING
+            self.sections[title].setVisible(not hidden and any(shown[n] for n in names))
+
+    def show_string_view(self, string_view: bool) -> None:
+        """Show only the sections that shape one string — for a view of one
+        string's bytes — or, with ``False``, every section the reading uses."""
+        if string_view != self._string_view:
+            self._string_view = string_view
+            self._sync()
 
     # -- reading back ---------------------------------------------------------
 
