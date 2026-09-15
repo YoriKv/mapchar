@@ -69,6 +69,9 @@ class FormatBarMixin:
         """Show the reading's format and mode, without applying anything."""
         cfg = self._reading()
         if cfg is None:
+            # Nothing on screen has a reading, so the bar shows the default one
+            # rather than every control the last entry needed.
+            self.reading_bar.show_default()
             self._sync_mode(False)
             return
         table_id, pick = cfg.table_id, self.format_pick
@@ -85,18 +88,16 @@ class FormatBarMixin:
 
     def _sync_mode(self, pointers: bool) -> None:
         """Show the mode, and the controls it uses. A block's mode is what it
-        was made with, so on a block the toggle only shows it; and one string's
-        bytes are text, so a string's view shows Strings with only the settings
-        that shape a string."""
+        was made with, so on a block the toggle only picks what the view shows:
+        a pointer block's table or its strings, and nothing but strings for any
+        other block. Strings' bytes are text, so a view of them shows Strings
+        with only the settings that shape a string."""
         entry = self._entry
         block = entry is not None and entry.kind is EntryKind.BLOCK
         string_view = self._in_string_view()
         shown = pointers and not string_view
         self.mode_toggle.set_value(shown)
-        self.mode_toggle.set_locked(block)
-        self.mode_toggle.setToolTip(
-            "A block reads as strings or pointers from when it is made" if block else ""
-        )
+        self.mode_toggle.button(True).setEnabled(pointers or not block)
         self.reading_bar.show_string_view(string_view)
         self.resolve_group.setVisible(shown)
 
@@ -106,7 +107,8 @@ class FormatBarMixin:
         self._sync_mode(cfg is not None and cfg.has_pointers)
 
     def _in_string_view(self) -> bool:
-        """Whether the view is confined to exactly the string last opened alone."""
+        """Whether the view is confined to exactly the strings last opened as
+        text: one string, or all of a pointer block's."""
         return self._string_bounds is not None and self._bounds == self._string_bounds
 
     def _default_table_id(self) -> str:
@@ -144,7 +146,7 @@ class FormatBarMixin:
 
     def _reads_pointers(self) -> bool:
         """Whether the Hex and Text tabs show pointers: the reading has them,
-        and the view is not one string's bytes, which are text."""
+        and the view is not strings' bytes, which are text."""
         if self._in_string_view():
             return False
         cfg = self._reading()
@@ -207,25 +209,29 @@ class FormatBarMixin:
         One mode cannot hold the other's source, so the reading switched away
         from is set aside on the entry, and switching back takes up its source
         and string type again rather than rebuilding them from the bar.
+
+        A block keeps its reading: on a pointer block the mode only shows its
+        pointer table or its strings.
         """
         entry, base = self._entry, self._reading()
-        if (
-            entry is None
-            or base is None
-            or entry.kind is EntryKind.BLOCK
-            or base.has_pointers == pointers
-        ):
+        if entry is not None and entry.kind is EntryKind.BLOCK and base is not None:
+            if not base.has_pointers:
+                self._sync_mode(False)
+            elif pointers:
+                self._view_source(entry)
+            else:
+                self._view_strings(entry)
+            return
+        if entry is None or base is None or base.has_pointers == pointers:
             self._sync_mode(base is not None and base.has_pointers)
             return
         back = entry.session.set_aside
         entry.session.set_aside = base
         if back is not None and back.has_pointers == pointers:
-            block = entry.kind is EntryKind.BLOCK
             self.reading_bar.load(
                 replace(base, source=back.source, string_type=back.string_type),
-                block=block,
+                block=False,
                 spare_room=entry.spare_room,
-                compressed=block and bool(entry.compression_id),
             )
         else:
             self.reading_bar.set_pointers(pointers)

@@ -415,7 +415,9 @@ four framed sections that sit side by side while there is room: **Source**
 type and what it takes, strings per pointer, realign, lines, Show `[end]`) and
 **Writing** (bound, write mode, fill byte, spare room). A file has no addresses
 of its own, so its bar leaves out start, stop, count, pointer addresses, skip
-ranges and the Writing section; a section with nothing to show is hidden.
+ranges and the Writing section; a section with nothing to show is hidden. With
+nothing open the bars are disabled and show the default reading — a file read
+as a **Range** of end-token strings — rather than every control at once.
 
 - **Source** — where the strings come from; the Pointers mode offers the two
   pointer kinds, the Strings mode the other two:

@@ -16,6 +16,7 @@ from mapchar.core.block import (
 )
 from mapchar.project.projectfile import load_project, save_project
 from mapchar.ui.raw_widget import POINTER_TOKENS
+from mapchar.ui.reading_bar import RANGE
 from mapchar.ui.widgets import select_data
 from window_helpers import add_block, make_window, open_rom_and_table
 
@@ -35,6 +36,28 @@ def _items(combo) -> list[object]:
 def test_the_format_list_offers_the_encodings(window):
     items = _items(window.format_pick)
     assert "ascii" in items and "shift-jis" in items and "utf-16le" in items
+
+
+def test_with_nothing_open_the_bar_shows_a_plain_range_reading(window, tmp_path):
+    window.show()
+    bar = window.reading_bar
+    sections = bar.sections
+
+    def default() -> None:
+        assert bar.source_kind.currentData() == RANGE
+        assert sections["Source"].isVisibleTo(window)
+        assert sections["Strings"].isVisibleTo(window)
+        assert not sections["Pointers"].isVisibleTo(window)
+        assert not sections["Writing"].isVisibleTo(window)
+
+    default()
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    add_block(window, entry, "b", PointerTableSource(0, 4, 1, 1))
+    assert sections["Pointers"].isVisibleTo(window)
+    # The last entry closed leaves the default reading, not the block's.
+    for open_entry in list(window.workspace.entries):
+        window.apply_entry_remove(open_entry)
+    default()
 
 
 def _pointers(window):
@@ -170,19 +193,46 @@ def test_a_block_keeps_its_mode_and_edits_its_other_settings(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
     block = add_block(window, entry, "b", PointerTableSource(0, 4, 1, 1))
     toggle = window.mode_toggle
-    assert toggle.value() is True and toggle.locked()
+    assert toggle.value() is True
     assert window.reading_bar.sections["Pointers"].isVisibleTo(window)
     assert window.reading_bar.sections["Strings"].isVisibleTo(window)
     toggle.button(False).click()
     assert block.config.source == PointerTableSource(0, 4, 1, 1)
+    toggle.button(True).click()
     bar = window.reading_bar
     bar.ptr_size.setValue(2)
     bar.ptr_stride.setValue(2)
     assert block.config.source == PointerTableSource(0, 4, 2, 2)
     assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+    # A block without pointers has none to show.
+    plain = add_block(window, entry, "r", RangeSource(0x10, 0x15))
+    assert toggle.value() is False and not toggle.button(True).isEnabled()
+    toggle.button(True).click()
+    assert plain.config.source == RangeSource(0x10, 0x15)
     # A file's mode is still the user's to switch.
     window._activate_entry(entry)
-    assert not toggle.locked()
+    assert toggle.button(True).isEnabled()
+
+
+def test_a_pointer_block_s_mode_shows_its_table_or_all_its_strings(window, tmp_path):
+    # Out of order, one target twice, and a byte between the two strings.
+    rom = pointer_rom((0x14, 0x10, 0x14), "41 42 00 FF 42 00")
+    entry = open_rom_and_table(window, tmp_path, rom)
+    block = add_block(window, entry, "b", PointerTableSource(0, 6, 2, 2))
+    config = block.config
+    toggle, sections = window.mode_toggle, window.reading_bar.sections
+    assert window._bounds == (0, 6)
+    toggle.button(False).click()
+    assert block.config == config
+    assert window._bounds == (0x10, 0x16) and window._offset == 0x10
+    assert toggle.value() is False and not window.resolve_group.isVisibleTo(window)
+    assert not sections["Pointers"].isVisibleTo(window)
+    text = "".join(t.text() for t in window.raw._model.tokens)
+    assert text.startswith("AB[end]") and text.endswith("B[end]")
+    toggle.button(True).click()
+    assert block.config == config and window._bounds == (0, 6)
+    assert window.raw._model.tokens[0].table_id == POINTER_TOKENS
+    assert sections["Pointers"].isVisibleTo(window)
 
 
 def test_a_pointer_block_s_string_opened_alone_reads_as_text(window, tmp_path):

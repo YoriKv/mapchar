@@ -11,7 +11,8 @@ session — and every view re-reads.
 What shows follows the reading: its source kind and string type, whether it is
 read as pointers (the Format bar's mode), and whether it is a block's, since
 only a block has addresses of its own, a way back to disk and room left by a
-re-compression. A section with nothing to show is hidden whole.
+re-compression. A section with nothing to show is hidden whole, and with
+nothing open the bar shows :data:`DEFAULT_READING`.
 """
 
 from __future__ import annotations
@@ -107,9 +108,14 @@ SECTIONS = {
 }
 """The bar's sections, in order, and the controls each gathers."""
 
-_NOT_ONE_STRING = ("Source", "Pointers")
-"""The sections about where a block's strings are, which a view of one string's
-bytes does not show."""
+_NOT_STRING_VIEW = ("Source", "Pointers")
+"""The sections about where a block's strings are, which a view of the strings'
+own bytes does not show."""
+
+DEFAULT_READING = BlockConfig(RangeSource(0, 0), EndToken(), "")
+"""What the bar shows with nothing open: a file read as a range of strings, so
+the window starts on one source's settings rather than on every source's at
+once."""
 
 _HEX = QRegularExpression(r"\s*\$?[0-9A-Fa-f_]*\s*")
 
@@ -490,6 +496,8 @@ class ReadingBar(WrapBar):
         ):
             field.editingFinished.connect(lambda n=name: self._edited(n))
 
+        self.show_default()
+
     # -- loading --------------------------------------------------------------
 
     def set_mappings(self, mapping_ids: list[str]) -> None:
@@ -574,6 +582,10 @@ class ReadingBar(WrapBar):
             self._loading = False
         self._sync()
 
+    def show_default(self) -> None:
+        """Show :data:`DEFAULT_READING`, for when no entry has one of its own."""
+        self.load(DEFAULT_READING, block=False)
+
     def set_pointers(self, pointers: bool) -> None:
         """Switch the source kinds between reading characters and pointers,
         keeping every other value, so :meth:`config` reads the other kind."""
@@ -644,12 +656,12 @@ class ReadingBar(WrapBar):
         for name, visible in shown.items():
             self._groups[name].setVisible(visible)
         for title, names in SECTIONS.items():
-            hidden = self._string_view and title in _NOT_ONE_STRING
+            hidden = self._string_view and title in _NOT_STRING_VIEW
             self.sections[title].setVisible(not hidden and any(shown[n] for n in names))
 
     def show_string_view(self, string_view: bool) -> None:
-        """Show only the sections that shape one string — for a view of one
-        string's bytes — or, with ``False``, every section the reading uses."""
+        """Show only the sections that shape a string — for a view of strings'
+        bytes — or, with ``False``, every section the reading uses."""
         if string_view != self._string_view:
             self._string_view = string_view
             self._sync()
