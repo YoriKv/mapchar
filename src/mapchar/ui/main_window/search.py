@@ -8,7 +8,7 @@ from mapchar.core.errors import MapcharError
 class SearchMixin:
     """Searching the current file for bytes or text.
 
-    The Find bar along the window's bottom holds the current search: Ctrl+F
+    The Find bar under the navigation row holds the current search: Ctrl+F
     puts the keyboard there, and Find Next and Find Previous (F3 and Shift+F3,
     Enter and Shift+Enter in the bar, its arrows) walk the matches of whatever
     it says. The Hex panel's field and Search for Selection hand the bar their

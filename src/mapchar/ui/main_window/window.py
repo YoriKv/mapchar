@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QTabWidget,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -419,23 +418,19 @@ class MainWindow(
         self.statusBar().addPermanentWidget(self.nav_status)
         self.nav_bar = nav
         layout.addWidget(nav)
-        self.setCentralWidget(central)
-
-        # The Find bar: the current byte search, along the window's very bottom
-        # under every dock, where Ctrl+F puts the keyboard and F3 reads from.
-        # A toolbar so it spans the window, but fixed where it is: not something
-        # to drag off or hide (mapchar.ui.main_window.search).
-        find_bar = QToolBar("Find")
+        # The Find bar: the current byte search, under the navigation row as the
+        # last row of the editing column, where Ctrl+F puts the keyboard and F3
+        # reads from (mapchar.ui.main_window.search).
+        find_bar = QWidget()
         find_bar.setObjectName("find_bar")
-        find_bar.setMovable(False)
-        find_bar.setFloatable(False)
-        find_bar.setAllowedAreas(Qt.ToolBarArea.BottomToolBarArea)
-        find_bar.toggleViewAction().setVisible(False)
-        find_bar.addWidget(QLabel("Find "))
+        fl = QHBoxLayout(find_bar)
+        fl.setContentsMargins(0, 0, 0, 0)
         self.find_row = FindRow(chars=40)
-        find_bar.addWidget(self.find_row)
-        self.addToolBar(Qt.ToolBarArea.BottomToolBarArea, find_bar)
+        fl.addWidget(QLabel("Find"))
+        fl.addWidget(self.find_row, 1)
+        layout.addWidget(find_bar)
         self.find_bar = find_bar
+        self.setCentralWidget(central)
 
         self.search_window = SearchWindow(self)
         self.scan_window = ScanWindow(self)

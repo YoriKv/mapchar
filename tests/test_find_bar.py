@@ -1,4 +1,4 @@
-"""The Find bar along the window's bottom: the current search, and the keys
+"""The Find bar under the navigation row: the current search, and the keys
 and buttons that walk its matches."""
 
 from __future__ import annotations
@@ -23,9 +23,12 @@ def _open(window, tmp_path):
     return entry
 
 
-def test_the_bar_sits_along_the_bottom_and_is_gated_with_search(window, tmp_path):
-    assert window.toolBarArea(window.find_bar) == Qt.ToolBarArea.BottomToolBarArea
-    assert not window.find_bar.isMovable() and not window.find_bar.isFloatable()
+def test_the_bar_is_the_last_row_of_the_editing_column_and_gated_with_search(
+    window, tmp_path
+):
+    column = window.centralWidget().layout()
+    rows = [column.itemAt(i).widget() for i in range(column.count())]
+    assert rows[-1] is window.find_bar and rows[-2] is window.nav_bar
     assert not window.find_bar.isEnabled()  # nothing open, nothing to search
     _open(window, tmp_path)
     assert window.find_bar.isEnabled()

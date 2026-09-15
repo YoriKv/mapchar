@@ -378,7 +378,7 @@ The exploration surface, the equivalent of celPix's tile canvas.
 All searches run over the current file through its container and
 compression, and report offsets in the file's coordinates.
 
-- **Find** — the **Find bar** along the window's bottom holds the current
+- **Find** — the **Find bar** under the navigation row holds the current
   search: hex bytes, or `"quoted text"` run through the encode engine, so
   multi-character entries, `[codes]` and table switches are all searchable.
   Ctrl+F in a view puts the keyboard there; Enter, F3 and the bar's arrows
