@@ -312,8 +312,9 @@ The exploration surface, the equivalent of celPix's tile canvas.
   column only. The current block's pointer bytes are chipped in the hex column,
   and the string boundaries it would produce are ruled in both.
 - **Two tabs** — **Hex** shows the columns above; **Text** shows the decode
-  from the same offset in an ordinary read-only text box, with **Show codes**,
-  **Show unknown** and **Wrap** switches remembered per machine. Off, Show
+  from the same offset in an ordinary read-only text box, where every end
+  token ends its line, with **Show codes**, **Show unknown** and **Wrap**
+  switches remembered per machine. Off, Show
   codes hides the bracketed codes — a CODE entry, or an END or SWITCH whose
   text is exactly `[label]`, keeping the line breaks after it — and Show
   unknown hides the `[$XX]` bytes no entry matches; a hidden token is still

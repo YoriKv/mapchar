@@ -119,7 +119,7 @@ def test_the_whole_file_fits_a_short_one(window, tmp_path):
     window.text_tab_action.trigger()
     QApplication.processEvents()
     assert window.text.shown_bytes() == len(data)
-    assert window.text.edit.toPlainText() == "Hello[end]"
+    assert window.text.edit.toPlainText() == "Hello[end]\n"
 
 
 WIDE_TABLE = f"{HEADER}\n@table main\n/00=[end]\n8020= \n81FF=[line]\\n\n" + "".join(
@@ -306,3 +306,10 @@ def test_show_codes_and_show_unknown_hide_their_tokens(window, tmp_path):
     assert text.edit.toPlainText() == "Hi[color $03][end]\nYo[end]\n"
     text.show_unknown.setChecked(True)
     assert text.edit.toPlainText() == "Hi[color $03][$EE][end]\nYo[end]\n"
+
+
+def test_an_end_ends_its_line(window, tmp_path):
+    text = _text_tab(window, tmp_path, b"Hi\x00Yo\x00", CODED_TABLE.replace("\\n", ""))
+    assert text.edit.toPlainText() == "Hi[end]\nYo[end]\n"
+    text.show_codes.setChecked(False)
+    assert text.edit.toPlainText() == "Hi\nYo\n"

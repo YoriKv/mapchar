@@ -55,6 +55,8 @@ class Shown:
     text is exactly ``[label]``, which keeps the line breaks after it so the
     lines stay where they were. Unknown is what matched no entry, shown
     ``[$XX]`` — or ``[%bits]`` for a tail shorter than a byte.
+
+    An end token ends its line, whether or not its table text breaks it.
     """
 
     codes: bool = True
@@ -64,7 +66,14 @@ class Shown:
         entry = token.entry
         if entry is None:
             return token.text() if self.unknown else ""
+        text = self._visible(token)
+        if entry.kind is TokenKind.END and not token.fallback:
+            return text if text.endswith("\n") else text + "\n"
+        return text
+
+    def _visible(self, token: Token) -> str:
         text = token.text()
+        entry = token.entry
         if self.codes or token.fallback:
             return text
         if entry.kind is TokenKind.CODE:

@@ -111,13 +111,13 @@ def test_text_tab(window, tmp_path):
     assert [window.tabs.tabText(i) for i in range(3)] == ["Hex", "Text", "Strings"]
     window.text_tab_action.trigger()
     assert window.tabs.currentWidget() is window.text
-    assert window.text.edit.toPlainText() == "AB[end]BA[end][$FF][$FF][$FF][$FF]"
+    assert window.text.edit.toPlainText() == "AB[end]\nBA[end]\n[$FF][$FF][$FF][$FF]"
     window.raw.set_selection(3, 5)
     window._on_selection(3, 5)
     cursor = window.text.edit.textCursor()
-    assert (cursor.selectionStart(), cursor.selectionEnd()) == (7, 9)
+    assert (cursor.selectionStart(), cursor.selectionEnd()) == (8, 10)
     cursor.setPosition(0)
-    cursor.setPosition(7, cursor.MoveMode.KeepAnchor)
+    cursor.setPosition(8, cursor.MoveMode.KeepAnchor)
     window.text.edit.setTextCursor(cursor)
     assert window.raw.selection() == (0, 3)
     window.raw_tab_action.trigger()
@@ -145,11 +145,11 @@ def test_text_tab_drag_upward(window, tmp_path):
         )
         QApplication.sendEvent(viewport, event)
 
-    # Each "ABBBB[end]" is ten characters over six bytes.
-    send(QEvent.Type.MouseButtonPress, 60, left)
-    for char in (57, 50, 40, 30):
+    # Each "ABBBB[end]" and its line break is eleven characters over six bytes.
+    send(QEvent.Type.MouseButtonPress, 66, left)
+    for char in (63, 55, 44, 33):
         send(QEvent.Type.MouseMove, char, Qt.MouseButton.NoButton)
-    assert edit.textCursor().anchor() == 60
+    assert edit.textCursor().anchor() == 66
     assert window._selection == (18, 36)
 
 
