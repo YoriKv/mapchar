@@ -302,10 +302,27 @@ class RefreshMixin:
         per_line = shown / text.lines_in_view() if shown else BYTES_PER_ROW
         body, starts = text.edit.toPlainText(), text.line_starts()
         first_line = body[: starts[1]] if len(starts) > 1 else body
-        budget = max(BYTES_PER_ROW, round((lines + 1) * per_line * 2))
+        # As far back as the last step up had to go for a line, when that is
+        # further than twice the text in view suggests: over a stretch that
+        # decodes to few lines, or to one, each step would otherwise decode
+        # from a little further back over and over to find the same thing.
+        per_line = max(per_line * 2, self._text_up_guess)
+        budget = min(
+            max(BYTES_PER_ROW, round((lines + 1) * per_line)), TEXT_WINDOW_LIMIT
+        )
+        cache = self._text_decode
+        if cache is not None and not cache.serves(doc.data, tables):
+            cache = None
         while True:
-            start, tokens = self._decode_up_to(doc, tables, offset - budget, offset)
-            above = text_model(tokens, start, offset - start)
+            # The kept tokens serve the text above where they reach back to;
+            # what they do not is decoded, and joins them for the next step.
+            above = cache.above(max(first, offset - budget), offset) if cache else None
+            if above is None:
+                start, tokens = self._decode_up_to(doc, tables, offset - budget, offset)
+                above = text_model(tokens, start, offset - start)
+                if cache is not None:
+                    cache.prepend(start, tokens)
+            start = above.offset
             text.set_model(
                 TextModel(above.body + first_line, above.spans, start, offset - start)
             )
@@ -314,6 +331,7 @@ class RefreshMixin:
             if here > lines or start <= first or budget >= TEXT_WINDOW_LIMIT:
                 break
             budget *= 2
+        self._text_up_guess = budget / (lines + 1) if here > lines else budget
         byte = text.byte_at_char(starts[max(0, here - lines)])
         return start if byte is None else byte
 
@@ -326,7 +344,8 @@ class RefreshMixin:
         Best is the fewest tokens left unmatched — a start inside a character
         leaves a trail of them — and then a token starting at ``offset`` itself,
         so the text above is in step with the text in view whenever that is in
-        step with the file.
+        step with the file. A start that reads with nothing unmatched and in
+        step is as good as one gets, and the tries stop there.
         """
         best: tuple[tuple[int, bool], int, list[Token]] | None = None
         first = self._view_range()[0]
@@ -340,6 +359,8 @@ class RefreshMixin:
             score = (unmatched, not any(t.bit_start == rel for t in tokens))
             if best is None or score < best[0]:
                 best = (score, at, before)
+            if score == (0, False):
+                break
         return best[1], best[2]
 
     def _current_view(self) -> str:

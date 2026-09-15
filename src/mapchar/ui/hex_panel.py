@@ -102,10 +102,11 @@ class HexPanel(ThemedIcons, QWidget):
         nibble, which outranks both the selection and the caret before it."""
         self._addr_of: Callable[[int], str] = lambda at: f"{at:06X}"
         self._addr_width = 6
-        self._rendered: tuple[bytes, int, int, int, str] | None = None
+        self._rendered: tuple[bytes, int, int, int, list[str]] | None = None
         """What the dump's text was last built from — the bytes, the window,
-        the address column's width and spelling — so a render that would build
-        the same text, as every move of the selection would, keeps it."""
+        the address column's width and every address in it — so a render that
+        would build the same text, as every move of the selection would, keeps
+        it."""
         self.view = _HexView(self)
         self.view.setReadOnly(True)
         self.view.setFont(mono_font())
@@ -240,23 +241,18 @@ class HexPanel(ThemedIcons, QWidget):
     def _render(self) -> None:
         caret = self.view.textCursor().position()
         end = min(self._offset + DUMP_WINDOW_BYTES, len(self._data))
-        built = (
-            self._data,
-            self._offset,
-            end,
-            self._addr_width,
-            self._addr_of(self._offset),
-        )
+        rows = range(self._offset, end, BYTES_PER_ROW)
+        addresses = [self._addr_of(at) for at in rows]
+        built = (self._data, self._offset, end, self._addr_width, addresses)
         if self._rendered is None or any(
             a is not b and a != b for a, b in zip(built, self._rendered, strict=True)
         ):
             self._rendered = built
             lines = []
-            for at in range(self._offset, end, BYTES_PER_ROW):
+            for at, address in zip(rows, addresses, strict=True):
                 chunk = self._data[at : at + BYTES_PER_ROW]
                 hexes = " ".join(f"{b:02X}" for b in chunk)
                 ascii_ = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in chunk)
-                address = self._addr_of(at)
                 lines.append(
                     f"{address:<{self._addr_width}}{' ' * _ADDRESS_GAP}"
                     f"{hexes:<{BYTES_PER_ROW * 3 - 1}}  {ascii_}"

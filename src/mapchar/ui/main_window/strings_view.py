@@ -80,6 +80,7 @@ class StringsViewMixin:
             # block on that table would otherwise go with it. The block reads
             # as unreadable in the Files panel until the table comes back.
             self._stash_strings(entry, doc)
+            changed = doc.extraction_key is not None
             doc.extraction_key = None
             self.statusBar().showMessage(
                 f"{entry.name}: start table @{cfg.table_id} is not loaded; its "
@@ -87,7 +88,7 @@ class StringsViewMixin:
                 6000,
             )
             self.files_panel.refresh_labels()
-            return True
+            return changed
         key = (
             cfg,
             tables.start.id,
@@ -104,7 +105,7 @@ class StringsViewMixin:
             # lose work the user cannot get back.
             self.statusBar().showMessage(str(exc), 5000)
             self._stash_strings(entry, doc)
-            return True
+            return False
         old = {s.index: s for s in doc.strings}
         for rec in ex.strings:
             prev = old.get(rec.index)

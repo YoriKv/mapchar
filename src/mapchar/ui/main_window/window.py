@@ -180,6 +180,9 @@ class MainWindow(
         """The Text tab's tokens, kept from one window to the next."""
         self._text_guess = 0
         """How many bytes the Text tab's last window took to fill its box."""
+        self._text_up_guess = 0.0
+        """How many bytes back a line of the text above the Text tab's window
+        was, the last time one was looked for."""
         """The Text tab's wheel steps down, as ``(from, to, lines)``, so a step
         up retraces one exactly (:mod:`mapchar.ui.main_window.refresh`)."""
         self._scan_stop = False

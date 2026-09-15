@@ -105,7 +105,10 @@ class TextDecode:
     same tokens from a little further on, and a line's worth more at the end.
     So the tokens are kept, by their absolute bits, and a window is served from
     them wherever they reach; only what lies past them is decoded, from the
-    last token boundary they can be trusted to.
+    last token boundary they can be trusted to. The text above a window, which
+    a step up lays out to find the line to land on, is kept the same way: once
+    decoded it joins the tokens in front, and a later step up over it decodes
+    nothing.
 
     Decoding from a byte in the middle of the kept tokens gives the same tokens
     only where the decoder carries no state across a token: a set with no
@@ -184,9 +187,14 @@ class TextDecode:
         del self.starts[kept:], self.ends[kept:], self.texts[kept:]
         del self.byte_starts[kept:], self.byte_ends[kept:], self.chars[kept + 1 :]
         run: RunResult = decode(self.data[resume:stop], self.tables)
-        base = resume * 8
+        self._append(resume, run.tokens)
+        self.end = stop
+
+    def _append(self, base: int, tokens: list[Token]) -> None:
+        """Tokens relative to byte ``base``, after those kept."""
+        base *= 8
         at = self.chars[-1]
-        for token in run.tokens:
+        for token in tokens:
             start, end = base + token.bit_start, base + token.bit_end
             text = token.text()
             self.starts.append(start)
@@ -196,7 +204,46 @@ class TextDecode:
             self.texts.append(text)
             at += len(text)
             self.chars.append(at)
-        self.end = stop
+
+    def prepend(self, start: int, tokens: list[Token]) -> bool:
+        """Put tokens decoded from byte ``start`` up to the origin in front of
+        those kept, when they join: the last ends where the first kept token
+        starts, and decoding on from there reads the same. ``True`` when they
+        were taken."""
+        if not self.resumable or start >= self.origin or not tokens:
+            return False
+        if start * 8 + tokens[-1].bit_end != self.origin * 8:
+            return False
+        kept = (self.starts, self.ends, self.byte_starts, self.byte_ends, self.texts)
+        self.starts, self.ends, self.byte_starts, self.byte_ends, self.texts = (
+            [] for _ in kept
+        )
+        self.chars = [0]
+        self._append(start, tokens)
+        for column, rest in zip(
+            (self.starts, self.ends, self.byte_starts, self.byte_ends, self.texts),
+            kept,
+            strict=True,
+        ):
+            column.extend(rest)
+        at = self.chars[-1]
+        for text in kept[4]:
+            at += len(text)
+            self.chars.append(at)
+        self.origin = start
+        return True
+
+    def above(self, lo: int, offset: int) -> TextModel | None:
+        """The kept tokens from the first starting at or after byte ``lo`` to
+        those ending by ``offset``: the text above a window there, when the
+        tokens reach that far back; ``None`` when they do not."""
+        if lo < self.origin or offset > self.end:
+            return None
+        first = bisect_left(self.starts, lo * 8)
+        last = bisect_right(self.ends, offset * 8)
+        if last <= first:
+            return None
+        return self._model(first, last, self.byte_starts[first], offset)
 
     def model(self, offset: int, stop: int) -> TextModel | None:
         """The tokens from ``offset`` that end by ``stop``, as a model; ``None``
@@ -204,7 +251,11 @@ class TextDecode:
         first = self._first(offset)
         if first is None or stop > self.end:
             return None
-        last = bisect_right(self.ends, stop * 8)
+        return self._model(first, bisect_right(self.ends, stop * 8), offset, stop)
+
+    def _model(self, first: int, last: int, offset: int, stop: int) -> TextModel:
+        """Tokens ``first`` to ``last`` as the text of bytes ``offset`` to
+        ``stop``."""
         base = self.chars[first]
         char_starts = [c - base for c in self.chars[first:last]]
         char_ends = [c - base for c in self.chars[first + 1 : last + 1]]

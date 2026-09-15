@@ -633,10 +633,10 @@ A refresh that only **moved** the view — a scroll, a step, a change of
 bounds — passes `moved=True` and leaves the Strings grid alone unless the move
 re-read the block: the grid shows the same strings wherever the view is, and
 filling it is the one part of a refresh that costs by the string. The Text tab
-keeps its decode between windows (`TextDecode`): a window is served from the
-tokens already decoded wherever they reach, and only what lies past them is
-decoded, from the last token boundary the decoder can be trusted to have read
-whole. The raw view lays its hex pairs and token texts out once per face
+keeps its decode between windows (`TextDecode`): a window, and the text above
+it that a step up lays out, are served from the tokens already decoded wherever
+they reach, and only what lies past them is decoded, from the last token
+boundary the decoder can be trusted to have read whole. The raw view lays its hex pairs and token texts out once per face
 (`QStaticText`) and places them; the Hex panel rebuilds its text only when the
 bytes, the window or the address column changed.
 4. **Sync dependent surfaces** — Tables dock, Block bar, Hex panel, Preview,
