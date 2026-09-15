@@ -67,21 +67,21 @@ mapchar/
 └── tmp/                 scratch (gitignored)
 ```
 
-- **Example projects**: `tests/test_examples.py` runs abcde's Dragon Quest IV
-  and Dragon Warrior II examples end to end, and the Super Mario World sample
-  whose tables and command file live in `tools/samples/Super Mario World/`
-  (the 22 message-box messages and the 57 level-name parts of the unheadered
-  USA ROM, located from the SMW disassembly). The ROMs go in
-  `sample-projects/<game>/` (gitignored) under the names
-  `tools/make_sample_projects.py` lists; without them the tests skip. `uv run
+- **Example projects**: `tests/test_examples.py` runs the Super Mario World
+  sample whose tables and command file live in `tools/samples/Super Mario
+  World/` (the 22 message-box messages and the 57 level-name parts of the
+  unheadered USA ROM, located from the SMW disassembly). The ROM goes in
+  `sample-projects/Super Mario World/` (gitignored) under the name
+  `tools/make_sample_projects.py` lists; without it the test skips. `uv run
   python tools/make_sample_projects.py` copies each game's tables and command
   file beside its ROM and saves a `<game>.mapchar` project there, ready to
   open.
-- **Verification fixtures** compare mapchar's extraction with abcde's
-  Cartographer dump (`tests/test_verify_abcde.py`) and its Atlas insertion
-  (`tests/test_atlas.py`); both need `perl` and `../abcde/abcde.pl` and skip
-  without them. `tests/fixtures/abcde/DIVERGENCES.md` lists where mapchar
-  departs from the reference tools on purpose.
+- **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's
+  extraction with abcde's Cartographer dump of the synthetic ROM in
+  `tests/fixtures/abcde/`. The fixtures are checked in, so the suite never runs
+  abcde itself; `tools/regen_fixtures.py` regenerates them, and
+  `tests/fixtures/abcde/DIVERGENCES.md` lists where mapchar departs from the
+  reference tools on purpose.
 
 - **Only `mapchar.ui` and `mapchar.app` import Qt.**
 - **Theme.** `src/mapchar/ui/theme.py` puts a `QPalette` on the Fusion

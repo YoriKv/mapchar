@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import subprocess
-
-from conftest import ABCDE, needs_abcde
 from helpers import ABC_TABLE, pointer_rom, table_set, tables_from
 from mapchar.core.block import BlockConfig, EndToken, PointerTableSource, RangeSource
 from mapchar.pipeline.extract import extract
@@ -97,50 +94,6 @@ def test_atlas_addresses_are_file_offsets(registry):
     assert back.strings[0].insert_at - header == 0x10
     assert [tuple(a - header for a in x.pointers) for x in back.strings] == [(0,), (2,)]
     assert [x.text for x in back.strings] == [r.current_text() for r in ex.strings]
-
-
-@needs_abcde
-def test_atlas_export_inserts_like_mapchar(tmp_path, registry):
-    """abcde's Atlas over the export writes what mapchar's layout writes."""
-    from mapchar.pipeline.insert import apply_splices, layout_block
-
-    data = pointer_rom((0x10, 0x13), "41 42 00 43 00")
-    cfg = BlockConfig(
-        PointerTableSource(0, 4, 2, 2, "little", "linear"),
-        EndToken(),
-        "main",
-        bound=0x19,
-        fill=0xFF,
-    )
-    ex = extract(data, cfg, TS, registry)
-    ex.strings[0].translation = "ABC[item][Herb][end]"
-    ex.strings[1].translation = "B[end]"
-    res = layout_block(data, cfg, TS, ex.strings, registry)
-    assert res.ok
-    expected = apply_splices(data, res.splices)
-    export = write_atlas(
-        "D", cfg, ex.strings, TS, {f"{t.id}.tbl": t for t in TS.tables.values()}
-    )
-    for name, text in export.tables.items():
-        (tmp_path / name).write_text(text)
-    (tmp_path / "script.txt").write_text(export.script)
-    target = tmp_path / "rom.bin"
-    target.write_bytes(data)
-    result = subprocess.run(
-        [
-            "perl",
-            str(ABCDE / "abcde.pl"),
-            "-cm",
-            "abcde::Atlas",
-            "rom.bin",
-            "script.txt",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert target.read_bytes() == expected
 
 
 def test_cartographer_export_roundtrip():

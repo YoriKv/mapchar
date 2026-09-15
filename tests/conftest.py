@@ -1,11 +1,10 @@
-"""Shared pytest setup: headless Qt, automatic ``qt`` marking, a fresh plugin
-registry, and where the abcde checkout the comparison tests need lives."""
+"""Shared pytest setup: headless Qt, automatic ``qt`` marking, and a fresh
+plugin registry."""
 
 from __future__ import annotations
 
 import os
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -19,15 +18,6 @@ _QT_HINT = re.compile(r"PySide6|qtbot|MainWindow|window_helpers")
 
 ROOT = Path(__file__).resolve().parent.parent
 """The repository root."""
-
-ABCDE = ROOT.parent / "abcde"
-"""abcde's own checkout, beside this repository."""
-
-needs_abcde = pytest.mark.skipif(
-    shutil.which("perl") is None or not (ABCDE / "abcde.pl").exists(),
-    reason="abcde not available",
-)
-"""Skip a test that runs abcde itself."""
 
 
 def pytest_collection_modifyitems(config, items):
