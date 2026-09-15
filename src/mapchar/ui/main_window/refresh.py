@@ -307,8 +307,9 @@ class RefreshMixin:
                 self.resolve_pointers.isChecked(),
             )
             return text_model(tokens, offset, stop - offset)
+        shown = self.text.shown()
         cache = self._text_decode
-        if cache is None or not cache.serves(doc.data, tables):
+        if cache is None or not cache.serves(doc.data, tables, shown):
             cache = None
         else:
             cache.extend(stop, self._decode_window)
@@ -316,7 +317,11 @@ class RefreshMixin:
             if model is not None:
                 return model
         cache = self._text_decode = TextDecode(
-            doc.data, tables, offset, resumable=cuts_at_end_tokens(self._reading())
+            doc.data,
+            tables,
+            offset,
+            shown=shown,
+            resumable=cuts_at_end_tokens(self._reading()),
         )
         cache.extend(stop, self._decode_window)
         model = cache.model(offset, stop)
@@ -328,6 +333,12 @@ class RefreshMixin:
         if self._doc is not None:
             self._refresh_text_mode(self._doc, self._table_set())
             self._sync_steps()
+
+    def _on_text_shown_changed(self) -> None:
+        """Show codes or Show unknown was switched: the kept tokens read to
+        another text now, so they are dropped and the window fitted afresh."""
+        self._text_decode = None
+        self._on_text_fit_changed()
 
     def _on_text_scroll(self, lines: int) -> None:
         """Move the Text tab's view by that many lines: the wheel, the keys,
@@ -408,8 +419,9 @@ class RefreshMixin:
         budget = min(
             max(BYTES_PER_ROW, round((lines + 1) * per_line)), TEXT_WINDOW_LIMIT
         )
+        shown = self.text.shown()
         cache = self._text_decode
-        if cache is not None and not cache.serves(doc.data, tables):
+        if cache is not None and not cache.serves(doc.data, tables, shown):
             cache = None
         while True:
             # The kept tokens serve the text above where they reach back to;
@@ -417,7 +429,7 @@ class RefreshMixin:
             above = cache.above(max(first, offset - budget), offset) if cache else None
             if above is None:
                 start, tokens = self._decode_up_to(doc, tables, offset - budget, offset)
-                above = text_model(tokens, start, offset - start)
+                above = text_model(tokens, start, offset - start, shown)
                 if cache is not None:
                     cache.prepend(start, tokens)
             start = above.offset

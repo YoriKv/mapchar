@@ -441,6 +441,7 @@ class MainWindow(
         self.raw.rows_changed.connect(self._on_raw_rows_changed)
         self.text.selection_changed.connect(self._on_text_selection)
         self.text.fit_changed.connect(self._on_text_fit_changed)
+        self.text.shown_changed.connect(self._on_text_shown_changed)
         self.text.scroll_requested.connect(self._on_text_scroll)
         self.text.page_requested.connect(self._step_pages)
         self.text.offset_requested.connect(self._go_to)

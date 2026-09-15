@@ -277,3 +277,32 @@ def test_the_text_scrollbar_is_the_files(window, tmp_path):
     assert window._offset == 1000
     window._go_to(2000)
     assert bar.value() == 2000
+
+
+CODED = b"Hi\x01\x03\xee\x00Yo\x00"
+"""Text, a code with an operand, an unmatched byte and end tokens."""
+
+CODED_TABLE = (
+    f"{HEADER}\n@table main\n48=H\n69=i\n59=Y\n6F=o\n/00=[end]\\n\n$01=[color],u8\n"
+)
+
+
+def test_show_codes_and_show_unknown_hide_their_tokens(window, tmp_path):
+    text = _text_tab(window, tmp_path, CODED, CODED_TABLE)
+    assert text.edit.toPlainText() == "Hi[color $03][$EE][end]\nYo[end]\n"
+    text.show_codes.setChecked(False)
+    assert text.edit.toPlainText() == "Hi[$EE]\nYo\n"
+    text.show_unknown.setChecked(False)
+    assert text.edit.toPlainText() == "Hi\nYo\n"
+    # The hidden tokens are still there: a selection over them maps to their
+    # bytes, the line break included.
+    text.select_bytes(0, 6)
+    cursor = text.edit.textCursor()
+    assert (
+        text.edit.toPlainText()[cursor.selectionStart() : cursor.selectionEnd()]
+        == "Hi\n"
+    )
+    text.show_codes.setChecked(True)
+    assert text.edit.toPlainText() == "Hi[color $03][end]\nYo[end]\n"
+    text.show_unknown.setChecked(True)
+    assert text.edit.toPlainText() == "Hi[color $03][$EE][end]\nYo[end]\n"

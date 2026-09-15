@@ -42,6 +42,41 @@ from mapchar.ui import settings
 from mapchar.ui.widgets import mono_font
 
 WORD_WRAP_KEY = "view/text_word_wrap"
+SHOW_CODES_KEY = "view/text_show_codes"
+SHOW_UNKNOWN_KEY = "view/text_show_unknown"
+
+
+@dataclass(frozen=True)
+class Shown:
+    """What of a decode the Text tab shows: all of it, or with the codes or the
+    unmatched bytes left out.
+
+    A code is a bracketed token: a CODE entry, or an END or SWITCH entry whose
+    text is exactly ``[label]``, which keeps the line breaks after it so the
+    lines stay where they were. Unknown is what matched no entry, shown
+    ``[$XX]`` — or ``[%bits]`` for a tail shorter than a byte.
+    """
+
+    codes: bool = True
+    unknown: bool = True
+
+    def text(self, token: Token) -> str:
+        entry = token.entry
+        if entry is None:
+            return token.text() if self.unknown else ""
+        text = token.text()
+        if self.codes or token.fallback:
+            return text
+        if entry.kind is TokenKind.CODE:
+            return ""
+        label = entry.label
+        if label is not None and text.startswith(f"[{label}]"):
+            return text[len(label) + 2 :]
+        return text
+
+
+ALL = Shown()
+"""Everything shown: the default."""
 
 
 @dataclass
@@ -83,14 +118,16 @@ def _byte_span(bit_start: int, bit_end: int) -> tuple[int, int]:
     return byte_start, max(byte_start + 1, -(-bit_end // 8))
 
 
-def text_model(tokens: list[Token], offset: int, length: int) -> TextModel:
+def text_model(
+    tokens: list[Token], offset: int, length: int, shown: Shown = ALL
+) -> TextModel:
     """Render tokens (bit positions relative to ``offset``) to a body and map."""
     parts: list[str] = []
     spans: list[tuple[int, int, int, int]] = []
     at = 0
     base = offset * 8
     for token in tokens:
-        text = token.text()
+        text = shown.text(token)
         byte_start, byte_end = _byte_span(base + token.bit_start, base + token.bit_end)
         spans.append((at, at + len(text), byte_start, byte_end))
         parts.append(text)
@@ -123,10 +160,17 @@ class TextDecode:
     """
 
     def __init__(
-        self, data: bytes, tables: TableSet, origin: int, *, resumable: bool = True
+        self,
+        data: bytes,
+        tables: TableSet,
+        origin: int,
+        *,
+        shown: Shown = ALL,
+        resumable: bool = True,
     ) -> None:
         self.data = data
         self.tables = tables
+        self.shown = shown
         self.origin = origin
         """The byte the first token starts at."""
         self.end = origin
@@ -151,10 +195,12 @@ class TextDecode:
             (len(e.bits) + sum(o.bits for o in e.operands) for e in entries), default=8
         )
 
-    def serves(self, data: bytes, tables: TableSet) -> bool:
-        """Whether these tokens are of ``data`` read through ``tables``."""
+    def serves(self, data: bytes, tables: TableSet, shown: Shown) -> bool:
+        """Whether these tokens are of ``data`` read through ``tables``, shown
+        as ``shown`` says."""
         return (
-            data is self.data
+            shown == self.shown
+            and data is self.data
             and tables.start is self.tables.start
             and tables.tables == self.tables.tables
         )
@@ -202,7 +248,7 @@ class TextDecode:
         at = self.chars[-1]
         for token in tokens:
             start, end = base + token.bit_start, base + token.bit_end
-            text = token.text()
+            text = self.shown.text(token)
             self.starts.append(start)
             self.ends.append(end)
             self.byte_starts.append(start // 8)
@@ -281,6 +327,9 @@ class TextWidget(QWidget):
     fit_changed = Signal()
     """The room for text changed — the box was resized, its font changed or
     Wrap was switched — so a different window fits it now."""
+    shown_changed = Signal()
+    """Show codes or Show unknown was switched: the same bytes read to a
+    different text now."""
     scroll_requested = Signal(int)
     """The wheel turned over the box, or the scrollbar's arrow was clicked:
     move the view by this many lines, down for positive."""
@@ -312,10 +361,25 @@ class TextWidget(QWidget):
             "Off, a line ends only where a token's line break says it does."
         )
         self.wrap.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.show_codes = self._toggle(
+            "Show codes",
+            "Show the bracketed codes — [end], [line], [color 3] — where they\n"
+            "fall in the text. Off, a code shows as nothing; a line break\n"
+            "after one stays.",
+            SHOW_CODES_KEY,
+        )
+        self.show_unknown = self._toggle(
+            "Show unknown",
+            "Show the bytes no table entry matches, as [$XX].\n"
+            "Off, an unmatched byte shows as nothing.",
+            SHOW_UNKNOWN_KEY,
+        )
         self.note = QLabel("")
         bar = QHBoxLayout()
         bar.setContentsMargins(0, 0, 0, 0)
         bar.addWidget(self.note, 1)
+        bar.addWidget(self.show_codes)
+        bar.addWidget(self.show_unknown)
         bar.addWidget(self.wrap)
         box = QHBoxLayout()
         box.setContentsMargins(0, 0, 0, 0)
@@ -333,6 +397,26 @@ class TextWidget(QWidget):
         self.edit.selectionChanged.connect(self._on_selection)
         self.edit.cursorPositionChanged.connect(self._on_selection)
         self._reported: tuple[int, int] | None = None
+
+    def _toggle(self, label: str, tip: str, key: str) -> QCheckBox:
+        """A checkbox on the bar, remembered per machine under ``key`` and on
+        by default, whose switch says the text shows differently."""
+        box = QCheckBox(label)
+        box.setToolTip(tip)
+        box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        stored = settings().value(key, "true")
+        box.setChecked(str(stored).lower() == "true")
+
+        def on_toggled(on: bool) -> None:
+            settings().setValue(key, "true" if on else "false")
+            self.shown_changed.emit()
+
+        box.toggled.connect(on_toggled)
+        return box
+
+    def shown(self) -> Shown:
+        """What of the decode the box shows, as its checkboxes say."""
+        return Shown(self.show_codes.isChecked(), self.show_unknown.isChecked())
 
     def _on_wrap(self, on: bool) -> None:
         settings().setValue(WORD_WRAP_KEY, "true" if on else "false")
