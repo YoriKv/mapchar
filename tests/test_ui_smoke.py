@@ -186,15 +186,19 @@ def test_edit_and_write(window, tmp_path):
     )
     assert not block.dirty and block.doc.strings[0].translation is None
     assert block.doc.strings[0].original_text() == "A[end]"
-    window.undo_stack.undo()  # undoing the edit after a write re-marks the block
-    assert block.doc.strings[0].translation is None
-    # Strictly dirty, not "dirty or unchanged": the command restores the revision
-    # token the entry had *before* the edit, which is not the one the write saved.
-    assert block.dirty
-    window.overtype_bytes(1, b"\x42")
-    assert file_entry.dirty and file_entry.doc.data[1] == 0x42
+    window.undo_stack.undo()  # the write itself: the file and the block go back
+    assert Path(file_entry.path).read_bytes() == data
+    assert block.doc.strings[0].translation == "A[end]" and block.dirty
+    window.undo_stack.redo()
+    assert Path(file_entry.path).read_bytes() != data and not block.dirty
     window.undo_stack.undo()
-    assert file_entry.doc.data[1] == 0x00
+    window.undo_stack.undo()  # the edit too: back to the bytes on disk, and clean
+    assert block.doc.strings[0].translation is None
+    assert not block.dirty
+    window.overtype_bytes(1, b"\x43")
+    assert file_entry.dirty and file_entry.doc.data[1] == 0x43
+    window.undo_stack.undo()
+    assert file_entry.doc.data[1] == 0x42
 
 
 def test_import_export_and_find_replace(window, tmp_path):

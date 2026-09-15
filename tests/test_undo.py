@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from mapchar.core.block import RangeSource
+from mapchar.core.block import RangeSource, Status
 from mapchar.core.font import Font
 from mapchar.core.table import Entry as TableEntry
 from mapchar.core.table import TokenKind
@@ -141,15 +141,98 @@ def test_an_undone_container_edit_leaves_the_project_clean(window, tmp_path):
     assert not window._project_dirty()
 
 
-def test_undo_after_a_write_re_marks_the_entry(window, tmp_path):
+def test_undoing_a_write_and_its_edit_reads_clean_again(window, tmp_path):
     file_entry, block = _block(window, tmp_path)
     window._on_translation_edited(0, "B[end]")
     assert window._write_blocks([block])
     assert not block.dirty
-    window.undo_stack.undo()
-    # The saved revision is the write's; the token this undo put back is older.
+    window.undo_stack.undo()  # the write
     assert block.dirty
-    assert Path(file_entry.path).exists()
+    window.undo_stack.undo()  # the edit
+    # Both steps undone, the block is back to what is on disk, and reads so:
+    # the write's undo put back the saved token it had before the write.
+    assert not block.dirty
+    assert Path(file_entry.path).read_bytes() == DATA
+
+
+# --- writes ----------------------------------------------------------------
+
+
+def test_an_undone_write_puts_the_file_and_the_translations_back(window, tmp_path):
+    file_entry, block = _block(window, tmp_path)
+    window._on_translation_edited(0, "B[end]")
+    assert window._write_blocks([block])
+    written = Path(file_entry.path).read_bytes()
+    assert written != DATA and not block.dirty
+    assert block.doc.strings[0].translation is None
+    assert window.undo_stack.undoText() == "Write rom.bin"
+
+    window.undo_stack.undo()
+    assert Path(file_entry.path).read_bytes() == DATA
+    assert file_entry.doc.data == DATA and block.doc.data == DATA
+    assert block.doc.strings[0].translation == "B[end]"
+    assert block.doc.strings[0].status is Status.EDITED
+    assert block.dirty and not file_entry.dirty
+    # The block reads its original bytes again, not the written ones.
+    window._refresh_view()
+    assert block.doc.strings[0].original_text() == "AB[end]"
+
+    window.undo_stack.redo()
+    assert Path(file_entry.path).read_bytes() == written
+    assert block.doc.strings[0].translation is None and not block.dirty
+    window._refresh_view()
+    assert block.doc.strings[0].original_text() == "B[end]"
+
+
+def test_an_undone_write_of_a_hex_edit_re_marks_the_file(window, tmp_path):
+    file_entry, block = _block(window, tmp_path)
+    window._activate_entry(file_entry)
+    window.overtype_bytes(1, b"\x43")
+    assert file_entry.dirty
+    window._write_entry(file_entry)
+    assert not file_entry.dirty and Path(file_entry.path).read_bytes()[1] == 0x43
+    window.undo_stack.undo()
+    # The disk is as it was; the buffer still carries the edit, unsaved again.
+    assert Path(file_entry.path).read_bytes() == DATA
+    assert file_entry.doc.data[1] == 0x43 and file_entry.dirty
+    window.undo_stack.undo()  # the overtype itself
+    assert file_entry.doc.data == DATA and not file_entry.dirty
+
+
+def test_write_all_over_two_files_is_one_step(window, tmp_path):
+    first_file, first = _block(window, tmp_path, "first", "one.bin")
+    window._on_translation_edited(0, "B[end]")
+    second_file, second = _block(window, tmp_path, "second", "two.bin")
+    window._on_translation_edited(0, "A[end]")
+    assert window._write_all()
+    assert window.undo_stack.undoText() == "Write All"
+    assert not first.dirty and not second.dirty
+    window.undo_stack.undo()
+    assert Path(first_file.path).read_bytes() == DATA
+    assert Path(second_file.path).read_bytes() == DATA
+    assert first.dirty and second.dirty
+    assert first.doc.strings[0].translation == "B[end]"
+    assert second.doc.strings[0].translation == "A[end]"
+
+
+def test_a_file_changed_since_the_write_is_left_alone(window, tmp_path):
+    file_entry, block = _block(window, tmp_path)
+    window._on_translation_edited(0, "B[end]")
+    assert window._write_blocks([block])
+    Path(file_entry.path).write_bytes(b"\x00" * len(DATA))
+    window.undo_stack.undo()
+    assert Path(file_entry.path).read_bytes() == b"\x00" * len(DATA)
+    assert window.errors and "changed on disk" in window.errors[-1]
+    # Nothing in memory moved either: the block still reads as written.
+    assert not block.dirty and block.doc.strings[0].translation is None
+
+
+def test_a_refused_write_leaves_no_step(window, tmp_path):
+    _, block = _block(window, tmp_path)
+    window._on_translation_edited(0, "BBB[end]")  # too long for its room
+    steps = window.undo_stack.count()
+    assert not window._write_blocks([block])
+    assert window.undo_stack.count() == steps
 
 
 # --- reach -----------------------------------------------------------------

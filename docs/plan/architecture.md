@@ -698,12 +698,21 @@ invariants once, in `_StateCommand`:
   push a second command.
 - **Reach.** `_CurrentEntryCommand` switches back to the entry a change was made
   in; `_EditContextCommand` also returns to the view and the row or offset it
-  was made at; `_InPlaceCommand` reaches nothing, because a rename or a reorder
-  shows wherever you are.
+  was made at; `_InPlaceCommand` reaches nothing, because a rename, a reorder
+  or a write shows wherever you are.
 - **Revision tokens.** An entry is unsaved when its live revision differs from
   the saved one, so every command over bytes or records carries the revision on
   both sides of its pair: undo restores the token the entry had before, and an
-  undo back to what was written reads clean again.
+  undo back to what was written reads clean again. A write carries both tokens
+  of every entry it saved, so undoing it makes them unsaved by the pair they had
+  before.
+
+A write's step (`WriteCommand`) holds, per side, the file's buffer, each written
+block's buffer and string states, and a `FileChange` per file on disk: the run
+of bytes that differed and the file's size, from `pipeline.py`. Applying a side
+reads the file then and moves it only while it still holds the other side; the
+disk is written by the write itself, so the command's first redo finds its
+files already there and lands the in-memory half alone.
 
 A string edit merges only within a **typing run** — the window bumps
 `_edit_run` when the selection or the entry moves — and a run that ends back

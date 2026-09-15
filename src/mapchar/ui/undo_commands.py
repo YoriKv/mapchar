@@ -7,9 +7,9 @@ handling for free while ``core``/``pipeline``/``project`` stay Qt-free.
 
 One **unified session stack** holds every command in chronological order — files
 panel structure, per-entry configuration, view moves, translations, hex
-overtypes, table and font edits — so a single Ctrl+Z always reverts the most
-recent action whichever surface made it. Three things follow from that, and they
-are what :class:`_StateCommand` exists to state once:
+overtypes, table and font edits, writes to disk — so a single Ctrl+Z always
+reverts the most recent action whichever surface made it. Three things follow
+from that, and they are what :class:`_StateCommand` exists to state once:
 
 - **The guard.** Applying pokes the same widgets and paths a user gesture does,
   so every apply runs inside the window's ``_undo_apply()`` guard and the push
@@ -35,12 +35,13 @@ a command can read the live revision in its own constructor.
 
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import dataclass, fields
 
 from PySide6.QtGui import QUndoCommand
 
 from mapchar.core.table import Table
-from mapchar.project.workspace import Entry
+from mapchar.pipeline.pipeline import FileChange
+from mapchar.project.workspace import Entry, StringState
 
 # QUndoStack only attempts mergeWith between commands whose id() match, and -1
 # never merges; any other command landing in between breaks the chain.
@@ -478,3 +479,51 @@ class PointerCommand(_CurrentEntryCommand):
 
     def _apply(self, state) -> None:
         self.window.apply_pointers(self.entry, state)
+
+
+@dataclass(frozen=True)
+class BlockSide:
+    """One written block on one side of a write: its buffer, its unsaved state
+    and every string that carries a translation, a status or a note."""
+
+    entry: Entry
+    data: bytes
+    live: int
+    saved: int
+    strings: dict[int, StringState]
+
+
+@dataclass(frozen=True)
+class WriteSide:
+    """One file on one side of a write: what its files on disk hold, the buffer
+    every entry over it reads, its unsaved state, and the blocks it wrote.
+
+    Each :class:`FileChange` moves the file *towards* this side, so both halves
+    of the pair apply the same way and only the pair differs.
+    """
+
+    files: tuple[FileChange, ...]
+    data: bytes
+    live: int
+    saved: int
+    blocks: tuple[BlockSide, ...]
+
+
+class WriteCommand(_InPlaceCommand):
+    """A write of one file: its bytes on disk, and what sits over them in memory.
+
+    Undoing puts the bytes the write replaced back in the file and hands the
+    blocks their translations again, so the step reads unsaved as it did before;
+    redoing writes the result once more. The file is read at the moment of each
+    and only touched while it still holds the side being left — one changed by
+    another program since is left alone and the step says so
+    (:meth:`~mapchar.pipeline.pipeline.FileChange.apply`). In place because a
+    write shows in the Files panel's marks wherever the view is, and one Write
+    All can cover files the view is not on.
+    """
+
+    def __init__(self, window, entry: Entry, before: WriteSide, after: WriteSide):
+        super().__init__(window, entry, f"Write {entry.name}", before, after)
+
+    def _apply(self, state: WriteSide) -> None:
+        self.window.apply_write(self.entry, state)

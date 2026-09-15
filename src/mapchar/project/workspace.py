@@ -200,6 +200,15 @@ class Workspace:
         if entry.dirty != before:
             self._fire(self.on_dirty_changed, entry)
 
+    def set_revisions(self, entry: Entry, live: int, saved: int) -> None:
+        """Put both tokens back as a command captured them: an undone write is
+        unsaved again by the same pair it had before the write."""
+        before = entry.dirty
+        entry.live_revision = live
+        entry.saved_revision = saved
+        if entry.dirty != before:
+            self._fire(self.on_dirty_changed, entry)
+
     def dirty_entries(self) -> list[Entry]:
         """Every entry with unsaved edits, in list order."""
         return [e for e in self.entries if e.dirty]

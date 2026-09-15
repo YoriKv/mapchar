@@ -6,6 +6,7 @@ from mapchar.core.context import KEY_HEADER_SIZE, KEY_SOURCE_FILES, PipelineCont
 from mapchar.core.errors import PipelineError
 from mapchar.pipeline.inspection import inspect_container
 from mapchar.pipeline.pipeline import (
+    FileChange,
     FileRef,
     PathwayConfig,
     SlotFill,
@@ -227,3 +228,35 @@ def test_write_target_room_matches_file_ref(tmp_path):
         assert target.whole_file is ref.whole_file
     assert WriteTarget(data).room() == len(data)
     assert WriteTarget(b"").room() == 0
+
+
+def test_a_file_change_holds_only_the_run_that_differs(tmp_path):
+    """A write changes one region of a ROM, so that is all an undo step keeps;
+    a single file may also grow or shrink, so the sizes travel with it."""
+    before = b"\x00" * 8 + b"AB" + b"\xff" * 8
+    after = b"\x00" * 8 + b"XYZ" + b"\xff" * 8
+    change = FileChange.between("f", before, after)
+    assert (change.offset, change.before, change.after) == (8, b"AB", b"XYZ")
+    assert (change.before_size, change.after_size) == (18, 19)
+    assert FileChange.between("f", before, before) is None
+    assert change.flipped().flipped() == change
+
+
+def test_a_file_change_moves_a_file_between_its_sides_and_no_further(tmp_path):
+    before = b"\x00" * 8 + b"AB" + b"\xff" * 8
+    after = b"\x00" * 8 + b"XYZ" + b"\xff" * 8
+    dest = tmp_path / "d.bin"
+    dest.write_bytes(before)
+    change = FileChange.between(str(dest), before, after)
+    assert change.holds_before() and not change.holds_after()
+    assert change.apply() and dest.read_bytes() == after
+    assert change.apply() and dest.read_bytes() == after  # already there
+    assert change.flipped().apply() and dest.read_bytes() == before
+    # Only the run the write changed is checked: a change elsewhere in the file
+    # is no reason to refuse, but the run holding neither side has changed
+    # since, and is left alone.
+    dest.write_bytes(b"\x00" * 8 + b"AB" + b"\xfe" * 8)
+    assert change.apply() and dest.read_bytes() == b"\x00" * 8 + b"XYZ" + b"\xfe" * 8
+    dest.write_bytes(b"\x00" * 8 + b"QQ" + b"\xff" * 8)
+    assert not change.apply()
+    assert dest.read_bytes() == b"\x00" * 8 + b"QQ" + b"\xff" * 8

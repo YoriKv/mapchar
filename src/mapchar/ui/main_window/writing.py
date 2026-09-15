@@ -5,10 +5,32 @@ from __future__ import annotations
 from mapchar.core.block import Status
 from mapchar.core.errors import MapcharError
 from mapchar.pipeline.insert import Splice, apply_splices, layout_block
-from mapchar.pipeline.pipeline import FileRef, PathwayConfig, compress_for_slot, save
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.pipeline.pipeline import (
+    FileChange,
+    FileRef,
+    PathwayConfig,
+    compress_for_slot,
+    existing_bytes,
+    save,
+)
+from mapchar.project.workspace import Entry, EntryKind, StringState
 from mapchar.ui.dialogs import TextDialog
-from mapchar.ui.undo_commands import BytesCommand
+from mapchar.ui.undo_commands import BlockSide, BytesCommand, WriteCommand, WriteSide
+
+
+def _string_states(strings, *, written: bool = False) -> dict[int, StringState]:
+    """Every string carrying state, by index — after a write, only the notes:
+    the translations became the originals, so they and their statuses go."""
+    states = {}
+    for rec in strings:
+        st = (
+            StringState(None, Status.UNTOUCHED, rec.notes)
+            if written
+            else StringState(rec.translation, rec.status, rec.notes)
+        )
+        if st != StringState():
+            states[rec.index] = st
+    return states
 
 
 class WritingMixin:
@@ -94,7 +116,16 @@ class WritingMixin:
     def _write_blocks(
         self, blocks: list[Entry], files: list[Entry] | None = None
     ) -> bool:
-        """Lay every block out over its file and write the files that changed."""
+        """Lay every block out over its file and write the files that changed.
+
+        Each file written is one undo step (:class:`WriteCommand`); several in
+        one call are one macro, so Write All comes back with one Ctrl+Z. The
+        disk is written here, where a refusal can be reported beside the block
+        it concerns, and the command's first redo lands only the in-memory side
+        — its file already holds the result, and
+        :meth:`~mapchar.pipeline.pipeline.FileChange.apply` leaves a file that
+        does alone.
+        """
         by_file: dict[int, tuple[Entry, list[Entry]]] = {}
         for b in blocks:
             if b.parent is None:
@@ -103,127 +134,208 @@ class WritingMixin:
         for f in files or []:
             by_file.setdefault(id(f), (f, []))
         ok = True
+        commands: list[WriteCommand] = []
         for file_entry, file_blocks in by_file.values():
-            parent_doc = self._load_document(file_entry)
-            if parent_doc is None:
+            command = self._write_file(file_entry, file_blocks)
+            if command is None:
                 ok = False
+            else:
+                commands.append(command)
+        if len(commands) > 1:
+            self.undo_stack.beginMacro("Write All")
+        for command in commands:
+            self._push_command(command)
+        if len(commands) > 1:
+            self.undo_stack.endMacro()
+        return ok
+
+    def _write_file(
+        self, file_entry: Entry, file_blocks: list[Entry]
+    ) -> WriteCommand | None:
+        """Write one file with the blocks over it; ``None`` when it was refused."""
+        parent_doc = self._load_document(file_entry)
+        if parent_doc is None:
+            return None
+        new_data = parent_doc.data
+        problems: list[str] = []
+        # Which buffer each written block reads afterwards: the file's, or for a
+        # compressed one the payload its slot now holds.
+        written: dict[int, tuple[Entry, bytes | None]] = {}
+        # Several blocks can sit over one compressed slot, and the slot holds one
+        # stream: each is laid out into the *same* decompressed buffer and the
+        # buffer is compressed once. Recompressing per block would have the last
+        # splice at the slot's offset replace every earlier one, so one of two
+        # blocks written together would silently lose its edits.
+        payloads: dict[tuple[str, int], bytes] = {}
+        members: dict[tuple[str, int], list[Entry]] = {}
+        for block in file_blocks:
+            doc = self._load_document(block)
+            if doc is None or block.config is None:
                 continue
-            new_data = parent_doc.data
-            problems: list[str] = []
-            written_blocks = []
-            # Several blocks can sit over one compressed slot, and the slot holds
-            # one stream: each is laid out into the *same* decompressed buffer and
-            # the buffer is compressed once. Recompressing per block would have
-            # the last splice at the slot's offset replace every earlier one, so
-            # one of two blocks written together would silently lose its edits.
-            payloads: dict[tuple[str, int], bytes] = {}
-            members: dict[tuple[str, int], list[Entry]] = {}
-            for block in file_blocks:
-                doc = self._load_document(block)
-                if doc is None or block.config is None:
-                    continue
-                ts = self._table_set_for(block.config.table_id)
-                if ts is None:
-                    problems.append(
-                        f"{block.name}: table @{block.config.table_id} is not loaded"
-                        " or does not build"
-                    )
-                    continue
-                self._extract_current(block, doc, ts)
-                slot = (block.compression_id or "", block.slice_offset)
-                if block.compression_id:
-                    base = payloads.setdefault(slot, doc.data)
-                else:
-                    base = new_data
-                res = layout_block(base, block.config, ts, doc.strings, self.registry)
-                if not res.ok:
-                    for p in res.problems:
-                        problems.append(f"{block.name} #{p.index}: {p.message}")
-                    continue
-                if block.compression_id:
-                    payloads[slot] = apply_splices(base, res.splices)
-                    members.setdefault(slot, []).append(block)
-                else:
-                    new_data = apply_splices(new_data, res.splices)
-                    written_blocks.append(block)
-            for slot, payload in payloads.items():
-                sharing = members.get(slot)
-                if not sharing:
-                    continue
-                # The slot's bounds and spare-room rule are one slot's, so the
-                # first block over it speaks for all of them.
-                packed, problem = self._recompress(sharing[0], payload)
-                if problem:
-                    problems.append(problem)
-                    continue
-                new_data = apply_splices(new_data, [Splice(slot[1], packed)])
-                for block in sharing:
-                    if block.doc is not None:
-                        block.doc.pending_payload = payload
-                    written_blocks.append(block)
-            if problems:
-                TextDialog("Cannot Write", "\n".join(problems), self).exec()
-                ok = False
-                continue
-            if not parent_doc.writable:
-                self._error(
-                    f"{file_entry.name} is view-only (a stage cannot write back)."
+            ts = self._table_set_for(block.config.table_id)
+            if ts is None:
+                problems.append(
+                    f"{block.name}: table @{block.config.table_id} is not loaded"
+                    " or does not build"
                 )
-                ok = False
                 continue
-            cfg = PathwayConfig(
-                FileRef(file_entry.paths),
-                file_entry.container_id,
-                file_entry.compression_id,
-                pathway=file_entry.name,
-            )
-            try:
-                save(new_data, cfg, self.registry, parent_doc.ctx)
-            except (OSError, MapcharError) as exc:
-                self._error(f"Cannot write {file_entry.name}: {exc}")
-                ok = False
+            self._extract_current(block, doc, ts)
+            slot = (block.compression_id or "", block.slice_offset)
+            if block.compression_id:
+                base = payloads.setdefault(slot, doc.data)
+            else:
+                base = new_data
+            res = layout_block(base, block.config, ts, doc.strings, self.registry)
+            if not res.ok:
+                for p in res.problems:
+                    problems.append(f"{block.name} #{p.index}: {p.message}")
                 continue
-            parent_doc.data = new_data
-            self.workspace.mark_saved(file_entry)
-            for block in written_blocks:
-                doc = block.doc
-                if doc is not None:
-                    pending = doc.pending_payload
-                    if block.compression_id and pending is not None:
-                        doc.data = pending
-                    else:
-                        doc.data = new_data
-                    doc.extraction_key = None
-                    for rec in doc.strings:
-                        if rec.translation is not None:
-                            rec.translation = None
-                            rec.status = Status.UNTOUCHED
-                self.workspace.mark_saved(block)
-            for child in self.workspace.children(file_entry):
-                if child.doc is None or child in written_blocks:
-                    continue
-                if not child.compression_id:
-                    child.doc.data = new_data
-                    child.doc.extraction_key = None
-                elif not child.dirty:
-                    # A compressed sibling's bytes are a *decode* of the region
-                    # that just changed, so they cannot be refreshed in place:
-                    # the block is dropped and decompresses again from the new
-                    # bytes when it is next shown. One with unsaved edits keeps
-                    # its document — that is where they live.
-                    self.workspace.drop_document(child)
-                    if child is self._entry:
-                        self._doc = self._load_document(child)
-            # Any *other* entry reading these bytes — a font sheet, a file that
-            # borrows this one as its second file — is now holding the old ones.
-            for written_path in file_entry.paths:
-                self.workspace.invalidate_path(written_path, keep=file_entry)
-            self.statusBar().showMessage(
-                f"Wrote {file_entry.name} ({len(written_blocks)} block(s))", 5000
-            )
+            if block.compression_id:
+                payloads[slot] = apply_splices(base, res.splices)
+                members.setdefault(slot, []).append(block)
+            else:
+                new_data = apply_splices(new_data, res.splices)
+                written[id(block)] = (block, None)
+        for slot, payload in payloads.items():
+            sharing = members.get(slot)
+            if not sharing:
+                continue
+            # The slot's bounds and spare-room rule are one slot's, so the first
+            # block over it speaks for all of them.
+            packed, problem = self._recompress(sharing[0], payload)
+            if problem:
+                problems.append(problem)
+                continue
+            new_data = apply_splices(new_data, [Splice(slot[1], packed)])
+            for block in sharing:
+                written[id(block)] = (block, payload)
+        if problems:
+            TextDialog("Cannot Write", "\n".join(problems), self).exec()
+            return None
+        if not parent_doc.writable:
+            self._error(f"{file_entry.name} is view-only (a stage cannot write back).")
+            return None
+        cfg = PathwayConfig(
+            FileRef(file_entry.paths),
+            file_entry.container_id,
+            file_entry.compression_id,
+            pathway=file_entry.name,
+        )
+        held = existing_bytes(file_entry.paths)
+        try:
+            changed = save(new_data, cfg, self.registry, parent_doc.ctx)
+        except (OSError, MapcharError) as exc:
+            self._error(f"Cannot write {file_entry.name}: {exc}")
+            return None
+        now = existing_bytes(tuple(changed))
+        files = tuple(
+            change
+            for path in changed
+            if (change := FileChange.between(path, held[path], now[path])) is not None
+        )
+        before = WriteSide(
+            tuple(c.flipped() for c in files),
+            parent_doc.data,
+            file_entry.live_revision,
+            file_entry.saved_revision,
+            tuple(
+                BlockSide(
+                    block,
+                    block.doc.data,
+                    block.live_revision,
+                    block.saved_revision,
+                    _string_states(block.doc.strings),
+                )
+                for block, _payload in written.values()
+                if block.doc is not None
+            ),
+        )
+        after = WriteSide(
+            files,
+            new_data,
+            file_entry.live_revision,
+            file_entry.live_revision,
+            tuple(
+                BlockSide(
+                    block,
+                    payload if payload is not None else new_data,
+                    block.live_revision,
+                    block.live_revision,
+                    _string_states(block.doc.strings, written=True),
+                )
+                for block, payload in written.values()
+                if block.doc is not None
+            ),
+        )
+        return WriteCommand(self, file_entry, before, after)
+
+    def apply_write(self, entry: Entry, side: WriteSide) -> None:
+        """Land one side of a write: the files on disk, then everything in memory.
+
+        Disk first, and all of it or none: a file that no longer holds the side
+        being left is reported and the step is skipped whole, since a buffer
+        moved to one side while the file stayed on the other would show bytes
+        that are not there. Then the file's buffer, the written blocks' buffers
+        and string states, and the same refresh of what else reads the file that
+        the write itself does.
+        """
+        for change in side.files:
+            if not change.holds_after() and not change.holds_before():
+                self._error(
+                    f"{change.path} has changed on disk since it was written, so it "
+                    "was left as it is."
+                )
+                return
+        for change in side.files:
+            change.apply()
+        doc = self._load_document(entry)
+        if doc is None:
+            return
+        doc.data = side.data
+        self.workspace.set_revisions(entry, side.live, side.saved)
+        written = []
+        for bs in side.blocks:
+            written.append(bs.entry)
+            bdoc = bs.entry.doc
+            if bdoc is None:
+                # The block reads again when next shown; its state waits there.
+                bs.entry.pending_strings = dict(bs.strings) or None
+            else:
+                bdoc.data = bs.data
+                bdoc.extraction_key = None
+                for rec in bdoc.strings:
+                    st = bs.strings.get(rec.index, StringState())
+                    rec.translation, rec.status, rec.notes = (
+                        st.translation,
+                        st.status,
+                        st.notes,
+                    )
+            self.workspace.set_revisions(bs.entry, bs.live, bs.saved)
+        for child in self.workspace.children(entry):
+            if child.doc is None or child in written:
+                continue
+            if not child.compression_id:
+                child.doc.data = side.data
+                child.doc.extraction_key = None
+            elif not child.dirty:
+                # A compressed sibling's bytes are a *decode* of the region that
+                # just changed, so they cannot be refreshed in place: the block
+                # is dropped and decompresses again from the new bytes when it
+                # is next shown. One with unsaved edits keeps its document —
+                # that is where they live.
+                self.workspace.drop_document(child)
+                if child is self._entry:
+                    self._doc = self._load_document(child)
+        # Any *other* entry reading these bytes — a font sheet, a file that
+        # borrows this one as its second file — is now holding the old ones.
+        for written_path in entry.paths:
+            self.workspace.invalidate_path(written_path, keep=entry)
+        verb = "Wrote" if side.saved == side.live else "Restored"
+        self.statusBar().showMessage(
+            f"{verb} {entry.name} ({len(written)} block(s))", 5000
+        )
         self.files_panel.refresh_labels()
         self._refresh_view()
-        return ok
 
     def _recompress(self, block: Entry, payload: bytes) -> tuple[bytes, str | None]:
         """The bytes of a block's compressed slot, or why it cannot be written.

@@ -35,7 +35,7 @@ Edit strings beside the original and write them back in place.
   filter, find and replace, selection sync with the raw view and Hex panel.
 - Write in *slotted* and *packed* modes over range and pointer sources; the
   Hex panel's overtype editing; Write / Write All; undo for text and hex
-  edits; unsaved tracking and the project prompts.
+  edits and for writes; unsaved tracking and the project prompts.
 - Native script import; TSV/CSV and PO export and import.
 - Complete when every string of the fixtures re-inserts to the original
   bytes untouched, and edited fixtures write what an Atlas run of the

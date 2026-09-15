@@ -642,6 +642,12 @@ The editing surface, opened on a block.
 - **Other open entries on the same file refresh afterwards** — a block over a
   compressed region by decompressing again, since its bytes are a reading of
   the region rather than a window on it. One with unsaved edits keeps them.
+- **A write is one undo step** — per file, and one step for all of a Write
+  All. Undoing it puts the bytes it replaced back in the file and hands the
+  blocks their translations, unsaved again; redoing writes the result once
+  more. The file is read at that moment and only touched while it still holds
+  what the step is moving away from: one changed since by another program is
+  left alone, and the step says so.
 - Opening, creating or saving a project with unsaved edits offers **Write All
   / Continue Without / Cancel**.
 
@@ -783,12 +789,14 @@ in the game. It is described in [preview.md](preview.md).
 
 - **One history** for the session: entry open, close, paste, rename, reorder;
   block, container and table edits; view moves; translation edits and status
-  changes; hex overtypes; font and box edits.
+  changes; hex overtypes; font and box edits; writes to disk.
 - **Ctrl+Z / Ctrl+Shift+Z** undo the latest action from any surface. Undoing
   a change made elsewhere switches back to that entry **and** the view it was
   made in — the Strings tab on its row, the Hex tab at its offset.
 - **Unsaved state follows undo** — undoing back to the saved state reads
-  clean again, and redoing marks it unsaved once more.
+  clean again, and redoing marks it unsaved once more. A write is a step of
+  its own, so undoing it and then the edits behind it ends at the bytes on
+  disk, clean.
 - **A run of edits on one string is one step**, and a run that ends back where
   it began is no step at all. Moving to another row, or to another entry, ends
   the run. Consecutive view moves in one entry merge the same way.
