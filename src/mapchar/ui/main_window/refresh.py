@@ -78,6 +78,7 @@ class RefreshMixin:
             self.offset_box.setText("")
             self._update_title()
             self._sync_capabilities()
+            self._sync_steps()
             return
         total = doc.size
         self._offset = max(0, min(self._offset, max(total - 1, 0)))
@@ -117,6 +118,7 @@ class RefreshMixin:
         # enables controls on grounds that are true in general and beside the
         # point for an entry of the wrong kind.
         self._sync_capabilities()
+        self._sync_steps()
 
     def _refresh_raw(self, doc: Document, tables: TableSet | None) -> None:
         """The raw view's window: as many rows as it shows, and one more for
@@ -152,6 +154,7 @@ class RefreshMixin:
         many, without the rest of a refresh."""
         if self._doc is not None:
             self._refresh_raw(self._doc, self._table_set())
+            self._sync_steps()
 
     @staticmethod
     def _decode_window(data: bytes, tables: TableSet | None) -> RunResult:
@@ -234,6 +237,7 @@ class RefreshMixin:
         """The Text tab's box has room for a different window: fit one to it."""
         if self._doc is not None:
             self._refresh_text_mode(self._doc, self._table_set())
+            self._sync_steps()
 
     def _on_text_scroll(self, lines: int) -> None:
         """Move the Text tab's view by that many lines: the wheel, the keys,
@@ -375,6 +379,8 @@ class RefreshMixin:
         # Only the Text tab renders on arrival: it is skipped while hidden.
         if self._doc is not None and self.tabs.currentWidget() is self.text:
             self._refresh_text_mode(self._doc, self._table_set())
+        if self._doc is not None:
+            self._sync_steps()  # what fits is the open tab's to say
 
     def _on_text_selection(self, start: int, end: int) -> None:
         self.raw.set_selection(start, end)
@@ -393,7 +399,10 @@ class RefreshMixin:
             )
         if self._selection:
             s, e = self._selection
-            parts.append(f"selected {s:X}–{e - 1:X} ({e - s} bytes)")
+            parts.append(
+                f"selected {self._format_address(s)}–"
+                f"{self._format_address(e - 1)} ({e - s} bytes)"
+            )
         if doc.missing_plugins:
             parts.append("view-only: missing " + ", ".join(doc.missing_plugins))
         self.nav_status.setText("  ·  ".join(parts))

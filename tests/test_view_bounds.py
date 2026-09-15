@@ -5,6 +5,8 @@ that confinement is asked for."""
 from __future__ import annotations
 
 import pytest
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
 
 from helpers import pointer_rom
@@ -17,6 +19,7 @@ from mapchar.core.block import (
     RangeSource,
     source_span,
 )
+from mapchar.core.capabilities import Capability
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.files_panel import PREVIEW_CHARS, string_preview
@@ -109,6 +112,47 @@ def test_home_end_and_the_steps_stay_inside_the_bounds(window, tmp_path):
     bar.setValue(bar.maximum())
     assert 0x100 <= window._offset < 0x180
     assert window._bounds == (0x100, 0x180)
+
+
+def _steps_enabled(window) -> bool:
+    states = {b.isEnabled() for b in window.step_buttons}
+    assert len(states) == 1
+    return states.pop()
+
+
+def _press(window, key) -> bool:
+    return window._handle_nav_key(
+        QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+    )
+
+
+def test_the_steps_are_off_while_the_whole_range_fits_in_view(window, tmp_path):
+    file_entry = open_rom_and_table(window, tmp_path, bytes(range(256)) * 4)
+    _shown(window)
+    assert _steps_enabled(window)
+    add_block(window, file_entry, "b", RangeSource(0x100, 0x300))
+    assert _steps_enabled(window)
+    # One row of bytes: a step down could only hide some of them.
+    add_block(window, file_entry, "c", RangeSource(0x200, 0x208))
+    assert window._bounds == (0x200, 0x208)
+    assert not _steps_enabled(window)
+    window.raw.setFocus()  # a focused tree would spend the arrows itself
+    for key in (Qt.Key.Key_Down, Qt.Key.Key_PageDown, Qt.Key.Key_Right, Qt.Key.Key_End):
+        assert _press(window, key)  # swallowed, not passed to the focused widget
+        assert window._offset == 0x200
+    assert not _press(window, Qt.Key.Key_A)
+    # Lifting the bounds brings the file, and the steps, back.
+    window.whole_action.trigger()
+    assert _steps_enabled(window)
+    assert _press(window, Qt.Key.Key_Down)
+    assert window._offset == 0x210
+
+
+def test_a_file_smaller_than_the_window_has_no_steps(window, tmp_path):
+    open_rom_and_table(window, tmp_path, DATA)
+    _shown(window)
+    assert not _steps_enabled(window)
+    assert window._can(Capability.NAVIGATION)
 
 
 def test_a_position_outside_the_bounds_widens_the_view(window, tmp_path):

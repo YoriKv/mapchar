@@ -17,7 +17,10 @@ For the controls named here the gate owns enablement in **both** directions,
 because nothing else in the window enables them: they applied everywhere before
 this table existed, and a veto-only gate would switch one off for the rest of
 the session. Controls whose availability something else decides — Open Recent,
-Locate Missing Files, the undo actions, the per-scan freeze in
+Locate Missing Files, the undo actions, the step buttons
+(:meth:`~mapchar.ui.main_window.navigation.NavigationMixin._sync_steps`, which
+weighs the capability against whether a step has anywhere to go), the per-scan
+freeze in
 :meth:`~mapchar.ui.main_window.compression.CompressionMixin._set_scan_ui` — are
 deliberately absent, and the freeze reaches them anyway by disabling the menu
 bar and the central widget above them.
@@ -38,12 +41,10 @@ from __future__ import annotations
 from mapchar.core.capabilities import Capability, EntryKind, supports
 
 # Window attributes each capability gates. A name may hold a single control or a
-# tuple of them; every member of a tuple is gated the same way, which keeps a
-# row of eight step buttons one line here rather than eight.
+# tuple of them; every member of a tuple is gated the same way.
 _GATES: dict[Capability, tuple[str, ...]] = {
     Capability.NAVIGATION: (
         "offset_box",
-        "step_buttons",
         "goto_action",
         "ends_actions",
     ),

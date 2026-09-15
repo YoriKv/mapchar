@@ -85,8 +85,8 @@ the preview system in [preview.md](preview.md).
   project. They are written a moment after they change rather than at quit, so
   a drag survives a crash.
 - **Messages** — errors appear as modal warnings; progress and results go to
-  the status bar, whose right end shows the file's size, the selection and any
-  view-only notice.
+  the status bar, whose right end shows the file's size, the selection (in
+  the address format) and any view-only notice.
 - **Resizing** — no panel, window or dialog can be shrunk until its controls
   stop working, and none needs more than a small screen; text cut short shows
   in full on hover (see [../ui.md](../ui.md)).
@@ -260,7 +260,10 @@ The exploration surface, the equivalent of celPix's tile canvas.
   opens on its source, and a string's row in the Files panel confines it to
   that string. Inside them the tabs show those bytes and no more, the
   scrollbar spans them, Home and End are their ends, and no step leaves them;
-  the status bar says what is in view. Addresses stay the file's. Any position
+  the status bar says what is in view. While the open tab shows the whole
+  stretch from its start — a string in one row — the step buttons and their
+  keys are off, since a step could only hide bytes that fit; the same goes for
+  a file smaller than the window. Addresses stay the file's. Any position
   asked for outside them — a typed address, a search hit, a Strings row, an
   undo reaching its edit — widens the view to the whole file, as **Navigate ▸
   Show Whole File** does in place. A file is never confined, and a block

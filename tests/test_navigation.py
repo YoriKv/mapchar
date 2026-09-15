@@ -106,6 +106,14 @@ def test_the_offset_box_spells_the_chosen_format(window, tmp_path):
     assert window.offset_box.text() == "$00:8010"
 
 
+def test_the_status_bar_spells_the_selection_in_the_chosen_format(window, tmp_path):
+    _opened(window, tmp_path)
+    window._select_bytes(0x10, 4)
+    assert "selected 000010–000013 (4 bytes)" in window.nav_status.text()
+    window.address_pick.setCurrentIndex(window.address_pick.findData("snes-lorom"))
+    assert "selected $00:8010–$00:8013 (4 bytes)" in window.nav_status.text()
+
+
 def test_the_offset_box_reads_the_chosen_format_back(window, tmp_path):
     _opened(window, tmp_path)
     window.address_pick.setCurrentIndex(window.address_pick.findData("snes-lorom"))
@@ -175,7 +183,8 @@ def _focus(monkeypatch, widget):
 def test_a_navigation_key_works_while_a_button_has_focus(window, tmp_path, monkeypatch):
     """The bug the filter fixes: a focused control used to eat the whole row of
     navigation keys, because the window's own ``keyPressEvent`` never ran."""
-    _opened(window, tmp_path)
+    # More than the view holds: with the whole file in view the keys are off.
+    window._activate_entry(open_rom_and_table(window, tmp_path, bytes(range(256)) * 4))
     _focus(monkeypatch, window.block_edit)
     assert _press(window, Qt.Key.Key_Down)
     assert window._offset == BYTES_PER_ROW

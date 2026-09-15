@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.address import HEX_ID, PRESETS_BY_ID, format_hex
 from mapchar.core.bits import parse_hex
+from mapchar.core.capabilities import Capability
 from mapchar.project.workspace import Entry
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.undo_commands import OffsetCommand
@@ -48,6 +49,24 @@ onto another.
 
 CUSTOM_ID = "custom"
 """The address-format id that means "the three fields beside the picker"."""
+
+
+_STEP_KEYS = frozenset(
+    {
+        Qt.Key.Key_PageUp,
+        Qt.Key.Key_PageDown,
+        Qt.Key.Key_Up,
+        Qt.Key.Key_Down,
+        Qt.Key.Key_Left,
+        Qt.Key.Key_Right,
+        Qt.Key.Key_Minus,
+        Qt.Key.Key_Plus,
+        Qt.Key.Key_Equal,
+        Qt.Key.Key_Home,
+        Qt.Key.Key_End,
+    }
+)
+"""Every key that steps the view: what the step buttons do, on the keyboard."""
 
 
 class NavigationMixin:
@@ -172,6 +191,22 @@ class NavigationMixin:
         walking off the end of a string cannot widen the view to the file."""
         start, end = self._view_range()
         return max(start, min(offset, max(end - 1, start)))
+
+    def _view_fits(self) -> bool:
+        """Whether the open tab shows the view's whole range from its start —
+        a string in one row, a file smaller than the window — so a step has
+        nowhere to go but out of sight of bytes that fit."""
+        start, end = self._view_range()
+        return self._offset <= start and self._offset + self._view_bytes() >= end
+
+    def _sync_steps(self) -> None:
+        """Enable the step buttons only where a step can show something: an
+        entry that can be navigated, with more in range than the open tab
+        holds. Neither tab has a scrollbar to say the rest is cut off, so a
+        step that only hides bytes is switched off rather than clamped."""
+        enabled = self._can(Capability.NAVIGATION) and not self._view_fits()
+        for button in self.step_buttons:
+            button.setEnabled(enabled)
 
     # -- moving ---------------------------------------------------------------
     def _go_to(self, offset: int) -> None:
@@ -327,6 +362,10 @@ class NavigationMixin:
         if self._doc is None:
             return False
         key = event.key()
+        if self._view_fits():
+            # Swallowed, as the buttons are disabled: a step that reaches the
+            # focused widget instead would move its own selection.
+            return key in _STEP_KEYS
         steps = {
             Qt.Key.Key_PageUp: (self._step_pages, -1),
             Qt.Key.Key_PageDown: (self._step_pages, 1),
