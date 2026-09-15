@@ -94,6 +94,13 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ),
     ),
     (
+        "Find Bar",
+        (
+            ("Find the next match", "Enter"),
+            ("Find the previous match", "Shift+Enter"),
+        ),
+    ),
+    (
         "Hex Panel",
         (
             ("Overtype the nibble under the caret", "0-9 / A-F"),

@@ -437,15 +437,10 @@ def test_ctrl_f_focuses_the_filter_when_the_panel_has_it(window, tmp_path, monke
     )
     window._find_bytes()
     assert focused == [True]
-    # Without the panel's focus the same key is the byte search, which asks.
+    # Without the panel's focus the same key is the byte search: the Find bar.
     monkeypatch.setattr(window.files_panel, "has_focus", lambda: False)
-    asked: list[bool] = []
-    monkeypatch.setattr(
-        "mapchar.ui.main_window.entries.QInputDialog.getText",
-        lambda *a, **k: (asked.append(True), ("", False))[1],
-    )
     window._find_bytes()
-    assert asked == [True]
+    assert window.focusWidget() is window.find_row.field
 
 
 def test_a_multi_selection_leaves_only_remove_and_the_moves_live(window, tmp_path):

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QTabWidget,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -48,6 +49,7 @@ from mapchar.ui.dialogs import (
 )
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
+from mapchar.ui.find_row import FindRow
 from mapchar.ui.fonts_panel import FontsPanel
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.help_dialogs import (
@@ -419,6 +421,22 @@ class MainWindow(
         layout.addWidget(nav)
         self.setCentralWidget(central)
 
+        # The Find bar: the current byte search, along the window's very bottom
+        # under every dock, where Ctrl+F puts the keyboard and F3 reads from.
+        # A toolbar so it spans the window, but fixed where it is: not something
+        # to drag off or hide (mapchar.ui.main_window.search).
+        find_bar = QToolBar("Find")
+        find_bar.setObjectName("find_bar")
+        find_bar.setMovable(False)
+        find_bar.setFloatable(False)
+        find_bar.setAllowedAreas(Qt.ToolBarArea.BottomToolBarArea)
+        find_bar.toggleViewAction().setVisible(False)
+        find_bar.addWidget(QLabel("Find "))
+        self.find_row = FindRow(chars=40)
+        find_bar.addWidget(self.find_row)
+        self.addToolBar(Qt.ToolBarArea.BottomToolBarArea, find_bar)
+        self.find_bar = find_bar
+
         self.search_window = SearchWindow(self)
         self.scan_window = ScanWindow(self)
         self.decompress_window = DecompressWindow(self)
@@ -485,6 +503,9 @@ class MainWindow(
         self.hex_panel.go_to_requested.connect(self._go_to)
         self.hex_panel.overtype_requested.connect(self.overtype_bytes)
         self.hex_panel.find_requested.connect(self._find_text_or_bytes)
+        self.find_row.find_requested.connect(
+            lambda _text, backwards: self._find_bytes(again=True, backwards=backwards)
+        )
         self.hex_dock.visibilityChanged.connect(lambda v: v and self._sync_hex_panel())
         self.find_replace.find_next.connect(self._fr_find_next)
         self.find_replace.replace_one.connect(self._fr_replace_one)

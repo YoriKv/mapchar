@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QPalette, QTextCharFormat, QTextCursor
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -19,8 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.ui import BYTES_PER_ROW, DUMP_WINDOW_BYTES, settings, theme
-from mapchar.ui.glyphs import Glyph
-from mapchar.ui.icon_font import ThemedIcons, themed_icon
+from mapchar.ui.find_row import FindRow
 from mapchar.ui.number_fields import AddressEdit, AddressSpelling
 from mapchar.ui.widgets import fit_chars, hint_field, mono_font
 
@@ -83,7 +82,7 @@ class _HexView(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
-class HexPanel(ThemedIcons, QWidget):
+class HexPanel(QWidget):
     go_to_requested = Signal(int)
     overtype_requested = Signal(int, bytes)
     find_requested = Signal(str, bool)
@@ -121,21 +120,10 @@ class HexPanel(ThemedIcons, QWidget):
             "address",
             "An address to scroll the dump to, then Enter",
         )
-        self.find = hint_field(
-            QLineEdit(),
-            'hex bytes or "text"',
-            'Hex bytes, or "quoted text" through the start table; Enter finds '
-            "the next match, Shift+Enter the previous",
-        )
-        fit_chars(self.find, 12)
-        # The same arrow marks the navigation bar and the Preview's pages wear.
-        self.find_previous = QPushButton()
-        self.find_previous.setToolTip("Find the previous match (Shift+Enter)")
-        self.find_next = QPushButton()
-        self.find_next.setToolTip("Find the next match (Enter)")
-        for button in (self.find_previous, self.find_next):
-            button.setFixedWidth(32)
-        self._bake_icons()
+        # The same field and arrows as the window's Find bar; a search from
+        # here is the window's current search too.
+        self.find_row = FindRow()
+        self.find = self.find_row.field
         self.follow = QCheckBox("Follow selection")
         self.follow.setToolTip(
             "Scroll the dump to whatever is selected in the raw view.\n"
@@ -145,9 +133,7 @@ class HexPanel(ThemedIcons, QWidget):
         top.addWidget(QLabel("Go to"))
         top.addWidget(self.goto)
         top.addWidget(QLabel("Find"))
-        top.addWidget(self.find, 1)
-        top.addWidget(self.find_previous)
-        top.addWidget(self.find_next)
+        top.addWidget(self.find_row, 1)
         top.addWidget(self.follow)
         bottom = QHBoxLayout()
         self.at_label = QLabel("At")
@@ -171,33 +157,10 @@ class HexPanel(ThemedIcons, QWidget):
         layout.addWidget(self.view, 1)
         layout.addLayout(bottom)
         self.goto.returnPressed.connect(self._on_goto)
-        self.find.returnPressed.connect(lambda: self._do_find(backwards=False))
-        self.find_next.clicked.connect(lambda: self._do_find(backwards=False))
-        self.find_previous.clicked.connect(lambda: self._do_find(backwards=True))
+        self.find_row.find_requested.connect(self.find_requested)
         self.bytes.returnPressed.connect(self._on_apply)
         self.apply.clicked.connect(self._on_apply)
         self.follow.toggled.connect(_remember_follow)
-        # Shift+Return in the find field searches backwards. It cannot be a
-        # ``returnPressed`` connection, which carries no modifiers, and a window
-        # shortcut would be taken from the field; the filter sees the press.
-        self.find.installEventFilter(self)
-
-    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override
-        if (
-            watched is self.find
-            and event.type() == QEvent.Type.KeyPress
-            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-        ):
-            self._do_find(backwards=True)
-            return True
-        return super().eventFilter(watched, event)
-
-    def _bake_icons(self) -> None:
-        """The find arrows in the theme's button-text color."""
-        role = QPalette.ColorRole.ButtonText
-        self.find_previous.setIcon(themed_icon(self, Glyph.ARROW_LEFT, role))
-        self.find_next.setIcon(themed_icon(self, Glyph.ARROW_RIGHT, role))
 
     # -- geometry of one rendered line ---------------------------------------
     @property
@@ -323,11 +286,6 @@ class HexPanel(ThemedIcons, QWidget):
                     highlights.append(highlight)
                 at += count
         self.view.setExtraSelections(highlights)
-
-    def _do_find(self, backwards: bool) -> None:
-        text = self.find.text()
-        if text.strip():
-            self.find_requested.emit(text, backwards)
 
     def _on_goto(self) -> None:
         offset = self.goto.value()

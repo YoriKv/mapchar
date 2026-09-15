@@ -149,19 +149,23 @@ def test_a_non_hex_run_writes_nothing(window, tmp_path):
 def test_find_next_and_previous_walk_the_matches(window, tmp_path):
     _dock(window, tmp_path)
     window.hex_panel.find.setText("41 42 43")
-    window.hex_panel._do_find(backwards=False)
+    window.hex_panel.find_row.search(backwards=False)
     assert window._offset <= 64 and window._selection == (64, 67)
-    window.hex_panel._do_find(backwards=False)
+    window.hex_panel.find_row.search(backwards=False)
     assert window._selection == (67, 70)
-    window.hex_panel._do_find(backwards=True)
+    window.hex_panel.find_row.search(backwards=True)
     assert window._selection == (64, 67)
+    # The Find bar took the search over, so F3 walks on from the panel's find.
+    assert window.find_row.text() == "41 42 43"
+    window._find_bytes(again=True)
+    assert window._selection == (67, 70)
 
 
 def test_find_previous_wraps_to_the_last_match(window, tmp_path):
     _dock(window, tmp_path)
     window._go_to(0)
     window.hex_panel.find.setText("41 42 43")
-    window.hex_panel._do_find(backwards=True)
+    window.hex_panel.find_row.search(backwards=True)
     assert window._selection == (67, 70)
 
 
@@ -182,7 +186,7 @@ def test_shift_return_in_the_find_field_searches_backwards(window, tmp_path, qtb
 def test_an_empty_needle_finds_nothing(window, tmp_path):
     _dock(window, tmp_path)
     window.hex_panel.find.setText("   ")
-    window.hex_panel._do_find(backwards=False)
+    window.hex_panel.find_row.search(backwards=False)
     assert window._selection is None
 
 

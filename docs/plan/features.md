@@ -249,8 +249,13 @@ and Strings tabs read again at once.
   On a file, switching turns the source to the other mode's kind and keeps
   every other setting; switching back restores the source and string type the
   file had in that mode, for as long as the session lasts. A block keeps the
-  mode it was made with: on a block the toggle shows it, its pressed button
-  plainly down, but does not switch, and every other setting stays editable.
+  mode it was made with, and every other setting stays editable: on a block
+  the toggle picks only what the view shows. On a pointer block **Pointers**
+  confines the view to its pointer table and **Strings** to its strings, read
+  as text, from the lowest-placed string to the end of the highest — the
+  pointers may reach them in any order, share one, or leave bytes between
+  them, and those bytes show too. A block without pointers has **Pointers**
+  disabled.
   The Reading bar shows only the sections and settings the mode uses — in
   Pointers mode the **Strings** section too, since it shapes what Resolve
   pointers shows.
@@ -373,9 +378,13 @@ The exploration surface, the equivalent of celPix's tile canvas.
 All searches run over the current file through its container and
 compression, and report offsets in the file's coordinates.
 
-- **Find** (Ctrl+F in a view) — hex bytes, or `"quoted text"` run through the
-  encode engine, so multi-character entries, `[codes]` and table switches are
-  all searchable; next and previous, wrapping.
+- **Find** — the **Find bar** along the window's bottom holds the current
+  search: hex bytes, or `"quoted text"` run through the encode engine, so
+  multi-character entries, `[codes]` and table switches are all searchable.
+  Ctrl+F in a view puts the keyboard there; Enter, F3 and the bar's arrows
+  find the next match and Shift+Enter, Shift+F3 the previous, wrapping. The
+  Hex panel's find field and **Search for Selection** (which spells the bytes
+  as hex) hand the bar their search first, so it always shows the current one.
 - **Relative search** (Search Window):
   - type a word; the tool finds byte runs with the same relative pattern,
     for 8- and 16-bit codes, in either endianness;
@@ -641,8 +650,9 @@ in the game. It is described in [preview.md](preview.md).
   nibble in place, one undo step per digit, the caret moving on to the next
   nibble; the bytes line below writes a run of hex bytes at an offset. Both make
   the file entry unsaved. Text is decoded, not editable here.
-- **Go to**, **Find** (hex bytes or quoted text through the reading's table) with
-  next and previous, and **Follow selection**, which is remembered per machine.
+- **Go to**, **Find** (the same field as the Find bar, which takes over what
+  is searched from here) with next and previous, and **Follow selection**,
+  which is remembered per machine.
 - The address column follows the navigation bar's address format.
 - Refreshes only while visible.
 
@@ -715,8 +725,8 @@ in the game. It is described in [preview.md](preview.md).
 
 **Help ▸ Shortcuts… (F1)** shows the live list in two balanced columns, one
 section per menu, built from the menu bar plus the keys and mouse gestures no
-menu row can carry (the Hex and Text views, the Strings view, the Files and Hex panels, the
-tool windows). **Help ▸ Legend…** explains every colour and mark the Hex and
+menu row can carry (the Hex and Text views, the Strings view, the Files panel, the
+Find bar, the Hex panel, the tool windows). **Help ▸ Legend…** explains every colour and mark the Hex and
 Text views, the Hex panel and the Strings view draw, each beside a swatch.
 **Help ▸ About** gives the version, author, homepage and licenses.
 
@@ -726,7 +736,8 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Return commit cell |
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
-| Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F find bytes · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
+| Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
+| Find bar | Enter next · Shift+Enter previous |
 | Files panel | Up/Down open the row · Shift/Ctrl+click extend · Alt+Up/Down reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
 | Tool windows | Esc close · Enter run the query |

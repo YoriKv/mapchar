@@ -51,7 +51,7 @@ _GATES: dict[Capability, tuple[str, ...]] = {
     Capability.RAW_VIEW: ("raw_tab_action", "text_tab_action"),
     Capability.HEX_VIEW: ("hex_panel",),
     Capability.CODECS: ("format_bar", "reading_bar"),
-    Capability.SEARCH: ("search_actions",),
+    Capability.SEARCH: ("search_actions", "find_bar"),
     Capability.POINTER_DISCOVERY: ("pointers_action",),
     Capability.CONTAINER: ("container_action",),
     Capability.BLOCK_CREATE: ("new_block_action",),

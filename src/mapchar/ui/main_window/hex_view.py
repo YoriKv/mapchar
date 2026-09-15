@@ -29,12 +29,7 @@ class HexViewMixin:
             )
 
     def _find_text_or_bytes(self, text: str, backwards: bool = False) -> None:
-        """The Hex dock's find field: hex bytes, or quoted text through the start
-        table, searched in either direction from the view position."""
-        if not text.strip() or self._doc is None:
-            return
-        needle = self._needle_from(text.strip())
-        if needle is None:
-            return
-        self._find_needle = needle
+        """The Hex dock's find field: the same search as the Find bar's, which
+        takes the text over so it stays the window's current search."""
+        self.find_row.set_text(text)
         self._find_bytes(again=True, backwards=backwards)
