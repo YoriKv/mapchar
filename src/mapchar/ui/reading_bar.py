@@ -1,16 +1,17 @@
 """The Reading bar: how the bytes are cut into strings, edited live.
 
-Every setting a block's reading has — where its strings come from, how one
-ends, how it goes back — as a row of controls under the Codecs bar, the way
-celPix keeps a slice's codec in its toolbar. The bar holds no entry: it is
-loaded from a configuration and reads one back, and says which control the
-user changed, so the window applies the change — to a block as an undo step, to
-a file as its session — and every view re-reads.
+Every setting a block's reading has — where its strings come from, how its
+pointers read, how a string ends, how it goes back — as controls under the
+Format bar, the way celPix keeps a slice's codec in its toolbar, gathered into
+the sections :data:`SECTIONS` names. The bar holds no entry: it is loaded from a
+configuration and reads one back, and says which control the user changed, so
+the window applies the change — to a block as an undo step, to a file as its
+session — and every view re-reads.
 
 What shows follows the reading: its source kind and string type, whether it is
-read as pointers (the Table list's **Pointer**), and whether it is a block's,
-since only a block has addresses of its own, a way back to disk and room left
-by a re-compression.
+read as pointers (the Format bar's mode), and whether it is a block's, since
+only a block has addresses of its own, a way back to disk and room left by a
+re-compression. A section with nothing to show is hidden whole.
 """
 
 from __future__ import annotations
@@ -57,6 +58,38 @@ _SOURCE_NAMES = {
 
 END, FIXED_LENGTH, PASCAL, NEXT = "end", "fixed", "pascal", "next"
 """The string types, as the String type picker's data."""
+
+SECTIONS = {
+    "Source": (
+        "source_kind",
+        "start",
+        "stop",
+        "count",
+        "length",
+        "ptr_addresses",
+        "skips",
+    ),
+    "Pointers": (
+        "ptr_size",
+        "ptr_stride",
+        "ptr_endian",
+        "ptr_mapping",
+        "ptr_offset",
+        "ptr_bank",
+    ),
+    "Strings": (
+        "string_type",
+        "fixed_length",
+        "stop_at_end",
+        "pascal",
+        "spp",
+        "realign",
+        "line_length",
+        "show_end",
+    ),
+    "Writing": ("bound", "write_mode", "fill", "spare_room"),
+}
+"""The bar's sections, in order, and the controls each gathers."""
 
 _HEX = QRegularExpression(r"\s*\$?[0-9A-Fa-f_]*\s*")
 _NUMBER = QRegularExpression(r"\s*(-?\$|\$-)?[0-9A-Fa-f]*\s*")
@@ -111,6 +144,7 @@ class ReadingBar(WrapBar):
         self._pointers = False
         self._block = False
         self._groups: dict[str, QWidget] = {}
+        self.sections: dict[str, QWidget] = {}
 
         self.source_kind = CompactComboBox(120)
         self.start = HexEdit()
@@ -174,8 +208,9 @@ class ReadingBar(WrapBar):
         self.spare_room.addItem("Fill", "fill")
         self.spare_room.addItem("Keep", "keep")
 
+        groups = {}
         for name, label, widgets, tip in (
-            ("source_kind", "Source", (self.source_kind,), "Where the strings are"),
+            ("source_kind", "", (self.source_kind,), "Where the strings are"),
             ("start", "Start", (self.start,), "The first byte, in hex"),
             ("stop", "Stop", (self.stop,), "The first byte past the region, in hex"),
             ("count", "Count", (self.count,), "How many strings"),
@@ -247,7 +282,13 @@ class ReadingBar(WrapBar):
                 "What a shorter re-compression leaves in its slot",
             ),
         ):
-            self._groups[name] = self.add_group(label, *widgets, tip=tip)
+            groups[name] = (label, widgets, tip)
+        for title, names in SECTIONS.items():
+            section = self.add_section(title)
+            self.sections[title] = section.parentWidget()
+            for name in names:
+                label, widgets, tip = groups[name]
+                self._groups[name] = section.add_group(label, *widgets, tip=tip)
 
         for name, combo in (
             ("source_kind", self.source_kind),
@@ -443,6 +484,8 @@ class ReadingBar(WrapBar):
         }
         for name, visible in shown.items():
             self._groups[name].setVisible(visible)
+        for title, names in SECTIONS.items():
+            self.sections[title].setVisible(any(shown[n] for n in names))
 
     # -- reading back ---------------------------------------------------------
 

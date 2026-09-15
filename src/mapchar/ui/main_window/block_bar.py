@@ -15,7 +15,6 @@ from mapchar.core.block import (
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
 from mapchar.core.table import TokenKind
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.widgets import select_data
 
 
 class BlockBarMixin:
@@ -79,7 +78,7 @@ class BlockBarMixin:
             parent=file_entry,
             config=cfg,
         )
-        entry.session.show_strings = self.show_strings.isChecked()
+        entry.session.resolve_pointers = self.resolve_pointers.isChecked()
         self._push_add(entry)
         self._activate_entry(entry)
         self._show_view("strings")
@@ -133,11 +132,11 @@ class BlockBarMixin:
             file_entry.path,
             parent=file_entry,
             bookmark_offset=self._offset,
-            compression_id=self.compression_pick.currentData(),
+            compression_id=self._preview_scheme,
         )
         entry.session.table_id = self._current_table_id()
         entry.session.config = self._reading()
-        entry.session.show_strings = self.show_strings.isChecked()
+        entry.session.resolve_pointers = self.resolve_pointers.isChecked()
         entry.session.offset = self._offset
         entry.session.view = self._current_view()
         self._push_add(entry)
@@ -147,17 +146,17 @@ class BlockBarMixin:
         if entry.parent is None:
             return
         self._read_file_as(entry.parent, entry.session.config, entry.session)
-        select_data(self.compression_pick, entry.compression_id)
+        self._preview_scheme = entry.compression_id
         self._go_to(entry.bookmark_offset)
         self._show_view(entry.session.view)
 
     def _read_file_as(self, file_entry: Entry, config, session) -> None:
         """Put ``file_entry`` on screen read by ``config`` — a bookmark's
-        snapshot, a block's own reading — with ``session``'s strings switch."""
+        snapshot, a block's own reading — with ``session``'s Resolve pointers."""
         if config is not None:
             file_entry.session.config = config
             file_entry.session.table_id = config.table_id or None
-            file_entry.session.show_strings = session.show_strings
+            file_entry.session.resolve_pointers = session.resolve_pointers
         elif session.table_id:
             file_entry.session.config = replace(
                 self._reading(file_entry), table_id=session.table_id
@@ -228,14 +227,14 @@ class BlockBarMixin:
 
     def _jump_to_source(self, entry: Entry) -> None:
         """Files panel ▸ Jump to Source: the parent file at the block's offset,
-        set up to read it — its start table picked and, for a decompressed
+        set up to read it — read the way the block reads and, for a decompressed
         block, its scheme armed in the Compression preview, since what sits at
         that address in the file is the packed structure."""
         if entry.parent is None or entry.config is None:
             return
         offset = self._block_file_offset(entry)
         self._read_file_as(entry.parent, entry.config, entry.session)
-        select_data(self.compression_pick, entry.compression_id)
+        self._preview_scheme = entry.compression_id
         self._go_to(offset)
 
     def _block_from_region(self, region) -> None:

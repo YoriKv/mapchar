@@ -9,7 +9,6 @@ from helpers import pointer_rom, texts
 from mapchar.core.block import RangeSource, Status
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.main_window import MainWindow
-from mapchar.ui.main_window.codecs_bar import POINTER
 from mapchar.ui.raw_widget import POINTER_TOKENS
 from window_helpers import ASCII_TABLE, TABLE, add_block, open_rom_and_table
 
@@ -48,7 +47,7 @@ def test_open_rom_table_block_and_dump(window, tmp_path, monkeypatch):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
     entry = open_rom_and_table(window, tmp_path, data, rom_name="game.bin")
     assert entry is not None and window._doc is not None and window._doc.size == 26
-    assert window.table_pick.currentData() == "main"
+    assert window.format_pick.currentData() == "main"
     window._refresh_view()
     model = window.raw._model
     assert model is not None and [t.text() for t in model.tokens][:3] == [
@@ -257,7 +256,7 @@ def test_pointer_block_in_window(window, tmp_path, monkeypatch):
     window._go_to(0)
     # A pointer block reads as pointers: its table is Pointer, and each of its
     # pointers is one token saying where it points.
-    assert window.table_pick.currentData() == POINTER
+    assert window.mode_toggle.value() is True
     tokens = window.raw._model.tokens
     assert [(t.bit_start, t.bit_end, t.text()) for t in tokens[:2]] == [
         (0, 16, "→10"),
@@ -327,9 +326,7 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     slot = len(packed) + 8  # the compressed slot has spare room at its end
     data = b"\xff" * 16 + packed + b"\xff" * 8 + b"\xff" * 24
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
-    window.compression_pick.setCurrentIndex(
-        window.compression_pick.findData("gba_lz77")
-    )
+    window._preview_scheme = "gba_lz77"
     window._go_to(16)
     assert "compressed bytes at 10 → 90 bytes" in window.decompress_window.status.text()
     block = add_block(
@@ -642,14 +639,14 @@ def test_tables_show_their_entry_count(window, tmp_path):
     open_rom_and_table(window, tmp_path, b"AB\x00")
     table_entry = window.workspace.table_entries()[0]
     assert window.files_panel._items[id(table_entry)].text(0) == "main.tbl  (3)"
-    assert window.table_pick.itemText(window.table_pick.findData("main")) == (
+    assert window.format_pick.itemText(window.format_pick.findData("main")) == (
         "@main  (3)"
     )
     window._edit_table_entry(table_entry)
     window.table_editor.new_line.setText("44=D")
     window.table_editor._add()
     assert window.files_panel._items[id(table_entry)].text(0) == "main.tbl  (4) ●"
-    assert window.table_pick.currentText() == "@main  (4)"
+    assert window.format_pick.currentText() == "@main  (4)"
 
 
 def test_saving_a_project_offers_to_write_the_unsaved_edits(window, tmp_path):
@@ -705,7 +702,7 @@ def test_the_capability_table_covers_every_kind():
 
 
 def test_nothing_open_leaves_the_controls_gated(window):
-    assert not window.codecs_bar.isEnabled()
+    assert not window.format_bar.isEnabled()
     assert not window.offset_box.isEnabled()
     assert not window.write_action.isEnabled()
     assert not window.block_bar.isVisible()
@@ -714,7 +711,7 @@ def test_nothing_open_leaves_the_controls_gated(window):
 def test_a_file_gates_the_string_surfaces_off(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, b"AB\x00")
     window._activate_entry(entry)
-    assert window.codecs_bar.isEnabled()
+    assert window.format_bar.isEnabled()
     assert window.offset_box.isEnabled() and window.goto_action.isEnabled()
     assert window.container_action.isEnabled()
     assert not window.strings_tab_action.isEnabled()
@@ -1311,7 +1308,7 @@ def test_new_table_writes_an_empty_native_file_and_opens_it(
     assert path.read_text() == f"{HEADER}\n@table main_2\n"
     assert window.table_editor._entry is entry
     # From a menu the start table stays as it was.
-    assert window.table_pick.currentData() == "main"
+    assert window.format_pick.currentData() == "main"
     errors = []
     monkeypatch.setattr(window, "_error", errors.append)
     assert window._new_table_dialog() is None and "already open" in errors[0]
@@ -1319,7 +1316,7 @@ def test_new_table_writes_an_empty_native_file_and_opens_it(
 
 def test_the_start_table_pick_ends_in_new_table(window, tmp_path, monkeypatch):
     open_rom_and_table(window, tmp_path, b"AB\x00")
-    pick = window.table_pick
+    pick = window.format_pick
     assert pick.itemText(pick.count() - 1) == "New Table…"
     monkeypatch.setattr(window, "_pick_save", lambda *a, **k: "")
     pick.setCurrentIndex(pick.count() - 1)
@@ -1499,7 +1496,7 @@ def test_switching_entries_keeps_the_block_s_document(window, tmp_path):
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     doc = block.doc
     window._activate_entry(file_entry)
-    assert window.table_pick.currentData() == "other"
+    assert window.format_pick.currentData() == "other"
     window._activate_entry(block)
-    assert window.table_pick.currentData() == "main"
+    assert window.format_pick.currentData() == "main"
     assert block.doc is doc

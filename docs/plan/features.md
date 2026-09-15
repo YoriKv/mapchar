@@ -63,9 +63,11 @@ the preview system in [preview.md](preview.md).
 - **Left column:** the **Files** dock on top. Below it, **Tables** and
   **Fonts** share one tabbed dock.
 - **Right column:** the editing surface, top to bottom:
-  - the **Codecs** bar: container, compression and **Table** (see
+  - the **Format** bar: **Format**, the **Strings** / **Pointers** mode and,
+    for pointers, **Resolve pointers** (see
     [Reading the bytes](#reading-the-bytes));
-  - the **Reading** bar: every setting of how the bytes are cut into strings
+  - the **Reading** bar: every setting of how the bytes are cut into strings,
+    in framed sections — **Source**, **Pointers**, **Strings**, **Writing**
     (see [Blocks](#blocks));
   - the **Block** bar, shown on a block: source, string type, table, a string
     counter, and **Dump…**;
@@ -106,8 +108,8 @@ the preview system in [preview.md](preview.md).
 - **File ▸ New Table…** writes an empty native table file where the user
   picks, registers it and opens it in the Table Editor. The table is named
   after the file, numbered up (`main_2`) past a loaded table of that name. The
-  Codecs bar's Table list and the Files panel's context menu offer it too;
-  from the Table list the new table becomes the reading's table.
+  Format list and the Files panel's context menu offer it too; from the
+  Format list the new table becomes the reading's table.
 - **File ▸ Open Font…** registers a glyph sheet.
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
@@ -186,7 +188,7 @@ the preview system in [preview.md](preview.md).
 - **Charsets** — a table can sit on a built-in charset (ASCII, Latin-1,
   Windows-1252, JIS X 0201, Shift-JIS as CP932, EUC-JP as JIS X 0213, EUC-KR,
   Big5, GBK, UTF-8, UTF-16) and only list its overrides.
-- **Encodings as tables** — every charset is also offered in the Table list as
+- **Encodings as tables** — every charset is also offered in the Format list as
   a table of its own, under the loaded tables: that encoding with a NUL of its
   code unit's width (`00`, `0000` in UTF-16) as the end token. They are built
   the first time they are read, are never entries or saved, and a loaded table
@@ -220,7 +222,7 @@ the preview system in [preview.md](preview.md).
 
 ## Reading the bytes
 
-The Codecs and Reading bars say how the entry on screen is read, and every
+The Format and Reading bars say how the entry on screen is read, and every
 change to them applies as it is made, as celPix's toolbar does: the Hex, Text
 and Strings tabs read again at once.
 
@@ -231,23 +233,26 @@ and Strings tabs read again at once.
   a bookmark, and what **New Block** starts from. Anything else that changes a
   block's configuration — an import, **Use as Pointer Table**, an undo — shows
   in the bars at the next refresh.
-- **Table** — **Pointer**, then the loaded tables with their entry counts,
-  then the encodings, then **New Table…**. A file with no table of its own
-  reads as the first loaded table, else as ASCII. A table the reading names
-  that is not loaded shows as `@id (not loaded)`.
-- **Pointer** — the bytes are pointers: the source becomes a pointer table (or
-  list), and beside the Table list come **Strings**, the table the strings they
-  reach are read through, and **Show strings**, remembered per entry. On a file
-  the pointers are read every stride from where the view starts; on a block,
-  its own.
+- **Format** — the table or encoding the text is read through, in either
+  mode: the loaded tables with their entry counts, then the encodings, then
+  **New Table…**. A file with no table of its own reads as the first loaded
+  table, else as ASCII. A table the reading names that is not loaded shows as
+  `@id (not loaded)`.
+- **Mode** — **Strings** or **Pointers**, side by side, one of them down.
+  Switching turns the source to the other mode's kind and keeps every other
+  setting; the Reading bar shows only the sections and settings the mode uses.
+- **Pointers** — the bytes are pointers: the source becomes a pointer table (or
+  list), the Reading bar adds its **Pointers** section, and beside the mode
+  comes **Resolve pointers**, remembered per entry. On a file the pointers are
+  read every stride from where the view starts; on a block, its own.
   - the **Hex** tab's text column shows each pointer where it points (`→1A3F0`,
-    `→?` when it maps outside the data), or with Show strings the string there
-    on one line; each is tinted as a pointer, and its hover says the value,
-    the target and the string;
+    `→?` when it maps outside the data), or resolved, the string there on one
+    line; each is tinted as a pointer, and its hover says the value, the
+    target and the string;
   - the **Text** tab shows a line per pointer: its address, its value, where it
-    points and, with Show strings, the string there;
+    points and, resolved, the string there;
   - a line step in Text is a pointer.
-- **A table** — the bytes are text through it, cut into strings by the
+- **Strings** — the bytes are text through the format, cut into strings by the
   reading's string type from the view's first byte: at end tokens, every
   fixed length, or by a Pascal prefix. What only means something at a block's
   own addresses — skip ranges, realignment, fixed lines — applies to its
@@ -378,12 +383,17 @@ A block is the unit of extraction and insertion. **File ▸ New Block** makes on
 over the selection — else from the view's position to the end — read the way
 the bars read the view, and opens it on its strings; from then on the bars are
 its settings (see [Reading the bytes](#reading-the-bytes)). The Reading bar
-shows the settings below that the source kind and string type use; a file has
-no addresses of its own, so its bar leaves out start, stop, count, pointer
-addresses, skip ranges and the writing settings.
+shows the settings below that the mode, source kind and string type use, in
+four framed sections that sit side by side while there is room: **Source**
+(the kind, start, stop, count, length, pointer addresses, skip ranges),
+**Pointers** (size, stride, endian, mapping, offset, bank), **Strings** (string
+type and what it takes, strings per pointer, realign, lines, Show `[end]`) and
+**Writing** (bound, write mode, fill byte, spare room). A file has no addresses
+of its own, so its bar leaves out start, stop, count, pointer addresses, skip
+ranges and the Writing section; a section with nothing to show is hidden.
 
-- **Source** — where the strings come from; Pointer in the Table list offers
-  the two pointer kinds, a table the other two:
+- **Source** — where the strings come from; the Pointers mode offers the two
+  pointer kinds, the Strings mode the other two:
   - **Range** — `start` to `stop` (exclusive), read as consecutive strings;
   - **Pointer table** — `start`, `stop`, pointer `size`, `stride` (size plus
     space), `endian`, `mapping`, and an `offset` added to each value; strings
@@ -404,9 +414,8 @@ addresses, skip ranges and the writing settings.
   `M` plus `O`.
 - **Skip ranges** — `from → to` pairs: reading `from` continues at `to`
   (Cartographer's auto-jump).
-- **Table** — the start table: a loaded table or an encoding, picked in the
-  Table list, or in **Strings** while it says Pointer; the table set follows
-  from it.
+- **Format** — the start table: a loaded table or an encoding, picked in the
+  Format list; the table set follows from it.
 - **Fixed-line layout** — for fixed strings, an optional `line length` that
   splits each string into lines marked with a `[line]` code.
 - **Bound** — the exclusive end address strings may not cross on write;
@@ -414,14 +423,14 @@ addresses, skip ranges and the writing settings.
 - **Write mode** — **Packed** or **Slotted**; see [Writing](#writing-back-to-disk).
 - **Fill byte** — what pads unused space on write.
 - **Compression** — a block inherits its parent file's container and
-  compression and may override the compression in the Codecs bar (on a file
-  that picker previews a scheme instead), in which case it is a
-  decompressed region over the compressed slot at its offset, with its own
-  **spare room** rule (fill, or keep the bytes that were there).
+  compression and may override the compression — **To Block** in the
+  Decompressed View makes such a block, and no bar picks a scheme — in which
+  case it is a decompressed region over the compressed slot at its offset,
+  with its own **spare room** rule (fill, or keep the bytes that were there).
 - **Jump to Source** shows the parent file at the block's own offset in the
   raw view — its compressed slot for a decompressed block, its first pointer
   for a pointer list — read the way the block reads and, where it has one,
-  with its compression armed in the Compression preview.
+  with its compression armed in the Decompressed View.
 
 ## Pointers
 
@@ -548,9 +557,11 @@ The editing surface, opened on a block.
 ## Compression
 
 - **Preview** — the raw view always shows the bytes of the chain as far as
-  the block's compression. Choosing a scheme in **Compression** decompresses
-  from the current offset into the floating **Decompressed View**, decoded
-  through the reading's table; it hides when nothing decodes.
+  the block's compression. A scheme armed on a file — by **Jump to Source**
+  from a compressed block, or a bookmark made under one — decompresses from
+  the current offset into the floating **Decompressed View**, decoded through
+  the reading's table, until another entry opens; it hides when nothing
+  decodes.
 - **Jump to Next** skips past a complete structure; **Scan** searches forward
   for the next complete structure with a Stop button; **To Block** creates a
   decompressed block over one. All three want a *complete* structure: the

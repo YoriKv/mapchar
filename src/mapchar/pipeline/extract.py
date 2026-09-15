@@ -185,9 +185,14 @@ def _extract_pointers(
 
 
 def string_at(
-    bits: Bits, config: BlockConfig, tables: TableSet, start_bit: int
+    bits: Bits,
+    config: BlockConfig,
+    tables: TableSet,
+    start_bit: int,
+    limit: int | None = None,
 ) -> list[Token]:
-    """The one string of the block's string type that starts at ``start_bit``.
+    """The one string of the block's string type that starts at ``start_bit``,
+    reading no further than ``limit`` bits past it.
 
     What a pointer's target reads as, on its own: a string that ends at the
     next pointer's target has no next pointer here, so it reads to an end token.
@@ -197,6 +202,8 @@ def string_at(
     stop_bit = bits.length if config.bound is None else config.bound * 8
     if stop_bit <= start_bit:
         stop_bit = bits.length
+    if limit is not None:
+        stop_bit = min(stop_bit, start_bit + limit)
     return decode_one(bits, config, tables, start_bit, stop_bit)[0]
 
 

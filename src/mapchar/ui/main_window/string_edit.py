@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mapchar.core.block import EndToken, Status
+from mapchar.core.block import EndToken, Status, block_bound
 from mapchar.core.errors import MapcharError
 from mapchar.ui.undo_commands import StringFieldCommand
 
@@ -111,7 +111,11 @@ class StringEditMixin:
             self.preview_window.set_readout(str(exc))
             return
         used = -(-len(result.bits) // 8)
-        room = self._room(rec, entry.config, entry.doc.strings) if rec else 0
+        room = (
+            self._room(rec, entry.config, block_bound(entry.config, entry.doc.strings))
+            if rec
+            else 0
+        )
         readout = f"{used} / {room} byte(s)" if room else f"{used} byte(s)"
         if room and used > room:
             readout += f" — {used - room} over"

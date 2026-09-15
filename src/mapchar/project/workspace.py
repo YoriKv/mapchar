@@ -40,8 +40,8 @@ class EntrySession:
     config: BlockConfig | None = None
     """A file's reading, as the top bar sets it: what New Block starts from.
     A block's own is :attr:`Entry.config`."""
-    show_strings: bool = False
-    """Read as pointers, show the strings they reach beside them."""
+    resolve_pointers: bool = False
+    """Read as pointers, show the string each reaches in its place."""
 
 
 @dataclass(eq=False)

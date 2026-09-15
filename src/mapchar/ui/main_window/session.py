@@ -7,7 +7,6 @@ from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.pipeline.pipeline import FileRef, PathwayConfig, SlotFill, load
 from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.widgets import select_data
 
 
 class SessionMixin:
@@ -146,13 +145,7 @@ class SessionMixin:
 
     def _restore_session(self) -> None:
         entry = self._entry
-        widgets = (
-            self.container_pick,
-            self.table_pick,
-            self.strings_pick,
-            self.compression_pick,
-            self.show_strings,
-        )
+        widgets = (self.format_pick, self.resolve_pointers)
         for w in widgets:
             w.blockSignals(True)
         try:
@@ -161,16 +154,8 @@ class SessionMixin:
                 self._offset = 0
                 self._bounds = None
                 return
-            file_entry = entry.parent if entry.kind is EntryKind.BLOCK else entry
-            if file_entry is not None and not select_data(
-                self.container_pick, file_entry.container_id
-            ):
-                self.container_pick.setCurrentIndex(0)
-            # A block's pick is the scheme it is read through, and a file's a
-            # preview: one left over from a block is not a preview anyone chose.
-            if entry.kind is not EntryKind.BLOCK and self._pick_is_blocks:
-                self.compression_pick.setCurrentIndex(0)
-            self._pick_is_blocks = entry.kind is EntryKind.BLOCK
+            # A preview is armed for the entry it was armed on, not the next.
+            self._preview_scheme = None
             self._load_reading_bar()
             self._offset = entry.session.offset
             # A block opens on its source: the view is confined to it, and the

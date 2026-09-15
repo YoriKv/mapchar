@@ -29,9 +29,12 @@ No layout's minimum size may be set by text or a count that varies.
   for no width, so a long notice cannot widen the window.
 - **A row of variable length** (the Strings view's code buttons) is a
   `FlowLayout`, which wraps onto more rows. A bar of labelled controls (the
-  Codecs and Reading bars) is a `WrapBar`: a `FlowLayout` that also asks for the
+  Format and Reading bars) is a `WrapBar`: a `FlowLayout` that also asks for the
   height its rows take at its width, so a short window cannot squeeze a row out
-  of sight. A fixed row too long for a narrow
+  of sight. A long bar gathers its controls into framed, bold-captioned
+  sections (`WrapBar.add_section`) that sit side by side while there is room,
+  stretch to fill their row, share one caption width, and wrap their own
+  controls when narrower. A fixed row too long for a narrow
   window is split into two rows instead.
 - **Fields** keep a minimum from `fit_chars`, so no layout squeezes one below
   what it holds; pickers in a bar are `CompactComboBox`es of one fixed width.

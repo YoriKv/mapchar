@@ -223,6 +223,10 @@ class TranslationDelegate(QStyledItemDelegate):
         return self._editor
 
 
+_LOCKED_FLAGS = QTableWidgetItem().flags() & ~Qt.ItemFlag.ItemIsEditable
+"""A cell that cannot be edited in place; worked out once, not per cell."""
+
+
 class StringsView(QWidget):
     translation_edited = Signal(int, str)
     notes_edited = Signal(int, str)
@@ -235,6 +239,7 @@ class StringsView(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._rows: list[RowData] = []
+        self._by_index: dict[int, RowData] = {}
         self._filling = False
         top = QHBoxLayout()
         self.filter = QLineEdit()
@@ -325,10 +330,16 @@ class StringsView(QWidget):
     def set_rows(self, rows: list[RowData], keep_selection: bool = True) -> None:
         selected = self.selected_indices() if keep_selection else []
         self._rows = rows
+        self._by_index = {d.index: d for d in rows}
         self._filling = True
-        self.table.setRowCount(len(rows))
-        for r, data in enumerate(rows):
-            self._fill_row(r, data)
+        # Signals off too: every cell set is an itemChanged the fill ignores.
+        was = self.table.blockSignals(True)
+        try:
+            self.table.setRowCount(len(rows))
+            for r, data in enumerate(rows):
+                self._fill_row(r, data)
+        finally:
+            self.table.blockSignals(was)
         self._filling = False
         self.table.resizeColumnToContents(COL_INDEX)
         self.table.resizeColumnToContents(COL_ADDRESS)
@@ -349,6 +360,7 @@ class StringsView(QWidget):
         for r, existing in enumerate(self._rows):
             if existing.index == data.index:
                 self._rows[r] = data
+                self._by_index[data.index] = data
                 self._filling = True
                 self._fill_row(r, data)
                 self._filling = False
@@ -358,7 +370,7 @@ class StringsView(QWidget):
         def item(text: str, editable: bool = False) -> QTableWidgetItem:
             it = QTableWidgetItem(text)
             if not editable:
-                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                it.setFlags(_LOCKED_FLAGS)
             return it
 
         self.table.setItem(r, COL_INDEX, item(str(data.index)))
@@ -400,8 +412,7 @@ class StringsView(QWidget):
         it = self.table.item(row, COL_INDEX)
         if it is None:
             return None
-        index = it.data(Qt.ItemDataRole.UserRole)
-        return next((d for d in self._rows if d.index == index), None)
+        return self._by_index.get(it.data(Qt.ItemDataRole.UserRole))
 
     # --- selection and filter ---------------------------------------------
 

@@ -23,6 +23,15 @@ _CODE_IN_TEXT = re.compile(r"(?<!\\)\[([^\]\s]+)")
 """A ``[label`` in script text, for counting which codes a block uses."""
 
 
+def _problems_by_index(result) -> dict[int, object]:
+    """A layout's first problem for each string, by the string's index."""
+    found: dict[int, object] = {}
+    if result is not None:
+        for p in result.problems:
+            found.setdefault(p.index, p)
+    return found
+
+
 class StringsViewMixin:
     """Extracting a block's strings and building the grid's rows.
 
@@ -177,23 +186,26 @@ class StringsViewMixin:
         # What the Files panel's "too long" count reads; the layout is only run
         # here, so this is where the number is known.
         doc.too_long = sum(p.over for p in result.problems) if result is not None else 0
-        rows = []
-        for rec in doc.strings:
-            rows.append(self._row_for(rec, cfg, result, doc.strings))
-        return rows
+        # Once for the block, not once per row: the bound and the problems are
+        # the same for every string, and a pointer block has thousands.
+        bound = block_bound(cfg, doc.strings) if cfg is not None else 0
+        problems = _problems_by_index(result)
+        return [self._row_for(rec, cfg, result, bound, problems) for rec in doc.strings]
 
-    def _row_for(self, rec, cfg, result, strings=()) -> RowData:
+    def _row_for(self, rec, cfg, result, bound: int, problems=None) -> RowData:
         used = rec.byte_length(cfg.skips) if cfg is not None else rec.length
-        room, problem = self._room(rec, cfg, strings), ""
+        room, problem = self._room(rec, cfg, bound), ""
         status = rec.status.value
         if result is not None:
             enc = result.encoded.get(rec.index)
             if enc is not None and enc.problem is None:
                 used = len(enc.data)
-            problems = [p for p in result.problems if p.index == rec.index]
-            if problems:
-                problem = problems[0].message
-                status = "too long" if problems[0].over else "invalid"
+            found = (
+                problems if problems is not None else _problems_by_index(result)
+            ).get(rec.index)
+            if found is not None:
+                problem = found.message
+                status = "too long" if found.over else "invalid"
         if status in ("untouched", "edited", "review") and self._entry is not None:
             if self._overflow_status(rec, self._entry):
                 status = "overflows box"
@@ -211,7 +223,9 @@ class StringsViewMixin:
         )
 
     @staticmethod
-    def _room(rec, cfg, strings=()) -> int:
+    def _room(rec, cfg, bound: int) -> int:
+        """How many bytes the string may take: its own, or up to the block's
+        ``bound`` (:func:`~mapchar.core.block.block_bound`) when it is packed."""
         if cfg is None:
             return rec.length
         if isinstance(cfg.string_type, FixedLength):
@@ -219,7 +233,7 @@ class StringsViewMixin:
         if isinstance(cfg.source, FixedSource):
             return cfg.source.length
         if cfg.effective_write_mode is WriteMode.PACKED:
-            return max(block_bound(cfg, list(strings)) - rec.start, 0)
+            return max(bound - rec.start, 0)
         return rec.byte_length(cfg.skips)
 
     def _refresh_string_row(self, entry, index: int) -> None:
@@ -235,7 +249,11 @@ class StringsViewMixin:
             result = layout_block(
                 doc.data, entry.config, tables, doc.strings, self.registry
             )
-        self.strings.update_row(self._row_for(rec, entry.config, result, doc.strings))
+        self.strings.update_row(
+            self._row_for(
+                rec, entry.config, result, block_bound(entry.config, doc.strings)
+            )
+        )
         self._sync_preview()
 
     def _string(self, entry, index: int):

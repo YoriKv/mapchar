@@ -221,6 +221,11 @@ class StringRecord:
     notices: list[Notice] = field(default_factory=list)
     lines: tuple[int, ...] = ()
     """Token indices where fixed-line pieces start (fixed-line layout only)."""
+    _text: tuple[tuple[int, int], str] | None = field(
+        default=None, repr=False, compare=False
+    )
+    """The original rendered, with which token list it was rendered from: the
+    Strings grid asks for it more than once per string, thousands at a time."""
 
     def __setattr__(self, name: str, value: object) -> None:
         # A translation is NFC however it arrived — typed, imported from a
@@ -267,7 +272,10 @@ class StringRecord:
     def original_text(self) -> str:
         from mapchar.core.tokens import render
 
-        return render(self.original)
+        key = (id(self.original), len(self.original))
+        if self._text is None or self._text[0] != key:
+            self._text = (key, render(self.original))
+        return self._text[1]
 
     def current_text(self) -> str:
         """The translation when there is one, else the original text."""

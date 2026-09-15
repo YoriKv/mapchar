@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 
+from mapchar.core.bits import Bits
 from mapchar.core.block import (
     EndToken,
     FixedLength,
@@ -23,6 +24,7 @@ from mapchar.pipeline.view_read import (
     cuts_at_end_tokens,
     decode_strings,
     pointer_cells,
+    pointer_window,
     target_string,
 )
 from mapchar.project.workspace import EntryKind
@@ -73,10 +75,11 @@ class RefreshMixin:
     def _refresh_view(self, *, moved: bool = False) -> None:
         """Re-render everything from the document as it stands.
 
-        ``moved`` says the view only moved — its offset or its bounds — so the
-        Strings grid, which shows the same strings wherever the view is, is
-        left as it is unless the move re-read them. Filling it is the one part
-        of a refresh that costs by the string, and a move must cost nothing.
+        ``moved`` says only the view changed — its offset, its bounds, whether
+        its pointers resolve — so the Strings grid, which shows the same strings
+        wherever the view is, is left as it is unless the move re-read them.
+        Filling it is the one part of a refresh that costs by the string, and a
+        move must cost nothing.
         """
         doc, entry = self._doc, self._entry
         is_block = entry is not None and entry.kind is EntryKind.BLOCK
@@ -148,7 +151,7 @@ class RefreshMixin:
                 cells,
                 self._offset,
                 self._pointer_preview(doc, tables),
-                self.show_strings.isChecked(),
+                self.resolve_pointers.isChecked(),
             )
             self.raw.set_model(
                 RowModel(
@@ -198,20 +201,35 @@ class RefreshMixin:
             return RunResult([], 0)
         return decode_strings(data, self._reading(), tables)
 
+    def _is_block(self) -> bool:
+        entry = self._entry
+        return entry is not None and entry.kind is EntryKind.BLOCK
+
     def _pointer_cells(self, doc: Document, start: int, end: int) -> list[PointerCell]:
         """The reading's pointers that start in bytes ``start`` to ``end``."""
-        entry = self._entry
-        source = view_source(
-            self._reading(), entry.kind is EntryKind.BLOCK, start, self._view_end()
-        )
+        source = view_source(self._reading(), self._is_block(), start, self._view_end())
         return pointer_cells(doc.data, source, start, end, self.registry)
 
     def _pointer_preview(self, doc: Document, tables: TableSet | None):
-        """What a pointer's target reads as, through the strings' table."""
+        """What a pointer's target reads as, through the strings' table.
+
+        Each target is read once for as long as the data, the reading and the
+        table stay what they are: a scroll shows the same pointers a row over,
+        and the Hex and Text tabs the same ones.
+        """
         cfg = self._reading()
         if tables is None or cfg is None:
             return preview_reader(None)
-        return preview_reader(lambda at: target_string(doc.data, cfg, tables, at))
+        key = (
+            id(doc.data),
+            cfg,
+            tables.start.id,
+            sum(len(t.entries) for t in tables.tables.values()),
+        )
+        if self._previews is None or self._previews[0] != key:
+            self._previews = (key, Bits(doc.data), {})
+        _, bits, seen = self._previews
+        return preview_reader(lambda at: target_string(bits, cfg, tables, at), seen)
 
     def _pointer_stride(self) -> int:
         """Bytes from one pointer in view to the next."""
@@ -243,6 +261,16 @@ class RefreshMixin:
         pointers = self._reads_pointers()
         if tables is None and not pointers:
             return text_model([], offset, min(offset + room, end) - offset)
+        if pointers:
+            # A line is a pointer, so the window is known: one more pointer
+            # than the box has lines, which overflows it by a line.
+            source = view_source(self._reading(), self._is_block(), offset, end)
+            until = pointer_window(source, offset, self.text.lines_in_view() + 1)
+            model = self._text_tokens(
+                doc, tables, offset, end if until is None else until
+            )
+            self.text.set_model(model)
+            return model.cut(bisect_right(model.columns()[1], self.text.fitted_chars()))
         # The last window is the best guess at this one: as many bytes as
         # overflowed then, or, where the first try overflowed, twice what was
         # kept, so a guess grown over a stretch that decodes to little shrinks
@@ -276,7 +304,7 @@ class RefreshMixin:
                 cells,
                 offset,
                 self._pointer_preview(doc, tables),
-                self.show_strings.isChecked(),
+                self.resolve_pointers.isChecked(),
             )
             return text_model(tokens, offset, stop - offset)
         cache = self._text_decode

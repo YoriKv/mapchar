@@ -49,19 +49,32 @@ def _target(cell: PointerCell) -> str:
     return "?" if cell.target is None else f"{cell.target:X}"
 
 
+PREVIEW_CACHE_LIMIT = 100_000
+"""How many targets' previews are kept before they are let go: a file read as
+pointers from every offset makes a fresh target of nearly every byte."""
+
+
 def preview_reader(
-    read: Callable[[int], list[Token]] | None,
+    read: Callable[[int], tuple[list[Token], bool]] | None,
+    seen: dict[int, str] | None = None,
 ) -> Callable[[int | None], str]:
-    """A pointer target's string on one line, each read once; empty with
-    nothing to read it through."""
-    seen: dict[int, str] = {}
+    """A pointer target's string on one line, each read once and kept in
+    ``seen`` — a caller's, to keep them from one view to the next — with ``…``
+    where the read cut it short; empty with nothing to read it through."""
+    if seen is None:
+        seen = {}
 
     def preview(target: int | None) -> str:
         if read is None or target is None:
             return ""
-        if target not in seen:
-            seen[target] = compact_text(render(read(target)))
-        return seen[target]
+        text = seen.get(target)
+        if text is None:
+            tokens, cut = read(target)
+            text = compact_text(render(tokens)) + ("…" if cut else "")
+            if len(seen) >= PREVIEW_CACHE_LIMIT:
+                seen.clear()
+            seen[target] = text
+        return text
 
     return preview
 
@@ -70,17 +83,17 @@ def hex_tokens(
     cells: list[PointerCell],
     offset: int,
     preview: Callable[[int | None], str],
-    show_strings: bool,
+    resolve_pointers: bool,
 ) -> tuple[list[Token], dict[int, str]]:
     """The Hex tab's tokens for ``cells``, and each one's hover text.
 
-    A pointer's cells show where it points, or with ``show_strings`` the
+    A pointer's cells show where it points, or with ``resolve_pointers`` the
     string it reaches; the hover says both.
     """
     tokens, tips = [], {}
     for cell in cells:
         text = preview(cell.target)
-        shown = text if show_strings and text else f"→{_target(cell)}"
+        shown = text if resolve_pointers and text else f"→{_target(cell)}"
         token = _token(cell, offset, shown)
         tokens.append(token)
         tip = f"pointer ${cell.value:0{cell.size * 2}X} → {_target(cell)}"
@@ -92,14 +105,14 @@ def text_tokens(
     cells: list[PointerCell],
     offset: int,
     preview: Callable[[int | None], str],
-    show_strings: bool,
+    resolve_pointers: bool,
 ) -> list[Token]:
     """The Text tab's tokens for ``cells``: a line per pointer — its address,
-    its value, where it points and, with ``show_strings``, the string there."""
+    its value, where it points and, with ``resolve_pointers``, the string there."""
     tokens = []
     for cell in cells:
         line = f"{cell.address:06X}  ${cell.value:0{cell.size * 2}X} → {_target(cell)}"
-        if show_strings:
+        if resolve_pointers:
             text = preview(cell.target)
             if len(text) > PREVIEW_CHARS:
                 text = text[: PREVIEW_CHARS - 1] + "…"

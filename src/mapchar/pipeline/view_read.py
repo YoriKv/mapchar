@@ -22,7 +22,7 @@ from mapchar.core.block import (
     PointerTableSource,
 )
 from mapchar.core.mapping import mapping_for, read_pointer
-from mapchar.core.table import TableSet
+from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.tokens import Token
 from mapchar.engines.decode import DecodeRules, RunResult, decode_run
 from mapchar.pipeline.extract import decode_one, pointer_target, string_at
@@ -125,8 +125,37 @@ def pointer_cells(
     return cells
 
 
+def pointer_window(source: PointerSource, lo: int, count: int) -> int | None:
+    """The byte after the ``count``-th pointer of ``source`` at or past ``lo``:
+    how far a view from ``lo`` reads to show that many. ``None`` when the source
+    has fewer."""
+    if isinstance(source, PointerTableSource):
+        stride = max(source.stride, 1)
+        first = source.start + max(0, -(-(lo - source.start) // stride)) * stride
+        last = first + (count - 1) * stride
+        return last + source.size if last < source.stop else None
+    addresses = sorted(a for a in source.addresses if a >= lo)
+    if len(addresses) < count:
+        return None
+    return addresses[count - 1] + source.size
+
+
+PREVIEW_BYTES = 256
+"""How far past its target a pointer's string is read for a preview. A pointer
+into anything but text reads to the next end token, wherever that is — the end
+of the file, on a table that has none — and a view holds hundreds of pointers."""
+
+
 def target_string(
-    data: bytes, config: BlockConfig, tables: TableSet, target: int
-) -> list[Token]:
-    """The string a pointer reaches, read by ``config``'s string rules."""
-    return string_at(Bits(data), config, tables, target * 8)
+    bits: Bits, config: BlockConfig, tables: TableSet, target: int
+) -> tuple[list[Token], bool]:
+    """The string a pointer reaches, read by ``config``'s string rules for at
+    most :data:`PREVIEW_BYTES`, and whether that cut it short."""
+    tokens = string_at(bits, config, tables, target * 8, PREVIEW_BYTES * 8)
+    last = tokens[-1] if tokens else None
+    cut = (
+        last is not None
+        and last.bit_end >= (target + PREVIEW_BYTES) * 8
+        and (last.entry is None or last.entry.kind is not TokenKind.END)
+    )
+    return tokens, cut

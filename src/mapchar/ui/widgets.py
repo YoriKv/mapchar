@@ -18,10 +18,13 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QButtonGroup,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLayout,
+    QLayoutItem,
     QLineEdit,
     QProgressDialog,
     QPushButton,
@@ -30,6 +33,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QToolTip,
     QWidget,
 )
@@ -323,12 +327,16 @@ class FlowLayout(QLayout):
     For a row of controls whose count is not fixed — the code buttons of a
     block — or that is long enough to otherwise set a window's minimum width.
     The minimum it asks for is its widest single item, and the height follows
-    the width through ``heightForWidth``.
+    the width through ``heightForWidth``. An item that wraps in turn (a
+    :class:`WrapBar` section) is narrowed to the row and as tall as it then
+    needs.
     """
 
     def __init__(self, parent: QWidget | None = None, spacing: int = -1):
         super().__init__(parent)
         self._items = []
+        self.fill_rows = False
+        """Widen each row's items to share the room left at its end."""
         if parent is None:
             self.setContentsMargins(0, 0, 0, 0)
         self.setSpacing(spacing)
@@ -361,6 +369,13 @@ class FlowLayout(QLayout):
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
         return self.minimumSize()
 
+    def natural_width(self) -> int:
+        """The width that lays every item out on one row."""
+        hints = [item.sizeHint().width() for item in self._items if not item.isEmpty()]
+        margins = self.contentsMargins()
+        gaps = self._gap(Qt.Orientation.Horizontal) * max(len(hints) - 1, 0)
+        return sum(hints) + gaps + margins.left() + margins.right()
+
     def minimumSize(self) -> QSize:  # noqa: N802 - Qt override
         size = QSize()
         for item in self._items:
@@ -389,20 +404,40 @@ class FlowLayout(QLayout):
         area = rect.adjusted(
             margins.left(), margins.top(), -margins.right(), -margins.bottom()
         )
-        x, y, line = area.x(), area.y(), 0
         across = self._gap(Qt.Orientation.Horizontal)
         down = self._gap(Qt.Orientation.Vertical)
+        rows: list[list[tuple[QLayoutItem, int]]] = [[]]
+        x = area.x()
         for item in self._items:
             if item.isEmpty():
                 continue
             hint = item.sizeHint()
-            if x + hint.width() > area.right() + 1 and line > 0:
-                x, y, line = area.x(), y + line + down, 0
-            if apply:
-                item.setGeometry(QRect(QPoint(x, y), hint))
-            x += hint.width() + across
-            line = max(line, hint.height())
-        return y + line - rect.y() + margins.bottom()
+            width = max(min(hint.width(), area.width()), item.minimumSize().width())
+            if x + width > area.right() + 1 and rows[-1]:
+                rows.append([])
+                x = area.x()
+            rows[-1].append((item, width))
+            x += width + across
+        y = area.y()
+        for row in rows:
+            if not row:
+                continue
+            spare = area.width() - sum(w for _, w in row) - across * (len(row) - 1)
+            x, line = area.x(), 0
+            for index, (item, width) in enumerate(row):
+                if self.fill_rows and spare > 0:
+                    width += spare // len(row) + (index < spare % len(row))
+                height = (
+                    item.heightForWidth(width)
+                    if item.hasHeightForWidth()
+                    else item.sizeHint().height()
+                )
+                if apply:
+                    item.setGeometry(QRect(QPoint(x, y), QSize(width, height)))
+                x += width + across
+                line = max(line, height)
+            y += line + down
+        return max(y - down, area.y()) - rect.y() + margins.bottom()
 
 
 class WrapBar(QWidget):
@@ -412,6 +447,10 @@ class WrapBar(QWidget):
     A :class:`FlowLayout` alone asks for one row's height, so a window short of
     room squeezes the rows under it out of sight; this asks for the height its
     rows take at the width it has, and asks again when the width changes.
+
+    Controls come in groups (:meth:`add_group`), and groups can be gathered
+    into titled sections (:meth:`add_section`) that sit side by side while
+    there is room and wrap their own groups when there is not.
     """
 
     def __init__(self, parent: QWidget | None = None):
@@ -419,6 +458,7 @@ class WrapBar(QWidget):
         self.flow = FlowLayout(self)
         self.flow.setContentsMargins(0, 0, 0, 0)
         self._height = 0
+        self._captions: list[QLabel] = []
 
     def add_group(
         self, label: str, *widgets: QWidget, tip: str | None = None
@@ -440,12 +480,42 @@ class WrapBar(QWidget):
         self.flow.addWidget(group)
         return group
 
+    def add_section(self, title: str) -> WrapBar:
+        """A framed section captioned ``title``, as one item of this bar; the
+        bar inside it takes the section's groups."""
+        self.flow.fill_rows = True
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(6, 3, 3, 3)
+        row.setSpacing(8)
+        caption = QLabel(title)
+        font = caption.font()
+        font.setBold(True)
+        caption.setFont(font)
+        row.addWidget(caption)
+        self._captions.append(caption)
+        # One caption width for every section, so the controls of sections
+        # stacked on rows of their own start in one column.
+        widest = max(c.sizeHint().width() for c in self._captions)
+        for c in self._captions:
+            c.setFixedWidth(widest)
+        inner = WrapBar()
+        row.addWidget(inner, 1)
+        self.flow.addWidget(frame)
+        return inner
+
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
         width = self.flow.minimumSize().width()
         return QSize(width, self.flow.heightForWidth(max(self.width(), width)))
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
-        return self.minimumSizeHint()
+        # One row, so a section beside others asks for the room to stay whole.
+        width = max(self.flow.natural_width(), self.flow.minimumSize().width())
+        return QSize(width, self.flow.heightForWidth(width))
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt override
+        return self.flow.heightForWidth(width)
 
     def event(self, event: QEvent) -> bool:
         # A row shown or hidden, or a new width, changes the rows it takes.
@@ -455,6 +525,44 @@ class WrapBar(QWidget):
                 self._height = height
                 self.updateGeometry()
         return super().event(event)
+
+
+class ModeToggle(QWidget):
+    """Buttons side by side, exactly one of them down: a choice of mode that
+    changes which controls around it apply.
+
+    :attr:`chosen` fires with the datum of a button the user pressed;
+    :meth:`set_value` shows one without firing.
+    """
+
+    chosen = Signal(object)
+
+    def __init__(
+        self, choices: Sequence[tuple[str, object]], parent: QWidget | None = None
+    ):
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        self._data = [data for _, data in choices]
+        self._group = QButtonGroup(self)
+        for index, (label, _) in enumerate(choices):
+            button = QToolButton()
+            button.setText(label)
+            button.setCheckable(True)
+            self._group.addButton(button, index)
+            row.addWidget(button)
+        self._group.button(0).setChecked(True)
+        self._group.idClicked.connect(lambda i: self.chosen.emit(self._data[i]))
+
+    def value(self) -> object:
+        return self._data[self._group.checkedId()]
+
+    def button(self, value: object) -> QToolButton:
+        return self._group.button(self._data.index(value))
+
+    def set_value(self, value: object) -> None:
+        self.button(value).setChecked(True)
 
 
 class EscapeCloses:
@@ -645,6 +753,7 @@ __all__ = [
     "FlowLayout",
     "MONO_FAMILIES",
     "ModalProgress",
+    "ModeToggle",
     "ResultsTable",
     "WrapBar",
     "fill_pick",

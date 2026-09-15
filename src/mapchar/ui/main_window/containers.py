@@ -11,7 +11,6 @@ from mapchar.plugins.base import Stage
 from mapchar.project.workspace import Entry, EntryKind, retarget_files
 from mapchar.ui.dialogs import ContainerDialog, TextDialog
 from mapchar.ui.undo_commands import ContainerCommand
-from mapchar.ui.widgets import select_data
 
 
 class ContainerMixin:
@@ -43,7 +42,7 @@ class ContainerMixin:
             if not writes_back(p, Stage.CONTAINER)
         )
         dialog = ContainerDialog(
-            self._plugin_items(Stage.CONTAINER),
+            [(p.info.name, p.info.id) for p in self.registry.plugins(Stage.CONTAINER)],
             entry.paths,
             entry.container_id,
             self._detected_container(entry),
@@ -104,7 +103,6 @@ class ContainerMixin:
             self._entry is not None and self._entry.parent is entry
         ):
             self._doc = self._load_document(self._entry)
-        select_data(self.container_pick, container_id)
         self.files_panel.refresh_labels()
         self._update_title()
         self._refresh_view()

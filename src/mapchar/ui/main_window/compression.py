@@ -176,7 +176,7 @@ class CompressionMixin:
             file_entry.path,
             parent=file_entry,
             config=cfg,
-            compression_id=self.compression_pick.currentData(),
+            compression_id=self._preview_scheme,
             slice_offset=self._offset,
             # A decode that read nothing recorded nothing: the slot is left
             # unknown rather than claimed to be empty, and the write-back then

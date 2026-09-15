@@ -81,8 +81,6 @@ class PluginsMixin:
         project_dir = os.path.dirname(project_path) if project_path else None
         self.registry, issues = self._reload_plugins(project_dir)
         self._plugin_issues = list(issues)
-        self._fill_container_pick()
-        self._fill_compression_pick()
         self._registry_changed()
         self._alert_plugin_issues()
 
@@ -96,8 +94,6 @@ class PluginsMixin:
         registry, issues = self._reload_plugins(project_dir)
         self.registry = registry
         self._plugin_issues = list(issues)
-        self._fill_container_pick()
-        self._fill_compression_pick()
         self._registry_changed()
         kept = self._drop_clean_documents()
         for e in self.workspace.table_entries():

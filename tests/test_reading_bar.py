@@ -1,5 +1,5 @@
-"""The Codecs and Reading bars: a block's settings edited live, Pointer in the
-Table list, the encodings under the loaded tables, and a file's reading."""
+"""The Format and Reading bars: a block's settings edited live, the Strings and
+Pointers modes, the encodings under the loaded tables, and a file's reading."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from mapchar.core.block import (
     RangeSource,
 )
 from mapchar.project.projectfile import load_project, save_project
-from mapchar.ui.main_window.codecs_bar import POINTER
 from mapchar.ui.raw_widget import POINTER_TOKENS
 from mapchar.ui.widgets import select_data
 from window_helpers import add_block, make_window, open_rom_and_table
@@ -30,26 +29,43 @@ def _items(combo) -> list[object]:
     return [combo.itemData(i) for i in range(combo.count())]
 
 
-def test_the_table_list_heads_with_pointer_then_tables_then_encodings(window):
-    items = _items(window.table_pick)
-    assert items[0] == POINTER
+def test_the_format_list_offers_the_encodings(window):
+    items = _items(window.format_pick)
     assert "ascii" in items and "shift-jis" in items and "utf-16le" in items
-    assert POINTER not in _items(window.strings_pick)
+
+
+def _pointers(window):
+    """Press the Pointers button, as the user does."""
+    window.mode_toggle.button(True).click()
+
+
+def test_the_mode_shows_only_its_own_settings(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    window._activate_entry(entry)
+    window.show()
+    bar = window.reading_bar
+    assert not window.resolve_group.isVisibleTo(window)
+    assert not bar.sections["Pointers"].isVisibleTo(window)
+    # A file has no addresses to write back to.
+    assert not bar.sections["Writing"].isVisibleTo(window)
+    _pointers(window)
+    assert window.resolve_group.isVisibleTo(window)
+    assert bar.sections["Pointers"].isVisibleTo(window)
 
 
 def test_a_file_with_no_table_reads_as_ascii(window, tmp_path):
     rom = tmp_path / "rom.bin"
     rom.write_bytes(b"HI\x00")
     window.open_rom(str(rom))
-    assert window.table_pick.currentData() == "ascii"
+    assert window.format_pick.currentData() == "ascii"
     assert "".join(t.text() for t in window.raw._model.tokens) == "HI[end]"
 
 
 def test_a_loaded_table_comes_before_the_encodings_and_is_picked(window, tmp_path):
     open_rom_and_table(window, tmp_path, ROM)
-    items = _items(window.table_pick)
+    items = _items(window.format_pick)
     assert items.index("main") < items.index("ascii")
-    assert window.table_pick.currentData() == "main"
+    assert window.format_pick.currentData() == "main"
 
 
 def test_a_block_setting_applies_as_it_changes_and_undoes(window, tmp_path):
@@ -73,28 +89,29 @@ def test_a_block_setting_applies_as_it_changes_and_undoes(window, tmp_path):
     assert len(block.doc.strings) == 2
 
 
-def test_pointer_turns_a_block_into_a_pointer_table_read_through_its_table(
+def test_pointers_turn_a_block_into_a_pointer_table_read_through_its_format(
     window, tmp_path
 ):
     entry = open_rom_and_table(window, tmp_path, ROM)
     block = add_block(window, entry, "b", RangeSource(0, 4))
-    select_data(window.table_pick, POINTER)
+    _pointers(window)
     assert block.config.source == PointerTableSource(0, 4, 1, 1)
     assert block.config.table_id == "main"
-    assert window.strings_pick.currentData() == "main"
+    assert window.format_pick.currentData() == "main"
     bar = window.reading_bar
     bar.ptr_size.setValue(2)
     bar.ptr_stride.setValue(2)
     assert block.config.source == PointerTableSource(0, 4, 2, 2)
     assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
-    # Back to a table, the region reads as text again.
-    select_data(window.table_pick, "main")
+    # Back to strings, the region reads as text again.
+    window.mode_toggle.button(False).click()
     assert block.config.source == RangeSource(0, 4)
+    assert block.config.table_id == "main"
 
 
 def test_a_file_read_as_pointers_shows_where_each_points(window, tmp_path):
     open_rom_and_table(window, tmp_path, ROM)
-    select_data(window.table_pick, POINTER)
+    _pointers(window)
     window.reading_bar.ptr_size.setValue(2)
     window.reading_bar.ptr_stride.setValue(2)
     tokens = window.raw._model.tokens
@@ -102,8 +119,8 @@ def test_a_file_read_as_pointers_shows_where_each_points(window, tmp_path):
     assert all(t.table_id == POINTER_TOKENS for t in tokens)
     tip = window.raw._model.tips[0]
     assert tip.startswith("pointer $0010 → 10") and "AB" in tip
-    # With the strings shown, a pointer's cells read what it reaches.
-    window.show_strings.setChecked(True)
+    # Resolved, a pointer's cells read what it reaches.
+    window.resolve_pointers.setChecked(True)
     assert window.raw._model.tokens[1].text() == "B▪"
     window._show_view("text")
     body = window.text.edit.toPlainText()
@@ -112,9 +129,9 @@ def test_a_file_read_as_pointers_shows_where_each_points(window, tmp_path):
 
 def test_a_file_s_reading_is_its_session_and_is_saved(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
-    select_data(window.table_pick, POINTER)
+    _pointers(window)
     window.reading_bar.ptr_size.setValue(2)
-    window.show_strings.setChecked(True)
+    window.resolve_pointers.setChecked(True)
     assert entry.session.config.source.size == 2
     path = tmp_path / "p.mapchar"
     window._capture_session()
@@ -122,17 +139,17 @@ def test_a_file_s_reading_is_its_session_and_is_saved(window, tmp_path):
     loaded = load_project(str(path))
     session = loaded.entries[0].session
     assert session.config == entry.session.config
-    assert session.show_strings
+    assert session.resolve_pointers
 
 
 def test_new_block_from_selection_starts_from_the_bars(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
-    select_data(window.table_pick, POINTER)
+    _pointers(window)
     window.reading_bar.ptr_size.setValue(2)
     window.reading_bar.ptr_stride.setValue(2)
     window._new_block(0, 4)
     block = window._entry
     assert block.parent is entry
     assert block.config.source == PointerTableSource(0, 4, 2, 2)
-    assert window.table_pick.currentData() == POINTER
+    assert window.mode_toggle.value() is True
     assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]

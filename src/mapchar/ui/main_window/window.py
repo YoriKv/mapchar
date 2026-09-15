@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from mapchar import APP_NAME
 from mapchar.core.address import BANK_PRESETS, HEX_ID
+from mapchar.core.bits import Bits
 from mapchar.core.document import Document
 from mapchar.core.text import read_text_any
 from mapchar.plugins.base import Stage
@@ -60,7 +61,6 @@ from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.main_window.block_bar import BlockBarMixin
 from mapchar.ui.main_window.capability_sync import CapabilitySyncMixin
-from mapchar.ui.main_window.codecs_bar import CodecsBarMixin
 from mapchar.ui.main_window.compression import CompressionMixin
 from mapchar.ui.main_window.containers import ContainerMixin
 from mapchar.ui.main_window.dumping import DumpingMixin
@@ -68,6 +68,7 @@ from mapchar.ui.main_window.entries import EntriesMixin
 from mapchar.ui.main_window.entry_clipboard import EntryClipboardMixin
 from mapchar.ui.main_window.find_replace import FindReplaceMixin
 from mapchar.ui.main_window.fonts import FontsMixin
+from mapchar.ui.main_window.format_bar import FormatBarMixin
 from mapchar.ui.main_window.hex_view import HexViewMixin
 from mapchar.ui.main_window.history import HistoryMixin
 from mapchar.ui.main_window.import_export import ImportExportMixin
@@ -101,6 +102,7 @@ from mapchar.ui.widgets import (
     CommandComboBox,
     CompactComboBox,
     ElidedLabel,
+    ModeToggle,
     WrapBar,
     fit_chars,
 )
@@ -111,7 +113,7 @@ class MainWindow(
     SessionMixin,
     RefreshMixin,
     CapabilitySyncMixin,
-    CodecsBarMixin,
+    FormatBarMixin,
     NavigationMixin,
     HistoryMixin,
     OpeningMixin,
@@ -188,6 +190,9 @@ class MainWindow(
         """The Text tab's tokens, kept from one window to the next."""
         self._text_guess = 0
         """How many bytes the Text tab's last window took to fill its box."""
+        self._previews: tuple[tuple, Bits, dict[int, str]] | None = None
+        """What the pointers' targets read as, by target, with what they were
+        read from and through (:meth:`_pointer_preview`)."""
         self._text_up_guess = 0.0
         """How many bytes back a line of the text above the Text tab's window
         was, the last time one was looked for."""
@@ -196,11 +201,12 @@ class MainWindow(
         self._scan_stop = False
         """Set by :meth:`request_scan_stop` to abandon a running structure scan."""
         self._selection: tuple[int, int] | None = None
-        self._pick_is_blocks = False
         self._bars_show: tuple | None = None
         """The entry and reading the bars were last loaded with."""
-        """Whether the Compression pick shows a block's own scheme rather than a
-        file's preview (:mod:`mapchar.ui.main_window.codecs_bar`)."""
+        self._preview_scheme: str | None = None
+        """The compression scheme the Decompressed view previews a file through:
+        the one Jump to Source or a bookmark arms, until another entry opens
+        (:mod:`mapchar.ui.main_window.compression`)."""
         self._step_icons: list[tuple[QPushButton, Glyph]] = []
         # Before anything can make an entry current: the first visit arms the
         # trail's two actions, and _build_menus puts them in the Navigate menu.
@@ -268,37 +274,28 @@ class MainWindow(
         # In the editing column rather than the window's toolbar area, which
         # would run across the top of the docks: the bars describe the view
         # under them, as celPix's do.
-        codecs = WrapBar()
-        codecs.setObjectName("codecs_bar")
-        self.container_pick = CompactComboBox()
-        self._fill_container_pick()
-        self.table_pick = CommandComboBox("New Table…")
-        self.strings_pick = CompactComboBox()
-        self.show_strings = QCheckBox("Show strings")
-        self.compression_pick = CompactComboBox()
-        self._fill_compression_pick()
-        codecs.add_group("Container", self.container_pick)
-        codecs.add_group("Compression", self.compression_pick)
-        codecs.add_group(
-            "Table",
-            self.table_pick,
-            tip="What the bytes are read as: Pointer, or the table or encoding "
-            "of their text",
+        format_bar = WrapBar()
+        format_bar.setObjectName("format_bar")
+        self.format_pick = CommandComboBox("New Table…")
+        self.mode_toggle = ModeToggle((("Strings", False), ("Pointers", True)))
+        self.mode_toggle.button(False).setToolTip("Read the bytes as text")
+        self.mode_toggle.button(True).setToolTip(
+            "Read the bytes as pointers to strings"
         )
-        self.pointer_groups = (
-            codecs.add_group(
-                "Strings",
-                self.strings_pick,
-                tip="The table the pointers' strings are read through",
-            ),
-            codecs.add_group(
-                "",
-                self.show_strings,
-                tip="Show the string each pointer reaches beside it",
-            ),
+        self.resolve_pointers = QCheckBox("Resolve pointers")
+        format_bar.add_group(
+            "Format",
+            self.format_pick,
+            tip="The table or encoding the text is read through",
         )
-        layout.addWidget(codecs)
-        self.codecs_bar = codecs
+        format_bar.add_group("", self.mode_toggle)
+        self.resolve_group = format_bar.add_group(
+            "",
+            self.resolve_pointers,
+            tip="Show the string each pointer reaches in its place",
+        )
+        layout.addWidget(format_bar)
+        self.format_bar = format_bar
         self.reading_bar = ReadingBar()
         self.reading_bar.set_mappings(self.registry.ids(Stage.MAPPING))
         layout.addWidget(self.reading_bar)
@@ -434,13 +431,10 @@ class MainWindow(
         self.files_panel.duplicate_requested.connect(self._duplicate_entries)
         self.tables_panel.table_chosen.connect(self._choose_table)
         self.fonts_panel.edit_requested.connect(self._edit_font_entry)
-        self.container_pick.currentIndexChanged.connect(self._on_chain_changed)
-        self.table_pick.chosen.connect(self._on_table_pick)
-        self.table_pick.command.connect(lambda: self._new_table_dialog(start=True))
-        self.strings_pick.currentIndexChanged.connect(
-            lambda: self._on_reading_edited("table")
-        )
-        self.show_strings.toggled.connect(self._on_show_strings)
+        self.format_pick.chosen.connect(self._on_format_pick)
+        self.format_pick.command.connect(lambda: self._new_table_dialog(start=True))
+        self.mode_toggle.chosen.connect(self._on_mode)
+        self.resolve_pointers.toggled.connect(self._on_resolve_pointers)
         self.reading_bar.edited.connect(self._on_reading_edited)
         self.block_dump.clicked.connect(self._dump)
         self.raw.offset_requested.connect(self._go_to)
@@ -467,7 +461,6 @@ class MainWindow(
         self.search_window.build_table.connect(self._build_table_from_hit)
         self.scan_window.go_to.connect(self._select_bytes)
         self.scan_window.new_block.connect(self._block_from_region)
-        self.compression_pick.currentIndexChanged.connect(self._on_compression_pick)
         self.decompress_window.jump_next.connect(self._jump_next_structure)
         self.decompress_window.scan_next.connect(self._scan_next_structure)
         self.decompress_window.scan_stop.connect(self.request_scan_stop)

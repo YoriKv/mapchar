@@ -3,6 +3,7 @@ the standard encodings as tables, and a new block's region."""
 
 from __future__ import annotations
 
+from mapchar.core.bits import Bits
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -80,7 +81,7 @@ def test_pointer_cells_are_every_stride_from_the_table_s_start():
 def test_a_pointer_s_string_reads_by_the_string_rules():
     data = b"HI\x00OK\x00"
     cfg = BlockConfig(PointerTableSource(0, 0, 2, 2), EndToken(), "ascii")
-    assert render(target_string(data, cfg, _ascii(), 3)) == "OK[end]"
+    assert render(target_string(Bits(data), cfg, _ascii(), 3)[0]) == "OK[end]"
 
 
 def test_a_new_block_keeps_its_reading_s_kind_over_the_region():
