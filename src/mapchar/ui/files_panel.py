@@ -668,10 +668,32 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
             return
         string = self.string_of(item)
         if string is not None:
+            # Showing the string selects its row again, over the block's row
+            # that making the block current selected.
             self.string_activated.emit(*string)
-            # Showing the block made it current, which selected its own row;
-            # the row clicked is the string's, and it stays selected.
-            self._select_item(item)
+
+    def select_entry(self, entry: Entry) -> None:
+        """Select ``entry``'s row alone — what a view that left one of its
+        strings for the block itself asks for, since the current entry did
+        not change and so did not select it."""
+        self._on_current(entry)
+
+    def select_string(self, entry: Entry, index: int) -> None:
+        """Select the row of string ``index`` under its block alone, opening
+        the block to show it — what showing a string from anywhere but a click
+        on its row asks for: Back and Forward land on strings too."""
+        item = self._items.get(id(entry))
+        if item is None:
+            return
+        if not item.isExpanded():
+            item.setExpanded(True)  # builds the rows
+        for i in range(item.childCount()):
+            child = item.child(i)
+            data = child.data(0, STRING_ROLE)
+            if isinstance(data, tuple) and data[1] == index:
+                self._select_item(child)
+                self.tree.scrollToItem(child)
+                return
 
     def _select_item(self, item: QTreeWidgetItem) -> None:
         self.tree.blockSignals(True)

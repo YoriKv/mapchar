@@ -360,6 +360,8 @@ The exploration surface, the equivalent of celPix's tile canvas.
   Forward** (Alt+Left / Alt+Right, or the browser buttons on a mouse) walk a
   trail of what has been on screen: the entries visited, and each string
   opened from the Files panel, which Back comes out of the way it came in.
+  The Files panel's selection follows each step, opening a block to the
+  string landed on. A project opens with its current entry as the first visit.
 - **The keys work wherever the focus is** — a picked table or a clicked row
   does not take the navigation keys away — except inside a text field or a list,
   which spend the arrows themselves. The Text tab's box is not one: read-only,

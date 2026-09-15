@@ -132,9 +132,9 @@ class ProjectMixin:
         self._entry = None
         self._doc = None
         self._load_project_plugins(None)  # drop the old project's plugins/ folder
+        self._forget_all_visits()  # nothing the trail named survives the swap
         self.workspace.replace([], None)
         self.undo_stack.clear()
-        self._forget_all_visits()  # nothing the trail named survives the swap
         self.project_path = None
         self._saved_snapshot = None
         self._sync_locate_action()
@@ -168,6 +168,9 @@ class ProjectMixin:
             except (OSError, MapcharError) as exc:
                 e.missing = True
                 loaded.warnings.append(f"{e.name}: {exc}")
+        # The trail goes before the swap, not after: nothing it named survives,
+        # and the entry the swap makes current is the new trail's first visit.
+        self._forget_all_visits()
         self.workspace.replace(loaded.entries, loaded.current)
         for e in loaded.entries:
             # A block whose translations are not on disk yet is an unsaved
@@ -178,7 +181,6 @@ class ProjectMixin:
             ):
                 self.workspace.stamp(e)
         self.undo_stack.clear()
-        self._forget_all_visits()  # nothing the trail named survives the swap
         self.project_path = path
         self._remember_dir(path)
         self._add_recent(path)

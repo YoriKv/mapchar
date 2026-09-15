@@ -357,6 +357,39 @@ def test_back_leaves_a_string_for_the_block_it_is_under(window, tmp_path):
     assert window._bounds == window._string_bounds != source
 
 
+def test_walking_onto_a_string_selects_its_row_in_the_files_panel(window, tmp_path):
+    """Back and Forward land on strings, and the panel's selection follows the
+    view there and out again, opening the block to show the row."""
+    file_entry = _opened(window, tmp_path)
+    block = add_block(window, file_entry, "b", RangeSource(0, 8))
+    panel = window.files_panel
+    window._show_string(block, 1)
+    item = panel._items[id(block)]
+    assert item.isExpanded()
+    assert panel.string_of(panel.tree.selectedItems()[0]) == (block, 1)
+    window._history_step(-1)
+    assert panel.tree.selectedItems() == [item]
+    item.setExpanded(False)
+    window._history_step(1)
+    assert item.isExpanded()
+    assert panel.string_of(panel.tree.selectedItems()[0]) == (block, 1)
+
+
+def test_opening_a_project_starts_the_trail_on_its_current_entry(window, tmp_path):
+    file_entry = _opened(window, tmp_path)
+    block = add_block(window, file_entry, "b", RangeSource(0, 8))
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    assert window.open_project(str(proj))
+    current = window.workspace.current
+    assert current is not None and current.name == block.name
+    assert window._history == [(current, None)]
+    loaded_file = window.workspace.files()[0]
+    window._show_entry(loaded_file)
+    window._history_step(-1)
+    assert window._entry is current
+
+
 def test_closing_a_block_forgets_the_visits_to_its_strings(window, tmp_path):
     file_entry = _opened(window, tmp_path)
     block = add_block(window, file_entry, "b", RangeSource(0, 8))

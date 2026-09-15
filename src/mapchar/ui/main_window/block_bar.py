@@ -258,6 +258,7 @@ class BlockBarMixin:
         # The view is already that string alone, so nothing in it is selected.
         self.raw.set_selection(0, 0)
         self._on_selection(0, 0)
+        self.files_panel.select_string(entry, index)
 
     def _leave_string(self, entry: Entry) -> None:
         """Back out of one string of the block on screen to what it reads apart
@@ -270,6 +271,7 @@ class BlockBarMixin:
             self._view_strings(entry)
         else:
             self._view_source(entry)
+        self.files_panel.select_entry(entry)
 
     def _read_block_strings(self, entry: Entry) -> None:
         """The Files panel opened a block the session has not read: read it, so
