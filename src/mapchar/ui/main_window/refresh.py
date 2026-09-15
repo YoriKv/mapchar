@@ -98,7 +98,7 @@ class RefreshMixin:
         total = doc.size
         self._offset = max(0, min(self._offset, max(total - 1, 0)))
         # A position outside the view's bounds widens them to the whole file:
-        # whatever asked for it — a typed address, a search hit, an undo
+        # whatever asked for it — a typed address, a Search Window hit, an undo
         # reaching its edit — meant to be shown there, not clamped away from it.
         if self._bounds is not None and not (
             self._bounds[0] <= self._offset < self._bounds[1]

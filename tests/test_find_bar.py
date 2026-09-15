@@ -6,9 +6,11 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import Qt
 
-from window_helpers import make_window, open_rom_and_table
+from mapchar.core.block import RangeSource
+from window_helpers import add_block, make_window, open_rom_and_table
 
-DATA = bytes(range(64)) + b"ABCABC" + bytes(16)
+DATA = bytes(range(64)) + b"ABCABC" + bytes(8) + b"ABC" + bytes(5)
+"""Two matches of ``ABC`` at 64 and 67, and a third at 78."""
 
 
 @pytest.fixture
@@ -56,7 +58,7 @@ def test_enter_and_shift_enter_in_the_bar_search_either_way(window, tmp_path, qt
     qtbot.keyClick(
         window.find_row.field, Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier
     )
-    assert window._selection == (67, 70)  # the last match, wrapped to
+    assert window._selection == (78, 81)  # the last match, wrapped to
     qtbot.keyClick(window.find_row.field, Qt.Key.Key_Return)
     assert window._selection == (64, 67)  # forward from there, wrapped again
 
@@ -90,3 +92,31 @@ def test_a_search_that_matches_nothing_says_so(window, tmp_path):
     window._find_bytes(again=True)
     assert window._selection is None
     assert window.statusBar().currentMessage() == "Not found"
+
+
+def test_inside_a_block_the_search_stays_in_its_bounds(window, tmp_path):
+    """A hit outside a block's source would widen the view to the file, so the
+    search never looks there: it wraps within the block."""
+    file_entry = _open(window, tmp_path)
+    add_block(window, file_entry, "b", RangeSource(64, 70))
+    assert window._bounds == (64, 70)
+    window.find_row.set_text("41 42 43")
+    window._find_bytes(again=True)
+    assert window._selection == (64, 67)
+    window._find_bytes(again=True)
+    assert window._selection == (67, 70)
+    window._find_bytes(again=True)
+    assert window._selection == (64, 67)  # wrapped inside, not to 78
+    window._find_bytes(again=True, backwards=True)
+    assert window._selection == (67, 70)
+    assert window._bounds == (64, 70)
+    # A match the block's bytes hold only part of is not the block's.
+    window.find_row.set_text("43 00")
+    window._find_bytes(again=True)
+    assert window._selection == (67, 70)
+    assert window.statusBar().currentMessage() == "Not found"
+    # The file, never confined, is searched whole.
+    window._activate_entry(file_entry)
+    window._go_to(0)
+    window._find_bytes(again=True)
+    assert window._selection == (69, 71) and window._bounds is None

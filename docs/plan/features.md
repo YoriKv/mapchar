@@ -343,9 +343,10 @@ The exploration surface, the equivalent of celPix's tile canvas.
   stretch from its start — a string in one row — the step buttons and their
   keys are off, since a step could only hide bytes that fit; the same goes for
   a file smaller than the window. Addresses stay the file's. Any position
-  asked for outside them — a typed address, a search hit, a Strings row, an
-  undo reaching its edit — widens the view to the whole file, as **Navigate ▸
-  Show Whole File** does in place. A file is never confined, and a block
+  asked for outside them — a typed address, a Search Window or Scan hit, a
+  Strings row, an undo reaching its edit — widens the view to the whole file,
+  as **Navigate ▸ Show Whole File** does in place; the Find bar never asks for
+  one, searching only the bytes in bounds. A file is never confined, and a block
   returning to the screen is confined to its source again, keeping its
   position if that is inside it.
 - **Navigation** — the address format (Hex, a console mapping preset, or Custom
@@ -386,6 +387,9 @@ compression, and report offsets in the file's coordinates.
   find the next match and Shift+Enter, Shift+F3 the previous, wrapping. The
   Hex panel's find field and **Search for Selection** (which spells the bytes
   as hex) hand the bar their search first, so it always shows the current one.
+  The search runs over the bytes the view is confined to — inside a block,
+  the block's source; on one string, that string — so a hit never widens the
+  view; a file is searched whole.
 - **Relative search** (Search Window):
   - type a word; the tool finds byte runs with the same relative pattern,
     for 8- and 16-bit codes, in either endianness;
