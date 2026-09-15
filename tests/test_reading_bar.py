@@ -4,6 +4,7 @@ Pointers modes, the encodings under the loaded tables, and a file's reading."""
 from __future__ import annotations
 
 import pytest
+from PySide6.QtCore import QPoint
 
 from helpers import pointer_rom
 from mapchar.core.block import (
@@ -89,6 +90,80 @@ def test_a_block_setting_applies_as_it_changes_and_undoes(window, tmp_path):
     assert bar.fixed_length.value() == 1
     window.undo_stack.undo()
     assert len(block.doc.strings) == 2
+
+
+def test_skip_ranges_are_edited_in_a_popup_list(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", RangeSource(0x10, 0x15))
+    window.show()
+    window.undo_stack.clear()
+    picker = window.reading_bar.skips
+    assert picker.currentText() == "none"
+    picker.showPopup()
+    popup = picker.popup
+    assert popup.isVisible()
+    popup.add_button.click()
+    # A row typed one side at a time applies once both sides read.
+    popup.table.item(0, 0).setText("11")
+    assert block.config.skips == ()
+    popup.table.item(0, 1).setText("13")
+    assert block.config.skips == ((0x11, 0x13),)
+    assert [s.original_text() for s in block.doc.strings] == ["AB[end]"]
+    assert picker.currentText() == "11>13"
+    # The reload after the edit left the list alone, so the row is still
+    # there to keep editing; a run of edits is one undo step.
+    popup.table.item(0, 1).setText("14")
+    assert block.config.skips == ((0x11, 0x14),)
+    assert window.undo_stack.count() == 1
+    # Removing it again in the same run leaves nothing to undo.
+    popup.remove_button.click()
+    assert block.config.skips == ()
+    assert picker.currentText() == "none"
+    assert window.undo_stack.count() == 0
+    picker.add(0x11, 0x14)
+    assert block.config.skips == ((0x11, 0x14),)
+    window.undo_stack.undo()
+    assert block.config.skips == ()
+    assert popup.table.rowCount() == 0
+    window.undo_stack.redo()
+    assert popup.table.rowCount() == 1 and picker.currentText() == "11>14"
+
+
+def test_a_skip_is_added_from_the_selection(window, tmp_path, monkeypatch):
+    from mapchar.ui.main_window import raw_view
+
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", RangeSource(0x10, 0x15))
+    window.undo_stack.clear()
+    rows = []
+
+    class ListedMenu(raw_view.QMenu):
+        def exec(self, *a):  # noqa: A003 - QMenu's name
+            rows.extend(self.actions())
+
+    monkeypatch.setattr(raw_view, "QMenu", ListedMenu)
+    window._raw_menu(QPoint(0, 0))
+    assert "Add S&kip from Selection" not in [a.text() for a in rows]
+    window._select_bytes(0x11, 2)
+    rows.clear()
+    window._raw_menu(QPoint(0, 0))
+    row = next(a for a in rows if a.text() == "Add S&kip from Selection")
+    row.trigger()
+    assert block.config.skips == ((0x11, 0x13),)
+    assert window.reading_bar.skips.currentText() == "11>13"
+    # Each one is its own step, whatever was selected before.
+    window._select_bytes(0x14, 1)
+    row.trigger()
+    assert block.config.skips == ((0x11, 0x13), (0x14, 0x15))
+    stack = window.undo_stack
+    edits = [i for i in range(stack.count()) if stack.text(i) == "Edit b"]
+    assert len(edits) == 2
+    # A file has no skip ranges, so its menu has no row for one.
+    window._activate_entry(entry)
+    window._select_bytes(0x11, 2)
+    rows.clear()
+    window._raw_menu(QPoint(0, 0))
+    assert "Add S&kip from Selection" not in [a.text() for a in rows]
 
 
 def test_a_block_keeps_its_mode_and_edits_its_other_settings(window, tmp_path):

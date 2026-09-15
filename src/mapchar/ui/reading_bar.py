@@ -18,14 +18,22 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import QRegularExpression, Signal
-from PySide6.QtGui import QRegularExpressionValidator
+from PySide6.QtCore import QPoint, QRegularExpression, Qt, Signal
+from PySide6.QtGui import QKeyEvent, QRegularExpressionValidator
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
-    QSpinBox,
+    QPushButton,
+    QStyledItemDelegate,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -43,7 +51,15 @@ from mapchar.core.block import (
     StringType,
     WriteMode,
 )
-from mapchar.core.numbers import format_num, parse_num
+from mapchar.ui.number_fields import (
+    AddressEdit,
+    AddressSpelling,
+    HexEdit,
+    HexSpinBox,
+    OffsetEdit,
+    number_spin,
+    respell_addresses,
+)
 from mapchar.ui.widgets import CompactComboBox, WrapBar, fit_chars, hint_field
 
 RANGE, FIXED, TABLE, LIST = "range", "fixed", "table", "list"
@@ -96,34 +112,175 @@ _NOT_ONE_STRING = ("Source", "Pointers")
 bytes does not show."""
 
 _HEX = QRegularExpression(r"\s*\$?[0-9A-Fa-f_]*\s*")
-_NUMBER = QRegularExpression(r"\s*(-?\$|\$-)?[0-9A-Fa-f]*\s*")
 
 
-class HexEdit(QLineEdit):
-    """A field for one hex number; blank is ``None``."""
+class _HexDelegate(QStyledItemDelegate):
+    """Cells edited as hex numbers."""
 
-    def __init__(self, chars: int = 8, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setValidator(QRegularExpressionValidator(_HEX, self))
-        fit_chars(self, chars)
-        self.setMaximumWidth(self.minimumWidth())
+    def createEditor(self, parent, option, index):  # noqa: N802 - Qt override
+        editor = QLineEdit(parent)
+        editor.setValidator(QRegularExpressionValidator(_HEX, editor))
+        return editor
 
-    def value(self) -> int | None:
+
+class SkipsPopup(QFrame):
+    """The list of a block's skip ranges, edited in a popup under its picker.
+
+    A row is a ``from`` and a ``to`` in hex; the list applies as it changes,
+    and a row with a side still blank or unreadable is left out until it can
+    be read whole. The popup closes on Esc or a click outside it.
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self._loading = False
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.addWidget(QLabel("Reading from continues at to, in hex"))
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["From", "To"])
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setItemDelegate(_HexDelegate(self.table))
+        self.table.setMinimumSize(fit_chars(QLineEdit(), 10).minimumWidth() * 2, 120)
+        self.table.cellChanged.connect(self._on_cell_changed)
+        layout.addWidget(self.table, 1)
+        row = QHBoxLayout()
+        self.add_button = QPushButton("Add")
+        self.add_button.clicked.connect(lambda: self.add(None, None))
+        self.remove_button = QPushButton("Remove")
+        self.remove_button.clicked.connect(self.remove_current)
+        row.addWidget(self.add_button)
+        row.addWidget(self.remove_button)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+    def set_value(self, skips: tuple[tuple[int, int], ...]) -> None:
+        """Show ``skips``; a list already showing them, blank rows and all, is
+        left as it is, so a reload after an edit does not lose the row being
+        typed into."""
+        if self.value() == tuple(skips):
+            return
+        self._loading = True
         try:
-            return parse_hex(self.text(), None)
-        except ValueError:
-            return None
+            self.table.setRowCount(0)
+            for a, b in skips:
+                self._append(f"{a:X}", f"{b:X}")
+        finally:
+            self._loading = False
 
-    def set_value(self, value: int | None) -> None:
-        self.setText("" if value is None else f"{value:X}")
+    def value(self) -> tuple[tuple[int, int], ...]:
+        """The rows that read as a pair of numbers."""
+        skips = []
+        for row in range(self.table.rowCount()):
+            try:
+                a = parse_hex(self._text(row, 0), None)
+                b = parse_hex(self._text(row, 1), None)
+            except ValueError:
+                continue
+            if a is not None and b is not None:
+                skips.append((a, b))
+        return tuple(skips)
+
+    def add(self, start: int | None, stop: int | None) -> None:
+        """Append a range — blank, to be typed, when either side is ``None``."""
+        row = self._append(
+            "" if start is None else f"{start:X}", "" if stop is None else f"{stop:X}"
+        )
+        self.table.setCurrentCell(row, 0)
+        if start is None or stop is None:
+            self.table.editItem(self.table.item(row, 0 if start is None else 1))
+        else:
+            self.changed.emit()
+
+    def remove_current(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        had = self.value()
+        self.table.removeRow(row)
+        if self.value() != had:
+            self.changed.emit()
+
+    def _append(self, start: str, stop: str) -> int:
+        was, self._loading = self._loading, True
+        try:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(start))
+            self.table.setItem(row, 1, QTableWidgetItem(stop))
+        finally:
+            self._loading = was
+        return row
+
+    def _text(self, row: int, column: int) -> str:
+        item = self.table.item(row, column)
+        return item.text() if item is not None else ""
+
+    def _on_cell_changed(self, row: int, column: int) -> None:
+        if not self._loading:
+            self.changed.emit()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
+        if event.key() == Qt.Key.Key_Escape:
+            self.hide()
+        else:
+            super().keyPressEvent(event)
 
 
-def _spin(low: int, high: int, off: bool = False) -> QSpinBox:
-    spin = QSpinBox()
-    spin.setRange(low, high)
-    if off:
-        spin.setSpecialValueText("off")
-    return spin
+class SkipsPicker(CompactComboBox):
+    """A block's skip ranges: the list as one line, opening on the popup that
+    edits it in place of a dropdown."""
+
+    changed = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(140, parent)
+        self.addItem("none")
+        self.setToolTip("Byte ranges inside the region that are not text")
+        self.popup = SkipsPopup(self)
+        self.popup.changed.connect(self._on_changed)
+
+    def set_value(self, skips: tuple[tuple[int, int], ...]) -> None:
+        self.popup.set_value(skips)
+        self._show_summary()
+
+    def value(self) -> tuple[tuple[int, int], ...]:
+        return self.popup.value()
+
+    def add(self, start: int, stop: int) -> None:
+        """Append ``start`` to ``stop`` and apply it."""
+        self.popup.add(start, stop)
+
+    def _on_changed(self) -> None:
+        self._show_summary()
+        self.changed.emit()
+
+    def _show_summary(self) -> None:
+        text = ", ".join(f"{a:X}>{b:X}" for a, b in self.value()) or "none"
+        self.setItemText(0, text)
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt override
+        below = self.mapToGlobal(QPoint(0, self.height()))
+        screen = self.screen().availableGeometry()
+        size = self.popup.sizeHint()
+        x = min(below.x(), screen.right() - size.width())
+        y = below.y()
+        if y + size.height() > screen.bottom():
+            y = self.mapToGlobal(QPoint(0, 0)).y() - size.height()
+        self.popup.move(max(x, screen.left()), max(y, screen.top()))
+        self.popup.show()
+        self.popup.table.setFocus()
+
+    def hidePopup(self) -> None:  # noqa: N802 - Qt override
+        pass
 
 
 def source_kind(config: BlockConfig) -> str:
@@ -142,8 +299,11 @@ class ReadingBar(WrapBar):
     edited = Signal(str)
     """The user changed the control of this name; a run on one merges."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self, spelling: AddressSpelling | None = None, parent: QWidget | None = None
+    ):
         super().__init__(parent)
+        self.spelling = spelling if spelling is not None else AddressSpelling(self)
         self._loading = False
         self._pointers = False
         self._block = False
@@ -152,26 +312,25 @@ class ReadingBar(WrapBar):
         self.sections: dict[str, QWidget] = {}
 
         self.source_kind = CompactComboBox(120)
-        self.start = HexEdit()
-        self.stop = HexEdit()
-        self.count = _spin(1, 1_000_000)
-        self.length = _spin(1, 1_000_000)
-        self.ptr_size = _spin(1, 4)
-        self.ptr_stride = _spin(1, 4096)
+        # Each count is as wide as the values it usually holds, not its maximum.
+        self.start = AddressEdit(self.spelling)
+        self.stop = AddressEdit(self.spelling)
+        self.count = number_spin(1, 1_000_000, 4)
+        self.length = number_spin(1, 1_000_000, 3)
+        self.ptr_size = number_spin(1, 4, 1)
+        self.ptr_stride = number_spin(1, 4096, 2)
         self.ptr_endian = QComboBox()
         self.ptr_endian.addItem("Little", "little")
         self.ptr_endian.addItem("Big", "big")
         self.ptr_mapping = CompactComboBox(100)
         self.ptr_mapping.setEditable(True)
-        self.ptr_offset = QLineEdit("0")
-        self.ptr_offset.setValidator(QRegularExpressionValidator(_NUMBER, self))
-        fit_chars(self.ptr_offset, 8)
-        self.ptr_offset.setMaximumWidth(self.ptr_offset.minimumWidth())
-        self.ptr_bank = _spin(0, 4095)
+        self.ptr_offset = OffsetEdit()
+        self.ptr_bank = HexSpinBox(0, 0xFFF, 2)
         self.ptr_addresses = hint_field(
-            QLineEdit(), "hex addresses, comma separated", "The pointers' addresses"
+            QLineEdit(), "addresses, comma separated", "The pointers' addresses"
         )
         fit_chars(self.ptr_addresses, 24)
+        self.spelling.changed.connect(self._respell_addresses)
 
         self.string_type = QComboBox()
         for label, data in (
@@ -181,28 +340,22 @@ class ReadingBar(WrapBar):
             ("Next pointer", NEXT),
         ):
             self.string_type.addItem(label, data)
-        self.fixed_length = _spin(1, 1_000_000)
+        self.fixed_length = number_spin(1, 1_000_000, 3)
         self.stop_at_end = QCheckBox("Stop at end token")
-        self.pascal_width = _spin(1, 4)
+        self.pascal_width = number_spin(1, 4, 1)
         self.pascal_tokens = QCheckBox("Counts token weights")
-        self.spp = _spin(1, 64)
-        self.realign_m = _spin(0, 65536, off=True)
-        self.realign_o = _spin(0, 65536)
-        self.line_length = _spin(0, 1_000_000, off=True)
+        self.spp = number_spin(1, 64, 2)
+        self.realign_m = number_spin(0, 65536, 2, off=True)
+        self.realign_o = number_spin(0, 65536, 2)
+        self.line_length = number_spin(0, 1_000_000, 3, off=True)
         self.show_end = QCheckBox("Show [end]")
-        self.skips = hint_field(
-            QLineEdit(),
-            "from>to, from>to  (hex)",
-            "Byte ranges inside the region that are not text, in hex",
-        )
-        fit_chars(self.skips, 16)
+        self.skips = SkipsPicker()
 
-        self.bound = HexEdit()
+        self.bound = AddressEdit(self.spelling)
         hint_field(
             self.bound,
             "stop",
-            "The last address a write may reach, in hex; blank stops at the "
-            "region's end",
+            "The last address a write may reach; blank stops at the region's end",
         )
         self.write_mode = QComboBox()
         self.write_mode.addItem("Automatic", None)
@@ -216,8 +369,8 @@ class ReadingBar(WrapBar):
         groups = {}
         for name, label, widgets, tip in (
             ("source_kind", "", (self.source_kind,), "Where the strings are"),
-            ("start", "Start", (self.start,), "The first byte, in hex"),
-            ("stop", "Stop", (self.stop,), "The first byte past the region, in hex"),
+            ("start", "Start", (self.start,), "The first byte"),
+            ("stop", "Stop", (self.stop,), "The first byte past the region"),
             ("count", "Count", (self.count,), "How many strings"),
             ("length", "Length", (self.length,), "Bytes in every string"),
             ("ptr_size", "Size", (self.ptr_size,), "Bytes in a pointer"),
@@ -238,14 +391,13 @@ class ReadingBar(WrapBar):
                 "ptr_offset",
                 "Offset",
                 (self.ptr_offset,),
-                "Added to every pointer value: decimal or $hex, with a leading - "
-                "to subtract",
+                "Added to every pointer value, in hex, with a leading - to subtract",
             ),
             (
                 "ptr_bank",
                 "Bank",
                 (self.ptr_bank,),
-                "The bank a banked mapping reads in",
+                "The bank a banked mapping reads in, in hex",
             ),
             ("ptr_addresses", "Addresses", (self.ptr_addresses,), None),
             ("string_type", "Ends at", (self.string_type,), "How a string ends"),
@@ -321,6 +473,7 @@ class ReadingBar(WrapBar):
             ("line_length", self.line_length),
         ):
             spin.valueChanged.connect(lambda _=0, n=name: self._edited(n))
+        self.skips.changed.connect(lambda: self._edited("skips"))
         for name, box in (
             ("stop_at_end", self.stop_at_end),
             ("pascal_tokens", self.pascal_tokens),
@@ -332,7 +485,6 @@ class ReadingBar(WrapBar):
             ("stop", self.stop),
             ("ptr_offset", self.ptr_offset),
             ("ptr_addresses", self.ptr_addresses),
-            ("skips", self.skips),
             ("bound", self.bound),
             ("fill", self.fill),
         ):
@@ -382,11 +534,13 @@ class ReadingBar(WrapBar):
                     self.stop.set_value(s.stop)
                     self.ptr_stride.setValue(s.stride)
                 else:
-                    self.ptr_addresses.setText(", ".join(f"{a:X}" for a in s.addresses))
+                    self.ptr_addresses.setText(
+                        ", ".join(self.spelling.format(a) for a in s.addresses)
+                    )
                 self.ptr_size.setValue(s.size)
                 self.ptr_endian.setCurrentIndex(1 if s.endian == "big" else 0)
                 self.ptr_mapping.setCurrentText(s.mapping_id)
-                self.ptr_offset.setText(format_num(s.offset) if s.offset else "0")
+                self.ptr_offset.set_value(s.offset)
                 self.ptr_bank.setValue(s.bank)
             st = config.string_type
             kind = END
@@ -406,7 +560,7 @@ class ReadingBar(WrapBar):
             self.realign_o.setValue(config.realign[1])
             self.line_length.setValue(config.line_length)
             self.show_end.setChecked(config.show_end)
-            self.skips.setText(", ".join(f"{a:X}>{b:X}" for a, b in config.skips))
+            self.skips.set_value(config.skips)
             self.bound.set_value(config.bound)
             self.write_mode.setCurrentIndex(
                 max(self.write_mode.findData(config.write_mode), 0)
@@ -502,14 +656,10 @@ class ReadingBar(WrapBar):
 
     # -- reading back ---------------------------------------------------------
 
-    def target_offset(self) -> int | None:
-        text = self.ptr_offset.text().strip()
-        if not text:
-            return 0
-        try:
-            return parse_num(text)
-        except ValueError:
-            return None
+    def _respell_addresses(self, old) -> None:
+        """Spell the pointer list under the address format it changed to."""
+        text = self.ptr_addresses.text()
+        self.ptr_addresses.setText(respell_addresses(text, self.spelling, old))
 
     def config(self, base: BlockConfig, table_id: str) -> BlockConfig:
         """The reading the controls show, over ``base`` for what they do not.
@@ -526,7 +676,7 @@ class ReadingBar(WrapBar):
             stop = _or(self.stop.value(), old_stop)
         else:
             start, stop = old_start, old_stop
-        offset = self.target_offset()
+        offset = self.ptr_offset.value()
         pointer = {
             "size": self.ptr_size.value(),
             "endian": self.ptr_endian.currentData(),
@@ -542,14 +692,15 @@ class ReadingBar(WrapBar):
                 start, stop, stride=self.ptr_stride.value(), **pointer
             )
         elif kind == LIST:
-            try:
-                addresses = tuple(
-                    parse_hex(a)
-                    for a in self.ptr_addresses.text().split(",")
-                    if a.strip()
-                )
-            except ValueError:
+            read = [
+                self.spelling.parse(a)
+                for a in self.ptr_addresses.text().split(",")
+                if a.strip()
+            ]
+            if None in read:
                 addresses = getattr(old, "addresses", ())
+            else:
+                addresses = tuple(read)
             source = PointerListSource(addresses, **pointer)
         else:
             source = RangeSource(start, stop)
@@ -565,7 +716,7 @@ class ReadingBar(WrapBar):
         if self._block:
             fill = self.fill.value()
             changes |= {
-                "skips": self._skips(base.skips),
+                "skips": self.skips.value(),
                 "bound": self.bound.value(),
                 "write_mode": self.write_mode.currentData(),
                 "fill": base.fill if fill is None else fill & 0xFF,
@@ -583,17 +734,6 @@ class ReadingBar(WrapBar):
         if st == NEXT and self._pointers:
             return NextPointer()
         return EndToken()
-
-    def _skips(self, old: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
-        skips = []
-        try:
-            for pair in self.skips.text().split(","):
-                if ">" in pair:
-                    a, b = pair.split(">", 1)
-                    skips.append((parse_hex(a), parse_hex(b)))
-        except ValueError:
-            return old
-        return tuple(skips)
 
     def spare_room_rule(self) -> str:
         return self.spare_room.currentData()

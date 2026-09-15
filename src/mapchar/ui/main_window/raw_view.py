@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMenu
 
 from mapchar.core.bits import Bits
 from mapchar.engines.decode import DecodeRules, decode
+from mapchar.ui.undo_commands import BlockEditCommand
 
 
 class RawViewMixin:
@@ -40,6 +43,10 @@ class RawViewMixin:
                     "Jump to &Pointer", lambda: self._select_bytes(p.address, p.size)
                 )
             menu.addAction("&Add to Table…", self._add_selection_to_table)
+            if self._current_block(need_config=True) is not None:
+                menu.addAction(
+                    "Add S&kip from Selection", self._add_skip_from_selection
+                )
             menu.addAction("&Search for Selection", self._search_selection)
             menu.addAction(
                 "Copy &Hex",
@@ -53,6 +60,23 @@ class RawViewMixin:
     def _string_at(self, offset: int):
         """The string of the current document holding ``offset``."""
         return self._doc.string_at(offset) if self._doc is not None else None
+
+    def _add_skip_from_selection(self) -> None:
+        """A skip range over the selected bytes: reading their first continues
+        past their last. Its own undo step, unlike a run of edits in the Skips
+        list, which is one."""
+        entry = self._current_block(need_config=True)
+        if entry is None or not self._selection:
+            return
+        cfg = entry.config
+        before = (entry.name, cfg, entry.compression_id, entry.spare_room)
+        after = (
+            entry.name,
+            replace(cfg, skips=cfg.skips + (self._selection,)),
+            entry.compression_id,
+            entry.spare_room,
+        )
+        self._push_command(BlockEditCommand(self, entry, before, after))
 
     def _copy_selection_text(self) -> None:
         if not self._selection or self._doc is None:
