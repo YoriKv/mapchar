@@ -165,13 +165,13 @@ def test_mother_3(registry):
 
     # Mr. Saturn's font, its dakuten a mark of their own.
     first, saturn = group(900)[0], group(900)[4]
-    assert texts(ex)[saturn].startswith("[saturn]◆どせいさん おんせん[FF03][FF00]\n")
-    edits = {saturn: "[saturn]◆ぱぴぷ[line]です[end]", first: "◇が[FF04 $0010]ぎ[end]"}
+    assert texts(ex)[saturn].startswith("[saturn]◆どせいさん おんせん[wait][page]\n")
+    edits = {saturn: "[saturn]◆ぱぴぷ[line]です[end]", first: "◇が[pause $0010]ぎ[end]"}
     res, out = relayout(data, config, ts, edits, registry)
     assert res.ok, res.problems
     again = extract(out, config, ts, registry)
     assert [texts(again)[i] for i in (first, saturn)] == [
-        "◇が[FF04 $0010]ぎ[end]",
+        "◇が[pause $0010]ぎ[end]",
         "[saturn]◆ぱぴぷ[line]\nです[end]",
     ]
     s = again.strings[saturn]
@@ -180,19 +180,19 @@ def test_mother_3(registry):
     changed = [i for i in range(len(data)) if data[i] != out[i]]
     assert script[1800] <= changed[0] and changed[-1] < script[1802]
 
-    # Battle messages: FF20 and FF21 take no operand there.
+    # Battle messages: [claus] and [hinawa] stand where the script takes operands.
     config, ts, ex = blocks["Battle text"]
-    assert texts(ex)[300] == "[FF11]は[line]\n[FF10]をこころみた！[end]"
-    res, out = relayout(data, config, ts, {300: "[FF21]は[FF20]！[end]"}, registry)
+    assert texts(ex)[300] == "[arg2]は[line]\n[arg1]をこころみた！[end]"
+    res, out = relayout(data, config, ts, {300: "[hinawa]は[claus]！[end]"}, registry)
     assert res.ok, res.problems
-    assert texts(extract(out, config, ts, registry))[300] == "[FF21]は[FF20]！[end]"
+    assert texts(extract(out, config, ts, registry))[300] == "[hinawa]は[claus]！[end]"
 
     # In map 101 one string is the last page of another: laid out once, it
     # stays so while it is still that page, and both edit.
     config, ts, ex = blocks["Script"]
     whole, page = group(101)[:2]
     assert ex.strings[page].start < ex.strings[whole].end == ex.strings[page].end
-    shorter = "◇かんばん。[FF03][FF00]\n◇あきかんは くずかごへ。[end]"
+    shorter = "◇かんばん。[wait][page]\n◇あきかんは くずかごへ。[end]"
     res, out = relayout(data, config, ts, {whole: shorter}, registry)
     assert res.ok, res.problems
     again = extract(out, config, ts, registry)

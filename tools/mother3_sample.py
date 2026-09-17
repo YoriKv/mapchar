@@ -21,7 +21,9 @@ What the ROM holds, and where each fact comes from:
   operand count in words, read by ``$08022ED0`` for every text box; the
   renderer at ``$08009B98`` draws ``FF01`` as a line break and ``FF05`` as a
   palette change, and ``$08021BDC`` indents a line to centre it for ``FF09``.
-  ``FFFF`` ends a string.
+  ``FFFF`` ends a string. A code is named for what the game's own text was
+  seen using it for (``SCRIPT_LABELS``, ``BATTLE_LABELS``); the rest keep
+  their hex.
 - **``FF0B``** draws the rest of the string from the 90-glyph Mr. Saturn font
   at ``$D1CE78`` (16x16, the left and right bytes of each row stored apart),
   whose codes run ``あ``-``ん`` in gojūon order with separate dakuten marks.
@@ -69,32 +71,100 @@ SATURN_EXTRA = {0x3E: "◆", 0x3F: "。", 0x40: "？", 0x41: "！", 0x42: " "}
 
 # What each script code was seen doing, where its label does not say.
 SCRIPT_NOTES = {
-    0xFF00: "Follows every [FF03]: the next page of a text box.",
-    0xFF02: "Ends a row of choices.",
-    0xFF03: "Precedes every [FF00]: the end of a page.",
-    0xFF04: "Between dots in drawn-out speech: a pause.",
-    0xFF06: "Before a row of choices; the operand is how many (2 for はい/いいえ).",
+    0xFF00: "Follows every [wait]: the next page of a text box.",
+    0xFF02: "Ends a row of choices, and parts one battle message from the next.",
+    0xFF03: "Precedes every [page]: waits for the player's button.",
+    0xFF04: "Between dots in drawn-out speech; the operand is how long.",
+    0xFF06: "The operand is how many choices follow (2 for はい/いいえ).",
     0xFF07: "Ends some strings; not in the length table.",
-    0xFF08: "Before animal noises (チュン).",
+    0xFF08: "Before animal noises (チュン); the operand is which voice.",
     0xFF0A: "Indents a line like [center] does, in another mode.",
-    0xFF0C: "Ends shouted lines.",
-    0xFF21: "Inserts a name; the operand is often $FFF0/$FFF1.",
-    0xFF22: "Inserts a name.",
-    0xFF23: "Inserts a name.",
-    0xFF24: "Inserts a name.",
+    0xFF0C: "Ends shouted lines; the operand is how long.",
+    0xFF21: "By id, or $FFF0/$FFF1 for the item the event holds.",
+    0xFF22: "From the battler names, which include ヒナワ.",
+    0xFF23: "From the character names.",
     0xFF25: "Inserts a name, after ＰＫ.",
-    0xFF26: "Takes two operands.",
-    0xFF42: "Inserts a name.",
-    0xFF45: "Inserts an item or food name.",
-    0xFF46: "Inserts a PSI name suffix, after ＰＫ.",
-    0xFF47: "Inserts a name, before さん.",
-    0xFF80: "Inserts a number; the operand is often $FFF0-$FFF5.",
-    0xFF81: "Inserts an item name.",
-    0xFF82: "Inserts an amount of DP.",
-    0xFFE0: "Inserts who can use a PSI.",
+    0xFF26: "Takes two operands: a character, and which of their names.",
+    0xFF42: "By party slot; $0000 is the leader.",
+    0xFF45: "The food the player named.",
+    0xFF46: "The word the player named, which follows ＰＫ.",
+    0xFF47: "The name the player is entering or answering to, often before さん.",
+    0xFF80: "The operand is often $FFF0-$FFF5: a variable.",
+    0xFF82: "An amount of DP.",
+    0xFF83: "How many of the item, before こ.",
+    0xFFA0: "The character the menu is acting on.",
+    0xFFA1: "The goods the menu is acting on.",
+    0xFFA3: "The menu's number: an amount healed, held or paid.",
+    0xFFE0: "Who can use a PSI.",
+    0xFFE1: "A status icon; the operand is the status, どく first.",
 }
-SCRIPT_LABELS = {0xFF01: "line", 0xFF05: "color", 0xFF09: "center", 0xFF0B: "saturn"}
+SCRIPT_LABELS = {
+    0xFF00: "page",
+    0xFF01: "line",
+    0xFF02: "next",
+    0xFF03: "wait",
+    0xFF04: "pause",
+    0xFF05: "color",
+    0xFF06: "choice",
+    0xFF07: "close",
+    0xFF08: "voice",
+    0xFF09: "center",
+    0xFF0A: "indent",
+    0xFF0B: "saturn",
+    0xFF0C: "shout",
+    0xFF21: "itemid",
+    0xFF22: "battler",
+    0xFF23: "char",
+    0xFF24: "enemy",
+    0xFF26: "name",
+    0xFF42: "party",
+    0xFF45: "food",
+    0xFF46: "psiword",
+    0xFF47: "you",
+    0xFF80: "num",
+    0xFF81: "item",
+    0xFF82: "dp",
+    0xFF83: "count",
+    0xFFA0: "user",
+    0xFFA1: "goods",
+    0xFFA3: "amount",
+    0xFFE0: "psiuser",
+    0xFFE1: "icon",
+}
+"""What each script control code is called; the rest keep their hex."""
+
 BATTLE_CODES = (0xFF01, 0xFF02, *range(0xFF10, 0xFF22), *range(0xFF30, 0xFF38))
+BATTLE_LABELS = {
+    0xFF10: "arg1",
+    0xFF11: "arg2",
+    0xFF12: "arg3",
+    0xFF14: "flint",
+    0xFF15: "lucas",
+    0xFF16: "duster",
+    0xFF17: "kumatora",
+    0xFF18: "boney",
+    0xFF19: "salsa",
+    0xFF1A: "wess",
+    0xFF1B: "thomas",
+    0xFF1C: "ionia",
+    0xFF1D: "fuel",
+    0xFF1E: "alec",
+    0xFF1F: "yokuba",
+    0xFF20: "claus",
+    0xFF21: "hinawa",
+    0xFF35: "row",
+    0xFF36: "endrow",
+    0xFF37: "opt",
+}
+"""What the battle message loop's codes are called, where it is known: the
+codes it shares with the script keep the script's names, and the rest their
+hex."""
+BATTLE_NOTES = {
+    0xFF10: "The message's operands, in order: each a name or a number.",
+    0xFF14: "[flint] to [hinawa] name a character each, in the character names' order.",
+    0xFF35: "Opens a row of choices, [opt] before each.",
+    0xFF36: "Closes a row of choices.",
+}
 
 
 @dataclass(frozen=True)
@@ -204,6 +274,12 @@ def _code_line(code: int, label: str, words: int) -> str:
     return f"{key}=[{label}]"
 
 
+def _battle_label(code: int) -> str:
+    """What the battle message loop's table calls a code."""
+    label = BATTLE_LABELS.get(code) or SCRIPT_LABELS.get(code)
+    return label or f"FF{code & 0xFF:02X}"
+
+
 def _script_codes(rom: bytes) -> dict[int, tuple[str, int]]:
     """Every script control code but ``FFFF`` and ``FF0B``: its label and its
     operand count in words."""
@@ -238,10 +314,11 @@ def table_files(rom: bytes) -> dict[str, str]:
         codes += [*([f"# {note}"] if note else []), _code_line(code, label, words)]
     battle = []
     for code in BATTLE_CODES:
-        line = _code_line(code, "line" if code == 0xFF01 else f"FF{code & 0xFF:02X}", 0)
+        line = _code_line(code, _battle_label(code), 0)
         label, words = script.get(code, ("", -1))
         if line != _code_line(code, label, words):
-            battle.append(line)
+            note = BATTLE_NOTES.get(code)
+            battle += [*([f"# {note}"] if note else []), line]
     saturn_chars = dict(enumerate(SATURN)) | SATURN_EXTRA
     files = {
         "m3codes.tbl": [
