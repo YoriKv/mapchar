@@ -326,6 +326,9 @@ class MainWindow(
         format_bar = WrapBar()
         format_bar.setObjectName("format_bar")
         self.format_pick = CommandComboBox("New Table…")
+        # Only a loaded table can be edited, so a charset leaves it disabled.
+        self.table_edit = QPushButton("Edit…")
+        self.table_edit.setToolTip("Open the picked table in the Table Editor")
         self.mode_toggle = ModeToggle((("Strings", False), ("Pointers", True)))
         self.mode_toggle.button(False).setToolTip(
             "Read the bytes as text; on a block, show its strings"
@@ -337,9 +340,10 @@ class MainWindow(
         format_bar.add_group(
             "Table",
             self.format_pick,
+            self.table_edit,
             tip="The table or encoding the text is read through",
         )
-        format_bar.add_group("", self.mode_toggle)
+        format_bar.add_group("Show as", self.mode_toggle)
         self.resolve_group = format_bar.add_group(
             "",
             self.resolve_pointers,
@@ -516,6 +520,7 @@ class MainWindow(
         self.tables_panel.table_chosen.connect(self._choose_table)
         self.fonts_panel.edit_requested.connect(self._edit_font_entry)
         self.format_pick.chosen.connect(self._on_format_pick)
+        self.table_edit.clicked.connect(self._edit_picked_table)
         self.format_pick.command.connect(lambda: self._new_table_dialog(start=True))
         self.mode_toggle.chosen.connect(self._on_mode)
         self.resolve_pointers.toggled.connect(self._on_resolve_pointers)

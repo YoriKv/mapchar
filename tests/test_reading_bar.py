@@ -99,6 +99,15 @@ def test_a_loaded_table_comes_before_the_encodings_and_is_picked(window, tmp_pat
     assert window.format_pick.currentData() == "main"
 
 
+def test_the_edit_button_opens_the_picked_table_and_not_an_encoding(window, tmp_path):
+    open_rom_and_table(window, tmp_path, ROM)
+    assert window.table_edit.isEnabled()
+    window.table_edit.click()
+    assert window.table_editor.entry is window.workspace.entry_for_table("main")
+    select_data(window.format_pick, "ascii")
+    assert not window.table_edit.isEnabled()
+
+
 def test_a_block_setting_applies_as_it_changes_and_undoes(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
     block = add_block(window, entry, "b", RangeSource(0x10, 0x15))

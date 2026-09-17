@@ -132,6 +132,12 @@ class TableEditorMixin:
             entry = tables[0] if tables else None
         self._edit_table_entry(entry)
 
+    def _edit_picked_table(self) -> None:
+        """The Format bar's Edit button: the table the bar picks, which is a
+        loaded one whenever the button is enabled."""
+        picked = self.format_pick.currentData() or ""
+        self._edit_table_entry(self.workspace.entry_for_table(picked))
+
     def _edit_table_entry(self, entry: Entry | None) -> None:
         # The Table Editor is where a table entry is edited, and the only thing
         # it can be handed: activating any other kind reaches this through the

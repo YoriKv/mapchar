@@ -80,6 +80,7 @@ class FormatBarMixin:
             fill_pick(pick, self._table_items())
             pick.add_command_row()
             self._select_reading()
+        self._sync_table_edit()
         self.tables_panel.set_start_table(self._current_table_id())
         self.table_editor.set_tables(self.workspace.table_entries())
 
@@ -91,6 +92,7 @@ class FormatBarMixin:
             # rather than every control the last entry needed.
             self.reading_bar.show_default()
             self._sync_mode(False)
+            self._sync_table_edit()
             return
         table_id, pick = cfg.table_id, self.format_pick
         with self._bars_quiet():
@@ -102,6 +104,13 @@ class FormatBarMixin:
                 pick.insertItem(at, label, table_id or "")
                 pick.setCurrentIndex(at)
         self._sync_mode(cfg.has_pointers)
+        self._sync_table_edit()
+
+    def _sync_table_edit(self) -> None:
+        """Whether the picked table can be edited: a loaded table can, and a
+        charset, which has no entry to edit, cannot."""
+        picked = self.format_pick.currentData() or ""
+        self.table_edit.setEnabled(self.workspace.entry_for_table(picked) is not None)
 
     def _sync_mode(self, pointers: bool) -> None:
         """Show the mode, and the controls it uses. A block's mode is what it
@@ -226,6 +235,7 @@ class FormatBarMixin:
                 self._load_reading_bar()
 
     def _on_format_pick(self) -> None:
+        self._sync_table_edit()
         self._on_reading_edited("table")
 
     def _on_mode(self, pointers: bool) -> None:

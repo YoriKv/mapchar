@@ -67,8 +67,8 @@ the preview system in [preview.md](preview.md).
 - **Left column:** the **Files** dock on top. Below it, **Tables** and
   **Fonts** share one tabbed dock.
 - **Right column:** the editing surface, top to bottom:
-  - the **Format** bar: **Table**, the **Strings** / **Pointers** mode and,
-    for pointers, **Follow pointers** (see
+  - the **Format** bar: **Table** with **Edit…**, the **Show as**
+    **Strings** / **Pointers** mode and, for pointers, **Follow pointers** (see
     [Reading the bytes](#reading-the-bytes));
   - the **Reading** bar: every setting of how the bytes are cut into strings,
     in framed sections — **Source**, **Pointers**, **Strings**, **Writing**
@@ -354,8 +354,9 @@ and Strings tabs read again at once.
   mode: the loaded tables with their entry counts, then the encodings, then
   **New Table…**. A file with no table of its own reads as the first loaded
   table, else as ASCII. A table the reading names that is not loaded shows as
-  `@id (not loaded)`.
-- **Mode** — **Strings** or **Pointers**, side by side, one of them down.
+  `@id (not loaded)`. **Edit…** beside it opens the picked table in the Table
+  Editor, and is disabled on an encoding, which has no table entry to edit.
+- **Show as** — **Strings** or **Pointers**, side by side, one of them down.
   On a file, switching turns the source to the other mode's kind and keeps
   every other setting; switching back restores the source and string type the
   file had in that mode, for as long as the session lasts. A block keeps the
