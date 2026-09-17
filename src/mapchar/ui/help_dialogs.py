@@ -73,6 +73,7 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Strings View",
         (
             ("Edit the selected cell", "F2, double-click, or start typing"),
+            ("Edit the selected string whole", "The pane under the grid"),
             ("Commit and move to the next row", "Enter"),
             ("Commit and stay", "Ctrl+Enter"),
             ("Write the block's newline code", "Shift+Return"),

@@ -21,8 +21,10 @@ from mapchar.ui.strings_view import (
     COL_TRANSLATION,
     CodeEditor,
     CodeInfo,
+    RowData,
     StringsView,
 )
+from mapchar.ui.token_text import hide_codes
 from window_helpers import add_block, open_rom_and_table
 
 TABLE = (
@@ -267,6 +269,98 @@ def test_fill_leaves_taken_keys_alone(window, tmp_path):
     assert "left alone" in editor.status.text()
     # 41=A, 42=B and 43=C were there already and keep their own text.
     assert table_entry.table.entries["01000010"].text == "B"
+
+
+def rows():
+    return [
+        RowData(0, 0, "A[line]\nB[end]", "A[line]\nB[end]", 4, 4, "untouched", ""),
+        RowData(1, 4, "B[end]", "A[end]", 2, 2, "edited", "seen"),
+    ]
+
+
+def test_the_pane_shows_the_selected_string_whole(qtbot):
+    view = StringsView()
+    qtbot.addWidget(view)
+    view.set_rows(rows())
+    view.select_index(0)
+    pane = view.pane
+    assert pane.index == 0 and pane.editor.toPlainText() == "A[line]\nB[end]"
+    assert pane.heading.text() == "#0 · 0 · untouched"
+    assert pane.readout.text() == "4 / 4 byte(s)"
+    # The original keeps its line breaks; Show codes off leaves the words.
+    pane.show_codes.setChecked(True)
+    assert pane.original.toPlainText() == "A[line]\nB[end]"
+    pane.show_codes.setChecked(False)
+    assert pane.original.toPlainText() == "A\nB"
+    assert hide_codes("x\\[not a code] [code]") == "x\\[not a code] "
+    view.select_index(1)
+    assert pane.notes.text() == "seen" and pane.editor.toPlainText() == "A[end]"
+    view.set_rows([])
+    assert pane.index is None and not pane.isEnabled()
+
+
+def test_the_pane_commits_on_return_and_moves_on(qtbot):
+    view = StringsView()
+    qtbot.addWidget(view)
+    landed: list[tuple[int, str]] = []
+    problems: list[str] = []
+    view.commit_handler = lambda i, t: landed.append((i, t)) or None
+    view.problem_shown.connect(problems.append)
+    view.set_rows(rows())
+    view.select_index(0)
+    pane = view.pane
+    drafts: list[str] = []
+    view.draft_changed.connect(drafts.append)
+    pane.editor.setPlainText("B[end]")
+    assert drafts == ["B[end]"] and pane.dirty()
+    key(pane.editor, Qt.Key.Key_Return)
+    assert landed == [(0, "B[end]")] and problems == []
+    # Moved on to the next row, on the pane.
+    assert view.selected_indices() == [1] and pane.index == 1
+    # A refused commit keeps the draft and the row, with the reason shown.
+    view.commit_handler = lambda i, t: "too long"
+    pane.editor.setPlainText("AAA[end]")
+    key(pane.editor, Qt.Key.Key_Return)
+    assert problems == ["too long"] and pane.readout.text() == "too long"
+    assert view.selected_indices() == [1] and pane.editor.toPlainText() == "AAA[end]"
+    # Selecting another row lands the draft first; refused, the row stays.
+    view.table.selectRow(0)
+    assert view.selected_indices() == [1] and pane.editor.toPlainText() == "AAA[end]"
+    # Esc puts the bytes' text back.
+    key(pane.editor, Qt.Key.Key_Escape)
+    assert not pane.dirty() and pane.editor.toPlainText() == "A[end]"
+    view.table.selectRow(0)
+    assert view.selected_indices() == [0]
+    # The notes field lands on the string it was edited on.
+    notes: list[tuple[int, str]] = []
+    view.notes_edited.connect(lambda i, t: notes.append((i, t)))
+    pane.notes.setText("check")
+    pane.notes.editingFinished.emit()
+    assert notes == [(0, "check")]
+    # A code button with no cell open types into the pane.
+    view.set_codes([CodeInfo("line", "", 1)])
+    view.codes_layout.itemAt(0).widget().click()
+    assert pane.editor.toPlainText() == "A[line]\nB[end][line]"
+
+
+def test_the_pane_edits_the_bytes(window, tmp_path):
+    data = b"\x41\x42\x00\x41\x00" + b"\xff" * 4
+    entry, block = block_with(window, tmp_path, data)
+    window._show_view("strings")
+    window.strings.select_index(0)
+    pane = window.strings.pane
+    pane.editor.setPlainText("B[end]")
+    assert "2 / 3 byte(s)" in pane.readout.text()
+    key(pane.editor, Qt.Key.Key_Return)
+    assert block.doc.strings[0].current_text() == "B[end]"
+    assert window.strings.selected_indices() == [1] and pane.index == 1
+    # Seven bytes into a slot of six: refused, the draft and the row stay.
+    pane.editor.setPlainText("AAAAAA[end]")
+    assert "1 over" in pane.readout.text()
+    key(pane.editor, Qt.Key.Key_Return)
+    assert pane.editor.toPlainText() == "AAAAAA[end]" and pane.index == 1
+    assert pane.readout.text().startswith("#1")
+    assert block.doc.strings[1].current_text() == "A[end]"
 
 
 def test_draft_reports_bytes_used_and_the_room(window, tmp_path):

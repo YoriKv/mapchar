@@ -25,6 +25,8 @@ BREAK_MARK = "↵"
 CODE_MARK = "▪"
 _EMBEDDED_BREAK = re.compile(r"\[[^\[\]]*\]\n|\n")
 _EMBEDDED_CODE = re.compile(r"\[[^\[\]]*\]")
+CODE_IN_TEXT = re.compile(r"(?<!\\)\[[^\[\]]*\]")
+"""A code in script text: a bracketed name, unless the bracket is escaped."""
 
 
 def token_bytes(token: Token) -> range:
@@ -49,6 +51,12 @@ def compact_text(text: str) -> str:
     """Rendered text on one line: a name ending a line as :data:`BREAK_MARK`,
     any other as :data:`CODE_MARK`."""
     return _EMBEDDED_CODE.sub(CODE_MARK, _EMBEDDED_BREAK.sub(BREAK_MARK, text))
+
+
+def hide_codes(text: str) -> str:
+    """Script text with its codes left out and its line breaks kept: what the
+    Text tab shows with Show codes off, for text that has no tokens."""
+    return CODE_IN_TEXT.sub("", text)
 
 
 def display_text(token: Token) -> tuple[str, bool]:

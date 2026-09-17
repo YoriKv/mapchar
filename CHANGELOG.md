@@ -13,6 +13,9 @@
   Originals puts one translation into all of them.
 - Autosave: a copy of the project every two minutes and after every write,
   offered back on the next open.
+- An editing pane under the Strings grid: the selected string's original with
+  its line breaks and codes dimmed or hidden, a multi-line editor, the byte
+  readout and the notes.
 
 ## v0.1.2 - 2026-09-15
 

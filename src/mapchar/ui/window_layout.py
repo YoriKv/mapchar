@@ -58,7 +58,7 @@ _LAYOUT_EVENTS = frozenset(
 toggles, which change what a restore has to put back as much as a drag does."""
 
 
-def _stored_bytes(value: object) -> QByteArray | None:
+def stored_bytes(value: object) -> QByteArray | None:
     """A settings value back as bytes Qt will take, or ``None`` if there is none.
 
     The backends hand the same value back in different shapes — the registry
@@ -133,10 +133,10 @@ class WindowLayout(QObject):
         would throw the position away every launch.
         """
         store = settings()
-        geometry = _stored_bytes(store.value(f"{self._key}/geometry"))
+        geometry = stored_bytes(store.value(f"{self._key}/geometry"))
         if geometry is not None:
             self._window.restoreGeometry(geometry)
-        state = _stored_bytes(store.value(f"{self._key}/state"))
+        state = stored_bytes(store.value(f"{self._key}/state"))
         if state is not None and isinstance(self._window, QMainWindow):
             self._window.restoreState(state, LAYOUT_VERSION)
         self._live = True

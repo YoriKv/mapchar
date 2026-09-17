@@ -14,11 +14,12 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, TypeVar
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialogButtonBox,
     QFrame,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QLayoutItem,
     QLineEdit,
     QMenu,
+    QPlainTextEdit,
     QProgressDialog,
     QPushButton,
     QStyle,
@@ -39,6 +41,8 @@ from PySide6.QtWidgets import (
     QToolTip,
     QWidget,
 )
+
+from mapchar.ui import set_setting_bool, setting_bool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -72,6 +76,44 @@ def mono_font(point_size: int = 10) -> QFont:
     font.setStyleHint(QFont.StyleHint.TypeWriter)
     font.setPointSize(point_size)
     return font
+
+
+def setting_toggle(
+    label: str, tip: str, key: str, on_toggled: Callable[[bool], None]
+) -> QCheckBox:
+    """A checkbox on a bar, remembered per machine under ``key`` and on by
+    default; ``on_toggled`` is what its switch changes. It takes no focus, so
+    clicking it leaves the editor beside it where it was."""
+    box = QCheckBox(label)
+    box.setToolTip(tip)
+    box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    box.setChecked(setting_bool(key, True))
+
+    def toggled(on: bool) -> None:
+        set_setting_bool(key, on)
+        on_toggled(on)
+
+    box.toggled.connect(toggled)
+    return box
+
+
+def apply_wrap(edit: QPlainTextEdit, on: bool) -> None:
+    """Wrap a text box's lines to its width, or let them run past it.
+
+    Unwrapped, a line wider than the box scrolls sideways, on a bar that is
+    there whether or not one is — a bar that came and went would change the
+    room for lines with the content.
+    """
+    edit.setWordWrapMode(
+        QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+        if on
+        else QTextOption.WrapMode.NoWrap
+    )
+    edit.setHorizontalScrollBarPolicy(
+        Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        if on
+        else Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+    )
 
 
 PICKER_WIDTH = 160
@@ -846,6 +888,8 @@ def install_column_menu(
 
 __all__ = [
     "PICKER_WIDTH",
+    "apply_wrap",
+    "setting_toggle",
     "CancellableRun",
     "CommandComboBox",
     "CompactComboBox",

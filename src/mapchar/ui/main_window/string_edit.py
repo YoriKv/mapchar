@@ -51,11 +51,10 @@ class StringEditMixin:
     def _on_edit_problem(self, message: str) -> None:
         self.statusBar().showMessage(message, 8000)
         self.preview_window.set_readout(message)
+        self.strings.set_readout(message, problem=True)
 
     def _refuse_edit(self, problems: list[str]) -> None:
-        message = "; ".join(problems)
-        self.statusBar().showMessage(message, 8000)
-        self.preview_window.set_readout(message)
+        self._on_edit_problem("; ".join(problems))
 
     def _set_translation(self, entry, index: int, text: str) -> list[str]:
         """One string's text, as an undo step; the reasons when it is refused."""
@@ -264,6 +263,7 @@ class StringEditMixin:
         except MapcharError as exc:
             self.statusBar().showMessage(str(exc))
             self.preview_window.set_readout(str(exc))
+            self.strings.set_readout(str(exc), problem=True)
             return
         used = -(-len(result.bits) // 8)
         bound = block_bound(entry.config, entry.doc.strings)
@@ -277,3 +277,4 @@ class StringEditMixin:
             readout += f" — {used - room} over"
         self.statusBar().showMessage(readout)
         self.preview_window.set_readout(readout)
+        self.strings.set_readout(readout)

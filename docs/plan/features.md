@@ -624,6 +624,17 @@ The editing surface, opened on a block.
     [preview.md](preview.md#wrapping);
   - **Apply to Identical Originals**, in Block or in Project, puts the
     selected string's text into every string whose original is the same.
+- **Editing pane** — under the grid, on the selected string, read whole:
+  the original with its line breaks, codes dimmed and, with **Show codes**
+  off, left out as the Text tab leaves them; beside it the same editor the
+  cell opens, the byte readout above it and the notes under it. **Wrap**
+  wraps both boxes. Return, Ctrl+Return, Shift+Return, `[` and Esc do what
+  they do in the cell; a commit from the pane moves the selection on and
+  keeps typing in the pane. Leaving the editor lands its draft as leaving a
+  cell does; a refused draft stays, with the reason in the readout, and the
+  selection stays on its row. A code button types into the cell being
+  edited, else into the pane. The split between grid and pane is remembered
+  per machine.
 - **Stepping** — **Edit ▸ Next / Previous Untranslated** (F4 / Shift+F4) and
   **Next / Previous Flagged** (F6 / Shift+F6: review or overflows box) move
   among the rows the filter shows, wrapping round.
@@ -863,7 +874,7 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
 | Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
 | Find bar | Enter next · Shift+Enter previous · Esc closes Find and Replace |
-| Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code · Esc cancel |
+| Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code · Esc cancel · the same keys in the pane under the grid |
 | Files panel | Up/Down or double-click open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename · right-click menu |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
 | Tool windows | Esc close · Enter run the Search window's query · double-click a result to jump |

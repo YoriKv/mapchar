@@ -657,14 +657,17 @@ through `_push_command`.
 Widgets outside the mixins: `reading_bar.py` (the Reading bar, loaded from and
 read back as a `BlockConfig`), `pointer_tokens.py` (pointers in view as tokens
 the Hex and Text tabs place), `raw_widget.py` (the two-column byte view),
-`text_widget.py` (the plain-text display), `strings_view.py` (the string grid
-and its cell editor), `table_entry_form.py` (the Table Editor's entry form:
+`text_widget.py` (the plain-text display), `strings_view.py` (the string grid),
+`string_pane.py` (the pane under it, on the selected string), `code_editor.py`
+(the translation editor both open, with its code completion), `table_entry_form.py` (the Table Editor's entry form:
 one entry as pickers and fields, and as the line that spells it), the panels (`files_panel.py`, `tables_panel.py`,
 `fonts_panel.py`, `hex_panel.py`), the tool windows, and the dialogs.
 
 What more than one of them needs lives in small modules: `ui/widgets.py`
 (`ResultsTable`, the `CancellableRun` run/stop/progress mixin for a tool window
 and `ModalProgress` for a menu row, `fill_pick` and `select_data` for combos,
+`setting_toggle` and `apply_wrap`, the remembered checkbox and the wrap mode
+the Text tab and the strings pane share,
 `CompactComboBox`, the fixed-width picker of the bars whose open list
 widens to its longest item, `WrapBar`, a wrapping bar of labelled controls in
 optional framed sections, and `ModeToggle`, side-by-side buttons one of which
@@ -676,7 +679,8 @@ field that steps to the next match on Enter and the previous on Shift+Enter),
 `ui/number_fields.py` (`AddressSpelling`, `HexEdit`, `AddressEdit` and the spin
 boxes sized to what they hold), `ui/marks.py` (the chip, tick, rule and notch
 the byte views and the legend both paint), `ui/token_text.py` (what a token
-covers and how it reads on one line, with no Qt), `ui/alphabets.py` (the canned
+covers and how it reads on one line, and script text with its codes left out,
+with no Qt), `ui/alphabets.py` (the canned
 runs of characters a fill offers), `ui/glyph_sheet.py` (`GlyphSheet` and
 `GlyphSheetView`), `ui/font_tab.py` (`FontTab`, the Preview window's font
 fields and their sheet), `ui/entry_tree.py` (the Files tree's drags and keys),

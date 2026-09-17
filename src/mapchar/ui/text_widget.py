@@ -23,9 +23,8 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
-from PySide6.QtGui import QTextCursor, QTextOption
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
-    QCheckBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -35,8 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.pipeline.text_view import Shown, TextModel
-from mapchar.ui import set_setting_bool, setting_bool
-from mapchar.ui.widgets import mono_font, wheel_steps
+from mapchar.ui.widgets import apply_wrap, mono_font, setting_toggle, wheel_steps
 
 WORD_WRAP_KEY = "view/text_word_wrap"
 SHOW_CODES_KEY = "view/text_show_codes"
@@ -79,19 +77,24 @@ class TextWidget(QWidget):
         self.bar.actionTriggered.connect(self._on_bar_action)
         self.bar.valueChanged.connect(self._on_bar_value)
         self._placing = False
-        self.wrap = QCheckBox("Wrap")
-        self.wrap.setToolTip("Wrap long lines to the window's width")
-        self.wrap.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.show_codes = self._toggle(
+        self.wrap = setting_toggle(
+            "Wrap",
+            "Wrap long lines to the window's width",
+            WORD_WRAP_KEY,
+            self._apply_wrap,
+        )
+        self.show_codes = setting_toggle(
             "Show codes",
             "Show codes like [end] or [color 3] in the text; "
             "hidden, their line breaks stay",
             SHOW_CODES_KEY,
+            self._on_shown,
         )
-        self.show_unknown = self._toggle(
+        self.show_unknown = setting_toggle(
             "Show unknown",
             "Show bytes no table entry matches, as [$XX]",
             SHOW_UNKNOWN_KEY,
+            self._on_shown,
         )
         self.note = QLabel("")
         bar = QHBoxLayout()
@@ -109,50 +112,20 @@ class TextWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(box, 1)
         layout.addLayout(bar)
-        self.wrap.setChecked(setting_bool(WORD_WRAP_KEY, True))
-        self.wrap.toggled.connect(self._on_wrap)
         self._apply_wrap(self.wrap.isChecked())
         self.edit.selectionChanged.connect(self._on_selection)
         self.edit.cursorPositionChanged.connect(self._on_selection)
         self._reported: tuple[int, int] | None = None
 
-    def _toggle(self, label: str, tip: str, key: str) -> QCheckBox:
-        """A checkbox on the bar, remembered per machine under ``key`` and on
-        by default, whose switch says the text shows differently."""
-        box = QCheckBox(label)
-        box.setToolTip(tip)
-        box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        box.setChecked(setting_bool(key, True))
-
-        def on_toggled(on: bool) -> None:
-            set_setting_bool(key, on)
-            self.shown_changed.emit()
-
-        box.toggled.connect(on_toggled)
-        return box
+    def _on_shown(self, _on: bool) -> None:
+        self.shown_changed.emit()
 
     def shown(self) -> Shown:
         """What of the decode the box shows, as its checkboxes say."""
         return Shown(self.show_codes.isChecked(), self.show_unknown.isChecked())
 
-    def _on_wrap(self, on: bool) -> None:
-        set_setting_bool(WORD_WRAP_KEY, on)
-        self._apply_wrap(on)
-
     def _apply_wrap(self, on: bool) -> None:
-        self.edit.setWordWrapMode(
-            QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
-            if on
-            else QTextOption.WrapMode.NoWrap
-        )
-        # Unwrapped, a line wider than the box scrolls sideways, on a bar that
-        # is there whether or not one is — a bar that came and went would
-        # change the room for lines with the content.
-        self.edit.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-            if on
-            else Qt.ScrollBarPolicy.ScrollBarAlwaysOn
-        )
+        apply_wrap(self.edit, on)
         self.fit_changed.emit()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override

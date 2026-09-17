@@ -5,7 +5,9 @@ Translation cell is a multi-line editor with code completion on ``[``;
 Return commits and moves to the next row, Ctrl+Return commits and stays,
 Shift+Return inserts the block's newline code, Esc cancels. A commit the
 window refuses keeps the editor open with the reason under it. Columns hide
-and reorder from the header's context menu.
+and reorder from the header's context menu. Under the grid, the pane
+(:mod:`mapchar.ui.string_pane`) shows the selected string whole, on the same
+editor.
 """
 
 from __future__ import annotations
@@ -13,16 +15,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPoint, QStringListModel, Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QCompleter,
     QHBoxLayout,
     QLineEdit,
-    QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
@@ -31,13 +32,11 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.text import fold
-from mapchar.ui import theme
-from mapchar.ui.widgets import (
-    FlowLayout,
-    install_column_menu,
-    mono_font,
-    show_elided_tooltips,
-)
+from mapchar.ui import settings, theme
+from mapchar.ui.code_editor import CodeEditor, CodeInfo
+from mapchar.ui.string_pane import StringPane
+from mapchar.ui.widgets import FlowLayout, install_column_menu, show_elided_tooltips
+from mapchar.ui.window_layout import stored_bytes
 
 (
     COL_INDEX,
@@ -70,31 +69,8 @@ STATUS_FILTERS = [
 ]
 FLAGGED = ("review", "overflows box")
 """The statuses Next Flagged steps through: what needs a second look."""
-
-
-@dataclass(frozen=True)
-class CodeInfo:
-    """One code of the table set, as the editor offers it."""
-
-    label: str
-    operands: str = ""
-    """The operand shapes, as the table spells them (``u8``, ``2``…)."""
-    uses: int = 0
-    """How often the block's strings hold it, for the Insert code buttons."""
-    comment: str = ""
-    """What the table says the code is, from the comment above its entry."""
-
-    @property
-    def completion(self) -> str:
-        """What the completion popup lists: the label with its operand shapes,
-        and what the table says it is."""
-        code = f"[{self.label}{' ' + self.operands if self.operands else ''}]"
-        return f"{code}  {self.comment}" if self.comment else code
-
-    @property
-    def insertion(self) -> str:
-        """What typing it inserts: a code with operands is left open to type in."""
-        return f"[{self.label} " if self.operands else f"[{self.label}]"
+SPLITTER_KEY = "view/strings_splitter"
+"""Where the grid and the pane under it are split, remembered per machine."""
 
 
 @dataclass
@@ -111,101 +87,6 @@ class RowData:
     pointers: str = ""
     same: int = 0
     """How many other strings of the block have this original."""
-
-
-class CodeEditor(QPlainTextEdit):
-    """The translation editor: completes ``[labels]``, commits on Return.
-
-    Return commits and moves on to the next row, Ctrl+Return commits and
-    stays — a cell editor's Return belongs to the cell — and Shift+Return
-    writes the block's newline code.
-    """
-
-    commit = Signal(bool)
-    """Committed; the argument says whether to move on to the next row."""
-    cancel = Signal()
-
-    def __init__(
-        self,
-        codes: list[CodeInfo],
-        newline_code: str = "[line]",
-        parent: QWidget | None = None,
-    ):
-        super().__init__(parent)
-        self.setFont(mono_font())
-        self.setTabChangesFocus(True)
-        self.newline_code = newline_code
-        """What Shift+Return writes: the block's newline code."""
-        self._insertions = {c.completion: c.insertion for c in codes}
-        self.completer = QCompleter(
-            QStringListModel([c.completion for c in codes]), self
-        )
-        self.completer.setWidget(self)
-        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.completer.activated.connect(self._insert_completion)
-
-    def _insert_completion(self, chosen: str) -> None:
-        text = self._insertions.get(chosen, chosen)
-        cursor = self.textCursor()
-        start = self._code_start(cursor)
-        if start is not None:
-            cursor.setPosition(start)
-            cursor.setPosition(
-                self.textCursor().position(), QTextCursor.MoveMode.KeepAnchor
-            )
-        cursor.insertText(text)
-        self.setTextCursor(cursor)
-
-    def _code_start(self, cursor: QTextCursor) -> int | None:
-        """The ``[`` that opens the code the caret is inside, if any."""
-        text = self.toPlainText()[: cursor.position()]
-        start = text.rfind("[")
-        if start < 0 or "]" in text[start:] or (start > 0 and text[start - 1] == "\\"):
-            return None
-        return start
-
-    def insert_code(self, code: str) -> None:
-        self.textCursor().insertText(code)
-
-    def keyPressEvent(self, event) -> None:
-        popup = self.completer.popup()
-        if popup.isVisible() and event.key() in (
-            Qt.Key.Key_Return,
-            Qt.Key.Key_Enter,
-            Qt.Key.Key_Tab,
-            Qt.Key.Key_Escape,
-        ):
-            event.ignore()
-            return
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                # A line break is a code in the ROM, never a literal newline:
-                # the script grammar drops those on the way back in.
-                self.insertPlainText(self.newline_code)
-            else:
-                self.commit.emit(
-                    not event.modifiers() & Qt.KeyboardModifier.ControlModifier
-                )
-            return
-        if event.key() == Qt.Key.Key_Escape:
-            self.cancel.emit()
-            return
-        super().keyPressEvent(event)
-        start = self._code_start(self.textCursor())
-        if start is None:
-            popup.hide()
-            return
-        prefix = self.toPlainText()[start : self.textCursor().position()]
-        self.completer.setCompletionPrefix(prefix)
-        if self.completer.completionCount() == 0:
-            popup.hide()
-            return
-        rect = self.cursorRect()
-        rect.setWidth(
-            popup.sizeHintForColumn(0) + popup.verticalScrollBar().sizeHint().width()
-        )
-        self.completer.complete(rect)
 
 
 class TranslationDelegate(QStyledItemDelegate):
@@ -326,22 +207,40 @@ class StringsView(QWidget):
         self.codes = QWidget()
         self.codes_layout = FlowLayout(self.codes)
         self.codes_layout.setContentsMargins(0, 0, 0, 0)
+        self.pane = StringPane()
+        self.pane.committer = self._commit_from_pane
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.addWidget(self.table)
+        self.splitter.addWidget(self.pane)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 1)
+        state = stored_bytes(settings().value(SPLITTER_KEY))
+        if state is not None:
+            self.splitter.restoreState(state)
+        self.splitter.splitterMoved.connect(
+            lambda *_: settings().setValue(SPLITTER_KEY, self.splitter.saveState())
+        )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)
-        layout.addWidget(self.table, 1)
+        layout.addWidget(self.splitter, 1)
         layout.addWidget(self.codes)
         self.filter.textChanged.connect(self._apply_filter)
         self.status_filter.currentIndexChanged.connect(self._apply_filter)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.itemSelectionChanged.connect(self._on_select)
         self.table.customContextMenuRequested.connect(self._on_menu)
+        self.pane.draft_changed.connect(self.draft_changed)
+        self.pane.problem_shown.connect(self.problem_shown)
+        self.pane.notes_edited.connect(self.notes_edited)
+        self.pane.advance_requested.connect(lambda: self.step_row(1))
 
     # --- rows ------------------------------------------------------------
 
     def set_codes(self, codes: list[CodeInfo]) -> None:
         """The table set's codes, and buttons for the ones this block uses most."""
         self.delegate.codes = list(codes)
+        self.pane.set_codes(self.delegate.codes)
         while self.codes_layout.count():
             item = self.codes_layout.takeAt(0)
             if item.widget():
@@ -362,19 +261,34 @@ class StringsView(QWidget):
     def set_newline_code(self, code: str) -> None:
         """What Shift+Return writes in the Translation cell."""
         self.delegate.newline_code = code
+        self.pane.set_newline_code(code)
 
     def _insert_code(self, code: str) -> None:
+        """A code button: into the cell being edited, else into the pane's
+        editor, which takes the focus so typing carries on there."""
         editor = self.delegate.current_editor()
+        if editor is None and self.pane.index is not None:
+            editor = self.pane.editor
+            editor.setFocus()
         if editor is not None:
             editor.insert_code(code)
-            return
-        row = self.table.currentRow()
-        if row < 0:
-            return
-        data = self._row_data(row)
-        if data is None:
-            return
-        self.translation_edited.emit(data.index, data.translation + code)
+
+    def set_readout(self, text: str, problem: bool = False) -> None:
+        """The pane's byte readout: the draft's budget, or why a commit was
+        refused."""
+        self.pane.set_readout(text, problem)
+
+    def _commit_from_pane(self, index: int, text: str) -> str | None:
+        handler = self.commit_handler
+        if handler is None:
+            self.translation_edited.emit(index, text)
+            return None
+        return handler(index, text)
+
+    def _show_in_pane(self) -> None:
+        """The pane on the selected row, or on nothing."""
+        selected = self.selected_indices()
+        self.pane.set_row(self._by_index.get(selected[0]) if selected else None)
 
     def set_rows(self, rows: list[RowData], keep_selection: bool = True) -> None:
         selected = self.selected_indices() if keep_selection else []
@@ -405,6 +319,8 @@ class StringsView(QWidget):
         self._apply_filter()
         if selected:
             self.select_index(selected[0])
+        else:
+            self._show_in_pane()
 
     def update_row(self, data: RowData) -> None:
         for r, existing in enumerate(self._rows):
@@ -414,6 +330,8 @@ class StringsView(QWidget):
                 self._filling = True
                 self._fill_row(r, data)
                 self._filling = False
+                if data.index == self.pane.index:
+                    self.pane.set_row(data)
                 return
 
     def _fill_row(self, r: int, data: RowData) -> None:
@@ -479,7 +397,9 @@ class StringsView(QWidget):
                 self.table.selectRow(r)
                 self.table.scrollToItem(it)
                 self.table.blockSignals(False)
+                self._show_in_pane()
                 return
+        self._show_in_pane()
 
     # --- stepping through the rows ------------------------------------------
 
@@ -497,6 +417,20 @@ class StringsView(QWidget):
             return
         self.table.setCurrentCell(after[0], COL_TRANSLATION)
         self.table.edit(self.table.model().index(after[0], COL_TRANSLATION))
+
+    def step_row(self, delta: int) -> bool:
+        """Select the visible row ``delta`` rows on from the current one;
+        ``False`` at the end."""
+        rows = self._visible_rows()
+        current = self.table.currentRow()
+        if current not in rows:
+            return False
+        at = rows.index(current) + delta
+        if not 0 <= at < len(rows):
+            return False
+        self.table.setCurrentCell(rows[at], COL_TRANSLATION)
+        self.table.scrollToItem(self.table.item(rows[at], COL_TRANSLATION))
+        return True
 
     def step_to(self, wanted, backwards: bool = False) -> bool:
         """Select the next (or previous) visible row whose data ``wanted``
@@ -543,7 +477,14 @@ class StringsView(QWidget):
             self.notes_edited.emit(d.index, item.text())
 
     def _on_select(self) -> None:
+        """The selection moved. A draft in the pane lands first; one refused
+        keeps the selection on its row, with the reason shown, rather than
+        losing what was typed."""
         idx = self.selected_indices()
+        if idx and idx[0] != self.pane.index and not self.pane.flush():
+            self.select_index(self.pane.index)
+            return
+        self._show_in_pane()
         if idx:
             self.row_selected.emit(idx[0])
 
@@ -553,4 +494,4 @@ class StringsView(QWidget):
         )
 
 
-__all__ = ["FLAGGED", "CodeInfo", "RowData", "StringsView"]
+__all__ = ["FLAGGED", "CodeEditor", "CodeInfo", "RowData", "StringsView"]
