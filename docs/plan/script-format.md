@@ -55,15 +55,14 @@ done well.[end]
   `\#`, `\\`.
 - **Comment lines** inside a string are the **original** when the dump was
   made with *both*; import ignores them.
-- **Dump modes** — *originals* (content is the original decode), *translations*
-  (content is the translation, or the original where none exists), *both*
-  (original as comments, translation as content).
+- **Dump modes** — *originals* (content is the original the project keeps),
+  *translations* (content is what the bytes say now), *both* (original as
+  comments, the bytes' text as content).
 - **Import** — for each `@string`, the block named by the enclosing `@block`
-  and the index select the project string; the content becomes its
-  translation; a string whose content differs from its original is marked
-  **edited**. A string whose content is its own original spelled decomposed is
-  therefore untouched, not edited. Extents and pointers in the script are
-  checked against the project and a mismatch is reported as a notice, since the
+  and the index select the project string; the content goes into its bytes as
+  an edit, and a string whose content is its own original — spelled decomposed
+  or not — is left as it is. Extents and pointers in the script are checked
+  against the project and a mismatch is reported as a notice, since the
   project is the authority.
 
 Numbers are decimal or `$hex`. Strings are in double quotes with `\"` and
@@ -78,8 +77,8 @@ by `id`.
 |---------------|----------------------------------------------------------------|
 | `id`          | `block name/index`                                             |
 | `address`     | `$start`                                                       |
-| `original`    | the decode, with codes in brackets and line breaks after `\n` tokens |
-| `translation` | the translation, empty when untouched                          |
+| `original`    | the original the project keeps, codes in brackets and line breaks after `\n` tokens |
+| `translation` | what the bytes say, empty when they still say the original     |
 | `status`      | `untouched`, `edited`, `review`                                |
 | `notes`       | free text                                                      |
 
@@ -93,11 +92,11 @@ by `id`.
   `#, fuzzy` when the status is *review*. Multi-line strings use PO's
   standard continuation. Plural forms are not used.
 - **Import rules** — a record whose `original` differs from the project's
-  current decode is skipped and listed, unless **Force** is on; the comparison
-  is on NFC, so a round trip through an editor that decomposes text skips
-  nothing. `status` becomes *edited* when the translation changed and *review*
-  when the record says so; whether a string is too long or does not encode is
-  recomputed, never imported.
+  original is skipped and listed, unless **Force** is on; the comparison is
+  on NFC, so a round trip through an editor that decomposes text skips
+  nothing. A translation goes into the bytes as an edit, and one that does not
+  fit or encode is refused and listed; *review* is set when the record says
+  so, and notes are taken as they come.
 
 ## Cartographer
 

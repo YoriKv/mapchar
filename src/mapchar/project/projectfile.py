@@ -115,31 +115,33 @@ def _recover_case(path: str) -> str:
 
 
 def _string_records(entry: Entry) -> list[dict[str, Any]]:
-    """A block's translated strings as the file stores them, defaults omitted.
+    """A block's strings as the file stores them: every one with its original,
+    plus a status and notes where they are not the defaults.
 
     Read from the extracted document when there is one, and otherwise from
     :attr:`~mapchar.project.workspace.Entry.pending_strings` — the state a block
     that was loaded but never opened is still carrying. Without that fallback a
     save would write back only the blocks the user happened to look at, and drop
-    the translations of every other one.
+    the originals of every other one. A translation an older project was still
+    holding goes out again as it came, until an extraction puts it in the ROM.
     """
     if entry.doc is not None and entry.doc.strings:
         states = [
-            (rec.index, rec.translation, rec.status, rec.notes)
+            (rec.index, rec.original, rec.status, rec.notes, None)
             for rec in entry.doc.strings
         ]
     elif entry.pending_strings:
         states = [
-            (i, st.translation, st.status, st.notes)
+            (i, st.original, st.status, st.notes, st.translation)
             for i, st in sorted(entry.pending_strings.items())
         ]
     else:
         return []
     records: list[dict[str, Any]] = []
-    for index, translation, status, notes in states:
-        if translation is None and status is Status.UNTOUCHED and not notes:
-            continue
+    for index, original, status, notes, translation in states:
         s: dict[str, Any] = {"i": index}
+        if original is not None:
+            s["o"] = original
         if translation is not None:
             s["t"] = translation
         if status is not Status.UNTOUCHED:
@@ -491,12 +493,15 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
     for s in raw.get("strings", []) or []:
         try:
             saved[int(s["i"])] = StringState(
-                s.get("t"), Status(s.get("s", "untouched")), str(s.get("n", ""))
+                s.get("o"),
+                Status(s.get("s", "untouched")),
+                str(s.get("n", "")),
+                s.get("t"),
             )
         except (KeyError, ValueError):
             continue
     # Until the block is opened and extracted this is the only place its
-    # translations exist, and a save has to be able to write them back
+    # originals exist, and a save has to be able to write them back
     # (:func:`_string_records`).
     entry.pending_strings = saved or None
     parent = raw.get("parent")

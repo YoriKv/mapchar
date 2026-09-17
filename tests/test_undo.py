@@ -42,17 +42,19 @@ def _block(window, tmp_path, name="b", rom_name="rom.bin"):
 
 
 def test_an_undone_translation_reads_clean_again(window, tmp_path):
-    _, block = _block(window, tmp_path)
-    assert not block.dirty
+    file_entry, block = _block(window, tmp_path)
+    assert not file_entry.dirty
     window._on_translation_edited(0, "B[end]")
-    assert block.dirty
+    # The translation is in the file's bytes, so the file is what is unsaved.
+    assert file_entry.dirty and not block.dirty
+    assert file_entry.doc.data[:3] == bytes.fromhex("42 00 EE")
     window.undo_stack.undo()
     # The command restored the revision token the entry had before the edit
     # rather than minting a fresh one, so the entry is back to what is on disk.
-    assert not block.dirty
-    assert block.doc.strings[0].translation is None
+    assert not file_entry.dirty
+    assert block.doc.strings[0].current_text() == "AB[end]"
     window.undo_stack.redo()
-    assert block.dirty
+    assert file_entry.dirty
 
 
 def test_an_undone_overtype_reads_clean_again(window, tmp_path):
@@ -145,43 +147,43 @@ def test_undoing_a_write_and_its_edit_reads_clean_again(window, tmp_path):
     file_entry, block = _block(window, tmp_path)
     window._on_translation_edited(0, "B[end]")
     assert window._write_blocks([block])
-    assert not block.dirty
+    assert not file_entry.dirty
     window.undo_stack.undo()  # the write
-    assert block.dirty
+    assert file_entry.dirty
     window.undo_stack.undo()  # the edit
-    # Both steps undone, the block is back to what is on disk, and reads so:
+    # Both steps undone, the file is back to what is on disk, and reads so:
     # the write's undo put back the saved token it had before the write.
-    assert not block.dirty
+    assert not file_entry.dirty
     assert Path(file_entry.path).read_bytes() == DATA
 
 
 # --- writes ----------------------------------------------------------------
 
 
-def test_an_undone_write_puts_the_file_and_the_translations_back(window, tmp_path):
+def test_an_undone_write_puts_the_file_back_and_keeps_the_buffer(window, tmp_path):
     file_entry, block = _block(window, tmp_path)
     window._on_translation_edited(0, "B[end]")
     assert window._write_blocks([block])
     written = Path(file_entry.path).read_bytes()
-    assert written != DATA and not block.dirty
-    assert block.doc.strings[0].translation is None
+    assert written != DATA and not file_entry.dirty
+    # A write moves no string state: the original is the project's to keep.
+    assert block.doc.strings[0].current_text() == "B[end]"
+    assert block.doc.strings[0].original == "AB[end]"
+    assert block.doc.strings[0].status is Status.EDITED
     assert window.undo_stack.undoText() == "Write rom.bin"
 
     window.undo_stack.undo()
+    # The disk is as it was; the buffer still carries the edit, unsaved again.
     assert Path(file_entry.path).read_bytes() == DATA
-    assert file_entry.doc.data == DATA and block.doc.data == DATA
-    assert block.doc.strings[0].translation == "B[end]"
-    assert block.doc.strings[0].status is Status.EDITED
-    assert block.dirty and not file_entry.dirty
-    # The block reads its original bytes again, not the written ones.
-    window._refresh_view()
-    assert block.doc.strings[0].original_text() == "AB[end]"
+    assert file_entry.doc.data == written and block.doc.data == written
+    assert block.doc.strings[0].current_text() == "B[end]"
+    assert file_entry.dirty and not block.dirty
 
     window.undo_stack.redo()
     assert Path(file_entry.path).read_bytes() == written
-    assert block.doc.strings[0].translation is None and not block.dirty
+    assert not file_entry.dirty
     window._refresh_view()
-    assert block.doc.strings[0].original_text() == "B[end]"
+    assert block.doc.strings[0].original == "AB[end]"
 
 
 def test_an_undone_write_of_a_hex_edit_re_marks_the_file(window, tmp_path):
@@ -206,13 +208,13 @@ def test_write_all_over_two_files_is_one_step(window, tmp_path):
     window._on_translation_edited(0, "A[end]")
     assert window._write_all()
     assert window.undo_stack.undoText() == "Write All"
-    assert not first.dirty and not second.dirty
+    assert not first_file.dirty and not second_file.dirty
     window.undo_stack.undo()
     assert Path(first_file.path).read_bytes() == DATA
     assert Path(second_file.path).read_bytes() == DATA
-    assert first.dirty and second.dirty
-    assert first.doc.strings[0].translation == "B[end]"
-    assert second.doc.strings[0].translation == "A[end]"
+    assert first_file.dirty and second_file.dirty
+    assert first.doc.strings[0].current_text() == "B[end]"
+    assert second.doc.strings[0].current_text() == "A[end]"
 
 
 def test_a_file_changed_since_the_write_is_left_alone(window, tmp_path):
@@ -223,16 +225,19 @@ def test_a_file_changed_since_the_write_is_left_alone(window, tmp_path):
     window.undo_stack.undo()
     assert Path(file_entry.path).read_bytes() == b"\x00" * len(DATA)
     assert window.errors and "changed on disk" in window.errors[-1]
-    # Nothing in memory moved either: the block still reads as written.
-    assert not block.dirty and block.doc.strings[0].translation is None
+    # Nothing in memory moved either: the file still reads as written.
+    assert not file_entry.dirty and block.doc.strings[0].current_text() == "B[end]"
 
 
-def test_a_refused_write_leaves_no_step(window, tmp_path):
-    _, block = _block(window, tmp_path)
-    window._on_translation_edited(0, "BBB[end]")  # too long for its room
+def test_a_refused_edit_leaves_no_step_and_no_bytes(window, tmp_path):
+    file_entry, block = _block(window, tmp_path)
     steps = window.undo_stack.count()
-    assert not window._write_blocks([block])
+    window._on_translation_edited(0, "BBB[end]")  # too long for its room
     assert window.undo_stack.count() == steps
+    assert not file_entry.dirty and file_entry.doc.data == DATA
+    assert "too long" in window.statusBar().currentMessage()
+    window._on_translation_edited(0, "Z[end]")  # nothing encodes a Z
+    assert window.undo_stack.count() == steps and file_entry.doc.data == DATA
 
 
 # --- reach -----------------------------------------------------------------
@@ -249,7 +254,7 @@ def test_undoing_a_change_made_elsewhere_switches_back_to_it(window, tmp_path):
     assert window.workspace.current is first
     # And in the view the edit was made in, not whichever tab happened to be up.
     assert window.tabs.currentWidget() is window.strings
-    assert first.doc.strings[0].translation is None
+    assert first.doc.strings[0].current_text() == "AB[end]"
 
 
 def test_undoing_an_overtype_returns_to_the_hex_tab(window, tmp_path):
@@ -304,18 +309,20 @@ def test_a_typing_run_on_one_cell_is_one_step(window, tmp_path):
     window._on_translation_edited(0, "B[end]")
     window._on_translation_edited(0, "BB[end]")
     assert window.undo_stack.count() == start + 1
+    assert block.doc.strings[0].current_text() == "BB[end]"
     window.undo_stack.undo()
-    assert block.doc.strings[0].translation is None
+    assert block.doc.strings[0].current_text() == "AB[end]"
 
 
-def test_a_run_cleared_back_to_no_translation_leaves_no_step(window, tmp_path):
-    _, block = _block(window, tmp_path)
+def test_a_run_cleared_back_to_the_original_leaves_no_step(window, tmp_path):
+    file_entry, block = _block(window, tmp_path)
     start = window.undo_stack.count()
     window._on_translation_edited(0, "B[end]")
-    window._on_translation_edited(0, "")  # cleared again: back where the run began
+    window._on_translation_edited(0, "")  # blank: the original, back where it began
     assert window.undo_stack.count() == start
-    assert block.doc.strings[0].translation is None
-    assert not block.dirty  # and the revision came back with it
+    assert block.doc.strings[0].current_text() == "AB[end]"
+    assert file_entry.doc.data == DATA
+    assert not file_entry.dirty  # and the revision came back with it
 
 
 def test_moving_to_another_row_starts_a_new_step(window, tmp_path):

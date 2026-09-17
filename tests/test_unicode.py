@@ -49,10 +49,12 @@ def test_table_text_is_composed_however_the_file_spelled_it():
     assert Entry("01000001", TokenKind.CODE, nfd("é")).text == "é"
 
 
-def test_a_translation_is_composed_on_commit():
+def test_a_replacement_and_an_original_are_composed_on_commit():
     rec = StringRecord(0, 0, 8, [])
-    rec.translation = GA_NFD
-    assert rec.translation == GA
+    rec.replacement = GA_NFD
+    assert rec.replacement == GA
+    rec.original = GA_NFD
+    assert rec.original == GA
     rec.status = Status.EDITED
     assert rec.status is Status.EDITED
 
@@ -60,6 +62,7 @@ def test_a_translation_is_composed_on_commit():
 def test_matches_original_ignores_the_form():
     entry = Entry("01000001", TokenKind.TEXT, GA)
     rec = StringRecord(0, 0, 8, [Token("01000001", 0, 8, entry)])
+    rec.original = rec.current_text()
     assert rec.original_text() == GA
     assert rec.matches_original(GA_NFD)
     assert rec.matches_original(GA)

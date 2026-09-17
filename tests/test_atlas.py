@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from helpers import ABC_TABLE, pointer_rom, table_set, tables_from
+from helpers import ABC_TABLE, pointer_rom, table_set, tables_from, translated
 from mapchar.core.block import BlockConfig, EndToken, PointerTableSource, RangeSource
 from mapchar.pipeline.extract import extract
 from mapchar.project.exchange.addresses import shift_config
@@ -46,10 +46,9 @@ def test_write_and_read_atlas_script(registry):
         "main",
         bound=0x19,
     )
-    ex = extract(data, cfg, TS, registry)
-    ex.strings[0].translation = "AB[color $03]C[end]"
+    strings, _ = translated(data, cfg, TS, {0: "AB[color $03]C[end]"}, registry)
     export = write_atlas(
-        "D", cfg, ex.strings, TS, {f"{t.id}.tbl": t for t in TS.tables.values()}
+        "D", cfg, strings, TS, {f"{t.id}.tbl": t for t in TS.tables.values()}
     )
     s = export.script
     assert '#ADDTBL("main.tbl", Table_0)' in s and "#ACTIVETBL(Table_0)" in s

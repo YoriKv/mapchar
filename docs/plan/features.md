@@ -53,8 +53,10 @@ the preview system in [preview.md](preview.md).
 - **Token** — one table entry matched against the bytes. A token is either
   **text** or a **code**: something in square brackets, such as `[end]`,
   `[line]`, `[color $03]`, or an unmatched byte `[$1F]`.
-- **String** — one extracted unit of a block: its original tokens, where they
-  sit, the pointers that reach it, and an editable translation.
+- **String** — one extracted unit of a block: the tokens its bytes decode to
+  now, where they sit, the pointers that reach it, and the **original** — its
+  text as it was when the block was made, which the project keeps. The bytes
+  are the translation: editing a string rewrites them.
 - **Mapping** — the rule that turns a pointer value into a file offset and
   back: LINEAR, LoROM, HiROM, GB, GBA or a generic banked layout.
 
@@ -133,8 +135,8 @@ the preview system in [preview.md](preview.md).
     icon font; files and fonts sit under their group heading and carry
     none; a missing file shows a warning mark instead;
   - `●` for unsaved edits;
-  - a string count and a status summary on blocks (edited / too long /
-    review), there from the start: opening a project, and locating its
+  - a string count and a status summary on blocks (edited / review), there
+    from the start: opening a project, and locating its
     missing files, reads every block over a file that is on disk;
   - an entry count on tables;
   - a joined-file count and a container tag on files;
@@ -175,8 +177,8 @@ the preview system in [preview.md](preview.md).
   paste into another mapchar window.
 - **Remove (Del)** asks once for the whole selection and names child blocks
   and bookmarks, unsaved edits being discarded, and blocks reading through a
-  removed table: they keep their translations, but cannot be re-read or written
-  until the table is loaded again. When the current entry goes, the nearest
+  removed table: they keep their originals and notes, but cannot be read or
+  edited until the table is loaded again. When the current entry goes, the nearest
   row of the same group takes its place — after the hole, else before it —
   so removing a block never puts a table in the hex and text panels; failing
   that, a String Data entry.
@@ -284,8 +286,9 @@ change to them applies as it is made, as celPix's toolbar does: the Hex, Text
 and Strings tabs read again at once.
 
 - **Whose settings** — on a block, its own configuration: each change is an
-  undo step that re-reads the block, its translations matched back by index,
-  and a run of changes to one control (a spin box stepped several times) is
+  undo step that re-reads the block, its originals, statuses and notes matched
+  back by index — a string the new reading cuts at other bits is a new string
+  and takes its original from the bytes afresh — and a run of changes to one control (a spin box stepped several times) is
   one step. On a file, the file's session: saved with the project, carried by
   a bookmark, and what **New Block** starts from. Anything else that changes a
   block's configuration — an import, **Use as Pointer Table**, an undo — shows
@@ -509,7 +512,7 @@ as a **Range** of end-token strings — rather than every control at once.
     the last string ends at an end token or `stop`);
   - **Lines** — after `N` line codes, or earlier at an end token: a message
     the game reads as a fixed number of terminated lines, with no end of its
-    own. A translation must hold exactly `N`.
+    own. Edited text must hold exactly `N`.
 - **Ends per string** — how many end tokens one string runs through before
   it ends (Cartographer's strings per pointer).
 - **Line code** — `[line]`, or the block's own label (`line_label=` in the
@@ -579,82 +582,108 @@ as a **Range** of end-token strings — rather than every control at once.
 
 The editing surface, opened on a block.
 
-- **Columns** — `#`, address, pointers, **Original** (read-only, the decode
-  of the bytes on disk), **Translation** (editable), bytes used / bytes
-  available (a string read across a skip range counts both of its pieces),
-  status, notes. The header's context menu hides and shows
-  columns, and dragging a header section reorders them; Translation stays.
-- **Status**, per string: **untouched**, **edited**, **too long** (the
-  encoding does not fit; see [Writing](#writing-back-to-disk)), **invalid**
-  (the translation cannot be encoded), **review** (set by hand or by import),
-  and, when a preview font is bound, **overflows box**.
-- **Editing** — the Translation cell is a multi-line editor:
+- **Columns** — `#`, address, pointers, **Original** (read-only: the string's
+  text when the block was made, kept by the project), **Translation** (what
+  the bytes say now; editable), bytes used / room, status, **Same** (`×N`
+  when other strings of the block share the original), notes. The header's
+  context menu hides and shows columns, and dragging a header section reorders
+  them; Translation stays.
+- **Status**, per string: **untouched** (the bytes still say the original),
+  **edited** (they say something else), **review** (set by hand or by
+  import), and, when a preview font is bound, **overflows box**. Nothing is
+  ever *too long* or *invalid*: the bytes cannot hold such a text, so an edit
+  that would need them is refused instead.
+- **Editing** — the Translation cell is a multi-line editor, opened on the
+  text the bytes hold:
   - typing edits text; `[` opens code completion listing the table set's
-    codes with their operand shapes; Return commits and Esc cancels;
+    codes with their operand shapes and the comment the table gives each;
+    **Return** commits and opens the next row, **Ctrl+Return** commits and
+    stays, Esc cancels; a blank cell puts the original back;
+  - a commit lays the block out again with the new text in place of the
+    string's bytes and every other string's bytes as they are, and splices
+    the result into the buffer — the file's, or the payload of the slot a
+    compressed block decodes — which then reads unsaved. A packed block moves
+    the strings after the edit and rewrites their pointers; a slotted one
+    keeps the string in its slot, padded with the fill byte, and the slot
+    runs to the next string, so a string shortened once can grow back;
+  - a commit is **refused** — the editor stays open with the reason under it
+    — when the text does not encode, does not fit its room, would not read
+    back as typed, or would change how the bytes after it are cut into
+    strings;
   - **Shift+Return** writes the block's newline code — the code carrying the
     *newline* effect, else `[line]` — never a line break, which the script
     grammar drops;
   - **Insert code** buttons for the codes this block's strings use most,
-    wrapping onto more rows when the view is narrow;
+    wrapping onto more rows when the view is narrow, each with the table's
+    comment as its tooltip;
   - the byte readout updates as you type, from a live encode, against the
     room the string has; the Preview follows the draft and lists what the
     font cannot spell;
-  - **Revert** copies Original back; **Copy Original to Empty Translations**
-    fills the ones with none;
-  - the Preview window's **Wrap Translation** (font and box bound) inserts line
-    codes to fit the box; see [preview.md](preview.md#wrapping).
+  - **Revert** puts the original back; the Preview window's **Wrap
+    Translation** (font and box bound) inserts line codes to fit the box; see
+    [preview.md](preview.md#wrapping);
+  - **Apply to Identical Originals**, in Block or in Project, puts the
+    selected string's text into every string whose original is the same.
+- **Stepping** — **Edit ▸ Next / Previous Untranslated** (F4 / Shift+F4) and
+  **Next / Previous Flagged** (F6 / Shift+F6: review or overflows box) move
+  among the rows the filter shows, wrapping round.
+- **Progress** — the Block bar says how many strings are translated, of the
+  block and of the project.
 - **Filter** — words in any order over original, translation and notes; a
   status box narrows to one status.
 - **Selection sync** — selecting a string highlights its bytes in the raw
-  view and the Hex panel; selecting bytes there selects the string.
-- **Bulk edit** — Find and Replace across translations of the block or the
-  project, with code-aware matching (`[line]` matches only the code).
-- **Undo** — a run of typing in one cell is one undo step.
+  view and the Hex panel; selecting bytes there selects the string. A hex
+  overtype inside a string reads as an edit of it.
+- **Bulk edit** — Find and Replace across the block or the project, with
+  code-aware matching (`[line]` matches only the code). A block's
+  replacements land as one edit; one that will not fit is tried string by
+  string and the refusals listed.
+- **Undo** — a run of commits on one cell is one undo step.
 
 ## Writing back to disk
 
-- **What a write does** — encodes every translation of a block through the
-  table set, lays the results out, rewrites pointers, then runs the chain in
-  reverse (compress, container) over the file as it stands on disk at that
-  moment, and writes the result back — the block's own region is the only part
-  of the file the write changes.
-- **Write mode:**
+- **What a write does** — a string edit is already in the buffer, so a write
+  lays nothing out: it compresses each edited slot back into the file, runs
+  the container in reverse over the file as it stands, and writes the result
+  back. The buffer is written whole, edits from every surface in it.
+- **Write mode**, per block, governs how an edit lays the block out:
   - **Packed** (default with pointers) — strings are laid end to end from the
     block's first string address, each pointer is rewritten to its string's
     new position, and leftover space up to the bound gets the fill byte;
   - **Slotted** (default without pointers, and always with skip ranges) —
-    every string stays at its address and may use up to its original extent
-    (the gap to the next string, or its fixed length), padded with the fill
-    byte.
-- **In place only** — a string or block that does not fit is **too long**:
-  the write is refused, and the strings that would cross the bound are
-  listed with the bytes over. Nothing is relocated; making room is the
-  user's job.
+    every string stays at its address and may use up to its slot (the gap to
+    the next string, or its fixed length), padded with the fill byte. A run
+    of the fill byte between two strings of a range is padding and is never
+    read as text, so the fill byte should be one no string begins with.
+- **In place only** — a string that does not fit is refused at the edit, with
+  the bytes over. Nothing is relocated; making room is the user's job.
 - **Encoding is verified** — every encoded string is decoded again and must
-  give back the same tokens; a mismatch is **invalid** and blocks the write.
+  give back the same tokens, and the block must read again as the same
+  strings; a mismatch refuses the edit.
 - **Bit-level tables** — an encoding that stops short of a byte is padded with
   zero bits to the byte, as the games and Atlas pad it: the next string, or
   the pointer to it, begins on a byte.
-- **File ▸ Write (Ctrl+W)** writes the current block; **Write All
-  (Ctrl+Shift+W)** writes every block with edits; the Files panel writes one
-  entry. An entry that cannot be written says why: a bookmark has no bytes of
-  its own, a table file is written with **Save As File…**, a glyph sheet is
-  never written to, and a view-only entry names the stage that has no way
-  back.
-- **Blocks over one compressed region write together** — they are laid out
-  into one decompressed buffer and it is compressed once, since the region
-  holds one stream.
+- **File ▸ Write (Ctrl+W)** writes the current entry's file; **Write All
+  (Ctrl+Shift+W)** writes every file and slot with edits; the Files panel
+  writes one entry. An entry that cannot be written says why: a bookmark has
+  no bytes of its own, a table file is written with **Save As File…**, a glyph
+  sheet is never written to, and a view-only entry names the stage that has no
+  way back.
+- **Blocks over one compressed region share its payload** — an edit in one is
+  in the bytes the others read, the slot is compressed once, and a write of
+  any of them writes them all.
 - **Other open entries on the same file refresh afterwards** — a block over a
   compressed region by decompressing again, since its bytes are a reading of
   the region rather than a window on it. One with unsaved edits keeps them.
 - **A write is one undo step** — per file, and one step for all of a Write
-  All. Undoing it puts the bytes it replaced back in the file and hands the
-  blocks their translations, unsaved again; redoing writes the result once
-  more. The file is read at that moment and only touched while it still holds
-  what the step is moving away from: one changed since by another program is
-  left alone, and the step says so.
+  All. Undoing it puts the bytes it replaced back in the file and leaves the
+  buffer as it was, unsaved again; redoing writes the result once more. The
+  file is read at that moment and only touched while it still holds what the
+  step is moving away from: one changed since by another program is left
+  alone, and the step says so.
 - Opening, creating or saving a project with unsaved edits offers **Write All
-  / Continue Without / Cancel**.
+  / Continue Without / Cancel**, as does changing a file's container, which
+  reads the file from disk again.
 
 ## Dump, export and import
 
@@ -662,12 +691,14 @@ The editing surface, opened on a block.
   for all, with originals, translations or both (see
   [script-format.md](script-format.md#native-script)).
 - **Import script** reads a native script back: strings are matched by block
-  and index, text becomes the translation, and strings that differ from the
-  original are marked **edited**. Unknown blocks are created when the script
-  carries their configuration.
+  and index and the text goes into the bytes as an edit. Unknown blocks are
+  created when the script carries their configuration.
 - **Translator files** — **Export ▸ TSV / CSV** and **Export ▸ PO** write one
   row or entry per string; **Import** reads them back by id. Rows whose
   original no longer matches are reported and skipped unless forced.
+- An import is one undo step. A block's texts land as one edit; a block whose
+  texts will not all fit is tried string by string, and what is refused is
+  listed and left as it was.
 - **Cartographer** — **Import** reads a command file into blocks (one per
   `#BLOCK`) and its tables through the abcde dialect, then extracts. **Export**
   writes a command file for a block whose settings Cartographer can express,
@@ -732,7 +763,8 @@ in the game. It is described in [preview.md](preview.md).
 - **Overtype** — typing a hex digit over a byte in the dump changes that
   nibble in place, one undo step per digit, the caret moving on to the next
   nibble; the bytes line below writes a run of hex bytes at an offset. Both make
-  the file entry unsaved. Text is decoded, not editable here.
+  the file entry unsaved, and a block over the bytes reads them again. Text is
+  decoded, not editable here.
 - **Go to**, **Find** (the same field as the Find bar, which takes over what
   is searched from here) with next and previous, and **Follow selection**,
   which is remembered per machine.
@@ -742,13 +774,16 @@ in the game. It is described in [preview.md](preview.md).
 ## Projects
 
 - A `.mapchar` project stores **references and settings, never bytes**:
-  every entry with its chain, block configuration, a file's reading; per-string
-  translations, statuses and notes; table edits made in-app; font bindings
-  and text boxes; the view position per entry.
+  every entry with its chain, block configuration, a file's reading; per
+  string its **original**, status and notes; table edits made in-app; font
+  bindings and text boxes; the view position per entry. Translations are not
+  in it: they are the ROM's bytes.
 - Not saved: zoom, theme, window layout, undo history.
 - **New / Open / Open Recent / Save / Save As** as in celPix; paths are stored
   relative to the project file; older versions are upgraded on load, which the
-  status line says, and newer ones open with what this build understands.
+  status line says, and newer ones open with what this build understands. A
+  project from before originals were kept still holds translations: opening
+  it puts them into the bytes, and the file reads unsaved until written.
   **Open Recent** lists projects by name, newest first, drops rows whose file
   has gone, and offers **Clear List**.
 - **Missing files** — a project that references files that are not there offers
@@ -757,13 +792,18 @@ in the game. It is described in [preview.md](preview.md).
   still named after the file takes the new name.
 - **Saving the project resolves unsaved edits first** — a project holds
   references, not bytes, so it asks to **Write All**, continue without writing,
-  or cancel. Reopening it marks every block whose translations were never
-  written unsaved again, so **Write All**, the file's Write and the `●` mark
-  still cover them.
+  or cancel. Edits left unwritten are lost with the session.
 - **Unsaved marker** — the title bar shows the project unsaved when its
   serialized form differs from disk — a table edit included, since that is
   project state. A session that has never been saved as a project has nothing
   to differ from and never prompts.
+- **Autosave** — the project is what remembers the originals once the ROM
+  has been written, so a copy of it is saved every two minutes when it has
+  changed, and at once after every write to disk: `name.mapchar.autosave`
+  beside the project file, or under the application's data folder for a
+  session with no project file. Saving the project removes the copy, as does
+  quitting. A copy newer than its project is offered when the project is next
+  opened, and a session's copy is offered at the next start.
 
 ## Plugins
 
@@ -792,8 +832,8 @@ in the game. It is described in [preview.md](preview.md).
 ## Undo
 
 - **One history** for the session: entry open, close, paste, rename, reorder;
-  block, container and table edits; view moves; translation edits and status
-  changes; hex overtypes; font and box edits; writes to disk.
+  block, container and table edits; view moves; string edits, status changes
+  and notes; hex overtypes; font and box edits; writes to disk.
 - **Ctrl+Z / Ctrl+Shift+Z** undo the latest action from any surface. Undoing
   a change made elsewhere switches back to that entry **and** the view it was
   made in — the Strings tab on its row, the Hex tab at its offset.
@@ -801,8 +841,8 @@ in the game. It is described in [preview.md](preview.md).
   clean again, and redoing marks it unsaved once more. A write is a step of
   its own, so undoing it and then the edits behind it ends at the bytes on
   disk, clean.
-- **A run of edits on one string is one step**, and a run that ends back where
-  it began is no step at all. Moving to another row, or to another entry, ends
+- **A run of commits on one string is one step**, and a run that ends back
+  with the bytes it began with is no step at all. Moving to another row, or to another entry, ends
   the run. Consecutive view moves in one entry merge the same way.
 - Opening or starting a project clears the history and the visit trail.
 
@@ -818,12 +858,12 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Area | Keys |
 |---|---|
 | File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh Plugins · Ctrl+Q Quit |
-| Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace |
+| Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · F4 / Shift+F4 next / previous untranslated · F6 / Shift+F6 next / previous flagged |
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
 | Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
 | Find bar | Enter next · Shift+Enter previous · Esc closes Find and Replace |
-| Strings view | F2, double-click or typing edit the cell · Enter commit · Shift+Enter newline code · [ complete a code · Esc cancel |
+| Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code · Esc cancel |
 | Files panel | Up/Down or double-click open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename · right-click menu |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
 | Tool windows | Esc close · Enter run the Search window's query · double-click a result to jump |

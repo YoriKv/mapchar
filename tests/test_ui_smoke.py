@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -170,33 +171,40 @@ def test_edit_and_write(window, tmp_path):
     block = add_block(window, file_entry, "b", RangeSource(0, 6), fill=0xEE)
     window._on_translation_edited(0, "A[end]")
     rec = block.doc.strings[0]
-    assert rec.translation == "A[end]" and rec.status is Status.EDITED and block.dirty
+    # The translation is the bytes: the string's slot holds it, fill after.
+    assert rec.current_text() == "A[end]" and rec.original == "AB[end]"
+    assert rec.status is Status.EDITED
+    assert file_entry.dirty and not block.dirty
+    assert file_entry.doc.data == bytes.fromhex("41 00 EE 42 41 00") + b"\xff" * 4
     rows = window._row_data(block, block.doc, window._table_set())
     assert (rows[0].used, rows[0].room, rows[0].status) == (2, 3, "edited")
+    # An edit that does not fit never lands: the bytes cannot hold it.
+    steps = window.undo_stack.count()
     window._on_translation_edited(1, "BBB[end]")
-    rows = window._row_data(block, block.doc, window._table_set())
-    assert rows[1].status == "too long"
-    assert not window._write_blocks([block])  # refused: string 1 too long
-    window.undo_stack.undo()
-    assert block.doc.strings[1].translation is None
+    assert window.undo_stack.count() == steps
+    assert block.doc.strings[1].current_text() == "BA[end]"
     assert window._write_blocks([block])
     assert (
         Path(file_entry.path).read_bytes()
         == bytes.fromhex("41 00 EE 42 41 00") + b"\xff" * 4
     )
-    assert not block.dirty and block.doc.strings[0].translation is None
-    assert block.doc.strings[0].original_text() == "A[end]"
-    window.undo_stack.undo()  # the write itself: the file and the block go back
+    assert not file_entry.dirty
+    # A write moves no string state.
+    assert rec.current_text() == "A[end]" and rec.original == "AB[end]"
+    window.undo_stack.undo()  # the write itself: the file goes back, the buffer stays
     assert Path(file_entry.path).read_bytes() == data
-    assert block.doc.strings[0].translation == "A[end]" and block.dirty
+    assert block.doc.strings[0].current_text() == "A[end]" and file_entry.dirty
     window.undo_stack.redo()
-    assert Path(file_entry.path).read_bytes() != data and not block.dirty
+    assert Path(file_entry.path).read_bytes() != data and not file_entry.dirty
     window.undo_stack.undo()
     window.undo_stack.undo()  # the edit too: back to the bytes on disk, and clean
-    assert block.doc.strings[0].translation is None
-    assert not block.dirty
+    assert block.doc.strings[0].current_text() == "AB[end]"
+    assert not file_entry.dirty and file_entry.doc.data == data
     window.overtype_bytes(1, b"\x43")
     assert file_entry.dirty and file_entry.doc.data[1] == 0x43
+    # A hex edit inside the block reads as an edit of its string.
+    assert block.doc.strings[0].current_text() == "A[$43][end]"
+    assert block.doc.strings[0].status is Status.EDITED
     window.undo_stack.undo()
     assert file_entry.doc.data[1] == 0x42
 
@@ -211,37 +219,37 @@ def test_import_export_and_find_replace(window, tmp_path):
     assert "D/0\t$0\tAB[end]\tB[end]\tedited" in tsv.read_text()
     po = tmp_path / "d.po"
     window.export_file(str(po), "po")
-    window._on_translation_edited(0, "")
-    assert block.doc.strings[0].translation is None
+    window._on_translation_edited(0, "")  # blank: the original again
+    assert not block.doc.strings[0].edited
     window.import_file(str(po), "po")
-    assert block.doc.strings[0].translation == "B[end]"
+    assert block.doc.strings[0].current_text() == "B[end]"
     window.undo_stack.undo()
-    assert block.doc.strings[0].translation is None
+    assert not block.doc.strings[0].edited
     # Script import through the native writer.
+    from helpers import translated
     from mapchar.project.formats.script import DumpMode, write_script
 
-    block.doc.strings[1].translation = "A[end]"
+    strings, _ = translated(data, block.config, window._table_set(), {1: "A[end]"})
     script = tmp_path / "s.txt"
     script.write_text(
-        write_script([("D", block.config, block.doc.strings)], DumpMode.TRANSLATIONS)
+        write_script([("D", block.config, strings)], DumpMode.TRANSLATIONS)
     )
-    block.doc.strings[1].translation = None
     window.import_file(str(script), "script")
-    assert block.doc.strings[1].translation == "A[end]"
+    assert block.doc.strings[1].current_text() == "A[end]"
     assert block.doc.strings[1].status is Status.EDITED
-    # Replace all over translations.
+    # Replace all over the strings' text.
     window._fr_replace_all("A", "B", True)
-    assert block.doc.strings[1].translation == "B[end]"
-    assert block.doc.strings[0].translation == "BB[end]"
+    assert block.doc.strings[1].current_text() == "B[end]"
+    assert block.doc.strings[0].current_text() == "BB[end]"
     # Hex panel overtype path.
     window.show()
     window.hex_dock.show()
     window._sync_hex_panel()
-    assert "000000  41 42 00" in window.hex_panel.view.toPlainText()
+    assert "000000  42 42 00" in window.hex_panel.view.toPlainText()
     window.hex_panel.at.setText("2")
     window.hex_panel.bytes.setText("42 00")
     window.hex_panel._on_apply()
-    assert file_entry.doc.data[:4] == bytes.fromhex("41 42 42 00")
+    assert file_entry.doc.data[:4] == bytes.fromhex("42 42 42 00")
 
 
 def test_pointer_block_in_window(window, tmp_path, monkeypatch):
@@ -293,8 +301,8 @@ def test_cartographer_and_atlas_import(window, tmp_path):
         "#JMP($3, $4)\nA[end]\n"
     )
     assert window.import_atlas(str(tmp_path / "atlas.txt")) == 2
-    assert block.doc.strings[0].translation == "BA[end]"
-    assert block.doc.strings[1].translation == "A[end]"
+    assert block.doc.strings[0].current_text() == "BA[end]"
+    assert block.doc.strings[1].current_text() == "A[end]"
     assert window._string_at(3) is block.doc.strings[1]
 
 
@@ -359,7 +367,8 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     assert written[:16] == b"\xff" * 16 and written[16 + slot :] == b"\xff" * 24
     out = GbaLz77().decompress(written[16:], PipelineContext())
     assert out.startswith(b"HI HI HI\x00" + b" " * 9 + b"WORLD WORLD\x00")
-    assert block.doc.strings[0].original_text() == "HI HI HI[end]"
+    assert block.doc.strings[0].current_text() == "HI HI HI[end]"
+    assert block.doc.strings[0].original == "HELLO HELLO HELLO[end]"
 
 
 def test_two_blocks_over_one_slot_write_together(window, tmp_path):
@@ -411,13 +420,10 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
     assert not first.dirty and not second.dirty
 
 
-def test_siblings_over_a_written_slot_refresh_but_keep_their_edits(window, tmp_path):
-    """A block that was not written still reads the region that just changed.
-
-    Its bytes are a *decode* of the slot rather than a window on it, so a clean
-    one is dropped and decompresses again when it is next shown. One carrying
-    unsaved edits keeps its document, because that is where they live.
-    """
+def test_siblings_over_a_slot_share_its_payload_and_write_together(window, tmp_path):
+    """Blocks over one compressed slot read one stream, so an edit in any of
+    them is in the payload the others read, and a write of one writes the slot
+    with every edit in it — and marks every block over it written."""
     from mapchar.core.context import PipelineContext
     from mapchar.plugins.builtins.compression import GbaLz77
 
@@ -438,17 +444,18 @@ def test_siblings_over_a_written_slot_refresh_but_keep_their_edits(window, tmp_p
     )
     window._on_translation_edited(0, "KEPT[end]")
     assert edited.dirty and edited.doc is not None and clean.doc is not None
+    assert written.doc.data == edited.doc.data  # one stream, shared
 
     window._activate_entry(written)
     window._on_translation_edited(0, "HI HI HI[end]")
     assert window._write_blocks([written])
 
-    assert clean.doc is None  # dropped: it decodes the slot afresh next time
-    assert edited.doc is not None
-    assert edited.doc.strings[0].translation == "KEPT[end]"
-    assert edited.dirty
-    # And the dropped one reads the bytes the write left behind.
-    assert window._load_document(clean).data[:8] == b"HI HI HI"
+    assert not written.dirty and not edited.dirty and not clean.dirty
+    assert edited.doc.strings[0].current_text() == "KEPT[end]"
+    out = GbaLz77().decompress(
+        Path(file_entry.path).read_bytes()[16:], PipelineContext()
+    )
+    assert out.startswith(b"HI HI HI") and out[60:].startswith(b"KEPT\x00")
 
 
 def test_preview_and_wrap(window, tmp_path):
@@ -489,8 +496,8 @@ def test_preview_and_wrap(window, tmp_path):
     assert rows[0].status == "overflows box"
     window.strings.select_index(0)
     window._wrap_selected()
-    text = block.doc.strings[0].translation
-    assert text is not None and "[line]" in text
+    text = block.doc.strings[0].current_text()
+    assert "[line]" in text
     assert window.preview_window.status.text().startswith("page 1/")
     proj = tmp_path / "p.mapchar"
     assert window._write_project(str(proj))
@@ -665,14 +672,14 @@ def test_tables_show_their_entry_count(window, tmp_path):
 def test_saving_a_project_offers_to_write_the_unsaved_edits(window, tmp_path):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
     file_entry = open_rom_and_table(window, tmp_path, data)
-    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    add_block(window, file_entry, "b", RangeSource(0, 6))
     window._on_translation_edited(0, "BA[end]")
-    assert block.dirty
+    assert file_entry.dirty
     # The fixture answers the gate with "Continue Without": the project saves and
     # the edit stays in memory, unwritten.
     proj = tmp_path / "p.mapchar"
     assert window._write_project(str(proj))
-    assert block.dirty
+    assert file_entry.dirty
     assert Path(str(file_entry.path)).read_bytes() == data
 
 
@@ -1386,22 +1393,23 @@ def test_open_recent_normalises_prunes_and_clears(window, tmp_path):
     assert window._recent() == [] and not window.recent_menu.isEnabled()
 
 
-def test_a_plugin_refresh_keeps_a_clean_block_s_translations(window, tmp_path):
-    """F5 drops every cached document it can; a block's translations live in one,
+def test_a_plugin_refresh_keeps_a_clean_block_s_originals(window, tmp_path):
+    """F5 drops every cached document it can; a block's originals live in one,
     so they have to be stashed on the entry on the way out."""
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._on_translation_edited(0, "ZZ[end]")
-    window.workspace.mark_saved(block)  # as if it had been written back
-    assert not block.dirty
+    window._on_translation_edited(0, "BB[end]")
+    assert window._write_blocks([block])
+    assert not file_entry.dirty
     window._reload_plugins = lambda project_dir: (window.registry, [])
     window._refresh_plugins()
     assert block.doc is not None
-    assert block.doc.strings[0].translation == "ZZ[end]"
+    assert block.doc.strings[0].current_text() == "BB[end]"
+    assert block.doc.strings[0].original == "AB[end]"
     proj = tmp_path / "p.mapchar"
     assert window._write_project(str(proj))
-    assert "ZZ[end]" in Path(proj).read_text()
+    assert '"o": "AB[end]"' in Path(proj).read_text()
 
 
 def test_a_files_row_name_takes_the_panel_width(window, tmp_path):
@@ -1428,25 +1436,33 @@ def test_the_bar_pickers_are_narrow_and_open_to_their_longest_item(window):
     pick.hidePopup()
 
 
-def test_a_reopened_block_with_translations_is_unsaved_and_writes(window, tmp_path):
-    """Translations a project carries are not on disk: the block they belong
-    to has to read unsaved again, or Write All would report nothing to write."""
+def test_a_project_holding_translations_puts_them_in_the_bytes(window, tmp_path):
+    """A project written before originals were kept carried translations
+    that were not in the ROM. Opening it lands them: the file reads unsaved,
+    and Write All writes them."""
+    import json
+
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
     file_entry = open_rom_and_table(window, tmp_path, data)
     add_block(window, file_entry, "b", RangeSource(0, 6), fill=0xEE)
-    window._on_translation_edited(0, "A[end]")
     proj = tmp_path / "p.mapchar"
-    assert window._write_project(str(proj))  # Continue Without, by the fixture
+    assert window._write_project(str(proj))
+    doc = json.loads(proj.read_text())
+    block_dict = next(e for e in doc["entries"] if e["kind"] == "block")
+    block_dict["strings"] = [{"i": 0, "t": "A[end]", "s": "edited"}]
+    proj.write_text(json.dumps(doc))
     window._new_project()
     assert window.open_project(str(proj))
     back = window.workspace.of_kind(EntryKind.BLOCK)[0]
-    assert back.dirty and window._dirty_blocks() == [back]
+    rom = window.workspace.files()[0]
+    assert rom.dirty and back.doc.strings[0].current_text() == "A[end]"
+    assert back.doc.strings[0].original == "AB[end]"
     assert window._write_all()
     assert (
         Path(file_entry.path).read_bytes()
         == bytes.fromhex("41 00 EE 42 41 00") + b"\xff" * 4
     )
-    assert not back.dirty
+    assert not rom.dirty
 
 
 def test_blocks_and_bookmarks_never_share_a_name(window, tmp_path):
@@ -1899,3 +1915,36 @@ def test_a_block_from_a_scanned_region_keeps_a_table_that_already_has_an_end(
     window._block_from_region(Region(0, 6, 1.0, terminator=0x0F))
     assert len(table_entry.table.entries) == before
     assert len(window.workspace.of_kind(EntryKind.BLOCK)) == blocks + 1
+
+
+def test_autosave_writes_a_copy_and_offers_it_back(window, tmp_path, monkeypatch):
+    """The copy beside the project is written on the timer and after a write,
+    goes with a save, and is offered when the project is next opened."""
+    import time
+
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    copy = tmp_path / "p.mapchar.autosave"
+    window._autosave()
+    assert not copy.exists()  # nothing changed since the save
+    window._on_translation_edited(0, "BB[end]")
+    assert window._write_blocks([block])  # a write saves a copy at once
+    assert copy.exists() and '"o": "AB[end]"' in copy.read_text()
+    assert window._write_project(str(proj))
+    assert not copy.exists()  # the save made it redundant
+    # A copy newer than the project is offered back on open.
+    block.doc.strings[0].notes = "from the copy"
+    window._autosave()
+    assert copy.exists()
+    time.sleep(0.05)
+    os.utime(str(proj), (time.time() - 10, time.time() - 10))
+    window._new_project()
+    monkeypatch.setattr(window, "_ask", lambda *a, **k: True)
+    assert window.open_project(str(proj))
+    assert window.project_path == str(proj) and not copy.exists()
+    back = window.workspace.of_kind(EntryKind.BLOCK)[0]
+    assert back.doc.strings[0].notes == "from the copy"
+    assert window._project_dirty()  # the copy is not what the file holds

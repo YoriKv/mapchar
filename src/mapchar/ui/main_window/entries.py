@@ -57,7 +57,7 @@ class EntriesMixin:
         if orphaned:
             msg += (
                 f"\n{', '.join(b.name for b in orphaned)} read through it: their "
-                "translations are kept, but they cannot be re-read or written "
+                "originals and notes are kept, but they cannot be read or edited "
                 "until the table is loaded again."
             )
         if not self._ask("Remove Entries", msg):

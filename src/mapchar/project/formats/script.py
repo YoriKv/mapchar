@@ -21,7 +21,6 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
     Source,
-    Status,
     StringRecord,
     StringType,
     WriteMode,
@@ -355,13 +354,17 @@ class ScriptImportReport:
     notices: list[str] = field(default_factory=list)
     new_blocks: list[tuple[str, BlockConfig]] = field(default_factory=list)
     """Blocks the script carries that the project lacks, with their config."""
+    texts: dict[str, dict[int, str]] = field(default_factory=dict)
+    """Per block, the text each placed string is to hold, by index."""
 
 
 def apply_script(
     script: Script, blocks: dict[str, list[StringRecord]]
 ) -> ScriptImportReport:
-    """Walk ``script`` into the project's strings, block by block and index by
-    index; what it could not place comes back as notices."""
+    """Walk ``script`` over the project's strings, block by block and index by
+    index: what each placed string is to say comes back as ``texts``, and what
+    could not be placed as notices. Nothing is changed here — the texts go
+    into the bytes, which is the window's to do."""
     report = ScriptImportReport()
     for sb in script.blocks:
         strings = blocks.get(sb.name)
@@ -384,12 +387,6 @@ def apply_script(
                     f"{sb.name}/{ss.index}: script says ${ss.start:X}-${ss.end:X}, "
                     f"project has ${rec.start:X}-${rec.end:X}"
                 )
-            if rec.matches_original(ss.text):
-                if rec.translation is not None:
-                    rec.translation = None
-                    rec.status = Status.UNTOUCHED
-            else:
-                rec.translation = ss.text
-                rec.status = Status.EDITED
+            report.texts.setdefault(sb.name, {})[ss.index] = ss.text
             report.applied += 1
     return report

@@ -6,7 +6,7 @@ state and Qt's stack provides the menu actions, the merging and the obsolete
 handling for free while ``core``/``pipeline``/``project`` stay Qt-free.
 
 One **unified session stack** holds every command in chronological order — files
-panel structure, per-entry configuration, view moves, translations, hex
+panel structure, per-entry configuration, view moves, string edits, hex
 overtypes, table and font edits, writes to disk — so a single Ctrl+Z always
 reverts the most recent action whichever surface made it. Three things follow
 from that, and they are what :class:`_StateCommand` exists to state once:
@@ -41,7 +41,7 @@ from PySide6.QtGui import QUndoCommand
 
 from mapchar.core.table import Table
 from mapchar.pipeline.filechange import FileChange
-from mapchar.project.workspace import Entry, StringState
+from mapchar.project.workspace import Entry
 
 # QUndoStack only attempts mergeWith between commands whose id() match, and -1
 # never merges; any other command landing in between breaks the chain.
@@ -50,6 +50,7 @@ FIELD_ID = 2
 FONT_ID = 3
 BOX_ID = 4
 BLOCK_ID = 5
+STRINGS_ID = 6
 
 
 class _StateCommand(QUndoCommand):
@@ -220,7 +221,7 @@ class OffsetCommand(_MergingCommand, _CurrentEntryCommand):
 
 
 class StringFieldCommand(_MergingCommand, _EditContextCommand):
-    """One field of one string: translation, notes or status.
+    """One field of one string: its notes or its status.
 
     State is the value paired with the revision token it leaves the entry at, so
     an undo hands back the exact unsaved-state the entry had before it.
@@ -275,6 +276,98 @@ class StringFieldCommand(_MergingCommand, _EditContextCommand):
         self.window.apply_string_field(
             self.entry, self.index, self.field, value, revision
         )
+
+
+class StringsEditCommand(_MergingCommand, _EditContextCommand):
+    """A block's strings changed in place: the bytes the layout rewrote.
+
+    A translation lives in the ROM's bytes, so editing one is a splice — of
+    the whole stretch the layout touched, since a packed block moves every
+    string after the edited one and rewrites their pointers. The entry is the
+    block, for the reach; the revision belongs to whichever entry's buffer the
+    bytes are (``StringEditMixin.apply_strings_edit``).
+
+    A run of commits on one cell is one step, as
+    :class:`StringFieldCommand`'s is: ``run`` and ``index`` say which commands
+    are the same run, and merging lays the two stretches over each other. A
+    run that ends with the bytes it began with is no step, and hands the owner
+    its revision back.
+    """
+
+    _stamps = True
+
+    def __init__(
+        self,
+        window,
+        entry: Entry,
+        offset: int,
+        before: bytes,
+        after: bytes,
+        index: int | None,
+        text: str = "Edit translation",
+        *,
+        run: int | None = None,
+    ):
+        owner = window._bytes_owner(entry)
+        revision = owner.live_revision
+        super().__init__(
+            window,
+            entry,
+            text,
+            (before, revision),
+            (after, window.workspace.next_revision()),
+            "strings",
+            index,
+        )
+        self.offset = offset
+        self.run = run
+
+    def id(self) -> int:
+        return STRINGS_ID
+
+    def _mergeable(self, other) -> bool:
+        if not (
+            isinstance(other, StringsEditCommand)
+            and other.entry is self.entry
+            and other.where == self.where
+            and self.run is not None
+            and other.run == self.run
+        ):
+            return False
+        # Two stretches with a gap between them would need bytes neither holds.
+        return other.offset <= self.end and self.offset <= other.end
+
+    @property
+    def end(self) -> int:
+        return self.offset + len(self.before[0])
+
+    def mergeWith(self, other) -> bool:  # noqa: N802 - Qt override
+        if not self._mergeable(other):
+            return False
+        lo = min(self.offset, other.offset)
+        hi = max(self.end, other.end)
+        # Before: what the union held before either — the other's stretch as
+        # it was after this one, with this one's own stretch laid back over it.
+        # After: this one's result, with the other's laid over it.
+        before = bytearray(hi - lo)
+        before[other.offset - lo : other.end - lo] = other.before[0]
+        before[self.offset - lo : self.end - lo] = self.before[0]
+        after = bytearray(hi - lo)
+        after[self.offset - lo : self.end - lo] = self.after[0]
+        after[other.offset - lo : other.end - lo] = other.after[0]
+        self.offset = lo
+        self.before = (bytes(before), self.before[1])
+        self.after = (bytes(after), other.after[1])
+        if self.after[0] == self.before[0]:
+            self.setObsolete(True)
+            self.window.workspace.stamp(
+                self.window._bytes_owner(self.entry), self.before[1]
+            )
+        return True
+
+    def _apply(self, state) -> None:
+        data, revision = state
+        self.window.apply_strings_edit(self.entry, self.offset, data, revision)
 
 
 class BytesCommand(_EditContextCommand):
@@ -494,14 +587,13 @@ class PointerCommand(_CurrentEntryCommand):
 
 @dataclass(frozen=True)
 class BlockSide:
-    """One written block on one side of a write: its buffer, its unsaved state
-    and every string that carries a translation, a status or a note."""
+    """One written compressed block on one side of a write: the payload its
+    slot decodes to, and its unsaved state."""
 
     entry: Entry
     data: bytes
     live: int
     saved: int
-    strings: dict[int, StringState]
 
 
 @dataclass(frozen=True)
@@ -523,9 +615,9 @@ class WriteSide:
 class WriteCommand(_InPlaceCommand):
     """A write of one file: its bytes on disk, and what sits over them in memory.
 
-    Undoing puts the bytes the write replaced back in the file and hands the
-    blocks their translations again, so the step reads unsaved as it did before;
-    redoing writes the result once more. The file is read at the moment of each
+    Undoing puts the bytes the write replaced back in the file and in memory,
+    so the step reads unsaved as it did before; redoing writes the result once
+    more. The file is read at the moment of each
     and only touched while it still holds the side being left — one changed by
     another program since is left alone and the step says so
     (:meth:`~mapchar.pipeline.filechange.FileChange.apply`). In place because a

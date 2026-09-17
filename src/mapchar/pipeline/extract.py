@@ -74,14 +74,22 @@ def _without_code(line: str, label: str) -> str:
 def extract(
     data: bytes, config: BlockConfig, tables: TableSet, registry=None
 ) -> Extraction:
-    """Cut ``data`` into strings. Pointer sources need a ``registry`` for mappings."""
+    """Cut ``data`` into strings. Pointer sources need a ``registry`` for mappings.
+
+    Every string's original is seeded from its bytes; a block the project
+    already knows puts the originals it saved back over them.
+    """
     bits = Bits(data)
     source = config.source
     if isinstance(source, RangeSource):
-        return _extract_range(bits, config, tables, source)
-    if isinstance(source, PointerTableSource | PointerListSource):
-        return _extract_pointers(bits, config, tables, source, registry)
-    raise TypeError(f"unknown source {source!r}")
+        ex = _extract_range(bits, config, tables, source)
+    elif isinstance(source, PointerTableSource | PointerListSource):
+        ex = _extract_pointers(bits, config, tables, source, registry)
+    else:
+        raise TypeError(f"unknown source {source!r}")
+    for rec in ex.strings:
+        rec.original = rec.current_text()
+    return ex
 
 
 def _read_pointers(
@@ -240,6 +248,14 @@ def _rules(config: BlockConfig, limit_bit: int, end_terminated: bool) -> DecodeR
 def _extract_range(
     bits: Bits, config: BlockConfig, tables: TableSet, source: RangeSource
 ) -> Extraction:
+    """Consecutive strings from ``start`` to ``stop``.
+
+    A string written shorter than the one it replaced leaves its slot padded
+    with the block's fill byte, and the next string starts after the padding:
+    a run of the fill byte between two strings is padding, never text, and is
+    skipped — which is why a block's fill byte should be one no string begins
+    with. A fixed-length string keeps its whole slot, so nothing is skipped.
+    """
     strings: list[StringRecord] = []
     notices: list[Notice] = []
     stop_bit = min(source.stop * 8, bits.length)
@@ -248,8 +264,15 @@ def _extract_range(
         notices.append(
             Notice("'next pointer' needs a pointer source; reading to end tokens")
         )
+    skip_fill = config.fixed_length is None
+    fill_bits = format(config.fill & 0xFF, "08b")
     while pos < stop_bit:
         start = pos
+        if skip_fill and strings and start % 8 == 0:
+            while start + 8 <= stop_bit and bits.window(start, 8) == fill_bits:
+                start += 8
+            if start >= stop_bit:
+                break
         tokens, record_end, res_notices = decode_one(
             bits, config, tables, start, stop_bit
         )

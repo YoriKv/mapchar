@@ -120,12 +120,15 @@ in bytes, which is the unit their results are reported and selected in.
   `show_end`, `end_label`, `line_label`.
 - **`StringRecord`** — one string: `index`, `start_bit`, `end_bit` (bits into
   the decompressed buffer, with `start`, `end` and `length` derived byte
-  properties), `original: list[Token]`, `pointers: tuple[PointerRef]`,
-  `translation: str | None`, `status`, `notes`, the `notices` reading it
-  raised, and `lines` — the token indices a fixed-line piece starts at.
-  Statuses that derive from the data — *too long*, *invalid*, *overflows
-  box* — are computed on demand, never stored; only *untouched*, *edited* and
-  *review* are a `Status`.
+  properties), `tokens: list[Token]` (the decode of the bytes as they are —
+  `current_text()` renders it), `original: str` (the text when the block was
+  made: seeded from the tokens by an extraction and replaced by what the
+  project saved), `pointers: tuple[PointerRef]`, `replacement: str | None`
+  (text to encode in place of the bytes on the next layout; transient),
+  `status`, `notes`, the `notices` reading it raised, and `lines` — the token
+  indices a fixed-line piece starts at. *Edited* and *untouched* follow from
+  the texts (`refresh_status`); *review* is set; *overflows box* is computed
+  on demand, never stored.
 - **`PointerRef`** — `address`, `size`, `endian`, `mapping_id`, `offset`, and
   the `value` read from disk.
 - **`source_start(source)`** — where a source begins, or `None` when it does
@@ -252,8 +255,8 @@ searches for the cheapest bit string that **decodes back to the same tokens**:
   pointer allows N−1 earlier ones, each restarting the frame stack as the
   decoder does, and then requires exactly N.
 - **Verification** — the result is decoded with [3.1](#31-decode) and must
-  give back the same tokens; a mismatch is an `EncodeError`, which the
-  Strings view shows as *invalid*.
+  give back the same tokens; a mismatch is an `EncodeError`, which refuses
+  the edit.
 - **Failure** reports the farthest position reached and the text around it.
 
 Encoding one string is fast enough to run on every keystroke for the byte
@@ -349,16 +352,18 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   tab shows: a body, a map from characters to bytes (`TextModel`), and
   `TextDecode`, which keeps the tokens from one window to the next.
 - **Layout** (`pipeline/insert.py`) turns a block's strings into a byte
-  splice: encode each translation (or reuse the original bits when
-  untouched), lay the results out in *packed* or *slotted* mode, compute the
-  new pointer values through the mappings, and refuse the whole block when
-  any string crosses its bound, reporting each offender. Its output is a
-  list of `(offset, bytes)` splices over the decompressed buffer plus the
-  pointer splices. `lay_out_file` is a file's worth of that: every block over
-  one file laid out and spliced in, with the blocks sharing a compressed slot
-  laid into one payload and that payload compressed once, since recompressing
-  per block would have the last splice at the slot's offset replace every
-  earlier one.
+  splice: encode each string's `replacement` (or reuse its bytes when it has
+  none), lay the results out in *packed* or *slotted* mode, compute the new
+  pointer values through the mappings, and refuse the whole block when any
+  string crosses its bound, reporting each offender. Its output is a list of
+  `(offset, bytes)` splices over the decompressed buffer plus the pointer
+  splices. A slotted string's slot (`slot_ends`) runs to the next string in
+  address order, or the bound, never short of its own end. The window runs
+  it on every edit (`string_edit.py`): the splices land in the buffer every
+  entry over those bytes reads, as one undo step, after a re-extraction has
+  shown the block reads as the same strings with the edited ones saying what
+  was typed. Extraction of a range skips a run of the fill byte between two
+  strings, which is what a shortened string leaves behind.
 - **Slots** (`compress_for_slot`) are the write minus the store, so the checks
   that make one safe hold however the bytes are delivered — through a container
   to a file, or spliced into a parent's buffer by a block. A *bounded* slot
@@ -474,8 +479,9 @@ Two more jobs are the workspace's because both are questions about the whole
 list, not about one entry:
 
 - **Dropping cached documents.** `drop_document` discards an entry's document
-  but keeps what only it held (a block's translations move to
-  `pending_strings`), and `invalidate_path` does that for every entry reading a
+  but keeps what only it held (a block's originals, statuses and notes move to
+  `pending_strings`, with the bits each string covered when the drop is for a
+  block edit), and `invalidate_path` does that for every entry reading a
   path a write just rewrote — sparing the entry that wrote, the blocks under
   it, and anything with unsaved edits of its own.
 - **Missing files.** `missing_paths` is the de-duplicated worklist of
@@ -489,12 +495,12 @@ list, not about one entry:
 
 Blocks are to files what celPix slices are, with these differences:
 
-- a block's `Document` holds `strings`, and its dirty token changes on any
-  translation, status or note edit;
-- writing a block settles through the parent file's buffer, so several
-  blocks over one file write in one deposit;
-- a block over a compressed region owns the decompressed buffer and writes
-  it back as one slot.
+- a block's `Document` holds `strings`; a status or note edit stamps the
+  block, while a string edit stamps whichever entry owns the bytes — the file
+  for a plain block, the block for one decompressing its own slot;
+- a plain block reads its file's buffer, so several blocks over one file
+  write in one deposit; blocks over one compressed slot share its payload and
+  write together.
 
 ### 6.2 Table files and scripts
 
@@ -596,12 +602,13 @@ spelling covers the project file, a script and a file's session reading. `parent
 index into `entries`; a `session` holds only what is not at its default, and its
 `view` names the open tab: `raw` (Hex, the default), `text` or `strings`.
 
-Only strings with a translation, a non-default status or notes are written, and
-a block that was loaded but never opened keeps its own in
+Every string is written with its original (`o`), plus a status and notes where
+they are not the defaults; translations are not stored, being the ROM's bytes.
+A block that was loaded but never opened keeps its own in
 `Entry.pending_strings` until an extraction adopts them — so a save writes back
-the state of every block, not only the ones that were looked at. Originals are
-never stored; they are re-decoded from the ROM, and a string whose original
-changed since the project was saved is flagged *review*.
+the state of every block, not only the ones that were looked at. A translation
+(`t`) an older project still holds is put into the bytes by the first
+extraction, and written out again as it came until then.
 
 ### 6.4 Exchange
 
@@ -644,7 +651,7 @@ through `_push_command`.
 | Blocks and strings | `blocks.py`, `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py` |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
 | Exchange | `import_export.py` |
-| Projects | `projects.py`, `relocate.py` |
+| Projects | `projects.py`, `relocate.py`, `autosave.py` |
 | Preview and fonts | `preview.py`, `fonts.py`, `hex_view.py` |
 
 Widgets outside the mixins: `reading_bar.py` (the Reading bar, loaded from and

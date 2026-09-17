@@ -34,6 +34,16 @@ class ContainerMixin:
         if entry is None or entry.kind is not EntryKind.FILE:
             self._error("Select a ROM to edit its container.")
             return
+        # A new container reads the file from disk again, under the buffer
+        # every edit lives in: the edits go first, or the change does not.
+        dirty = [entry] if entry.dirty else []
+        dirty += [b for b in self.workspace.children(entry) if b.dirty]
+        if dirty and not self._resolve_dirty_entries(
+            f"Changing the container reads {entry.name} from disk again, and "
+            "its unsaved edits are lost",
+            skip_label="Discard",
+        ):
+            return
         from mapchar.plugins.base import writes_back
 
         readonly = frozenset(

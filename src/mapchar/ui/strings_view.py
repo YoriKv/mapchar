@@ -1,13 +1,16 @@
-"""The Strings view: a block's strings beside their translations.
+"""The Strings view: a block's strings beside what its bytes say now.
 
 Presentation only: the window hands it rows and takes back edits. The
 Translation cell is a multi-line editor with code completion on ``[``;
-Ctrl+Return (or Return) commits, Shift+Return inserts the block's newline
-code, Esc cancels. Columns hide and reorder from the header's context menu.
+Return commits and moves to the next row, Ctrl+Return commits and stays,
+Shift+Return inserts the block's newline code, Esc cancels. A commit the
+window refuses keeps the editor open with the reason under it. Columns hide
+and reorder from the header's context menu.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QPoint, QStringListModel, Qt, Signal
@@ -44,8 +47,9 @@ from mapchar.ui.widgets import (
     COL_TRANSLATION,
     COL_BYTES,
     COL_STATUS,
+    COL_SAME,
     COL_NOTES,
-) = range(8)
+) = range(9)
 HEADERS = [
     "#",
     "Address",
@@ -54,6 +58,7 @@ HEADERS = [
     "Translation",
     "Bytes",
     "Status",
+    "Same",
     "Notes",
 ]
 STATUS_FILTERS = [
@@ -61,10 +66,10 @@ STATUS_FILTERS = [
     "untouched",
     "edited",
     "review",
-    "too long",
-    "invalid",
     "overflows box",
 ]
+FLAGGED = ("review", "overflows box")
+"""The statuses Next Flagged steps through: what needs a second look."""
 
 
 @dataclass(frozen=True)
@@ -76,11 +81,15 @@ class CodeInfo:
     """The operand shapes, as the table spells them (``u8``, ``2``…)."""
     uses: int = 0
     """How often the block's strings hold it, for the Insert code buttons."""
+    comment: str = ""
+    """What the table says the code is, from the comment above its entry."""
 
     @property
     def completion(self) -> str:
-        """What the completion popup lists: the label with its operand shapes."""
-        return f"[{self.label}{' ' + self.operands if self.operands else ''}]"
+        """What the completion popup lists: the label with its operand shapes,
+        and what the table says it is."""
+        code = f"[{self.label}{' ' + self.operands if self.operands else ''}]"
+        return f"{code}  {self.comment}" if self.comment else code
 
     @property
     def insertion(self) -> str:
@@ -93,23 +102,27 @@ class RowData:
     index: int
     address: int
     original: str
-    translation: str | None
+    translation: str
+    """What the bytes say now."""
     used: int
     room: int
     status: str
     notes: str
-    problem: str = ""
     pointers: str = ""
+    same: int = 0
+    """How many other strings of the block have this original."""
 
 
 class CodeEditor(QPlainTextEdit):
-    """The translation editor: completes ``[labels]``, commits on Ctrl+Return.
+    """The translation editor: completes ``[labels]``, commits on Return.
 
-    Plain Return commits too — a cell editor's Return belongs to the cell —
-    and Shift+Return writes the block's newline code.
+    Return commits and moves on to the next row, Ctrl+Return commits and
+    stays — a cell editor's Return belongs to the cell — and Shift+Return
+    writes the block's newline code.
     """
 
-    commit = Signal()
+    commit = Signal(bool)
+    """Committed; the argument says whether to move on to the next row."""
     cancel = Signal()
 
     def __init__(
@@ -171,7 +184,9 @@ class CodeEditor(QPlainTextEdit):
                 # the script grammar drops those on the way back in.
                 self.insertPlainText(self.newline_code)
             else:
-                self.commit.emit()
+                self.commit.emit(
+                    not event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                )
             return
         if event.key() == Qt.Key.Key_Escape:
             self.cancel.emit()
@@ -200,19 +215,43 @@ class TranslationDelegate(QStyledItemDelegate):
         self.codes: list[CodeInfo] = []
         self.newline_code = "[line]"
         self._editor: CodeEditor | None = None
+        self._index = None
 
     def createEditor(self, parent, option, index):
         editor = CodeEditor(self.codes, self.newline_code, parent)
-        editor.commit.connect(lambda: self._finish(editor, True))
+        editor.commit.connect(lambda advance: self._finish(editor, True, advance))
         editor.cancel.connect(lambda: self._finish(editor, False))
         editor.textChanged.connect(
             lambda: self.view.draft_changed.emit(editor.toPlainText())
         )
         self._editor = editor
+        self._index = index
         return editor
 
-    def _finish(self, editor: CodeEditor, commit: bool) -> None:
+    def _finish(self, editor: CodeEditor, commit: bool, advance: bool = False) -> None:
+        """Return or Esc in the editor.
+
+        A commit goes to the window first: an edit it refuses — too long, a
+        code that does not encode — keeps the editor open with the reason shown,
+        rather than closing on text that went nowhere. Landing goes through
+        ``commitData`` as any cell's does, so a focus-out commits the same way.
+        """
         if commit:
+            handler = self.view.commit_handler
+            if handler is not None:
+                data = self.view._row_data(self._index.row()) if self._index else None
+                if data is not None:
+                    problem = handler(data.index, editor.toPlainText())
+                    if problem:
+                        self.view.problem_shown.emit(problem)
+                        return
+                    self.closeEditor.emit(
+                        editor, QStyledItemDelegate.EndEditHint.NoHint
+                    )
+                    self._editor = None
+                    if advance:
+                        self.view.edit_next_row()
+                    return
             self.commitData.emit(editor)
         self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
         self._editor = None
@@ -237,6 +276,8 @@ class StringsView(QWidget):
     notes_edited = Signal(int, str)
     row_selected = Signal(int)
     draft_changed = Signal(str)
+    problem_shown = Signal(str)
+    """A commit the window refused, with why: shown where the draft readout is."""
     revert_requested = Signal(list)
     review_toggled = Signal(list)
     context_menu_requested = Signal(list, QPoint)
@@ -246,6 +287,9 @@ class StringsView(QWidget):
         self._rows: list[RowData] = []
         self._by_index: dict[int, RowData] = {}
         self._filling = False
+        self.commit_handler: Callable[[int, str], str | None] | None = None
+        """What the editor's Return hands the text to: ``None`` when it landed,
+        else why it did not, which keeps the editor open."""
         top = QHBoxLayout()
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter original, translation and notes…")
@@ -304,11 +348,12 @@ class StringsView(QWidget):
                 item.widget().deleteLater()
         most_used = sorted(codes, key=lambda c: (-c.uses, c.label))[:24]
         for code in most_used:
-            button = QPushButton(code.completion)
-            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            button.setToolTip(
-                f"{code.uses} use(s) in this block" if code.uses else "unused here"
+            button = QPushButton(
+                code.insertion.rstrip() if code.operands else code.insertion
             )
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            uses = f"{code.uses} use(s) in this block" if code.uses else "unused here"
+            button.setToolTip(f"{code.comment}\n{uses}" if code.comment else uses)
             button.clicked.connect(
                 lambda _=False, text=code.insertion: self._insert_code(text)
             )
@@ -329,8 +374,7 @@ class StringsView(QWidget):
         data = self._row_data(row)
         if data is None:
             return
-        current = data.translation if data.translation is not None else data.original
-        self.translation_edited.emit(data.index, current + code)
+        self.translation_edited.emit(data.index, data.translation + code)
 
     def set_rows(self, rows: list[RowData], keep_selection: bool = True) -> None:
         selected = self.selected_indices() if keep_selection else []
@@ -351,6 +395,7 @@ class StringsView(QWidget):
         self.table.resizeColumnToContents(COL_POINTERS)
         self.table.resizeColumnToContents(COL_BYTES)
         self.table.resizeColumnToContents(COL_STATUS)
+        self.table.resizeColumnToContents(COL_SAME)
         self.table.setColumnWidth(
             COL_ORIGINAL, max(self.table.columnWidth(COL_ORIGINAL), 260)
         )
@@ -382,32 +427,28 @@ class StringsView(QWidget):
         self.table.setItem(r, COL_ADDRESS, item(f"{data.address:X}"))
         self.table.setItem(r, COL_POINTERS, item(data.pointers))
         self.table.setItem(r, COL_ORIGINAL, item(data.original.replace("\n", "↵")))
-        tr = item(
-            "" if data.translation is None else data.translation.replace("\n", "↵"),
-            True,
-        )
-        tr.setData(
-            Qt.ItemDataRole.EditRole,
-            "" if data.translation is None else data.translation,
-        )
+        tr = item(data.translation.replace("\n", "↵"), True)
+        tr.setData(Qt.ItemDataRole.EditRole, data.translation)
         self.table.setItem(r, COL_TRANSLATION, tr)
         bytes_item = item(f"{data.used} / {data.room}")
         status = item(data.status)
-        if data.problem:
-            status.setToolTip(data.problem)
-            bytes_item.setToolTip(data.problem)
         colour = self._status_colour(data.status)
         if colour is not None:
             status.setForeground(colour)
-            bytes_item.setForeground(colour)
         self.table.setItem(r, COL_BYTES, bytes_item)
         self.table.setItem(r, COL_STATUS, status)
+        same = item(f"×{data.same + 1}" if data.same else "")
+        if data.same:
+            same.setToolTip(
+                f"{data.same} other string(s) of this block have the same original"
+            )
+        self.table.setItem(r, COL_SAME, same)
         self.table.setItem(r, COL_NOTES, item(data.notes, True))
         self.table.item(r, COL_INDEX).setData(Qt.ItemDataRole.UserRole, data.index)
 
     @staticmethod
     def _status_colour(status: str) -> QColor | None:
-        if status in ("too long", "invalid", "overflows box"):
+        if status == "overflows box":
             return theme.ERROR_INK
         if status == "review":
             return theme.WARNING_INK
@@ -440,6 +481,42 @@ class StringsView(QWidget):
                 self.table.blockSignals(False)
                 return
 
+    # --- stepping through the rows ------------------------------------------
+
+    def _visible_rows(self) -> list[int]:
+        return [
+            r for r in range(self.table.rowCount()) if not self.table.isRowHidden(r)
+        ]
+
+    def edit_next_row(self) -> None:
+        """Move to the next visible row and open its Translation cell."""
+        rows = self._visible_rows()
+        current = self.table.currentRow()
+        after = [r for r in rows if r > current]
+        if not after:
+            return
+        self.table.setCurrentCell(after[0], COL_TRANSLATION)
+        self.table.edit(self.table.model().index(after[0], COL_TRANSLATION))
+
+    def step_to(self, wanted, backwards: bool = False) -> bool:
+        """Select the next (or previous) visible row whose data ``wanted``
+        accepts, wrapping round; False when there is none."""
+        rows = self._visible_rows()
+        current = self.table.currentRow()
+        if backwards:
+            order = [r for r in reversed(rows) if r < current] + [
+                r for r in reversed(rows) if r >= current
+            ]
+        else:
+            order = [r for r in rows if r > current] + [r for r in rows if r <= current]
+        for r in order:
+            data = self._row_data(r)
+            if data is not None and wanted(data):
+                self.table.setCurrentCell(r, COL_TRANSLATION)
+                self.table.scrollToItem(self.table.item(r, COL_TRANSLATION))
+                return True
+        return False
+
     def _apply_filter(self) -> None:
         words = fold(self.filter.text()).split()
         status = self.status_filter.currentText()
@@ -447,7 +524,7 @@ class StringsView(QWidget):
             d = self._row_data(r)
             if d is None:
                 continue
-            hay = fold(f"{d.original} {d.translation or ''} {d.notes}")
+            hay = fold(f"{d.original} {d.translation} {d.notes}")
             hidden = bool(words) and not all(w in hay for w in words)
             if status != "all" and d.status != status:
                 hidden = True
@@ -476,4 +553,4 @@ class StringsView(QWidget):
         )
 
 
-__all__ = ["CodeInfo", "RowData", "StringsView"]
+__all__ = ["FLAGGED", "CodeInfo", "RowData", "StringsView"]

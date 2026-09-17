@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unicodedata
 
-from helpers import ABC_TABLE, table_set
+from helpers import ABC_TABLE, table_set, translated
 from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
 from mapchar.pipeline.extract import extract
 from mapchar.project.formats.translator import (
@@ -17,17 +17,33 @@ from mapchar.project.formats.translator import (
 TS = table_set(ABC_TABLE, "main")
 
 
+DATA = bytes.fromhex("41 FE 42 00 42 00 FF FF FF FF FF FF")
+CFG = BlockConfig(RangeSource(0, 12), EndToken(), "main")
+"""Two strings and room to spare, for one to grow into."""
+
+
 def strings():
-    data = bytes.fromhex("41 FE 42 00 42 00")
-    ex = extract(data, BlockConfig(RangeSource(0, 6), EndToken(), "main"), TS)
-    ex.strings[1].translation = 'A "quoted"\ttab[end]'
-    ex.strings[1].status = Status.REVIEW
-    ex.strings[1].notes = "check\nme"
-    return ex.strings
+    """Two strings, the second translated, marked for review and annotated."""
+    recs, _ = translated(DATA, CFG, TS, {1: "AB[end]"})
+    recs[1].status = Status.REVIEW
+    recs[1].notes = "check\nme"
+    return recs
+
+
+def records():
+    """The records of :func:`strings`, the translation spelled with what a
+    file has to escape: a quote and a tab."""
+    recs = records_for("Dialogue", strings())
+    recs[1].translation = 'A "quoted"\ttab[end]'
+    return recs
+
+
+def fresh():
+    return extract(DATA, CFG, TS).strings
 
 
 def test_tsv_and_csv_roundtrip():
-    recs = records_for("Dialogue", strings())
+    recs = records()
     for delim in ("\t", ","):
         text = write_delimited(recs, delim)
         back = read_delimited(text)
@@ -38,7 +54,7 @@ def test_tsv_and_csv_roundtrip():
 
 
 def test_po_roundtrip():
-    recs = records_for("Dialogue", strings())
+    recs = records()
     text = write_po(recs, "game.nes")
     assert "#, fuzzy" in text and "#: game.nes:$4" in text
     back = read_po(text)
@@ -49,27 +65,26 @@ def test_po_roundtrip():
 
 
 def test_apply_records():
-    target = strings()
-    for s in target:
-        s.translation, s.status, s.notes = None, Status.UNTOUCHED, ""
-    recs = records_for("Dialogue", strings())
+    target = fresh()
+    recs = records()
     recs[0].translation = "B[line]A[end]"
     recs.append(type(recs[0])("Dialogue/9", 0, "", "x", "edited", ""))
     recs.append(type(recs[0])("Other/0", 0, "", "x", "edited", ""))
     drift = type(recs[0])("Dialogue/0", 0, "Z[end]", "y", "edited", "")
     report = apply_records(recs + [drift], {"Dialogue": target})
     assert report.applied == 2
-    assert (
-        target[0].translation == "B[line]A[end]" and target[0].status is Status.EDITED
-    )
-    assert target[1].status is Status.REVIEW and target[1].notes == "check\nme"
+    # What is to change comes back; the records themselves are left alone.
+    assert report.texts == {"Dialogue": {0: "B[line]A[end]", 1: 'A "quoted"\ttab[end]'}}
+    assert report.review == {"Dialogue": {1: True}}
+    assert report.notes == {"Dialogue": {1: "check\nme"}}
+    assert [r.current_text() for r in target] == ["A[line]\nB[end]", "B[end]"]
     assert len(report.skipped) == 3
     report = apply_records([drift], {"Dialogue": target}, force=True)
-    assert report.applied == 1 and target[0].translation == "y"
+    assert report.applied == 1 and report.texts == {"Dialogue": {0: "y"}}
 
 
 def test_csv_carries_a_byte_order_mark_and_kana_survives_both_ways():
-    recs = records_for("会話", strings())
+    recs = records_for("会話", fresh())
     recs[0].translation = "はじめまして[end]"
     recs[0].notes = "漢字, with a comma"
     csv_text = write_delimited(recs, ",")
@@ -84,10 +99,7 @@ def test_csv_carries_a_byte_order_mark_and_kana_survives_both_ways():
 
 
 def test_a_decomposed_record_still_finds_its_string():
-    target = strings()
-    for s in target:
-        s.translation, s.status = None, Status.UNTOUCHED
-    target[0].original = list(target[0].original)
+    target = fresh()
     recs = records_for("Dialogue", target)
     # A translator's editor may hand the original back decomposed; the row is
     # about the same string, so it is not "original changed".
@@ -95,5 +107,4 @@ def test_a_decomposed_record_still_finds_its_string():
     recs[0].translation = unicodedata.normalize("NFD", "あが[end]")
     report = apply_records(recs, {"Dialogue": target})
     assert report.skipped == [] and report.applied == 2
-    assert target[0].translation == "あが[end]"
-    assert unicodedata.is_normalized("NFC", target[0].translation)
+    assert unicodedata.normalize("NFC", report.texts["Dialogue"][0]) == "あが[end]"

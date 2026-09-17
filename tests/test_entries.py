@@ -47,22 +47,22 @@ def item_for(window, entry):
     return window.files_panel._items[id(entry)]
 
 
-# -- translations survive what re-reads a block --------------------------------
+# -- string state survives what re-reads a block -------------------------------
 
 
 def test_removing_a_table_keeps_every_translation(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._set_translation(block, 0, "ZZ[end]")
-    assert block.doc.strings[0].translation == "ZZ[end]"
+    window._set_translation(block, 0, "BB[end]")
+    assert block.doc.strings[0].current_text() == "BB[end]"
 
     table_entry = window.workspace.of_kind(EntryKind.TABLE)[0]
     window._remove_entries([table_entry])
     assert table_entry not in window.workspace.entries
     # The records are still there, and stashed where a document drop cannot
     # reach them, rather than replaced by an empty list.
-    assert [r.translation for r in block.doc.strings] == ["ZZ[end]", None]
-    assert block.pending_strings[0].translation == "ZZ[end]"
+    assert [r.current_text() for r in block.doc.strings] == ["BB[end]", "BA[end]"]
+    assert block.pending_strings[0].original == "AB[end]"
     # And the row says why it cannot be re-read.
     window.files_panel.refresh_labels()
     item = item_for(window, block)
@@ -73,11 +73,11 @@ def test_removing_a_table_keeps_every_translation(window, tmp_path):
 def test_a_failed_reload_does_not_clear_the_strings(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._set_translation(block, 1, "QQ[end]")
+    window._set_translation(block, 1, "AA[end]")
     # The table set goes away without the entry going away: an extraction with
     # no tables must keep what is there.
     window._extract_current(block, block.doc, None)
-    assert [r.translation for r in block.doc.strings] == [None, "QQ[end]"]
+    assert [r.current_text() for r in block.doc.strings] == ["AB[end]", "AA[end]"]
 
 
 def test_edit_block_carries_translations_and_is_one_undo_step(window, tmp_path):
@@ -92,7 +92,9 @@ def test_edit_block_carries_translations_and_is_one_undo_step(window, tmp_path):
     )
     window.apply_block_config(block, "renamed", wider, None, "keep")
     assert block.name == "renamed"
-    assert block.doc.strings[0].translation == "BA[end]"
+    # The strings sit at the same bits, so their originals stay with them.
+    assert block.doc.strings[0].current_text() == "BA[end]"
+    assert block.doc.strings[0].original == "AB[end]"
 
     # As a command it undoes in one step, name, config and all.
     window.undo_stack.clear()
@@ -103,7 +105,27 @@ def test_edit_block_carries_translations_and_is_one_undo_step(window, tmp_path):
     assert block.name == "second" and block.spare_room == "fill"
     window.undo_stack.undo()
     assert block.name == before[0] and block.spare_room == before[3]
-    assert block.doc.strings[0].translation == "BA[end]"
+    assert block.doc.strings[0].current_text() == "BA[end]"
+    assert block.doc.strings[0].original == "AB[end]"
+
+
+def test_a_block_edit_that_cuts_a_string_elsewhere_takes_its_original_afresh(
+    window, tmp_path
+):
+    """A string the new reading cuts at other bits is not the same string, so
+    the original it shows is what those bytes say, not what an older string at
+    that index said."""
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._set_translation(block, 0, "BB[end]")
+    assert block.doc.strings[0].original == "AB[end]"
+    from dataclasses import replace
+
+    window.apply_block_config(
+        block, block.name, replace(block.config, source=RangeSource(1, 6)), None, "fill"
+    )
+    assert [r.current_text() for r in block.doc.strings] == ["B[end]", "BA[end]"]
+    assert [r.original for r in block.doc.strings] == ["B[end]", "BA[end]"]
 
 
 # -- the quit gate -------------------------------------------------------------
@@ -114,8 +136,8 @@ def test_the_project_is_asked_about_before_the_file_edits(
 ):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._set_translation(block, 0, "ZZ[end]")
-    assert block.dirty
+    window._set_translation(block, 0, "BB[end]")
+    assert file_entry.dirty
     window._saved_snapshot = "{}"  # a project that has been saved and has moved on
     assert window._project_dirty()
 
@@ -141,7 +163,7 @@ def test_the_file_gate_offers_write_all_continue_without_cancel(
 ):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._set_translation(block, 0, "ZZ[end]")
+    window._set_translation(block, 0, "BB[end]")
     labels: list[str] = []
 
     def capture(box):
@@ -268,13 +290,14 @@ def test_a_dropped_project_claims_the_whole_drop(window, tmp_path, monkeypatch):
 def test_the_payload_carries_absolute_paths_and_translations(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._set_translation(block, 0, "ZZ[end]")
+    window._set_translation(block, 0, "BB[end]")
     text = entries_payload([file_entry, block])
     assert str(tmp_path) in text
     copied = entries_from_payload(text)
     assert [e.name for e in copied] == ["rom.bin", "b"]
     assert copied[1].parent is copied[0]
-    assert copied[1].pending_strings[0].translation == "ZZ[end]"
+    assert copied[1].pending_strings[0].original == "AB[end]"
+    assert copied[1].pending_strings[0].status is Status.EDITED
     assert entries_from_payload("not json at all") == []
     assert entries_from_payload('{"other": 1}') == []
 
@@ -332,7 +355,7 @@ def test_entries_paste_into_a_second_window(qtbot, monkeypatch, tmp_path):
     first = make_window(qtbot, monkeypatch)
     file_entry = open_rom_and_table(first, tmp_path, DATA)
     block = add_block(first, file_entry, "b", RangeSource(0, 6))
-    first._set_translation(block, 0, "ZZ[end]")
+    first._set_translation(block, 0, "BB[end]")
     first._copy_entries([file_entry])  # the block comes with it
 
     second = make_window(qtbot, monkeypatch)
@@ -343,7 +366,7 @@ def test_entries_paste_into_a_second_window(qtbot, monkeypatch, tmp_path):
     blocks = second.workspace.of_kind(EntryKind.BLOCK)
     assert [b.name for b in blocks] == ["b"]
     assert blocks[0].parent is pasted[0]
-    assert blocks[0].pending_strings[0].translation == "ZZ[end]"
+    assert blocks[0].pending_strings[0].original == "AB[end]"
 
 
 # -- the Files panel -----------------------------------------------------------
@@ -397,7 +420,7 @@ def test_sort_by_name_and_offset(window, tmp_path):
 def test_a_block_row_summarises_its_strings(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._set_translation(block, 0, "ZZ[end]")
+    window._set_translation(block, 0, "BB[end]")
     block.doc.strings[1].status = Status.REVIEW
     window.files_panel.refresh_labels()
     label = item_for(window, block).text(0)
@@ -639,20 +662,39 @@ def test_every_ui_document_drop_goes_through_the_workspace():
 def test_re_picking_the_start_table_keeps_the_translations(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._set_translation(block, 0, "ZZ[end]")
+    window._set_translation(block, 0, "BB[end]")
     window._on_format_pick()  # re-reads the region under the picked table
     assert block.doc is not None
-    assert block.doc.strings[0].translation == "ZZ[end]"
+    assert block.doc.strings[0].current_text() == "BB[end]"
+    assert block.doc.strings[0].original == "AB[end]"
 
 
-def test_changing_the_container_chain_keeps_a_blocks_translations(window, tmp_path):
+def test_changing_the_container_chain_keeps_a_blocks_originals(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    window._set_translation(block, 0, "ZZ[end]")
-    # Drops the file's document and every child's.
+    window._set_translation(block, 0, "BB[end]")
+    assert window._write_blocks([block])
+    # Drops the file's document and every child's: the file is read again.
     window.apply_container(file_entry, file_entry.container_id, file_entry.paths)
     assert block.doc is not None
-    assert block.doc.strings[0].translation == "ZZ[end]"
+    assert block.doc.strings[0].current_text() == "BB[end]"
+    assert block.doc.strings[0].original == "AB[end]"
+
+
+def test_a_container_edit_over_unsaved_edits_goes_through_the_gate(
+    window, tmp_path, monkeypatch
+):
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._set_translation(block, 0, "BB[end]")
+    asked: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_resolve_dirty_entries",
+        lambda *a, **k: (asked.append("gate"), False)[1],
+    )
+    window._edit_container(file_entry)
+    assert asked == ["gate"]  # and Cancel left the dialog unopened
 
 
 def test_find_pointers_keeps_the_translations_it_re_reads(
@@ -663,7 +705,7 @@ def test_find_pointers_keeps_the_translations_it_re_reads(
     rom = pointer_rom((0x10, 0x13), "41 42 00 42 41 00")
     file_entry = open_rom_and_table(window, tmp_path, rom)
     block = add_block(window, file_entry, "b", RangeSource(0x10, 0x16))
-    window._set_translation(block, 0, "ZZ[end]")
+    window._set_translation(block, 0, "BB[end]")
     monkeypatch.setattr(
         PointerSearchDialog,
         "exec",
@@ -675,7 +717,8 @@ def test_find_pointers_keeps_the_translations_it_re_reads(
     window._find_pointers()
     assert isinstance(block.config.source, PointerTableSource)
     assert block.doc is not None
-    assert block.doc.strings[0].translation == "ZZ[end]"
+    assert block.doc.strings[0].current_text() == "BB[end]"
+    assert block.doc.strings[0].original == "AB[end]"
 
 
 def test_a_container_edit_carries_the_children_and_the_row_name(window, tmp_path):

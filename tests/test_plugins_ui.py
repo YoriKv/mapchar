@@ -76,14 +76,16 @@ def test_refreshing_plugins_re_reads_the_clean_and_keeps_the_edited(window, tmp_
     clean = add_block(window, file_entry, "c", RangeSource(3, 6))
     window._activate_entry(edited)
     window._on_translation_edited(0, "B[end]")
-    assert edited.dirty
-    clean_doc = clean.doc
+    assert file_entry.dirty  # the edit is in the file's bytes
+    file_doc = file_entry.doc
 
     window._refresh_plugins()
 
-    assert edited.dirty and edited.doc.strings[0].translation == "B[end]"
-    assert file_entry.doc is not None  # the parent the edits settle through
-    assert clean.doc is not clean_doc  # re-read through the new registry
+    # The file's buffer is where the edit lives, so it is kept; the blocks read
+    # it again and find the edit there.
+    assert file_entry.dirty and file_entry.doc is file_doc
+    assert edited.doc.strings[0].current_text() == "B[end]"
+    assert window._load_document(clean).data is file_doc.data
     assert "unsaved edits kept" in window.statusBar().currentMessage()
 
 

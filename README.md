@@ -28,7 +28,8 @@ mapChar is built on Python + Qt (PySide6) and runs on Windows, macOS, and Linux.
   text-likeness and offers the regions it finds as blocks.
 - **Editing** - translations edited beside the original with code completion,
   live byte counts against the room available, filters, find and replace across
-  a project, and undo across everything.
+  a project, and undo across everything. Every edit goes straight into the
+  ROM's bytes; the project keeps each string's original.
 - **Writing back** - packed or slotted layout, fill bytes, bounds, and undo.
 - **Compression** - various built in compression formats that work as part of the
   editing pipeline.
@@ -57,8 +58,9 @@ Grab the build for your platform from the [Releases page](https://github.com/Yor
 4. **Make a block** - File -> New Block over the strings, set how they are
    parsed and if it's a pointer table.
 5. **Translate** - edit translations in the Strings view or dump a script and import it back.
-6. **Write/Save** - write the strings back to the original file. Save your
-   project session to resume later.
+   Each edit rewrites the bytes in memory, so what you see is what the ROM will hold.
+6. **Write/Save** - write the file back to disk. Save your project session to
+   resume later: it is what remembers the original text once the ROM is written.
 
 Help -> Shortcuts (`F1`) to view a list of keyboard shortcuts.
 

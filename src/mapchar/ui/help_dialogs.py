@@ -73,7 +73,8 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Strings View",
         (
             ("Edit the selected cell", "F2, double-click, or start typing"),
-            ("Commit the cell being edited", "Enter"),
+            ("Commit and move to the next row", "Enter"),
+            ("Commit and stay", "Ctrl+Enter"),
             ("Write the block's newline code", "Shift+Return"),
             ("Complete a code", "["),
             ("Cancel the edit", "Esc"),
@@ -213,28 +214,18 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
     (
         "Strings View",
         (
-            (Swatch("untouched"), "No translation yet"),
-            (Swatch("edited"), "A translation typed here"),
+            (Swatch("untouched"), "The bytes still say the original"),
+            (Swatch("edited"), "The bytes say something else: a translation"),
             (
                 Swatch("review", ink=theme.WARNING_INK),
-                "A translation imported with a request for review",
-            ),
-            (
-                Swatch("too long", ink=theme.ERROR_INK),
-                "More bytes than the string has room for",
-            ),
-            (
-                Swatch("invalid", ink=theme.ERROR_INK),
-                "Something the tables cannot encode",
+                "Marked for a second look, by hand or by an import",
             ),
             (
                 Swatch("overflows box", ink=theme.ERROR_INK),
                 "The text does not fit the entry's box",
             ),
-            (
-                Swatch("12 / 16"),
-                "Bytes the string encodes to, and its room; coloured like the status",
-            ),
+            (Swatch("12 / 16"), "Bytes the string takes, and the room it has"),
+            (Swatch("×3"), "How many strings of the block share this original"),
             (Swatch("↵"), "A line break in the Original or Translation"),
             (Swatch("1F"), "The addresses of the pointers to the string"),
         ),

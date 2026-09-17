@@ -54,8 +54,9 @@ class PreviewMixin:
         if rec is None and entry.doc.strings:
             rec = entry.doc.strings[0]
         if rec is not None:
-            source = rec.translation if rec.translation is not None else rec.original
-            self.preview_window.show_string(source, f"{entry.name} #{rec.index}")
+            self.preview_window.show_string(
+                rec.current_text(), f"{entry.name} #{rec.index}"
+            )
 
     def _on_box_changed(self, box: TextBox) -> None:
         entry = self._current_block()

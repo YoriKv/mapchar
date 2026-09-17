@@ -6,6 +6,7 @@ import os
 
 from mapchar.core.context import KEY_HEADER_SIZE
 from mapchar.core.errors import MapcharError
+from mapchar.core.text import nfc
 from mapchar.project.exchange.addresses import shift_config
 from mapchar.project.exchange.atlas import read_atlas, write_atlas
 from mapchar.project.exchange.cartographer import (
@@ -23,6 +24,10 @@ from mapchar.project.formats.translator import (
 )
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import StringFieldCommand
+
+
+def _same(a: str, b: str) -> bool:
+    return nfc(a).replace("\n", "") == nfc(b).replace("\n", "")
 
 
 class ImportExportMixin:
@@ -123,21 +128,22 @@ class ImportExportMixin:
         header = self._container_header(entry.parent)
         by_pointer = {p.address: r for r in entry.doc.strings for p in r.pointers}
         by_start = {r.start: r for r in entry.doc.strings}
-        applied = 0
-        with self._macro(f"Import {os.path.basename(path)}"):
-            for i, item in enumerate(script.strings):
-                rec = None
-                for addr in item.pointers:
-                    rec = by_pointer.get(addr - header)
-                    if rec is not None:
-                        break
-                if rec is None and item.insert_at is not None:
-                    rec = by_start.get(item.insert_at - header)
-                if rec is None:
-                    notices.append(f"string {i}: no block string matches its address")
-                    continue
-                self._set_translation(entry, rec.index, item.text)
-                applied += 1
+        texts: dict[int, str] = {}
+        for i, item in enumerate(script.strings):
+            rec = None
+            for addr in item.pointers:
+                rec = by_pointer.get(addr - header)
+                if rec is not None:
+                    break
+            if rec is None and item.insert_at is not None:
+                rec = by_start.get(item.insert_at - header)
+            if rec is None:
+                notices.append(f"string {i}: no block string matches its address")
+                continue
+            texts[rec.index] = item.text
+        applied = self._land_texts(
+            {entry.name: texts}, f"Import {os.path.basename(path)}", notices
+        )
         self._remember_dir(path)
         self._refresh_view()
         self._report(
@@ -239,16 +245,59 @@ class ImportExportMixin:
             return
         self.import_file(path, kind)
 
+    def _land_texts(
+        self, texts: dict[str, dict[int, str]], label: str, notices: list[str]
+    ) -> int:
+        """Put imported texts into the blocks' bytes, one undo step in all.
+
+        Each block's texts go in as one edit — a packed block lays every
+        string out together, so they must — and a block whose texts will not
+        all fit is tried string by string, so that one over-long line does not
+        hold the rest of the file back. Whatever is refused is listed in
+        ``notices`` and left as it was; how many landed comes back.
+        """
+        landed = 0
+        with self._macro(label):
+            for name, by_index in texts.items():
+                entry = next(
+                    (
+                        e
+                        for e in self.workspace.entries
+                        if e.kind is EntryKind.BLOCK and e.name == name
+                    ),
+                    None,
+                )
+                if entry is None or entry.doc is None:
+                    continue
+                edits = {
+                    i: t
+                    for i, t in by_index.items()
+                    if (rec := entry.doc.string_by_index(i)) is not None
+                    and not _same(rec.current_text(), t)
+                }
+                if not edits:
+                    continue
+                if entry is not self._entry:
+                    self._activate_entry(entry)
+                if not self._edit_strings(entry, edits, label):
+                    landed += len(edits)
+                    continue
+                for i, t in edits.items():
+                    problems = self._edit_strings(entry, {i: t}, label)
+                    if problems:
+                        notices += [f"{name}/{p}" for p in problems]
+                    else:
+                        landed += 1
+        return landed
+
     def import_file(self, path: str, kind: str, force: bool = False) -> None:
         text = self._read_text(path)
         if text is None:
             return
         file_entry = self._current_file()
         blocks = self._block_strings_by_name(file_entry)
-        before = {
-            name: [(r.translation, r.status, r.notes) for r in strs]
-            for name, strs in blocks.items()
-        }
+        review: dict[str, dict[int, bool]] = {}
+        notes: dict[str, dict[int, str]] = {}
         try:
             if kind == "script":
                 report = apply_script(parse_script(text, path), blocks)
@@ -264,16 +313,17 @@ class ImportExportMixin:
                         )
                         self._push_add(entry)
                         notices.append(f"created block {name}")
-                applied = report.applied
             else:
                 records = read_po(text) if kind == "po" else read_delimited(text)
                 report = apply_records(records, blocks, force=force)
-                notices, applied = report.skipped, report.applied
+                notices, review, notes = report.skipped, report.review, report.notes
         except (MapcharError, ValueError) as exc:
             self._error(f"Cannot import {path}: {exc}")
             return
-        # Record the changes as one undo step.
-        with self._macro(f"Import {os.path.basename(path)}"):
+        label = f"Import {os.path.basename(path)}"
+        current = self._entry
+        with self._macro(label):
+            applied = self._land_texts(report.texts, label, notices)
             for name, strs in blocks.items():
                 entry = next(
                     (
@@ -285,27 +335,30 @@ class ImportExportMixin:
                 )
                 if entry is None:
                     continue
-                for rec, (tr, st, notes) in zip(strs, before[name], strict=False):
-                    new = (rec.translation, rec.status, rec.notes)
-                    rec.translation, rec.status, rec.notes = tr, st, notes
-                    if new[0] != tr:
+                for rec in strs:
+                    if (
+                        review.get(name, {}).get(rec.index)
+                        and rec.status.value != "review"
+                    ):
                         self._push_command(
                             StringFieldCommand(
-                                self, entry, rec.index, "translation", tr, new[0]
+                                self,
+                                entry,
+                                rec.index,
+                                "status",
+                                rec.status.value,
+                                "review",
                             )
                         )
-                    if new[1] != st:
+                    note = notes.get(name, {}).get(rec.index)
+                    if note is not None and note != rec.notes:
                         self._push_command(
                             StringFieldCommand(
-                                self, entry, rec.index, "status", st.value, new[1].value
+                                self, entry, rec.index, "notes", rec.notes, note
                             )
                         )
-                    if new[2] != notes:
-                        self._push_command(
-                            StringFieldCommand(
-                                self, entry, rec.index, "notes", notes, new[2]
-                            )
-                        )
+            if current is not None and self._entry is not current:
+                self._activate_entry(current)
         self._remember_dir(path)
         self._refresh_view()
         self._report(

@@ -58,8 +58,8 @@ def test_project_roundtrip(tmp_path):
     ts = table_set(ABC_TABLE, "main")
     ex = extract(rom.read_bytes(), cfg, ts)
     b.doc = Document(rom.read_bytes(), PipelineContext(), True, strings=ex.strings)
-    b.doc.strings[1].translation = "C[end]"
-    b.doc.strings[1].status = Status.EDITED
+    b.doc.strings[1].original = "C[end]"
+    b.doc.strings[1].refresh_status()
     b.doc.strings[1].notes = "n"
     ws.add(Entry(EntryKind.BOOKMARK, "bm", str(rom), parent=f, bookmark_offset=2))
     ws.add(Entry(EntryKind.TABLE, "t", str(tmp_path / "t.tbl"), dialect="abcde"))
@@ -79,8 +79,9 @@ def test_project_roundtrip(tmp_path):
     lb = loaded.entries[1]
     assert lb.parent is loaded.entries[0] and lb.config == cfg
     assert loaded.current is lb
-    assert lb.pending_strings[1].translation == "C[end]"
-    assert lb.pending_strings[1].status is Status.EDITED
+    # Every string's original travels, whether or not its bytes still say it.
+    assert lb.pending_strings[0] == StringState("A[end]")
+    assert lb.pending_strings[1] == StringState("C[end]", Status.EDITED, "n")
     assert loaded.entries[2].bookmark_offset == 2
     assert loaded.entries[3].dialect == "abcde"
     assert os.path.isabs(lb.path)
@@ -113,7 +114,7 @@ def test_case_recovery(tmp_path):
 
 
 def test_unopened_blocks_keep_their_strings_over_a_save(tmp_path):
-    """A block never activated still has its translations written back.
+    """A block never activated still has its string state written back.
 
     The loader parks them on the entry, and only the first extraction moves them
     into a document — so a save that read documents alone dropped the state of
@@ -147,7 +148,7 @@ def test_unopened_blocks_keep_their_strings_over_a_save(tmp_path):
     again = tmp_path / "q.mapchar"
     save_project(str(again), loaded.entries, None)
     back = load_project(str(again))
-    assert back.entries[1].pending_strings[0].translation == "X[end]"
+    assert back.entries[1].pending_strings[0].original == "X[end]"
     assert back.entries[1].pending_strings[0].notes == "why"
     assert back.entries[2].pending_strings[0].status is Status.REVIEW
 
@@ -161,14 +162,16 @@ def test_document_strings_win_over_pending_and_a_drop_stashes_them(tmp_path):
     b = ws.add(Entry(EntryKind.BLOCK, "b", str(rom), parent=f, config=cfg))
     ex = extract(rom.read_bytes(), cfg, table_set(ABC_TABLE, "main"))
     b.doc = Document(rom.read_bytes(), PipelineContext(), True, strings=ex.strings)
-    b.doc.strings[0].translation = "live"
+    b.doc.strings[0].original = "live"
+    b.doc.strings[0].refresh_status()
     b.pending_strings = {0: StringState("stale")}
     assert project_dict([f, b], None, str(tmp_path))["entries"][1]["strings"] == [
-        {"i": 0, "t": "live"}
+        {"i": 0, "o": "live", "s": "edited"},
+        {"i": 1, "o": "B[end]"},
     ]
     # Dropping the document keeps what only it held.
     ws.drop_document(b)
-    assert b.doc is None and b.pending_strings == {0: StringState("live")}
+    assert b.doc is None and b.pending_strings[0] == StringState("live", Status.EDITED)
 
 
 def test_invalidate_path_spares_the_saver_and_the_dirty(tmp_path):

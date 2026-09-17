@@ -166,9 +166,10 @@ class BlocksMixin:
         entry.config = config
         entry.compression_id = compression_id
         entry.spare_room = spare_room
-        # The one drop that keeps the translations, so the re-read matches them
-        # back onto the new configuration by index.
-        self.workspace.drop_document(entry)
+        # The re-read matches originals, statuses and notes back by index —
+        # except onto a string the new reading cuts at other bits, which takes
+        # its original afresh, as a string the old reading never had.
+        self.workspace.drop_document(entry, reconfigured=True)
         self.files_panel.refresh_labels()
         self._update_title()
         if entry is self._entry:

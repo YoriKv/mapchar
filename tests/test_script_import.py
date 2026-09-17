@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unicodedata
 
-from helpers import ABC_TABLE, table_set
-from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
+from helpers import ABC_TABLE, table_set, translated
+from mapchar.core.block import BlockConfig, EndToken, RangeSource
 from mapchar.pipeline.extract import extract
 from mapchar.project.formats.script import (
     DumpMode,
@@ -18,14 +18,14 @@ TS = table_set(ABC_TABLE, "main")
 def test_apply_script_roundtrip():
     data = bytes.fromhex("41 00 42 00")
     cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
-    ex = extract(data, cfg, TS)
-    ex.strings[0].translation = "B[end]"
-    text = write_script([("D", cfg, ex.strings)], DumpMode.TRANSLATIONS)
+    strings, _ = translated(data, cfg, TS, {0: "B[end]"})
+    text = write_script([("D", cfg, strings)], DumpMode.TRANSLATIONS)
     fresh = extract(data, cfg, TS).strings
     report = apply_script(parse_script(text), {"D": fresh})
     assert report.applied == 2 and not report.notices
-    assert fresh[0].translation == "B[end]" and fresh[0].status is Status.EDITED
-    assert fresh[1].translation is None and fresh[1].status is Status.UNTOUCHED
+    # What each string is to say; putting it in the bytes is the window's.
+    assert report.texts == {"D": {0: "B[end]", 1: "B[end]"}}
+    assert [r.current_text() for r in fresh] == ["A[end]", "B[end]"]
     other = parse_script(text.replace('@block "D"', '@block "E"'))
     report = apply_script(other, {"D": fresh})
     assert report.new_blocks[0][0] == "E" and report.new_blocks[0][1] == cfg
@@ -58,7 +58,6 @@ def test_a_decomposed_script_is_composed_on_import():
     text = script_for(cfg, [f"{decomposed}[end]", f"{decomposed}{decomposed}[end]"])
     report = apply_script(parse_script(text), {"D": fresh})
     assert report.applied == 2 and not report.notices
-    # The first string is its own original spelled decomposed: nothing changed.
-    assert fresh[0].translation is None and fresh[0].status is Status.UNTOUCHED
-    assert fresh[1].translation == "がが[end]"
-    assert unicodedata.is_normalized("NFC", fresh[1].translation)
+    # The first string is its own original spelled decomposed: the same text.
+    assert fresh[0].matches_original(report.texts["D"][0])
+    assert unicodedata.normalize("NFC", report.texts["D"][1]) == "がが[end]"

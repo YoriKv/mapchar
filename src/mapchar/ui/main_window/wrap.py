@@ -43,12 +43,17 @@ class WrapMixin:
         indices = self.strings.selected_indices() or [
             r.index for r in entry.doc.strings[:1]
         ]
-        with self._macro("Wrap"):
-            for index in indices:
-                rec = self._string(entry, index)
-                if rec is None:
-                    continue
-                text = rec.current_text()
-                wrapped, _ = wrap_text(text, font_entry.font, entry.box, newline, page)
-                if wrapped != text:
-                    self._set_translation(entry, index, wrapped)
+        edits = {}
+        for index in indices:
+            rec = self._string(entry, index)
+            if rec is None:
+                continue
+            text = rec.current_text()
+            wrapped, _ = wrap_text(text, font_entry.font, entry.box, newline, page)
+            if wrapped != text:
+                edits[index] = wrapped
+        if not edits:
+            return
+        problems = self._edit_strings(entry, edits, "Wrap")
+        if problems:
+            self._refuse_edit(problems)

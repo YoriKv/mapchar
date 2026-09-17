@@ -152,6 +152,17 @@ class SessionMixin:
         container found are facts about the file and its pointer mappings need
         them.
         """
+        # Another block over the same slot already holds its payload, edits
+        # included: the slot is one stream, so this block reads that rather
+        # than decompressing the file's bytes underneath those edits.
+        for other in self.workspace.children(entry.parent):
+            if (
+                other is not entry
+                and other.doc is not None
+                and (other.compression_id, other.slice_offset)
+                == (entry.compression_id, entry.slice_offset)
+            ):
+                return Document(other.doc.data, other.doc.ctx, other.doc.writable)
         cfg = self._block_pathway(entry, parent_doc)
         try:
             loaded = load(cfg, self.registry, parent_doc.ctx.inherit())

@@ -9,7 +9,7 @@ checks the ones a test can see.
 - **Title Case** for menu rows, context-menu rows, submenus, buttons, tabs,
   window and dialog titles, group boxes and the shortcut guide's sections.
   Short joining words stay lower case inside a title (`Go to Address…`,
-  `Copy Original to Empty Translations`).
+  `Apply to Identical Originals in Block`).
 - **Sentence case** for form labels, checkboxes, placeholders, tooltips,
   status lines and combo items (`Stop at end token`, `hex bytes or "text"`).
 - **`…`** ends a row or button that asks for more before it acts: a dialog, a

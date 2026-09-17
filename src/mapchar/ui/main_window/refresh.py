@@ -85,7 +85,10 @@ class RefreshMixin:
         self._refresh_decompress_preview(doc, tables)
         if block is not None and (reread or not moved):
             self._fill_strings(doc)
-            self.block_label.setText(self._block_label(block, len(doc.strings)))
+            self.block_label.setText(
+                f"{self._block_label(block, len(doc.strings))} · "
+                f"{self._progress_text(doc)}"
+            )
         self._update_nav_status()
         self.search_window.set_data(doc.data)
         self.scan_window.set_source(doc.data, tables)

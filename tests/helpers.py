@@ -67,9 +67,23 @@ def relayout(data: bytes, cfg, ts, edits: dict[int, str], registry=None):
     """
     ex = extract(data, cfg, ts, registry)
     for i, text in edits.items():
-        ex.strings[i].translation = text
+        ex.strings[i].replacement = text
     res = layout_block(data, cfg, ts, ex.strings, registry)
     return res, (apply_splices(data, res.splices) if res.ok else None)
+
+
+def translated(data: bytes, cfg, ts, edits: dict[int, str], registry=None):
+    """Strings whose bytes hold ``{index: text}``, with the originals they had
+    before: what a block looks like after the edits landed. Returns the strings
+    and the bytes."""
+    res, out = relayout(data, cfg, ts, edits, registry)
+    assert res.ok, res.problems
+    before = extract(data, cfg, ts, registry).strings
+    after = extract(out, cfg, ts, registry).strings
+    for a, b in zip(after, before, strict=True):
+        a.original = b.original
+        a.refresh_status()
+    return after, out
 
 
 def load_abcde_tables(

@@ -1,4 +1,4 @@
-"""Find and Replace over translations."""
+"""Find and Replace over the strings' text."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from mapchar.project.workspace import Entry, EntryKind
 
 
 class FindReplaceMixin:
-    """Find and Replace over translations.
+    """Find and Replace over the strings' text.
 
     A slice of :class:`~mapchar.ui.main_window.window.MainWindow`, reaching the
     rest of the window only through ``self``.
@@ -85,7 +85,10 @@ class FindReplaceMixin:
                 rec.current_text(), needle, replacement, case=case
             )
             if count:
-                self._set_translation(entry, rec.index, new, refresh=True)
+                problems = self._set_translation(entry, rec.index, new)
+                if problems:
+                    self._refuse_edit(problems)
+                    return
         self._fr_find_next(needle, case, project)
 
     def _fr_replace_all(
@@ -94,19 +97,37 @@ class FindReplaceMixin:
         blocks = self._fr_blocks(project)
         if not blocks or not needle:
             return
-        n = 0
+        n, refused = 0, []
+        current = self._entry
         with self._macro("Replace all"):
             for entry in blocks:
-                # Make the block current first: a string edit on the block in
-                # view refreshes one row instead of re-reading the whole block.
-                if entry is not self._entry:
-                    self._activate_entry(entry)
+                edits = {}
                 for rec in list(entry.doc.strings):
                     new, count = scriptfind.replace(
                         rec.current_text(), needle, replacement, case=case
                     )
                     if count:
-                        self._set_translation(entry, rec.index, new)
+                        edits[rec.index] = new
+                if not edits:
+                    continue
+                # Make the block current first: the edit is reverted where it
+                # was made, and that is where it lands too.
+                if entry is not self._entry:
+                    self._activate_entry(entry)
+                # One edit for the block; if that is refused, string by string,
+                # so one that will not fit does not hold the others back.
+                if not self._edit_strings(entry, edits, "Replace all"):
+                    n += len(edits)
+                    continue
+                for i, t in edits.items():
+                    problems = self._edit_strings(entry, {i: t}, "Replace all")
+                    if problems:
+                        refused += [f"{entry.name} {p}" for p in problems]
+                    else:
                         n += 1
+            if current is not None and self._entry is not current:
+                self._activate_entry(current)
         where = "the project" if project else "the block"
         self.statusBar().showMessage(f"Replaced in {n} string(s) of {where}", 4000)
+        if refused:
+            self._report("Not Replaced", f"{len(refused)} string(s) refused", refused)

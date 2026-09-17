@@ -7,7 +7,7 @@ import io
 import re
 from dataclasses import dataclass, field
 
-from mapchar.core.block import Status, StringRecord
+from mapchar.core.block import StringRecord
 from mapchar.core.numbers import format_num, parse_num
 from mapchar.project.formats.textfile import BOM, escape, split_lines, unescape
 
@@ -29,8 +29,8 @@ def records_for(block_name: str, strings: list[StringRecord]) -> list[Record]:
         Record(
             f"{block_name}/{s.index}",
             s.start,
-            s.original_text(),
-            s.translation or "",
+            s.original,
+            s.current_text() if s.edited else "",
             s.status.value,
             s.notes,
         )
@@ -210,6 +210,12 @@ def read_po(text: str) -> list[Record]:
 class ImportReport:
     applied: int = 0
     skipped: list[str] = field(default_factory=list)
+    texts: dict[str, dict[int, str]] = field(default_factory=dict)
+    """Per block, the text each record's string is to hold, by index."""
+    review: dict[str, dict[int, bool]] = field(default_factory=dict)
+    """Per block, the strings the records mark for review."""
+    notes: dict[str, dict[int, str]] = field(default_factory=dict)
+    """Per block, the notes the records carry."""
 
 
 def apply_records(
@@ -218,7 +224,9 @@ def apply_records(
     *,
     force: bool = False,
 ) -> ImportReport:
-    """Set translations by id; a record whose original drifted is skipped."""
+    """Match records to strings by id; a record whose original drifted is
+    skipped. What each string is to say, and its review mark and notes, come
+    back in the report — nothing is changed here."""
     report = ImportReport()
     for r in records:
         name, _, idx = r.id.rpartition("/")
@@ -233,13 +241,11 @@ def apply_records(
         if not force and r.original and not rec.matches_original(r.original):
             report.skipped.append(f"{r.id}: original changed")
             continue
-        translation = r.translation or None
-        if translation is not None and translation != rec.translation:
-            rec.translation = translation
-            rec.status = Status.EDITED
+        if r.translation:
+            report.texts.setdefault(name, {})[rec.index] = r.translation
         if r.status == "review":
-            rec.status = Status.REVIEW
+            report.review.setdefault(name, {})[rec.index] = True
         if r.notes:
-            rec.notes = r.notes
+            report.notes.setdefault(name, {})[rec.index] = r.notes
         report.applied += 1
     return report

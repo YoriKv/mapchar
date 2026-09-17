@@ -19,6 +19,7 @@ from mapchar.project.projectfile import (
 from mapchar.project.tables import adopt_table, read_table_file
 from mapchar.project.workspace import Entry, EntryKind, missing_paths
 from mapchar.ui.dialogs import TextDialog
+from mapchar.ui.main_window.autosave import AUTOSAVE_SUFFIX
 
 MAX_RECENT = 10
 """Projects kept in Open Recent."""
@@ -146,9 +147,15 @@ class ProjectMixin:
         if path:
             self.open_project(path)
 
-    def open_project(self, path: str) -> bool:
-        if not self._confirm_discard("open another project"):
-            return False
+    def open_project(self, path: str, *, recovered_from: str | None = None) -> bool:
+        """Open a project file. ``recovered_from`` names the project an
+        autosaved copy stands for, when ``path`` is the copy: the copy is read
+        and the project keeps its own path and reads unsaved."""
+        if recovered_from is None:
+            if not self._confirm_discard("open another project"):
+                return False
+            if self._offer_autosave(path):
+                return self._open_recovered(path + AUTOSAVE_SUFFIX, path)
         try:
             loaded: LoadedProject = load_project(path)
         except ProjectError as exc:
@@ -177,16 +184,11 @@ class ProjectMixin:
         # and the entry the swap makes current is the new trail's first visit.
         self._forget_all_visits()
         self.workspace.replace(loaded.entries, loaded.current)
-        for e in loaded.entries:
-            # A block whose translations are not on disk yet is an unsaved
-            # entry the same as one edited this session: Write All, the file's
-            # Write and the Files panel's mark all have to see it.
-            if e.kind is EntryKind.BLOCK and any(
-                st.translation is not None for st in (e.pending_strings or {}).values()
-            ):
-                self.workspace.stamp(e)
         self.undo_stack.clear()
-        self.project_path = path
+        self.project_path = recovered_from or path
+        self._discard_autosave()
+        if recovered_from is not None:
+            path = recovered_from
         self._remember_dir(path)
         self._add_recent(path)
         self._refresh_table_picks()
@@ -249,7 +251,11 @@ class ProjectMixin:
         except OSError as exc:
             self._error(f"Cannot save project: {exc}")
             return False
+        # The copy of the session with no project file goes with the save, and
+        # so does the one beside the file it was a copy of.
+        self._discard_autosave()
         self.project_path = path
+        self._discard_autosave()
         self._saved_snapshot = self._snapshot()
         self._add_recent(path)
         self._remember_dir(path)

@@ -1,7 +1,6 @@
 # mapchar documentation
 
-Reference documentation for this repository. `CLAUDE.md` at the repository root
-holds only the project-wide rules; everything else lives here.
+Reference documentation for this repository.
 
 ## Not intended for human consumption
 

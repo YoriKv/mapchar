@@ -29,8 +29,6 @@ class Document:
     notices: list[Notice] = field(default_factory=list)
     extraction_key: tuple | None = None
     """What the strings were extracted from, to skip a repeat."""
-    too_long: int = 0
-    """How many strings the last layout found would not fit; a Files-panel mark."""
 
     @property
     def size(self) -> int:

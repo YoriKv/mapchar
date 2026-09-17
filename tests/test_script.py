@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from helpers import ABC_TABLE, table_set
+from helpers import ABC_TABLE, table_set, translated
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -55,10 +55,9 @@ def test_lines_config():
 def test_write_and_parse():
     data = bytes.fromhex("41 FE 42 00 40 23 5C 00")
     cfg = BlockConfig(RangeSource(0, 8), EndToken(), "main")
-    ex = extract(data, cfg, TS)
-    ex.strings[1].translation = "B[end]"
+    strings, _ = translated(data, cfg, TS, {1: "B[end]"})
     text = write_script(
-        [("Dialogue", cfg, ex.strings)], DumpMode.BOTH, rom="rom.nes", tables=["t.tbl"]
+        [("Dialogue", cfg, strings)], DumpMode.BOTH, rom="rom.nes", tables=["t.tbl"]
     )
     assert text.startswith('@mapchar script 1\n@rom "rom.nes"\n@table "t.tbl"\n')
     assert "@string 0 at $0-$4\n# A[line]\n# B[end]\nA[line]\nB[end]\n" in text
@@ -69,8 +68,8 @@ def test_write_and_parse():
     assert block.name == "Dialogue" and block.config == cfg
     assert block.strings[0].text == "A[line]B[end]"
     assert block.strings[1].text == "B[end]"
-    assert (block.strings[1].start, block.strings[1].end) == (4, 8)
-    originals = write_script([("Dialogue", cfg, ex.strings)], DumpMode.ORIGINALS)
+    assert (block.strings[1].start, block.strings[1].end) == (4, 6)
+    originals = write_script([("Dialogue", cfg, strings)], DumpMode.ORIGINALS)
     assert "\n\\@#\\\\[end]\n" in originals
     assert parse_script(originals).blocks[0].strings[1].text == "@#\\\\[end]"
 

@@ -88,24 +88,19 @@ def label(entry: Entry) -> str:
 def block_extra(entry: Entry) -> str:
     """A block's string count and status summary.
 
-    Counted off the records when the block is loaded, else off the
-    translations it is carrying with no document to hold them, so a block
-    the session has not opened still says how much work is in it.
+    Counted off the records when the block is loaded, else off the state it
+    is carrying with no document to hold it, so a block the session has not
+    opened still says how much work is in it.
     """
     if entry.doc is not None:
         statuses = [rec.status for rec in entry.doc.strings]
-        total = len(statuses)
-        too_long = entry.doc.too_long
     elif entry.pending_strings:
         statuses = [st.status for st in entry.pending_strings.values()]
-        total = len(statuses)
-        too_long = 0
     else:
         return ""
-    parts = [str(total)]
+    parts = [str(len(statuses))]
     for label, n in (
         ("edited", sum(s is Status.EDITED for s in statuses)),
-        ("too long", too_long),
         ("review", sum(s is Status.REVIEW for s in statuses)),
     ):
         if n:

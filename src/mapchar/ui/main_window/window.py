@@ -61,6 +61,7 @@ from mapchar.ui.help_dialogs import (
 )
 from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
+from mapchar.ui.main_window.autosave import AutosaveMixin
 from mapchar.ui.main_window.blocks import BlocksMixin
 from mapchar.ui.main_window.capability_sync import CapabilitySyncMixin
 from mapchar.ui.main_window.compression import CompressionMixin
@@ -145,6 +146,7 @@ class MainWindow(
     PointerDiscoveryMixin,
     ImportExportMixin,
     ProjectMixin,
+    AutosaveMixin,
     RelocateMixin,
     PreviewMixin,
     FontsMixin,
@@ -458,6 +460,7 @@ class MainWindow(
         self.find_replace = FindReplaceDialog(self)
 
         self._connect_signals()
+        self._start_autosave()
 
     def _connect_signals(self) -> None:
         """Wire every widget the shell owns to the mixin that answers for it.
@@ -504,6 +507,8 @@ class MainWindow(
         self._restore_address_format()
         self.strings.row_selected.connect(self._on_string_row)
         self.strings.translation_edited.connect(self._on_translation_edited)
+        self.strings.commit_handler = self._commit_translation
+        self.strings.problem_shown.connect(self._on_edit_problem)
         self.strings.notes_edited.connect(self._on_notes_edited)
         self.strings.draft_changed.connect(self._on_draft)
         self.strings.context_menu_requested.connect(self._strings_menu)
@@ -585,6 +590,8 @@ class MainWindow(
         if not self._confirm_discard("quit"):
             event.ignore()
             return
+        # A session ended on purpose leaves no copy to recover.
+        self._discard_autosave()
         # The layout is written on a short delay, so a quit inside that delay
         # would otherwise lose the last drag.
         self._window_layout.save()

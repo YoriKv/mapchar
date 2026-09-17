@@ -113,9 +113,25 @@ def test_shift_return_writes_the_newline_code(qtbot):
     # Never a literal newline: parse_text drops those on the way back in.
     assert editor.toPlainText() == "A[line]"
     committed = []
-    editor.commit.connect(lambda: committed.append(True))
+    editor.commit.connect(lambda advance: committed.append(advance))
+    # Ctrl+Return commits and stays; Return commits and moves on.
     key(editor, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
-    assert committed == [True] and editor.toPlainText() == "A[line]"
+    key(editor, Qt.Key.Key_Return)
+    assert committed == [False, True] and editor.toPlainText() == "A[line]"
+
+
+def test_completion_and_buttons_carry_the_tables_comment(qtbot):
+    code = CodeInfo("color", "u8", 2, "text colour")
+    assert code.completion == "[color u8]  text colour"
+    editor = CodeEditor([code], "[line]")
+    qtbot.addWidget(editor)
+    editor._insert_completion(code.completion)
+    assert editor.toPlainText() == "[color "
+    view = StringsView()
+    qtbot.addWidget(view)
+    view.set_codes([code, CodeInfo("line", "", 1)])
+    button = view.codes_layout.itemAt(0).widget()
+    assert button.text() == "[color" and button.toolTip().startswith("text colour")
 
 
 def test_completion_lists_operand_shapes(qtbot):
@@ -164,7 +180,7 @@ def test_a_replace_all_that_matched_nothing_leaves_no_undo_step(window, tmp_path
     # And a run that does match still lands one step.
     window._fr_replace_all("A", "C", True, False)
     assert window.undo_stack.count() == before + 1
-    assert block.doc.strings[0].translation == "C[line]\nB[end]"
+    assert block.doc.strings[0].current_text() == "C[line]\nB[end]"
 
 
 def test_replace_all_is_code_aware_over_block_or_project(window, tmp_path):
@@ -176,27 +192,24 @@ def test_replace_all_is_code_aware_over_block_or_project(window, tmp_path):
 
     # "line" is inside a code and must not be touched.
     window._fr_replace_all("line", "X", True, False)
-    assert first.doc.strings[0].translation is None
+    assert not first.doc.strings[0].edited
 
+    # A [line] turned into an [end] cuts the string in two: the block would
+    # read differently, so the edit is refused and nothing lands.
+    steps = window.undo_stack.count()
     window._fr_replace_all("[line]", "[end]", True, False)
-    assert first.doc.strings[0].translation == "A[end]\nB[end]"
-    assert second.doc is None or not [
-        r for r in (second.doc.strings or []) if r.translation
-    ]
-
-    window.undo_stack.undo()
-    assert first.doc.strings[0].translation is None
+    assert not first.doc.strings[0].edited and window.undo_stack.count() == steps
 
     # Project scope reaches the block that was never opened.
     window._fr_replace_all("A", "C", True, True)
-    assert first.doc.strings[0].translation == "C[line]\nB[end]"
-    assert second.doc.strings[0].translation == "C[line]\nB[end]"
-    # Every block it touched has unsaved edits, and the lot undoes as one step:
-    # both blocks go back to the untranslated state they were in together.
-    assert first.dirty and second.dirty
+    assert first.doc.strings[0].current_text() == "C[line]\nB[end]"
+    assert second.doc.strings[0].current_text() == "C[line]\nB[end]"
+    # Both blocks read the same bytes, so the file is what has unsaved edits,
+    # and the lot undoes as one step: both go back to the original together.
+    assert entry.dirty
     window.undo_stack.undo()
-    assert first.doc.strings[0].translation is None
-    assert second.doc.strings[0].translation is None
+    assert not first.doc.strings[0].edited
+    assert not second.doc.strings[0].edited
 
 
 def test_find_next_walks_into_the_next_block(window, tmp_path):
@@ -384,8 +397,9 @@ def test_wrap_is_one_undo_step(window, tmp_path):
     from mapchar.core.font import CodeEffect, Effect
     from mapchar.core.font import TextBox as Box
 
+    # Room after the string, for the line codes wrapping adds.
     data = b"\x41\x42\x41\x42\x41\x42\x00" + b"\xff" * 8
-    entry, block = block_with(window, tmp_path, data, stop=7)
+    entry, block = block_with(window, tmp_path, data, stop=15)
     font_entry = window.open_font(str(tmp_path / "sheet.png"))
     font_entry.font = replace(
         font_entry.font, chars="AB", base=1, widths=(0,) + (8,) * 8
@@ -402,9 +416,9 @@ def test_wrap_is_one_undo_step(window, tmp_path):
     depth = window.undo_stack.index()
     window._wrap_selected()
     assert window.undo_stack.index() == depth + 1
-    assert "[line]" in (block.doc.strings[0].translation or "")
+    assert "[line]" in block.doc.strings[0].current_text()
     window.undo_stack.undo()
-    assert block.doc.strings[0].translation is None
+    assert not block.doc.strings[0].edited
 
 
 def test_a_table_keeps_its_identity_through_undo(window, tmp_path):

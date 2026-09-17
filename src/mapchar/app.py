@@ -107,4 +107,5 @@ def main(argv: list[str] | None = None) -> int:
             window.open_table(arg)
         else:
             window.open_rom(arg)
+    window.offer_session_recovery()
     return app.exec()

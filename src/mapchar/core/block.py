@@ -210,10 +210,20 @@ class StringRecord:
     """First bit of the string in the decompressed buffer."""
     end_bit: int
     """Exclusive bit after the last bit the string owns."""
-    original: list[Token]
+    tokens: list[Token]
+    """The decode of the bytes as they are now: the string's **current** text."""
     pointers: tuple[PointerRef, ...] = ()
-    translation: str | None = None
+    original: str = ""
+    """The string's text as it was when the block was made: a snapshot the
+    project keeps, not a reading of the bytes. An extraction seeds it from the
+    tokens and the project's saved state replaces it."""
+    replacement: str | None = None
+    """Text to encode in place of the bytes on the next layout; ``None`` keeps
+    the bytes as they are. Transient: set for one layout and cleared after."""
     status: Status = Status.UNTOUCHED
+    """*review* when set by hand or by an import; else *edited* or *untouched*
+    as the current text differs from the original or not
+    (:meth:`refresh_status`)."""
     notes: str = ""
     notices: list[Notice] = field(default_factory=list)
     lines: tuple[int, ...] = ()
@@ -221,14 +231,14 @@ class StringRecord:
     _text: tuple[tuple[int, int], str] | None = field(
         default=None, repr=False, compare=False
     )
-    """The original rendered, with which token list it was rendered from: the
+    """The tokens rendered, with which token list they were rendered from: the
     Strings grid asks for it more than once per string, thousands at a time."""
 
     def __setattr__(self, name: str, value: object) -> None:
-        # A translation is NFC however it arrived — typed, imported from a
-        # script, a translator file or a PO — so it compares and encodes
-        # against NFC table text.
-        if name == "translation" and isinstance(value, str):
+        # Text is NFC however it arrived — typed, imported from a script, a
+        # translator file or a PO — so it compares and encodes against NFC
+        # table text.
+        if name in ("replacement", "original") and isinstance(value, str):
             value = nfc(value)
         object.__setattr__(self, name, value)
 
@@ -266,25 +276,32 @@ class StringRecord:
         """How many bytes the string occupies, whatever its pieces."""
         return sum(b - a for a, b in self.pieces(skips))
 
-    def original_text(self) -> str:
+    def current_text(self) -> str:
+        """The tokens rendered: what the bytes say now."""
         from mapchar.core.tokens import render
 
-        key = (id(self.original), len(self.original))
+        key = (id(self.tokens), len(self.tokens))
         if self._text is None or self._text[0] != key:
-            self._text = (key, render(self.original))
+            self._text = (key, render(self.tokens))
         return self._text[1]
 
-    def current_text(self) -> str:
-        """The translation when there is one, else the original text."""
-        return (
-            self.translation if self.translation is not None else self.original_text()
-        )
+    def original_text(self) -> str:
+        """The snapshot the project keeps (:attr:`original`)."""
+        return self.original
+
+    @property
+    def edited(self) -> bool:
+        """Whether the bytes now say something other than the original."""
+        return not self.matches_original(self.current_text())
 
     def matches_original(self, text: str) -> bool:
         """Whether ``text`` is the original text, line breaks and form aside."""
-        return nfc(text).replace("\n", "") == nfc(self.original_text()).replace(
-            "\n", ""
-        )
+        return nfc(text).replace("\n", "") == nfc(self.original).replace("\n", "")
+
+    def refresh_status(self) -> None:
+        """Settle *edited* or *untouched* from the texts; *review* stays."""
+        if self.status is not Status.REVIEW:
+            self.status = Status.EDITED if self.edited else Status.UNTOUCHED
 
 
 def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:

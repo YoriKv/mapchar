@@ -18,15 +18,37 @@ from mapchar.core.table import Table
 
 @dataclass
 class StringState:
-    """One string's saved translation state, apart from any document.
+    """One string's saved state, apart from any document.
 
-    What the project file stores per string, and what an entry carries while no
-    document of its own exists to hold it (:attr:`Entry.pending_strings`).
+    What the project file stores per string — its original, its status and its
+    notes — and what an entry carries while no document of its own exists to
+    hold it (:attr:`Entry.pending_strings`).
     """
 
-    translation: str | None = None
+    original: str | None = None
     status: Status = Status.UNTOUCHED
     notes: str = ""
+    translation: str | None = None
+    """A translation a project written before originals were kept was still
+    holding, not yet in the ROM. The next extraction puts it into the bytes
+    and it is gone."""
+    extent: tuple[int, int] | None = None
+    """The bits the string covered when its block was last re-configured.
+
+    Set by the stash a block edit makes: a string the new reading cuts at
+    other bits is not the same string, so its original is taken afresh from
+    the bytes rather than kept.
+    """
+
+
+def string_state(rec, extent: bool = False) -> StringState:
+    """``rec``'s state as an entry carries it, its extent when asked."""
+    return StringState(
+        rec.original,
+        rec.status,
+        rec.notes,
+        extent=(rec.start_bit, rec.end_bit) if extent else None,
+    )
 
 
 @dataclass
@@ -117,7 +139,7 @@ class Entry:
     session: EntrySession = field(default_factory=EntrySession)
     doc: Document | None = None
     pending_strings: dict[int, StringState] | None = None
-    """Blocks: translation state with no document to live in yet.
+    """Blocks: string state with no document to live in yet.
 
     Set by a project load and by dropping a document, and consumed by the next
     extraction. It is also what a save serialises when the block was never
@@ -139,28 +161,28 @@ class Entry:
     def is_child(self) -> bool:
         return self.kind in (EntryKind.BLOCK, EntryKind.BOOKMARK)
 
-    def stash_strings(self, doc: Document | None = None) -> None:
-        """Copy this block's translations onto the entry, where no document
-        holds them.
+    def stash_strings(
+        self, doc: Document | None = None, *, reconfigured: bool = False
+    ) -> None:
+        """Copy this block's string state onto the entry, where no document
+        holds it.
 
         The safety net under everything that drops or fails to build a document
         — a block edit, an unavailable table, a refused extraction — so the next
-        successful read puts the same translations back on the same indices.
-        Merged into whatever is already stashed, since a block may go through
-        several such rounds before it reads again.
+        successful read puts the same originals, statuses and notes back on the
+        same indices. Merged into whatever is already stashed, since a block may
+        go through several such rounds before it reads again.
+
+        ``reconfigured`` says the block's reading is changing: each state then
+        remembers the bits its string covered, and a string the new reading
+        cuts differently takes its original afresh from the bytes.
         """
         doc = doc if doc is not None else self.doc
         if doc is None or not doc.strings:
             return
         saved = dict(self.pending_strings or {})
         for rec in doc.strings:
-            touched = (
-                rec.translation is not None
-                or rec.status is not Status.UNTOUCHED
-                or rec.notes
-            )
-            if touched:
-                saved[rec.index] = StringState(rec.translation, rec.status, rec.notes)
+            saved[rec.index] = string_state(rec, extent=reconfigured)
         self.pending_strings = saved or None
 
 
@@ -306,10 +328,10 @@ class Workspace:
         """Forget every cached document so a new registry re-reads it — except
         the ones holding unsaved edits. Returns how many were kept.
 
-        A refresh is not a revert: translations, overtypes and status changes
-        live only in the document, so dropping a dirty one throws work away while
-        the entry still reads as edited. Those keep what they have, and re-read
-        when the user next writes or closes them. A dirty entry's parents are
+        A refresh is not a revert: edits live only in the document, so dropping
+        a dirty one throws work away while the entry still reads as edited.
+        Those keep what they have, and re-read when the user next writes or
+        closes them. A dirty entry's parents are
         kept too: a block settles its bytes through its file's buffer, so
         re-reading that from disk underneath it would strand the edits.
         """
@@ -455,25 +477,16 @@ class Workspace:
             if e.doc is not None:
                 e.doc.extraction_key = None
 
-    def drop_document(self, entry: Entry) -> None:
-        """Discard an entry's cached document, keeping its translation state.
+    def drop_document(self, entry: Entry, *, reconfigured: bool = False) -> None:
+        """Discard an entry's cached document, keeping its string state.
 
         Once a load has consumed :attr:`Entry.pending_strings` the document is
-        the only place those translations exist, so a drop that did not stash
-        them back would silently revert the block to the bytes on disk.
+        the only place the originals, statuses and notes exist, so a drop that
+        did not stash them back would lose them. An extracted document is the
+        newer answer; a pending set the extraction never consumed is still the
+        only one there is. ``reconfigured`` is :meth:`Entry.stash_strings`'s.
         """
-        if entry.doc is not None and entry.doc.strings:
-            states = {
-                rec.index: StringState(rec.translation, rec.status, rec.notes)
-                for rec in entry.doc.strings
-                if rec.translation is not None
-                or rec.status is not Status.UNTOUCHED
-                or rec.notes
-            }
-            # An extracted document is the newer answer; a pending set the
-            # extraction never consumed is still the only one there is.
-            if states or entry.pending_strings is None:
-                entry.pending_strings = states or None
+        entry.stash_strings(reconfigured=reconfigured)
         entry.doc = None
 
     def invalidate_path(self, path: str, keep: Entry | None = None) -> None:

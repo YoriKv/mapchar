@@ -125,11 +125,26 @@ class MenuBarMixin:
         )
         edit_menu.addSeparator()
         self.string_actions = tuple(
-            act(edit_menu, text, slot)
-            for text, slot in (
-                ("Re&vert Selected Strings", self._revert_selected),
-                ("Toggle Revie&w on Selected", self._toggle_review_selected),
-                ("Copy &Original to Empty Translations", self._copy_originals),
+            act(edit_menu, text, slot, key)
+            for text, slot, key in (
+                ("Re&vert Selected Strings", self._revert_selected, None),
+                ("Toggle Revie&w on Selected", self._toggle_review_selected, None),
+                (
+                    "&Next Untranslated",
+                    lambda: self._step_strings("untranslated"),
+                    "F4",
+                ),
+                (
+                    "Previous Untranslate&d",
+                    lambda: self._step_strings("untranslated", backwards=True),
+                    "Shift+F4",
+                ),
+                ("Next Fla&gged", lambda: self._step_strings("flagged"), "F6"),
+                (
+                    "Previous Fl&agged",
+                    lambda: self._step_strings("flagged", backwards=True),
+                    "Shift+F6",
+                ),
             )
         )
 
