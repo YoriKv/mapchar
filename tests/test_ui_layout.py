@@ -102,11 +102,11 @@ def test_tool_windows_stay_usable_at_their_smallest(window):
         assert hint.width() < 700 and hint.height() < 400, tool
 
 
-def test_the_table_editors_form_grows_without_moving_the_grid(window, tmp_path, qtbot):
-    """The grid and the form are split rather than sized to fit: a kind that
-    takes parameters grows the form, and the rows stay where they were. Once
-    the handle is dragged the split is the user's, and the form growing then
-    scrolls inside its own pane rather than taking the grid's height."""
+def test_the_table_editors_form_never_resizes_the_grid(window, tmp_path, qtbot):
+    """The grid and the form are split, never sized to fit: the handle is put
+    at its default once and only a drag moves it again, so no kind picked —
+    a switch's parameters are the tallest — takes height off the grid or moves
+    the rows under the cursor."""
     from mapchar.core.table import TokenKind
 
     table = TABLE + "".join(f"{0x80 + i:02X}=c{i}\n" for i in range(200))
@@ -116,22 +116,15 @@ def test_the_table_editors_form_grows_without_moving_the_grid(window, tmp_path, 
     qtbot.waitExposed(editor)
     bar = editor.grid.verticalScrollBar()
     bar.setValue(bar.maximum() // 2)
-    scrolled = bar.value()
+    scrolled, was = bar.value(), editor.grid.height()
     assert scrolled > 0
+    # The default holds the tallest entry, so nothing is scrolled to for it.
+    assert editor.form_pane.height() >= editor.form_pane.widget().sizeHint().height()
     kind = editor.form.kind
-    # Left to itself, the form is as tall as the kind picked needs.
-    text_split = editor.splitter.sizes()
-    kind.setCurrentIndex(kind.findData(TokenKind.SWITCH))
-    assert editor.form.params_box.isVisible()
-    assert editor.splitter.sizes()[1] > text_split[1]
-    assert bar.value() == scrolled
-    # A drag settles it: the form is scrolled from here on, not the grid.
-    kind.setCurrentIndex(kind.findData(TokenKind.TEXT))
-    editor.splitter.splitterMoved.emit(0, 1)
-    was = editor.grid.height()
-    kind.setCurrentIndex(kind.findData(TokenKind.SWITCH))
-    assert editor.grid.height() == was
-    assert bar.value() == scrolled
+    for token in (TokenKind.SWITCH, TokenKind.CODE, TokenKind.RETURN, TokenKind.TEXT):
+        kind.setCurrentIndex(kind.findData(token))
+        assert editor.grid.height() == was, token
+        assert bar.value() == scrolled, token
 
 
 # -- cut-short text reads in full --------------------------------------------

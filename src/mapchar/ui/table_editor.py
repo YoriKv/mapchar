@@ -66,6 +66,10 @@ COLUMNS_KEY = "table_editor/columns"
 """Which columns the grid shows, remembered per machine."""
 SPLITTER_KEY = "table_editor/splitter"
 """Where the grid and the form under it are split, remembered per machine."""
+FORM_LINES = 16
+"""How many lines of text tall the form's pane opens: what the tallest entry
+— a switch, its parameters a row each — takes, so no kind picked has to be
+scrolled to before the handle has been touched."""
 
 KEY, KIND, TEXT, DETAILS, WEIGHT, COMMENT = range(6)
 """The grid's columns."""
@@ -199,8 +203,8 @@ class TableEditor(EscapeCloses, QWidget):
         self.sample = ElidedLabel("")
         self.sample.setToolTip("Where in the file the key's bytes were taken from")
         self.form = TableEntryForm()
-        self._lower = QWidget()
-        lower_box = QVBoxLayout(self._lower)
+        lower = QWidget()
+        lower_box = QVBoxLayout(lower)
         lower_box.setContentsMargins(0, 0, 0, 0)
         lower_box.addWidget(self.sample)
         lower_box.addWidget(self.form)
@@ -209,7 +213,7 @@ class TableEditor(EscapeCloses, QWidget):
         # takes, so it is scrolled inside a pane of its own: growing it would
         # otherwise take height off the grid and move the rows under the cursor.
         self.form_pane = QScrollArea()
-        self.form_pane.setWidget(self._lower)
+        self.form_pane.setWidget(lower)
         self.form_pane.setWidgetResizable(True)
         self.form_pane.setFrameShape(QFrame.Shape.NoFrame)
         self.form_pane.setHorizontalScrollBarPolicy(
@@ -228,9 +232,9 @@ class TableEditor(EscapeCloses, QWidget):
         if state is not None:
             self.splitter.restoreState(state)
         self._split_set = state is not None
-        """Whether the split is the user's. Until it is, the form is given the
-        height it asks for and the grid keeps the rest (:meth:`_fit_split`); a
-        handle once dragged is never moved again."""
+        """Whether the split is settled: restored, put at its default by the
+        first show (:meth:`_split_once`), or dragged. Nothing moves the handle
+        once it is."""
         self.splitter.splitterMoved.connect(self._remember_split)
         layout.addWidget(self.splitter, 1)
         row = QHBoxLayout()
@@ -382,36 +386,32 @@ class TableEditor(EscapeCloses, QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
-        self._fit_split()
+        self._split_once()
         # Opened on a table, the first thing to do is type a key.
         if self._editing is None and not self.form.key.text():
             self.form.focus_key()
 
-    def _fit_split(self) -> None:
-        """Give the form the height it asks for and the grid the rest.
+    def _split_once(self) -> None:
+        """Put the handle at :data:`FORM_LINES` from the bottom, the once.
 
-        What a splitter does for itself at first, except that the form's height
-        answers to the kind picked: a switch's parameters need room a text
-        entry does not. So it is fitted again whenever the form changes — up to
-        the moment the handle is dragged, after which the split is the user's
-        and nothing here moves it. The rows stay where they were either way:
-        the grid is left scrolled exactly where it was found, which is the
-        whole point of the form having a pane of its own.
+        The form's own height answers to the kind picked, so it is no use as a
+        split: fitting it would move the handle — and the rows with it — every
+        time a kind changed, which is the auto-sizing the pane exists to stop.
+        The pane opens at a height that holds the tallest entry instead, and
+        from the first show it only ever moves because the handle was dragged.
+        It waits for that show because ``setSizes`` divides a height, and there
+        is none to divide until the window is on screen.
         """
         if self._split_set:
             return
-        sizes = self.splitter.sizes()
-        total = sum(sizes)
-        if total <= 0:  # not laid out yet; the first show asks again
+        self._split_set = True
+        total = sum(self.splitter.sizes())
+        if total <= 0:
+            self._split_set = False  # not laid out yet; the next show asks again
             return
         # Half at the most: a window opened short is still a window of rows.
-        wanted = min(self._lower.sizeHint().height(), total // 2)
-        if wanted == sizes[1]:
-            return
-        bar = self.grid.verticalScrollBar()
-        at = bar.value()
+        wanted = min(self.fontMetrics().height() * FORM_LINES, total // 2)
         self.splitter.setSizes([total - wanted, wanted])
-        bar.setValue(at)
 
     def _remember_split(self) -> None:
         self._split_set = True
@@ -621,7 +621,6 @@ class TableEditor(EscapeCloses, QWidget):
     def _on_form_changed(self) -> None:
         self._sync_buttons()
         self._show_sample()
-        self._fit_split()
 
     def _show_sample(self) -> None:
         """Where the form's key came from, for the keys the raw view sent."""

@@ -274,9 +274,9 @@ the preview system in [preview.md](preview.md).
     chooses which columns show, kept between runs. Weight, left to itself,
     shows only when the table weights something. The grid and the form under
     it are **split** by a handle, where it is left kept between runs: a taller
-    window is more rows, and the form takes the height the kind picked needs
-    until the handle is dragged, after which it scrolls in its own pane
-    instead. The rows keep their place through either;
+    window is more rows, and the form opens at a height that holds the tallest
+    entry and scrolls in its own pane after that, so no kind picked moves the
+    rows;
   - a **sample** line under the grid, for a key the raw view sent: where in
     the file its bytes were taken from (`sampled from 0C4A10`);
   - an **entry form** under the grid, loaded from the selected row or blank

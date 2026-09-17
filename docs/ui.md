@@ -44,13 +44,13 @@ No layout's minimum size may be set by text or a count that varies.
   box has room for, and what does not fit is reached by moving the view — its
   scrollbar is the file's (or the stretch of it the view is confined to),
   never the box's.
-- **A pane whose height is a judgement is split**: the Strings view's grid and
-  pane, and the Table Editor's grid and form, sit in a `QSplitter` whose
-  position is kept in `QSettings`. A pane that grows with what it shows — a
-  form whose kind takes parameters — is fitted to it until the handle is
-  dragged, after which the split is the user's and the pane scrolls inside its
-  half instead. Either way the view above keeps the scroll position it had, so
-  the rows never move out from under the cursor.
+- **A pane whose height is a judgement is split, never fitted**: the Strings
+  view's grid and pane, and the Table Editor's grid and form, sit in a
+  `QSplitter` whose position is kept in `QSettings`. A pane whose contents grow
+  — a form whose kind takes parameters — opens at a height that holds the
+  tallest of them and scrolls inside its half after that; only a drag ever
+  moves the handle. Fitting it to what it shows would move the rows of the view
+  above out from under the cursor, which is the thing to avoid.
 - **Dialogs fit a 768-pixel-high screen**: a long form is grouped into titled
   boxes in columns.
 - **Docks**: a tree's name column stretches and gives way first; count columns
