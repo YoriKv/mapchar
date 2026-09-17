@@ -12,7 +12,9 @@ from dataclasses import replace
 
 from mapchar.core.block import (
     BlockConfig,
+    NestedPointerSource,
     PointerListSource,
+    PointerSource,
     PointerTableSource,
     RangeSource,
 )
@@ -23,14 +25,13 @@ def shift_config(config: BlockConfig, delta: int) -> BlockConfig:
     if not delta:
         return config
     src = config.source
-    if isinstance(src, RangeSource | PointerTableSource):
+    if isinstance(src, RangeSource | PointerTableSource | NestedPointerSource):
         src = replace(src, start=src.start + delta, stop=src.stop + delta)
     elif isinstance(src, PointerListSource):
         src = replace(src, addresses=tuple(a + delta for a in src.addresses))
-    if (
-        isinstance(src, PointerTableSource | PointerListSource)
-        and src.mapping_id == "linear"
-    ):
+    # A nested source's inner pointers count from a base its outer pointers
+    # reach, which the outer offset moves with everything else.
+    if isinstance(src, PointerSource) and src.mapping_id == "linear":
         src = replace(src, offset=src.offset + delta)
     return replace(
         config,

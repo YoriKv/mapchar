@@ -30,10 +30,18 @@ class RawViewMixin:
         menu.addAction("New Boo&kmark", self._new_bookmark)
         if sel:
             ptr_rec = self._doc.string_for_pointer(sel[0])
+            cell = self._pointer_cell_at(sel[0]) if ptr_rec is None else None
             if ptr_rec is not None:
                 menu.addAction(
                     "&Jump to Pointer Target",
                     lambda: self._select_bytes(ptr_rec.start, ptr_rec.length),
+                )
+            elif cell is not None and cell.target is not None:
+                # A pointer that reaches no string: a nested source's outer
+                # pointer, at an inner table or the base it counts from.
+                menu.addAction(
+                    "&Jump to Pointer Target",
+                    lambda: self._select_bytes(cell.target, 1),
                 )
             str_rec = self._string_at(sel[0])
             if str_rec is not None and str_rec.pointers:
@@ -55,6 +63,16 @@ class RawViewMixin:
             )
             menu.addAction("Copy &Text", self._copy_selection_text)
         menu.exec(pos)
+
+    def _pointer_cell_at(self, offset: int):
+        """The pointer of the reading whose bytes hold ``offset``, if any."""
+        cfg = self._reading()
+        if cfg is None or not cfg.has_pointers or self._doc is None:
+            return None
+        cells = self._pointer_cells(self._doc, max(0, offset - 8), offset + 1)
+        return next(
+            (c for c in cells if c.address <= offset < c.address + c.size), None
+        )
 
     def _string_at(self, offset: int):
         """The string of the current document holding ``offset``."""

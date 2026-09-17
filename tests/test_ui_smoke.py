@@ -168,7 +168,7 @@ def test_the_text_tab_is_a_session_view(window, tmp_path):
 def test_edit_and_write(window, tmp_path):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
     file_entry = open_rom_and_table(window, tmp_path, data)
-    block = add_block(window, file_entry, "b", RangeSource(0, 6), fill=0xEE)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6), fill=b"\xee")
     window._on_translation_edited(0, "A[end]")
     rec = block.doc.strings[0]
     # The translation is the bytes: the string's slot holds it, fill after.
@@ -357,7 +357,7 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
         RangeSource(0, len(payload)),
         # The fill byte is one the ASCII table maps nothing to, so what a
         # shorter string leaves behind is padding and not text.
-        fill=0xFF,
+        fill=b"\xff",
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=slot,
@@ -395,7 +395,7 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
         file_entry,
         "front",
         RangeSource(0, 30),
-        fill=0xFF,
+        fill=b"\xff",
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=slot,
@@ -405,7 +405,7 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
         file_entry,
         "back",
         RangeSource(30, 60),
-        fill=0xFF,
+        fill=b"\xff",
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=slot,
@@ -435,7 +435,7 @@ def test_siblings_over_a_slot_share_its_payload_and_write_together(window, tmp_p
     data = b"\xff" * 16 + packed + b"\xff" * 16 + b"\xff" * 24
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     slice_fields = dict(
-        fill=0xFF, compression_id="gba_lz77", slice_offset=16, slice_length=slot
+        fill=b"\xff", compression_id="gba_lz77", slice_offset=16, slice_length=slot
     )
     written = add_block(
         window, file_entry, "written", RangeSource(0, 30), **slice_fields
@@ -1497,7 +1497,7 @@ def test_a_project_holding_translations_puts_them_in_the_bytes(window, tmp_path)
 
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
     file_entry = open_rom_and_table(window, tmp_path, data)
-    add_block(window, file_entry, "b", RangeSource(0, 6), fill=0xEE)
+    add_block(window, file_entry, "b", RangeSource(0, 6), fill=b"\xee")
     proj = tmp_path / "p.mapchar"
     assert window._write_project(str(proj))
     doc = json.loads(proj.read_text())
@@ -1528,7 +1528,7 @@ def test_a_project_holding_translations_keeps_them_while_its_table_is_gone(
 
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
     file_entry = open_rom_and_table(window, tmp_path, data)
-    add_block(window, file_entry, "b", RangeSource(0, 6), fill=0xEE)
+    add_block(window, file_entry, "b", RangeSource(0, 6), fill=b"\xee")
     proj = tmp_path / "p.mapchar"
     assert window._write_project(str(proj))
     doc = json.loads(proj.read_text())
@@ -1576,7 +1576,7 @@ def test_an_older_project_s_translation_that_would_re_cut_the_block_is_refused(
     # The spare room a shorter string leaves is filled with the end token,
     # which the table maps and the block therefore reads as text: it would
     # read as three strings rather than two.
-    add_block(window, file_entry, "b", RangeSource(0, 6), fill=0x00)
+    add_block(window, file_entry, "b", RangeSource(0, 6), fill=b"\x00")
     proj = tmp_path / "p.mapchar"
     assert window._write_project(str(proj))
     doc = json.loads(proj.read_text())

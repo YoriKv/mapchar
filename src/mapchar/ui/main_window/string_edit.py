@@ -19,7 +19,7 @@ from mapchar.core.errors import MapcharError
 from mapchar.core.table import TableSet
 from mapchar.core.text import same_text
 from mapchar.engines.layout import char_layout
-from mapchar.pipeline.extract import extract
+from mapchar.pipeline.extract import extract, reextract
 from mapchar.pipeline.insert import apply_splices, layout_block, room_for
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import StringFieldCommand, StringsEditCommand
@@ -161,7 +161,7 @@ class StringEditMixin:
         before, after = doc.data[lo:hi], new_data[lo:hi]
         if before == after:
             return []
-        back = self._reads_back(cfg, tables, doc, new_data, edits)
+        back = self._reads_back(cfg, tables, doc, new_data, edits, (lo, hi))
         if back.block is not None:
             return [back.block]
         if back.string is not None:
@@ -181,6 +181,7 @@ class StringEditMixin:
         doc: Document,
         data: bytes,
         edits: dict[int, str],
+        span: tuple[int, int] | None = None,
     ) -> ReadBack:
         """Whether ``data`` may stand for ``edits``, on the one set of terms.
 
@@ -190,9 +191,17 @@ class StringEditMixin:
         now — an edit that changes how the bytes after it are cut has changed
         strings nobody asked to change. Both landings, the undo step and the
         undo-free one a project load makes, refuse on these terms and no other.
+
+        ``span`` is the stretch the edit changed: where the block's reading
+        comes apart (:func:`~mapchar.pipeline.extract.reextract`), only what it
+        reaches is read again.
         """
         try:
-            check = extract(data, cfg, tables, self.registry)
+            check = None
+            if span is not None:
+                check = reextract(data, cfg, tables, doc.strings, *span, self.registry)
+            if check is None:
+                check = extract(data, cfg, tables, self.registry)
         except MapcharError as exc:
             return ReadBack(str(exc), None, None)
         if len(check.strings) != len(doc.strings):
@@ -208,7 +217,8 @@ class StringEditMixin:
             if not same_text(back, t):
                 return ReadBack(None, f"#{i}: reads back as {back!r}", None)
         for rec in doc.strings:
-            if rec.index in edits:
+            if rec.index in edits or read[rec.index] is rec:
+                # A record a partial reading kept is the bytes it was.
                 continue
             back = read[rec.index].current_text()
             if not same_text(back, rec.current_text()):
@@ -259,10 +269,17 @@ class StringEditMixin:
         edit, so undoing back to what was written reads clean again.
         """
         shared = self.workspace.entries_sharing(entry)
+        # The blocks over one file hold the very same buffer: spliced once, the
+        # result is theirs too, rather than a copy of a whole ROM per block.
+        spliced: dict[int, tuple[bytes, bytes]] = {}
         for holder in shared:
-            buf = bytearray(holder.doc.data)
-            buf[offset : offset + len(data)] = data
-            holder.doc.data = bytes(buf)
+            before = holder.doc.data
+            done = spliced.get(id(before))
+            if done is None or done[0] is not before:
+                buf = bytearray(before)
+                buf[offset : offset + len(data)] = data
+                done = spliced[id(before)] = (before, bytes(buf))
+            holder.doc.data = done[1]
             holder.doc.extraction_key = None
         self._stamp_shared_bytes(entry, revision, shared)
         self._reread_blocks_over(entry, offset, offset + len(data))
@@ -302,7 +319,22 @@ class StringEditMixin:
             if any(
                 span is not None and span[0] < hi and lo < span[1] for span in spans
             ):
-                self._extract_current(block, doc, self._table_set_of(block))
+                tables = self._table_set_of(block)
+                if tables is not None and self._checked_extraction is None:
+                    # An undo or redo brings no reading of its own; a block
+                    # whose reading comes apart reads only what changed.
+                    part = reextract(
+                        doc.data,
+                        block.config,
+                        tables,
+                        doc.strings,
+                        lo,
+                        hi,
+                        self.registry,
+                    )
+                    if part is not None:
+                        self._remember_extraction(doc.data, block.config, tables, part)
+                self._extract_current(block, doc, tables)
 
     def _on_notes_edited(self, index: int, text: str) -> None:
         entry = self._entry

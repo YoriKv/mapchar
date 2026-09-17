@@ -158,6 +158,10 @@ class Entry:
     extraction. It is also what a save serialises when the block was never
     opened, so state survives a session that never looked at it.
     """
+    fixed_ends_shown: bool = False
+    """Blocks: :attr:`pending_strings` spell a fixed string's end token, as a
+    project from before version 2 does; the next extraction respells them
+    (:func:`~mapchar.pipeline.extract.respell_fixed_end`)."""
     live_revision: int = 0
     saved_revision: int = 0
     missing: bool = False

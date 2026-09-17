@@ -14,8 +14,8 @@ from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
 from mapchar.engines.layout import char_layout
 from mapchar.engines.layout import layout as layout_glyphs
-from mapchar.pipeline.extract import extract
-from mapchar.pipeline.insert import room_for, slot_ends
+from mapchar.pipeline.extract import extract, respell_fixed_end
+from mapchar.pipeline.insert import room_for, string_ends
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.strings_view import FLAGGED, CodeInfo, RowData
 from mapchar.ui.undo_commands import StringFieldCommand
@@ -128,6 +128,12 @@ class StringsViewMixin:
         saved = entry.pending_strings
         legacy: dict[int, str] = {}
         if saved:
+
+            def spelled(text: str, rec) -> str:
+                if not entry.fixed_ends_shown:
+                    return text
+                return respell_fixed_end(text, rec, cfg, tables)
+
             for rec in ex.strings:
                 st = saved.get(rec.index)
                 if st is None:
@@ -139,11 +145,12 @@ class StringsViewMixin:
                     # marked, so its original, its mark and its notes are all
                     # about text that is no longer there and it starts afresh.
                     if st.original is not None:
-                        rec.original = st.original
+                        rec.original = spelled(st.original, rec)
                     rec.status, rec.notes = st.status, st.notes
                 if st.translation is not None:
-                    legacy[rec.index] = st.translation
+                    legacy[rec.index] = spelled(st.translation, rec)
             entry.pending_strings = None
+            entry.fixed_ends_shown = False
         for rec in ex.strings:
             rec.refresh_status()
         doc.strings = ex.strings
@@ -275,7 +282,11 @@ class StringsViewMixin:
         if result.problems:
             return [f"#{p.index}: {p.message}" for p in result.problems]
         new_data = apply_splices(doc.data, result.splices)
-        back = self._reads_back(cfg, tables, doc, new_data, edits)
+        span = (
+            min(s.offset for s in result.splices),
+            max(s.end for s in result.splices),
+        )
+        back = self._reads_back(cfg, tables, doc, new_data, edits, span)
         if back.block is not None:
             return [f"#{min(edits)}: {back.block}"]
         if back.string is not None:
@@ -401,11 +412,11 @@ class StringsViewMixin:
             cached is not None
             and cached[0] is doc.strings
             and cached[1] is doc.data
-            and cached[2] == (bound, cfg.fill)
+            and cached[2] == (bound, cfg)
         ):
             return cached[3]
-        ends = slot_ends(doc.strings, bound, doc.data, cfg.fill)
-        self._slots_cache = (doc.strings, doc.data, (bound, cfg.fill), ends)
+        ends = string_ends(doc.data, cfg, doc.strings, self.registry)
+        self._slots_cache = (doc.strings, doc.data, (bound, cfg), ends)
         return ends
 
     def _same_originals(self, doc: Document) -> Counter:

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from mapchar.core.block import (
     BlockConfig,
+    NestedPointerSource,
     Pascal,
     StringRecord,
     WriteMode,
@@ -20,8 +21,9 @@ from mapchar.core.tokens import (
     escape_text,
     operand_values,
     parse_text,
+    render,
 )
-from mapchar.pipeline.extract import strip_artificial
+from mapchar.pipeline.extract import is_hidden_end, strip_artificial
 from mapchar.project.formats.legacy.abcde import write_abcde_table
 from mapchar.project.formats.textfile import split_lines
 
@@ -107,7 +109,16 @@ def write_atlas(
         out.append(f"#ACTIVETBL(@{tables.start.id})")
     src = config.source
     mapping = getattr(src, "mapping_id", "linear")
-    if config.has_pointers:
+    nested = isinstance(src, NestedPointerSource)
+    if nested:
+        # Atlas has one header for every pointer; a nested source's inner
+        # pointers each count from their own group's base.
+        notices.append(
+            "nested pointer tables have no Atlas form; every string is written "
+            "in place and its pointers are left as they are"
+        )
+        mapping = ""
+    elif config.has_pointers:
         if mapping not in ADDRESS_TYPES:
             notices.append(
                 f"mapping {mapping!r} has no Atlas address type; pointers omitted"
@@ -127,13 +138,18 @@ def write_atlas(
             out.append('#PASCALTYPE("TOKENS")')
     fixed_len = config.fixed_length
     if fixed_len is not None:
-        out.append(f"#FIXEDLENGTH({fixed_len}, {format_num(config.fill)})")
+        out.append(f"#FIXEDLENGTH({fixed_len}, {format_num(config.fill[0])})")
+        if len(config.fill) > 1:
+            notices.append(
+                f"a fill pattern of {len(config.fill)} bytes has no Atlas form; "
+                "padded with its first byte"
+            )
     if config.realign[0]:
         out.append(f"#STRINGALIGN({config.realign[0]})")
         if config.realign[1]:
             notices.append("realign offset has no Atlas form")
     mode = config.effective_write_mode
-    packed = mode is WriteMode.PACKED
+    packed = mode is WriteMode.PACKED and not nested
     if packed and strings:
         bound = config.bound if config.bound is not None else getattr(src, "stop", None)
         start = strings[0].start + header
@@ -154,7 +170,11 @@ def write_atlas(
             for ptr in rec.pointers:
                 addr = format_num(ptr.address + header)
                 out.append(f"#{width.get(ptr.size, 'W16')}({addr})")
-        text = rec.current_text()
+        # The end token a fixed string keeps out of its text is bytes Atlas
+        # has to write.
+        text = render(
+            [replace(t, fallback=False) if is_hidden_end(t) else t for t in rec.tokens]
+        )
         for line in strip_artificial(text, config):
             out.append(atlas_text(line, tables))
     return AtlasExport("\n".join(out) + "\n", files, notices)

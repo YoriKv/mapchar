@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,6 +34,7 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     Lines,
+    NestedPointerSource,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -41,8 +43,11 @@ from mapchar.core.block import (
     StringType,
     WriteMode,
     default_write_mode,
+    format_fill,
+    parse_fill,
 )
 from mapchar.ui.number_fields import (
+    HEX_NUMBER,
     AddressEdit,
     AddressSpelling,
     HexEdit,
@@ -54,13 +59,14 @@ from mapchar.ui.number_fields import (
 from mapchar.ui.skips_picker import SkipsPicker
 from mapchar.ui.widgets import CompactComboBox, WrapBar, fit_chars, hint_field
 
-RANGE, TABLE, LIST = "range", "table", "list"
+RANGE, TABLE, LIST, NESTED = "range", "table", "list", "nested"
 """The source kinds, as the Source picker's data."""
 
 _SOURCE_NAMES = {
     RANGE: "Range",
     TABLE: "Pointer table",
     LIST: "Pointer list",
+    NESTED: "Nested tables",
 }
 
 END, FIXED_LENGTH, PASCAL, NEXT, LINES = "end", "fixed", "pascal", "next", "lines"
@@ -75,6 +81,9 @@ SECTIONS = {
         "ptr_mapping",
         "ptr_offset",
         "ptr_bank",
+        "ptr_null",
+        "inner",
+        "inner_null",
     ),
     "Strings": (
         "string_type",
@@ -122,7 +131,37 @@ def source_kind(config: BlockConfig) -> str:
         return TABLE
     if isinstance(source, PointerListSource):
         return LIST
+    if isinstance(source, NestedPointerSource):
+        return NESTED
     return RANGE
+
+
+class FillEdit(QLineEdit):
+    """A fill pattern in hex: a byte for every two digits typed, so ``FFFF`` is
+    two bytes and ``FF`` one; blank is ``None``."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setValidator(QRegularExpressionValidator(HEX_NUMBER, self))
+        fit_chars(self, 4)
+
+    def value(self) -> bytes | None:
+        digits = self.text().strip().removeprefix("$").removeprefix("0x")
+        digits = digits.removeprefix("0X").replace("_", "")
+        try:
+            return parse_fill("$" + digits) if digits else None
+        except ValueError:
+            return None
+
+    def set_value(self, fill: bytes | None) -> None:
+        self.setText("" if fill is None else format_fill(fill)[1:])
+
+
+def _null_edit(tip: str) -> HexEdit:
+    """A pointer value that reaches nothing, in hex; blank for none."""
+    edit = HexEdit(4, pad=False)
+    hint_field(edit, "none", tip)
+    return edit
 
 
 class ReadingBar(WrapBar):
@@ -154,6 +193,13 @@ class ReadingBar(WrapBar):
         self.ptr_mapping.setEditable(True)
         self.ptr_offset = OffsetEdit()
         self.ptr_bank = HexSpinBox(0, 0xFFF, 2)
+        self.ptr_null = _null_edit("A pointer holding this value reaches no string")
+        self.inner_size = number_spin(1, 4, 1)
+        self.inner_size.setValue(2)
+        self.inner_endian = _endian_combo("The inner pointers' byte order")
+        self.inner_null = _null_edit(
+            "An inner pointer holding this value reaches no string"
+        )
         self.ptr_addresses = hint_field(
             QLineEdit(),
             "addresses, comma separated",
@@ -207,7 +253,7 @@ class ReadingBar(WrapBar):
             self.write_mode.setItemData(
                 self.write_mode.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
             )
-        self.fill = HexEdit(2)
+        self.fill = FillEdit()
         self.spare_room = QComboBox()
         self.spare_room.addItem("Fill", "fill")
         self.spare_room.addItem("Keep", "keep")
@@ -254,6 +300,25 @@ class ReadingBar(WrapBar):
                 (self.ptr_addresses,),
                 "Where each pointer sits, comma separated",
             ),
+            (
+                "ptr_null",
+                "Null",
+                (self.ptr_null,),
+                "A pointer value that means no string, in hex",
+            ),
+            (
+                "inner",
+                "Inner",
+                (self.inner_size, self.inner_endian),
+                "Bytes in an inner pointer, and their order: a record's first "
+                "pointer is its inner table, its second the base those count from",
+            ),
+            (
+                "inner_null",
+                "Inner null",
+                (self.inner_null,),
+                "An inner pointer value that means no string, in hex",
+            ),
             ("string_type", "Ends at", (self.string_type,), "How a string ends"),
             ("fixed_length", "Length", (self.fixed_length,), "Bytes in every string"),
             ("count", "Count", (self.count,), "How many strings; sets Stop"),
@@ -293,7 +358,12 @@ class ReadingBar(WrapBar):
                 (self.write_mode,),
                 "How a write lays the strings out",
             ),
-            ("fill", "Fill", (self.fill,), "The byte that pads unused room, in hex"),
+            (
+                "fill",
+                "Fill",
+                (self.fill,),
+                "The bytes that pad unused room, in hex: FFFF pads with a word",
+            ),
             (
                 "spare_room",
                 "Spare room",
@@ -312,6 +382,7 @@ class ReadingBar(WrapBar):
         for name, combo in (
             ("source_kind", self.source_kind),
             ("ptr_endian", self.ptr_endian),
+            ("inner_endian", self.inner_endian),
             ("string_type", self.string_type),
             ("pascal_endian", self.pascal_endian),
             ("write_mode", self.write_mode),
@@ -327,6 +398,7 @@ class ReadingBar(WrapBar):
             ("ptr_size", self.ptr_size),
             ("ptr_stride", self.ptr_stride),
             ("ptr_bank", self.ptr_bank),
+            ("inner_size", self.inner_size),
             ("fixed_length", self.fixed_length),
             ("pascal_width", self.pascal_width),
             ("spp", self.spp),
@@ -348,6 +420,8 @@ class ReadingBar(WrapBar):
             ("stop", self.stop),
             ("ptr_offset", self.ptr_offset),
             ("ptr_addresses", self.ptr_addresses),
+            ("ptr_null", self.ptr_null),
+            ("inner_null", self.inner_null),
             ("bound", self.bound),
             ("fill", self.fill),
         ):
@@ -403,13 +477,16 @@ class ReadingBar(WrapBar):
         id the list does not know, which is left its bank rather than guessed."""
         return self._mappings.get(self.mapping_id(), True)
 
-    def show_bound_default(self, bound: int | None) -> None:
-        """Say in the Bound field's placeholder where a blank bound stops."""
-        hint_field(
-            self.bound,
-            "stop" if bound is None else self.spelling.format(bound),
-            self.bound.toolTip(),
-        )
+    def show_bound_default(self, default: int | str | None) -> None:
+        """Say in the Bound field's placeholder where a blank bound stops: at an
+        address, or where the words given say."""
+        if default is None:
+            hint = "stop"
+        elif isinstance(default, str):
+            hint = default
+        else:
+            hint = self.spelling.format(default)
+        hint_field(self.bound, hint, self.bound.toolTip())
 
     def load(
         self,
@@ -430,7 +507,7 @@ class ReadingBar(WrapBar):
                 self.start.set_value(s.start)
                 self.stop.set_value(s.stop)
             else:
-                if isinstance(s, PointerTableSource):
+                if isinstance(s, PointerTableSource | NestedPointerSource):
                     self.start.set_value(s.start)
                     self.stop.set_value(s.stop)
                     self.ptr_stride.setValue(s.stride)
@@ -443,6 +520,13 @@ class ReadingBar(WrapBar):
                 self._show_mapping(s.mapping_id)
                 self.ptr_offset.set_value(s.offset)
                 self.ptr_bank.setValue(s.bank)
+                self.ptr_null.set_value(s.null)
+                if isinstance(s, NestedPointerSource):
+                    self.inner_size.setValue(s.inner_size)
+                    self.inner_endian.setCurrentIndex(
+                        1 if s.inner_endian == "big" else 0
+                    )
+                    self.inner_null.set_value(s.inner_null)
             st = config.string_type
             kind = END
             if isinstance(st, FixedLength):
@@ -519,13 +603,15 @@ class ReadingBar(WrapBar):
 
     def _fill_kinds(self, current: str) -> None:
         self.source_kind.clear()
-        kinds = (TABLE, LIST) if self._pointers else (RANGE,)
+        kinds = (TABLE, LIST, NESTED) if self._pointers else (RANGE,)
         for kind in kinds:
             self.source_kind.addItem(_SOURCE_NAMES[kind], kind)
         self.source_kind.setCurrentIndex(max(self.source_kind.findData(current), 0))
-        # A file has no addresses of its own to list pointers at.
+        # A file has no addresses of its own to list pointers at, nor strings
+        # of its own to group.
         if self._pointers and not self._block:
-            self.source_kind.model().item(1).setEnabled(False)
+            for at in (1, 2):
+                self.source_kind.model().item(at).setEnabled(False)
 
     def _edited(self, name: str) -> None:
         if self._loading:
@@ -550,14 +636,17 @@ class ReadingBar(WrapBar):
             # Text has one kind of source, so there is nothing to pick.
             "source_kind": pointers,
             "start": block and kind != LIST,
-            "stop": block and kind in (RANGE, TABLE),
+            "stop": block and kind in (RANGE, TABLE, NESTED),
             "ptr_size": pointers,
-            "ptr_stride": kind == TABLE,
+            "ptr_stride": kind in (TABLE, NESTED),
             "ptr_endian": pointers,
             "ptr_mapping": pointers,
             "ptr_offset": pointers,
             "ptr_bank": pointers and self._needs_bank(),
             "ptr_addresses": block and kind == LIST,
+            "ptr_null": pointers,
+            "inner": kind == NESTED,
+            "inner_null": kind == NESTED,
             "string_type": True,
             "fixed_length": st == FIXED_LENGTH,
             "count": block and kind == RANGE and st == FIXED_LENGTH,
@@ -619,10 +708,21 @@ class ReadingBar(WrapBar):
             "mapping_id": self.mapping_id(),
             "offset": getattr(old, "offset", 0) if offset is None else offset,
             "bank": self.ptr_bank.value(),
+            "null": self.ptr_null.value(),
         }
         if kind == TABLE:
             source = PointerTableSource(
                 start, stop, stride=self.ptr_stride.value(), **pointer
+            )
+        elif kind == NESTED:
+            source = NestedPointerSource(
+                start,
+                stop,
+                stride=self.ptr_stride.value(),
+                inner_size=self.inner_size.value(),
+                inner_endian=self.inner_endian.currentData(),
+                inner_null=self.inner_null.value(),
+                **pointer,
             )
         elif kind == LIST:
             read = [
@@ -652,7 +752,7 @@ class ReadingBar(WrapBar):
                 "skips": self.skips.value(),
                 "bound": self.bound.value(),
                 "write_mode": self.write_mode.currentData(),
-                "fill": base.fill if fill is None else fill & 0xFF,
+                "fill": base.fill if fill is None else fill,
             }
         return replace(base, **changes)
 
@@ -679,7 +779,7 @@ class ReadingBar(WrapBar):
 def source_kind_for(kind: str | None, pointers: bool) -> str:
     """``kind`` when it reads the way asked, else that way's first kind."""
     if pointers:
-        return kind if kind in (TABLE, LIST) else TABLE
+        return kind if kind in (TABLE, LIST, NESTED) else TABLE
     return RANGE
 
 

@@ -8,6 +8,9 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     Lines,
+    NestedPointerSource,
+    PointerListSource,
+    PointerTableSource,
     RangeSource,
     WriteMode,
 )
@@ -37,13 +40,47 @@ def test_config_roundtrip():
         line_length=4,
         bound=0x1F0,
         write_mode=WriteMode.SLOTTED,
-        fill=0,
+        fill=b"\x00",
         show_end=True,
         end_label="fin",
     )
     spec = format_config(cfg)
     assert parse_config(spec) == cfg
     assert "type=fixed:8:stop" in spec and "mode=slotted" in spec
+
+
+def test_nested_null_and_fill_config():
+    spec = (
+        "source=nested start=$136A6F8 stop=$136B698 size=4 stride=8 endian=little "
+        "mapping=linear offset=20358900 bank=0 null=$0 inner_size=2 "
+        "inner_endian=little inner_null=$0 type=end table=m3"
+    )
+    cfg = parse_config(spec)
+    assert cfg.source == NestedPointerSource(
+        0x136A6F8, 0x136B698, 4, 8, offset=0x136A6F4, null=0, inner_null=0
+    )
+    assert format_config(cfg) == spec
+    cfg = BlockConfig(
+        PointerTableSource(0, 8, 2, 2, null=0xFFFF),
+        FixedLength(18, True),
+        "m3",
+        fill=b"\xff\xff",
+    )
+    spec = format_config(cfg)
+    assert "null=$FFFF" in spec and "fill=$FFFF" in spec
+    assert parse_config(spec) == cfg
+    listed = BlockConfig(PointerListSource((2, 4), 2, null=0), EndToken(), "m")
+    assert parse_config(format_config(listed)) == listed
+    # A nested source's stride defaults to a record of two pointers; a fill is
+    # a byte for every two digits, and a decimal fill one byte.
+    assert parse_config("source=nested start=0 stop=8 size=4").source.stride == 8
+    assert (
+        parse_config("source=range start=0 stop=1 fill=$0FFFF").fill == b"\x00\xff\xff"
+    )
+    assert parse_config("source=range start=0 stop=1 fill=0").fill == b"\x00"
+    assert "fill" not in format_config(
+        parse_config("source=range start=0 stop=1 fill=$FF")
+    )
 
 
 def test_lines_config():

@@ -45,7 +45,7 @@ def _compressed_block(window, tmp_path, name="z", stop=6, rom_name="rom.bin"):
         file_entry,
         name,
         RangeSource(0, stop),
-        fill=0xEE,
+        fill=b"\xee",
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=slot,
@@ -162,7 +162,7 @@ def test_a_write_resolves_a_block_unsaved_for_its_notes(window, tmp_path):
     file_entry = open_rom_and_table(
         window, tmp_path, PAYLOAD + b"\xff" * 8, rom_name="plain.bin"
     )
-    block = add_block(window, file_entry, "b", RangeSource(0, 9), fill=0xEE)
+    block = add_block(window, file_entry, "b", RangeSource(0, 9), fill=b"\xee")
     window._on_notes_edited(0, "check this")
     assert block.dirty and window._writable_dirty() == [block]
 
@@ -190,7 +190,7 @@ def _two_over_one_slot(window, tmp_path):
         file_entry,
         "second",
         RangeSource(6, 9),
-        fill=0xEE,
+        fill=b"\xee",
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=first.slice_length,
@@ -242,7 +242,7 @@ def test_a_block_loaded_after_a_sibling_s_edit_inherits_its_unsaved_state(
         file_entry,
         "later",
         RangeSource(6, 9),
-        fill=0xEE,
+        fill=b"\xee",
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=first.slice_length,
@@ -268,7 +268,7 @@ def test_a_compressed_file_shares_its_buffer_with_its_plain_blocks(window, tmp_p
     )
     window._activate_entry(file_entry)
     assert file_entry.doc is not None and file_entry.doc.data == PAYLOAD
-    block = add_block(window, file_entry, "b", RangeSource(0, 9), fill=0xEE)
+    block = add_block(window, file_entry, "b", RangeSource(0, 9), fill=b"\xee")
 
     assert window.workspace.entries_sharing(file_entry) == [file_entry, block]
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from mapchar.core.bits import Bits
-from mapchar.core.block import block_bound
+from mapchar.core.block import NestedPointerSource, block_bound
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.engines.decode import RunResult
@@ -75,11 +75,16 @@ class RefreshMixin:
         # A block whose configuration never made it back — a project file that
         # held none — is still a block; it just has no reading to spell out.
         configured = self._current_block(need_config=True)
-        self.reading_bar.show_bound_default(
-            block_bound(replace(configured.config, bound=None), doc.strings)
-            if configured is not None
-            else None
-        )
+        if configured is not None and isinstance(
+            configured.config.source, NestedPointerSource
+        ):
+            self.reading_bar.show_bound_default("each group's end")
+        else:
+            self.reading_bar.show_bound_default(
+                block_bound(replace(configured.config, bound=None), doc.strings)
+                if configured is not None
+                else None
+            )
         self._refresh_raw(doc, tables)
         self._refresh_text_mode(doc, tables)
         self._refresh_decompress_preview(doc, tables)
@@ -134,12 +139,22 @@ class RefreshMixin:
         string_starts = {bit // 8 for bit in run.starts}
         pointer_bytes: set[int] = set()
         if block is not None and block.doc is not None:
-            for rec in block.doc.strings:
-                for p in rec.pointers:
-                    for b in range(p.address, p.address + p.size):
-                        rel = b - self._offset
-                        if 0 <= rel < len(data):
-                            pointer_bytes.add(rel)
+            marked = [
+                (p.address, p.size) for r in block.doc.strings for p in r.pointers
+            ]
+            if block.config is not None and isinstance(
+                block.config.source, NestedPointerSource
+            ):
+                # The outer table's pointers reach no string of their own.
+                marked += [
+                    (c.address, c.size)
+                    for c in self._pointer_cells(doc, self._offset, end)
+                ]
+            for address, size in marked:
+                for b in range(address, address + size):
+                    rel = b - self._offset
+                    if 0 <= rel < len(data):
+                        pointer_bytes.add(rel)
         self.raw.set_model(
             RowModel(
                 self._offset,

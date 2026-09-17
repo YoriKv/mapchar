@@ -25,6 +25,8 @@ class PointerRef:
     endian: str
     mapping_id: str
     offset: int
+    """Added to the mapped value: the source's offset, or for a nested source's
+    inner pointer the base its group counts from."""
     value: int
 
 
@@ -38,6 +40,8 @@ class PointerTableSource:
     mapping_id: str = "linear"
     offset: int = 0
     bank: int = 0
+    null: int | None = None
+    """A raw pointer value that means "no string": not read, never rewritten."""
 
 
 @dataclass(frozen=True)
@@ -48,9 +52,42 @@ class PointerListSource:
     mapping_id: str = "linear"
     offset: int = 0
     bank: int = 0
+    null: int | None = None
 
 
-Source = RangeSource | PointerTableSource | PointerListSource
+@dataclass(frozen=True)
+class NestedPointerSource:
+    """A pointer table whose records each give an inner pointer table and the
+    base its pointers count from.
+
+    The outer table runs from ``start`` to ``stop`` by ``stride``, read as a
+    pointer table is (``size``, ``endian``, ``mapping_id``, ``offset``,
+    ``bank``). A record holds two outer pointers: the inner table at record
+    offset 0 and its base at record offset ``size``. The inner table runs from
+    its own address up to the base, ``inner_size`` bytes a pointer, and each
+    inner pointer's target is its value plus the base. A record whose outer
+    pointers either hold ``null`` is skipped, as is an inner pointer holding
+    ``inner_null``. The strings one record's table reaches are its **group**,
+    laid out on their own (:func:`string_groups`).
+    """
+
+    start: int
+    stop: int
+    size: int
+    stride: int
+    endian: str = "little"
+    mapping_id: str = "linear"
+    offset: int = 0
+    bank: int = 0
+    inner_size: int = 2
+    inner_endian: str = "little"
+    null: int | None = None
+    inner_null: int | None = None
+
+
+Source = RangeSource | PointerTableSource | PointerListSource | NestedPointerSource
+PointerSource = PointerTableSource | PointerListSource | NestedPointerSource
+"""The sources that read strings at pointer targets."""
 
 
 def source_start(source: Source | None) -> int | None:
@@ -141,7 +178,9 @@ class BlockConfig:
     """Exclusive end address strings may not cross on write."""
     write_mode: WriteMode | None = None
     """``None`` picks packed with pointers and slotted without."""
-    fill: int = 0xFF
+    fill: bytes = b"\xff"
+    """The pattern that pads unused room, repeated from the start of the room
+    it fills (:func:`fill_run`)."""
     show_end: bool = False
     """Append an artificial ``[end]`` code to every fixed string."""
     end_label: str = "end"
@@ -151,7 +190,7 @@ class BlockConfig:
 
     @property
     def has_pointers(self) -> bool:
-        return isinstance(self.source, PointerTableSource | PointerListSource)
+        return isinstance(self.source, PointerSource)
 
     @property
     def fixed_length(self) -> int | None:
@@ -186,15 +225,61 @@ def with_region(config: BlockConfig, start: int, stop: int) -> BlockConfig:
     """
     s = config.source
     source: Source
-    if isinstance(s, PointerTableSource):
+    if isinstance(s, PointerTableSource | NestedPointerSource):
         source = replace(s, start=start, stop=stop)
     elif isinstance(s, PointerListSource):
         source = PointerTableSource(
-            start, stop, s.size, s.size, s.endian, s.mapping_id, s.offset, s.bank
+            start,
+            stop,
+            s.size,
+            s.size,
+            s.endian,
+            s.mapping_id,
+            s.offset,
+            s.bank,
+            s.null,
         )
     else:
         source = RangeSource(start, stop)
     return replace(config, source=source, skips=(), bound=None)
+
+
+DEFAULT_FILL = b"\xff"
+
+
+def fill_run(fill: bytes, length: int) -> bytes:
+    """``length`` bytes of the ``fill`` pattern, from its first byte."""
+    if length <= 0:
+        return b""
+    pattern = fill or DEFAULT_FILL
+    return (pattern * -(-length // len(pattern)))[:length]
+
+
+def is_fill(data: bytes, fill: bytes) -> bool:
+    """Whether ``data`` is nothing but the ``fill`` pattern from its first byte,
+    the last repeat allowed to be cut short — what :func:`fill_run` lays down."""
+    return data == fill_run(fill, len(data))
+
+
+def parse_fill(text: str) -> bytes:
+    """A fill pattern as a configuration spells it: ``$`` and hex digits, a
+    byte for every two (``$FFFF`` is two bytes), or a decimal byte."""
+    text = text.strip()
+    if text.startswith("$"):
+        digits = text[1:]
+        if not digits:
+            raise ValueError("empty fill")
+        digits = digits.zfill(len(digits) + len(digits) % 2)
+        return bytes.fromhex(digits)
+    value = int(text, 10)
+    if not 0 <= value <= 0xFF:
+        raise ValueError(f"fill {value} is not a byte")
+    return bytes([value])
+
+
+def format_fill(fill: bytes) -> str:
+    """``fill`` spelled for a configuration: ``$`` and every byte in hex."""
+    return "$" + fill.hex().upper()
 
 
 class Status(Enum):
@@ -309,6 +394,26 @@ class StringRecord:
         stay."""
         if self.status not in HELD:
             self.status = Status.EDITED if self.edited else Status.UNTOUCHED
+
+
+def string_groups(
+    config: BlockConfig, strings: list[StringRecord]
+) -> list[list[StringRecord]]:
+    """The block's strings in the groups a layout handles apart, each in the
+    order given.
+
+    One group of every string, except for a nested source, whose records each
+    reach strings of their own through their inner table: those are a group,
+    told by the base the string's first pointer counts from, since what lies
+    between one group's text and the next is not the block's to write over.
+    """
+    if not isinstance(config.source, NestedPointerSource):
+        return [strings] if strings else []
+    groups: dict[int | None, list[StringRecord]] = {}
+    for rec in strings:
+        key = rec.pointers[0].offset if rec.pointers else None
+        groups.setdefault(key, []).append(rec)
+    return list(groups.values())
 
 
 def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:

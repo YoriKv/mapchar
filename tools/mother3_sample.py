@@ -291,37 +291,19 @@ def table_files(rom: bytes) -> dict[str, str]:
     return {name: "\n".join(lines) + "\n" for name, lines in files.items()}
 
 
-def _string_end(rom: bytes, at: int) -> int:
-    while _u16(rom, at) != 0xFFFF:
-        at += 2
-    return at + 2
-
-
-def _offsets(
-    rom: bytes, name: str, table: int, count: int, base: int, table_id: str
-) -> Block:
+def _offsets(name: str, table: int, count: int, base: int, table_id: str) -> Block:
     """A block over ``count`` u16 offsets at ``table`` into strings at ``base``.
 
     Offset zero names the ``FFFF`` that opens a string list, ahead of its
-    count: a slot nothing uses. Where a table has such slots the block lists
-    its other pointers instead, so the header never reads as a string that a
-    packed write would move.
+    count: a slot nothing uses, so zero is the table's null pointer. Where one
+    string is the tail of another, the packed layout keeps it so.
     """
-    offsets = struct.unpack_from(f"<{count}H", rom, table)
-    common = f"size=2 endian=little mapping=linear offset={base} bank=0"
-    if 0 in offsets:
-        addresses = ",".join(f"${table + 2 * i:X}" for i, o in enumerate(offsets) if o)
-        source = f"source=list addresses={addresses} {common}"
-    else:
-        stop = table + 2 * count
-        source = f"source=pointers start=${table:X} stop=${stop:X} stride=2 {common}"
-    spec = f"{source} type=end table={table_id}"
-    # A string that is the tail of another cannot be packed: its bytes would be
-    # written twice. Kept in place, every string can still be edited.
-    starts = sorted({base + o for o in offsets if o})
-    if any(_string_end(rom, a) > b for a, b in zip(starts, starts[1:], strict=False)):
-        spec += " mode=slotted"
-    return Block(name, spec)
+    return Block(
+        name,
+        f"source=pointers start=${table:X} stop=${table + 2 * count:X} size=2 "
+        f"stride=2 endian=little mapping=linear offset={base} bank=0 null=$0 "
+        f"type=end table={table_id}",
+    )
 
 
 def _paired(
@@ -331,12 +313,12 @@ def _paired(
     the strings the offsets are from."""
     table, text = archive(rom, base)[index : index + 2]
     assert table is not None and text is not None, (hex(base), index)
-    return _offsets(rom, name, table, _u16(rom, text + 2), text, table_id)
+    return _offsets(name, table, _u16(rom, text + 2), text, table_id)
 
 
 def _names(rom: bytes, name: str, index: int) -> Block:
     """A fixed-width name list: u16 width and count, then the names, each
-    padded with ``FFFF``."""
+    ended by ``FFFF`` where it is short and padded with ``FFFF`` words."""
     start = archive(rom, NAMES)[index]
     assert start is not None, index
     width, count = struct.unpack_from("<2H", rom, start)
@@ -344,14 +326,33 @@ def _names(rom: bytes, name: str, index: int) -> Block:
     return Block(
         name,
         f"source=range start=${start + 4:X} stop=${stop:X} "
-        f"type=fixed:{2 * width}:stop table=m3",
+        f"type=fixed:{2 * width}:stop table=m3 fill=$FFFF",
     )
 
 
 def _bxt(rom: bytes, name: str, at: int, table_id: str = "m3") -> Block:
     """A ``bxt`` chunk: the tag, u32 1, a u32 count, u16 offsets from the tag."""
     assert rom[at : at + 4] == b"bxt ", hex(at)
-    return _offsets(rom, name, at + 12, _u32(rom, at + 8), at, table_id)
+    return _offsets(name, at + 12, _u32(rom, at + 8), at, table_id)
+
+
+def _script(rom: bytes) -> Block:
+    """The main script, every map's text in one block: the archive's offsets
+    are its outer table, each record the pair of entries ``2g`` (map ``g``'s
+    u16 offset table, sometimes padded to four bytes with a zero word) and
+    ``2g + 1`` (its text, which the offsets count from). A map with no text has
+    zero for both, and an offset of zero names the text's ``FFFF`` header, so
+    zero is null at both levels. Each map is a group of its own, laid out over
+    its own text."""
+    count = _u32(rom, MAIN_SCRIPT)
+    start = MAIN_SCRIPT + 4
+    return Block(
+        "Script",
+        f"source=nested start=${start:X} stop=${start + 4 * count:X} size=4 "
+        f"stride=8 endian=little mapping=linear offset={MAIN_SCRIPT} bank=0 "
+        "null=$0 inner_size=2 inner_endian=little inner_null=$0 type=end "
+        "table=m3",
+    )
 
 
 def blocks(rom: bytes) -> list[Block]:
@@ -376,10 +377,7 @@ def blocks(rom: bytes) -> list[Block]:
         _bxt(rom, "Save messages", 0x1D0BC24),
         _bxt(rom, "Sound player titles", 0x1C8F390),
         _paired(rom, "Debug menu", DEBUG, 36),
+        _script(rom),
     ]
-    script = archive(rom, MAIN_SCRIPT)
-    for group in range(len(script) // 2):
-        if script[2 * group] is not None:
-            out.append(_paired(rom, f"Script {group:04d}", MAIN_SCRIPT, 2 * group))
     folder_of = {name: folder for folder, names in FOLDERS.items() for name in names}
     return [replace(b, folder=folder_of.get(b.name)) for b in out]

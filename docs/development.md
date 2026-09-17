@@ -77,12 +77,15 @@ mapchar/
   command file beside its ROM and saves a `<game>.mapchar` project there,
   ready to open; named games are the only ones built.
 - **Mother 3**: `tools/mother3_sample.py` derives the sample's tables (`m3`,
-  `m3battle`, `saturn`) and its 582 blocks — 12,997 strings — from
+  `m3battle`, `saturn`) and its 20 blocks — 12,997 strings, 7,825 of them in
+  **Script**, one block over the main script's nested offset tables — from
   `sample-projects/Mother 3/Mother 3 (Japan).gba`, since nothing extracted
   from a ROM is checked in; its docstring says which ROM structure and routine
   each fact comes from, and `FOLDERS` which Files panel folder each block goes
   in. `tests/test_examples.py` reads every block and edits
-  through all three tables. The project reads every block as it opens, in
+  through all three tables, and in a map of the script whose last page is a
+  string of its own. A string commit in **Script** takes about a third of a
+  second. The project reads every block as it opens, in
   about four seconds.
 - **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's
   extraction with abcde's Cartographer dump of the synthetic ROM in

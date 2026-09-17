@@ -131,7 +131,8 @@ class SessionMixin:
         bytes on disk. A ``slice_length`` nobody recorded leaves the slot
         unbounded, which the pipeline reads as running to the end of that buffer.
         """
-        fill = entry.config.fill if entry.config else 0xFF
+        # A compressed slot's tail takes the fill pattern's first byte.
+        fill = entry.config.fill[0] if entry.config and entry.config.fill else 0xFF
         return PathwayConfig(
             FileRef(
                 entry.paths or ((entry.parent.path,) if entry.parent else ()),

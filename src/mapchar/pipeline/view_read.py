@@ -17,18 +17,23 @@ from mapchar.core.bits import Bits, align_up
 from mapchar.core.block import (
     BlockConfig,
     FixedLength,
+    NestedPointerSource,
     Pascal,
-    PointerListSource,
+    PointerSource,
     PointerTableSource,
 )
 from mapchar.core.mapping import read_pointer
 from mapchar.core.table import TableSet
 from mapchar.core.tokens import Token
 from mapchar.engines.decode import DecodeRules, RunResult, decode_run
-from mapchar.pipeline.extract import decode_one, pointer_target, string_at
+from mapchar.pipeline.extract import (
+    decode_one,
+    nested_records,
+    pointer_addresses,
+    pointer_target,
+    string_at,
+)
 from mapchar.plugins.registry import mapping_for
-
-PointerSource = PointerTableSource | PointerListSource
 
 
 def decode_strings(
@@ -128,6 +133,8 @@ class PointerCell:
     value: int
     target: int | None
     """The byte it reaches, or ``None`` when it maps outside the data."""
+    null: bool = False
+    """It holds the source's null value: it reaches nothing."""
 
 
 def pointer_cells(
@@ -136,8 +143,11 @@ def pointer_cells(
     """The pointers of ``source`` that start in bytes ``lo`` to ``hi``.
 
     A pointer table's are every ``stride`` bytes from its start, and a list's
-    are its addresses; one cut short by the end of the data is left out.
+    are its addresses; one cut short by the end of the data is left out. A
+    nested source's are its outer table's pointers and its inner tables'.
     """
+    if isinstance(source, NestedPointerSource):
+        return _nested_cells(data, source, lo, hi, registry)
     mapping = mapping_for(source, registry)
     if isinstance(source, PointerTableSource):
         stride = max(source.stride, 1)
@@ -150,19 +160,74 @@ def pointer_cells(
         value = read_pointer(data, address, source.size, source.endian)
         if value is None:
             break
+        null = value == source.null
         target = (
             pointer_target(mapping, source, value, address, len(data))
-            if mapping is not None
+            if mapping is not None and not null
             else None
         )
-        cells.append(PointerCell(address, source.size, value, target))
+        cells.append(PointerCell(address, source.size, value, target, null))
     return cells
 
 
-def pointer_window(source: PointerSource, lo: int, count: int) -> int | None:
+def _nested_cells(
+    data: bytes, source: NestedPointerSource, lo: int, hi: int, registry
+) -> list[PointerCell]:
+    """A nested source's pointers in bytes ``lo`` to ``hi``: each record's two
+    outer pointers, mapped, and every inner pointer, counted from its base."""
+    mapping = mapping_for(source, registry)
+    cells: list[PointerCell] = []
+    stride = max(source.stride, 1)
+    for record in range(
+        align_up(lo - 2 * source.size, stride, source.start),
+        min(source.stop, hi),
+        stride,
+    ):
+        for address in (record, record + source.size):
+            if not lo <= address < hi:
+                continue
+            value = read_pointer(data, address, source.size, source.endian)
+            if value is None:
+                continue
+            null = value == source.null
+            target = (
+                pointer_target(mapping, source, value, address, len(data))
+                if mapping is not None and not null
+                else None
+            )
+            cells.append(PointerCell(address, source.size, value, target, null))
+    width = source.inner_size
+    records, _ = nested_records(data, source, registry)
+    for rec in records:
+        if rec.base <= lo or rec.table >= hi:
+            continue
+        first = align_up(max(lo, rec.table), width, rec.table)
+        for address in range(first, min(rec.base - width + 1, hi), width):
+            value = read_pointer(data, address, width, source.inner_endian)
+            if value is None:
+                break
+            null = value == source.inner_null
+            target = None if null or rec.base + value >= len(data) else rec.base + value
+            cells.append(PointerCell(address, width, value, target, null))
+    return sorted(cells, key=lambda c: c.address)
+
+
+def pointer_window(
+    source: PointerSource, lo: int, count: int, data: bytes = b"", registry=None
+) -> int | None:
     """The byte after the ``count``-th pointer of ``source`` at or past ``lo``:
     how far a view from ``lo`` reads to show that many. ``None`` when the source
-    has fewer."""
+    has fewer. A nested source's inner tables are read from ``data``."""
+    if isinstance(source, NestedPointerSource):
+        found = sorted(
+            (a, size)
+            for a, size in pointer_addresses(data, source, registry)
+            if a >= lo
+        )
+        if len(found) < count:
+            return None
+        address, size = found[count - 1]
+        return address + size
     if isinstance(source, PointerTableSource):
         stride = max(source.stride, 1)
         first = align_up(lo, stride, source.start)

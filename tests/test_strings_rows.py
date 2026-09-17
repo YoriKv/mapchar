@@ -49,7 +49,7 @@ def _pointer_block(window, tmp_path):
         "b",
         PointerTableSource(0, 4, 2, 2, "little", "linear"),
         bound=0x1C,
-        fill=0xEE,
+        fill=b"\xee",
         write_mode=WriteMode.SLOTTED,
     )
 
@@ -103,7 +103,7 @@ def test_a_commit_refreshes_only_the_rows_its_bytes_reach(
     """
     data = bytes.fromhex("41 42 00 EE EE EE 42 41 00 EE EE EE")
     file_entry = open_rom_and_table(window, tmp_path, data, table=TABLE)
-    block = add_block(window, file_entry, "b", RangeSource(0, 12), fill=0xEE)
+    block = add_block(window, file_entry, "b", RangeSource(0, 12), fill=b"\xee")
     kept = window.strings.rows_by_index()[1]
     rebuilt: list[int] = []
     monkeypatch.setattr(
@@ -141,7 +141,7 @@ def test_apply_to_identical_keeps_the_strings_that_do_fit(window, tmp_path):
         + bytes.fromhex("41 42 00")  # 0x0C: AB[end], and no room at all
     )
     file_entry = open_rom_and_table(window, tmp_path, data, table=TABLE)
-    block = add_block(window, file_entry, "b", RangeSource(0, 15), fill=0xEE)
+    block = add_block(window, file_entry, "b", RangeSource(0, 15), fill=b"\xee")
     rows = window._row_data(block, block.doc, window._table_set())
     assert [r.room for r in rows] == [6, 6, 3]
 
@@ -162,7 +162,7 @@ def test_the_dirty_check_follows_a_string_s_state(window, tmp_path):
     keeping missed would leave the project reading clean with work in it."""
     data = bytes.fromhex("41 42 00 EE EE EE 42 41 00 EE EE EE")
     file_entry = open_rom_and_table(window, tmp_path, data, table=TABLE)
-    block = add_block(window, file_entry, "b", RangeSource(0, 12), fill=0xEE)
+    block = add_block(window, file_entry, "b", RangeSource(0, 12), fill=b"\xee")
     proj = str(tmp_path / "p.mapchar")
     assert window._write_project(proj) and not window._project_dirty()
 

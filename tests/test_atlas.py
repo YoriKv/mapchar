@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from helpers import ABC_TABLE, pointer_rom, table_set, tables_from, translated
-from mapchar.core.block import BlockConfig, EndToken, PointerTableSource, RangeSource
+from mapchar.core.block import (
+    BlockConfig,
+    EndToken,
+    FixedLength,
+    NestedPointerSource,
+    PointerTableSource,
+    RangeSource,
+)
 from mapchar.pipeline.extract import extract
 from mapchar.project.exchange.addresses import shift_config
 from mapchar.project.exchange.atlas import (
@@ -114,3 +121,30 @@ def test_cartographer_export_roundtrip():
     cfg2 = BlockConfig(RangeSource(0, 0x40), EndToken(), "main", bound=0x40)
     text, notes = write_command_file("Raw", cfg2, "main.tbl", table_id="main")
     assert parse_command_file(text).blocks[0].config == cfg2
+
+
+def test_what_atlas_and_cartographer_cannot_express_is_said(registry):
+    nested = BlockConfig(
+        NestedPointerSource(0, 4, 2, 4, null=0, inner_null=0), EndToken(), "main"
+    )
+    data = bytes.fromhex("04 00 08 00 01 00 03 00 FF 41 00 43 00")
+    ex = extract(data, nested, TS, registry)
+    export = write_atlas("N", nested, ex.strings, TS, {})
+    assert any("nested" in n for n in export.notices)
+    assert "#W16" not in export.script and "#JMP($9, $A)" in export.script
+    text, notes = write_command_file("N", nested, "main.tbl")
+    assert not text and "nested" in notes[0]
+    table = BlockConfig(PointerTableSource(0, 4, 2, 2, null=0), EndToken(), "main")
+    text, notes = write_command_file("T", table, "main.tbl")
+    assert text and any("null" in n for n in notes)
+    # A fixed string's end token is not its text, but it is bytes Atlas writes;
+    # a fill wider than a byte pads with its first.
+    fixed = BlockConfig(
+        RangeSource(0, 4), FixedLength(4, True), "main", fill=b"\xee\xdd"
+    )
+    ex = extract(bytes.fromhex("41 00 EE DD"), fixed, TS, registry)
+    assert ex.strings[0].current_text() == "A"
+    export = write_atlas("F", fixed, ex.strings, TS, {})
+    assert "#FIXEDLENGTH(4, $EE)" in export.script
+    assert "\nA[end]\n" in export.script
+    assert any("fill" in n for n in export.notices)

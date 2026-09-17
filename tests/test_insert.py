@@ -21,7 +21,7 @@ TS = table_set(ABC_TABLE, "main")
 
 def test_slotted_default_without_pointers():
     data = bytes.fromhex("41 42 00 43 00 41 41")
-    cfg = BlockConfig(RangeSource(0, 7), EndToken(), "main", fill=0xEE)
+    cfg = BlockConfig(RangeSource(0, 7), EndToken(), "main", fill=b"\xee")
     assert cfg.effective_write_mode is WriteMode.SLOTTED
     res, out = relayout(data, cfg, TS, {0: "A[end]"})
     assert res.ok and out == bytes.fromhex("41 00 EE 43 00 41 41")
@@ -34,7 +34,7 @@ def test_slotted_default_without_pointers():
 def test_packed_mode_with_bound():
     data = bytes.fromhex("41 42 00 43 00 41 41")
     cfg = BlockConfig(
-        RangeSource(0, 7), EndToken(), "main", write_mode=WriteMode.PACKED, fill=0xEE
+        RangeSource(0, 7), EndToken(), "main", write_mode=WriteMode.PACKED, fill=b"\xee"
     )
     res, out = relayout(data, cfg, TS, {0: "A[end]", 1: "CC[end]"})
     # String 2 is untouched, so its original bytes (no end token) are reused.
@@ -52,7 +52,7 @@ def test_packed_realign():
         "main",
         realign=(4, 0),
         write_mode=WriteMode.PACKED,
-        fill=0xEE,
+        fill=b"\xee",
     )
     res, out = relayout(data, cfg, TS, {0: "AA[end]"})
     # The untouched second string keeps its realignment padding bytes.
@@ -62,7 +62,7 @@ def test_packed_realign():
 def test_fixed_strings_and_lines():
     data = bytes.fromhex("41 42 43 41 42 43")
     cfg = BlockConfig(
-        RangeSource(0, 6), FixedLength(3), "main", line_length=2, fill=0xEE
+        RangeSource(0, 6), FixedLength(3), "main", line_length=2, fill=b"\xee"
     )
     # Line codes are dump formatting; the string is one fixed-length run.
     res, out = relayout(data, cfg, TS, {0: "B[line]\nC"})
@@ -70,7 +70,7 @@ def test_fixed_strings_and_lines():
     res, out = relayout(data, cfg, TS, {0: "BBBB[line]C"})
     assert not res.ok and "too long" in res.problems[0].message
     cfg = BlockConfig(
-        RangeSource(0, 6), FixedLength(3, True), "main", show_end=True, fill=0xEE
+        RangeSource(0, 6), FixedLength(3, True), "main", show_end=True, fill=b"\xee"
     )
     res, out = relayout(data, cfg, TS, {1: "A[end][end]\n"})
     assert res.ok and out == bytes.fromhex("41 42 43 41 00 EE")
@@ -81,7 +81,7 @@ def test_a_fixed_length_string_is_never_padded_past_its_slot():
     # it. Padding to the full length would run into the neighbour — out is a
     # bytearray, so the slice assignment grows the buffer rather than stopping.
     data = bytes.fromhex("41 42 43 41 42")
-    cfg = BlockConfig(RangeSource(0, 5), FixedLength(3), "main", fill=0xEE)
+    cfg = BlockConfig(RangeSource(0, 5), FixedLength(3), "main", fill=b"\xee")
     res, out = relayout(data, cfg, TS, {1: "C"})
     assert not res.ok and out is None
     assert res.problems[0].index == 1
@@ -96,7 +96,7 @@ def test_pascal():
         "main",
         write_mode=WriteMode.PACKED,
         bound=5,
-        fill=0xEE,
+        fill=b"\xee",
     )
     res, out = relayout(data, cfg, TS, {0: "A"})
     assert res.ok and out == bytes.fromhex("01 41 01 43 EE")
@@ -104,7 +104,7 @@ def test_pascal():
 
 def test_lines():
     data = bytes.fromhex("41 FE 42 FE 43 FE 41 FE")
-    cfg = BlockConfig(RangeSource(0, 8), Lines(2), "main", fill=0xEE)
+    cfg = BlockConfig(RangeSource(0, 8), Lines(2), "main", fill=b"\xee")
     res, out = relayout(data, cfg, TS, {0: "B[line]\n[line]"})
     assert res.ok and out == bytes.fromhex("42 FE FE EE 43 FE 41 FE")
     res, out = relayout(data, cfg, TS, {1: "A[line]"})
@@ -177,7 +177,7 @@ def test_a_slot_is_the_string_and_the_padding_after_it(registry):
         "main",
         bound=13,
         write_mode=WriteMode.SLOTTED,
-        fill=0xEE,
+        fill=b"\xee",
     )
     res, out = relayout(data, cfg, TS, {0: "A[end]", 1: "B[end]"}, registry)
     assert res.ok and out == data
@@ -194,7 +194,7 @@ def test_a_slotted_splice_never_grows_the_buffer():
     """A bound past the end of the buffer bounds the last slot at the bytes
     there are; a splice past them would lengthen what it is spliced into."""
     data = bytes.fromhex("41 42 00 42 41 00")
-    cfg = BlockConfig(RangeSource(0, 16), EndToken(), "main", fill=0xEE)
+    cfg = BlockConfig(RangeSource(0, 16), EndToken(), "main", fill=b"\xee")
     res, out = relayout(data, cfg, TS, {0: "A[end]"})
     assert res.ok and out == bytes.fromhex("41 00 EE 42 41 00")
     assert all(s.end <= len(data) for s in res.splices)
@@ -210,10 +210,48 @@ def test_a_next_pointer_string_reads_back_without_its_padding(registry):
         NextPointer(),
         "main",
         write_mode=WriteMode.SLOTTED,
-        fill=0xFF,
+        fill=b"\xff",
     )
     res, out = relayout(data, cfg, TS, {0: "A"}, registry)
     assert res.ok and out == bytes.fromhex("06 00 09 00 FF FF 41 FF FF") + b"ABC"
     assert texts(extract(out, cfg, TS, registry)) == ["A", "ABC"]
     res, out = relayout(out, cfg, TS, {0: "ABC"}, registry)
     assert res.ok and out == data
+
+
+def test_a_fixed_string_writes_its_end_token_where_there_is_room_then_fill():
+    data = bytes.fromhex("41 42 00 EE DD EE  41 42 43 41 42 43")
+    cfg = BlockConfig(
+        RangeSource(0, 12), FixedLength(6, True), "main", fill=b"\xee\xdd"
+    )
+    res, out = relayout(data, cfg, TS, {0: "C", 1: "AB"})
+    assert res.ok, res.problems
+    assert out == bytes.fromhex("43 00 EE DD EE DD  41 42 00 EE DD EE")
+    assert texts(extract(out, cfg, TS)) == ["C", "AB"]
+    # No room for the end token: the text fills the string.
+    res, out = relayout(data, cfg, TS, {0: "CCCCCC", 1: "BBBBB"})
+    assert res.ok and out == bytes.fromhex("43 43 43 43 43 43  42 42 42 42 42 00")
+    # A tail after the end token writes back as it reads.
+    res, out = relayout(data, cfg, TS, {0: "A[end]C[$EE][$DD][$EE]"})
+    assert res.ok and out[:6] == bytes.fromhex("41 00 43 EE DD EE")
+    res, _ = relayout(data, cfg, TS, {0: "ABCABCA"})
+    assert not res.ok and "too long" in res.problems[0].message
+
+
+def test_fill_words_pad_slots_and_packed_tails_from_where_the_room_starts():
+    data = bytes.fromhex("41 42 43 00 42 00")
+    cfg = BlockConfig(RangeSource(0, 6), EndToken(), "main", fill=b"\xee\xdd")
+    res, out = relayout(data, cfg, TS, {0: "A[end]"})
+    assert res.ok and out == bytes.fromhex("41 00 EE DD 42 00")
+    # The padding is the slot's again.
+    res, out = relayout(out, cfg, TS, {0: "AAA[end]"})
+    assert res.ok and out == bytes.fromhex("41 41 41 00 42 00")
+    packed = BlockConfig(
+        RangeSource(0, 6),
+        EndToken(),
+        "main",
+        write_mode=WriteMode.PACKED,
+        fill=b"\xee\xdd",
+    )
+    res, out = relayout(data, packed, TS, {0: "A[end]"})
+    assert res.ok and out == bytes.fromhex("41 00 42 00 EE DD")

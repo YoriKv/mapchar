@@ -11,10 +11,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 
-from mapchar.core.block import BlockConfig, PointerTableSource
+from mapchar.core.block import BlockConfig, PointerSource, PointerTableSource
 from mapchar.core.table import Entry, TokenKind
 from mapchar.core.tokens import Token, render
-from mapchar.pipeline.view_read import PointerCell, PointerSource
+from mapchar.pipeline.view_read import PointerCell
 from mapchar.ui.token_text import POINTER_TOKENS, compact_text
 
 PREVIEW_CHARS = 80
@@ -46,6 +46,8 @@ def _token(cell: PointerCell, offset: int, text: str) -> Token:
 
 
 def _target(cell: PointerCell) -> str:
+    if cell.null:
+        return "null"
     return "?" if cell.target is None else f"{cell.target:X}"
 
 

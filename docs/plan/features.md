@@ -542,29 +542,51 @@ its settings (see [Reading the bytes](#reading-the-bytes)). The Reading bar
 shows the settings below that the mode, source kind and string type use, in
 four framed sections that sit side by side while there is room: **Source**
 (the kind, start, stop, pointer addresses), **Pointers** (size, stride,
-endian, mapping, offset, bank), **Strings** (string type and what it takes,
-strings per pointer, realign, skip ranges, lines, Show `[end]`) and **Writing**
-(bound, write mode, fill byte, spare room). A file has no addresses of its
+endian, mapping, offset, bank, null, and a nested source's inner size, endian
+and null), **Strings** (string type and what it takes, strings per pointer,
+realign, skip ranges, lines, Show `[end]`) and **Writing** (bound, write mode,
+fill, spare room). A file has no addresses of its
 own, so its bar leaves out start, stop, count, pointer addresses, skip
 ranges and the Writing section; a section with nothing to show is hidden. With
 nothing open the bars are disabled and show the default reading — a file read
 as a **Range** of end-token strings — rather than every control at once.
 
 - **Source** — where the strings come from; the Pointers mode picks between
-  the two pointer kinds, and the Strings mode has one, so shows no picker:
+  the three pointer kinds — a file's reading only a pointer table — and the
+  Strings mode has one, so shows no picker:
   - **Range** — `start` to `stop` (exclusive), read as consecutive strings;
   - **Pointer table** — `start`, `stop`, pointer `size`, `stride` (size plus
     space), `endian`, `mapping` (listed by name), an `offset` added to each
     value, and a `bank`, shown only for a mapping that reads one; strings are
     read at each target;
   - **Pointer list** — explicit pointer addresses, one per line, with the
-    same pointer fields.
+    same pointer fields;
+  - **Nested tables** — a pointer table (`start`, `stop`, the same pointer
+    fields) whose records each hold two pointers: an inner pointer table, and
+    the base its pointers count from, `size` bytes further on — so `stride` is
+    normally twice `size`. The inner table runs from its own address up to the
+    base, `inner size` bytes a pointer in the **Inner** byte order, and each
+    inner pointer reaches its value plus the base. The strings one record's
+    table reaches are a **group**, laid out over its own text
+    ([Writing](#writing-back-to-disk)). An archive of paired entries — each
+    map's offset table, then the text the offsets count from — is one block.
+- **Null** — a raw pointer value that means "no string", for every pointer
+  kind, and **Inner null** for a nested source's inner pointers: such a
+  pointer is not read, reaches no string, is not listed as a string's pointer
+  and is never rewritten. A nested record either of whose pointers holds the
+  null value is skipped. Blank is none.
 - **String type** — how a string ends:
   - **End token** — at the first end token of the table set;
   - **Fixed length** — after `length` bytes, or earlier at an end token when
     **Stop at end token** is on. On a range this is the fixed-string block
     of other tools, and a **Count** beside the length says how many strings
-    the range holds and, typed into, moves `stop` to hold that many;
+    the range holds and, typed into, moves `stop` to hold that many. A string
+    that stops at an end token followed by nothing but fill shows neither:
+    a short name padded with `FFFF` reads `あき`, a full-width one
+    `あたらしいカクザイ`, and editing writes the text, then the end token where
+    there is room, then fill to the length. One whose bytes after the end
+    token are anything else shows the end token and those bytes after it, fill
+    and all, and writes them back as they read;
   - **Length prefix** — a `1–4`-byte prefix, little- or big-endian when wider
     than one byte, counting bytes or token weights (**Counts tokens**);
   - **Next pointer** — at the next pointer's target (pointer sources only;
@@ -596,10 +618,14 @@ as a **Range** of end-token strings — rather than every control at once.
   that splits each string into lines marked with a `[line]` code.
 - **Bound** — the exclusive end address strings may not cross on write;
   defaults to `stop`, or to the last string's end for pointer sources, and
-  the field's placeholder shows which.
+  the field's placeholder shows which. A nested source's groups each have
+  their own ([Writing](#writing-back-to-disk)), which the bound caps.
 - **Write mode** — **Packed**, **Slotted**, or **Automatic**, which says
   which of the two it picks; see [Writing](#writing-back-to-disk).
-- **Fill byte** — what pads unused space on write.
+- **Fill** — what pads unused space on write: a byte, or a pattern of
+  several (`FFFF` is a word), repeated from the start of the space it fills —
+  a slot's tail, a packed block's tail, a fixed string's padding. A run of
+  whole patterns is what reads as padding.
 - **Compression** — a block inherits its parent file's container and
   compression and may override the compression — **To Block** in the
   Decompressed View makes such a block, and no bar picks a scheme — in which
@@ -619,7 +645,9 @@ as a **Range** of end-token strings — rather than every control at once.
   applies after the container's header offset, then the block's `offset`.
 - **Pointer table entry** in the Strings view — every string lists the
   pointers that reach it; a target reached by several pointers is one string
-  with several pointers, written back to all of them.
+  with several pointers, written back to all of them. A null pointer reaches
+  none. A nested source's strings list their inner pointers, each written
+  back counting from its own group's base.
 - **Discovery** (**Search ▸ Find Pointers…**, Ctrl+Shift+P, on a block):
   - a first dialog asks what to cover: the selected string or every string in
     the block, and an offset range (from, to, step) to try;
@@ -635,7 +663,10 @@ as a **Range** of end-token strings — rather than every control at once.
     from the chosen result, as one undo step; **Attach** adds the found addresses to the
     strings without changing the source.
 - **Overlays** — the raw view marks bytes that are pointers of the current
-  block, and jumping from a pointer to its target and back is a click.
+  block — a nested source's outer pointers as well as its inner ones — and
+  jumping from a pointer to its target and back is a click: **Jump to Pointer
+  Target** from an outer pointer goes to the inner table or base it names.
+  Read as pointers, a null pointer points at `null`.
 
 ## Strings view
 
@@ -742,19 +773,29 @@ The editing surface, opened on a block.
 - **Write mode**, per block, governs how an edit lays the block out:
   - **Packed** (default with pointers) — strings are laid end to end from the
     block's first string address, each pointer is rewritten to its string's
-    new position, and leftover space up to the bound gets the fill byte;
+    new position, and leftover space up to the bound gets the fill. A string
+    that starts inside the string before it and ends with it — the last page
+    of a message, with pointers of its own — is written once while its bytes
+    still end that string's, its pointers reaching into it; edited apart, each
+    has bytes of its own from then on. A nested source packs each group apart,
+    from its first string to its own bound: the end of its last string and
+    the run of whole fill patterns after it, never as far as the next inner
+    table or text the outer table points at, nor past the block's bound. Only
+    the groups an edit touches are laid out and read again, and only their
+    inner pointers are rewritten;
   - **Slotted** (default without pointers, and always with skip ranges) —
     every string stays at its address and may use up to its slot, padded with
-    the fill byte. A slot is the bytes the string holds itself and the run of
-    the fill byte after them — the padding a shorter string left, which the
-    next edit takes back — stopping at the next string, at the bound, or at
-    the end of the bytes, whichever comes first, and a fixed length caps it.
-    Bytes between two strings that are not that padding belong to no slot and
-    are left standing. A run of the fill byte between two strings is read as
-    padding rather than text only when the block's table maps nothing
-    beginning with the fill byte, so the fill byte should be one no string
-    begins with: one the table maps is read like any other byte, and a
-    shortened string's padding is then text in front of the next string.
+    the fill. A slot is the bytes the string holds itself and the run of whole
+    fill patterns after them — the padding a shorter string left, which the
+    next edit takes back — stopping at the next string, at the bound (a
+    nested source's group bound), or at the end of the bytes, whichever comes
+    first, and a fixed length caps it. Bytes between two strings that are not
+    that padding belong to no slot and are left standing. A run of the fill
+    between two strings is read as padding rather than text only when the
+    block's table maps nothing beginning with the fill, so the fill should be
+    one no string begins with: one the table maps is read like any other
+    bytes, and a shortened string's padding is then text in front of the next
+    string.
 - **In place only** — a string that does not fit is refused at the edit, with
   the bytes over. Nothing is relocated; making room is the user's job.
 - **Encoding is verified** — every encoded string is decoded again and must

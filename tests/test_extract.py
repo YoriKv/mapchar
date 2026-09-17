@@ -10,7 +10,11 @@ from mapchar.core.block import (
     PointerListSource,
     RangeSource,
 )
-from mapchar.pipeline.extract import extract
+from mapchar.pipeline.extract import (
+    extract,
+    legacy_fixed_text,
+    respell_fixed_end,
+)
 
 TS = table_set(ABC_TABLE, "main")
 
@@ -61,7 +65,8 @@ def test_fixed_length_range():
     cfg = BlockConfig(
         RangeSource(0, 8), FixedLength(4, stop_at_end=True), "main", show_end=True
     )
-    assert texts(extract(data, cfg, TS)) == ["AB[end][end]\n", "AABC[end]\n"]
+    # The tail after the end token is not fill, so it shows, and writes back.
+    assert texts(extract(data, cfg, TS)) == ["AB[end]C[end]\n", "AABC[end]\n"]
 
 
 def test_fixed_source_with_lines():
@@ -134,5 +139,66 @@ def test_a_fill_byte_that_is_the_end_token_keeps_its_empty_strings():
     """A block filled with its own end token: every one of them ends a string
     of its own, and none of them is passed over."""
     data = bytes.fromhex("41 00 00 42 00")
-    cfg = BlockConfig(RangeSource(0, 5), EndToken(), "main", fill=0x00)
+    cfg = BlockConfig(RangeSource(0, 5), EndToken(), "main", fill=b"\x00")
     assert texts(extract(data, cfg, TS)) == ["A[end]", "[end]", "B[end]"]
+
+
+WORD_FILL = b"\xee\xdd"
+
+
+def test_a_fixed_string_hides_its_end_token_and_the_fill_after_it():
+    data = bytes.fromhex("41 42 00 EE DD EE  41 42 43 41 42 43  41 42 43 41 42 00")
+    cfg = BlockConfig(RangeSource(0, 18), FixedLength(6, True), "main", fill=WORD_FILL)
+    ex = extract(data, cfg, TS)
+    assert texts(ex) == ["AB", "ABCABC", "ABCAB"]
+    # The end token's bytes are still the string's.
+    assert ex.strings[0].tokens[-1].is_end and ex.strings[0].end == 6
+    # Show [end] still closes every fixed string with its own code.
+    shown = BlockConfig(
+        RangeSource(0, 18), FixedLength(6, True), "main", fill=WORD_FILL, show_end=True
+    )
+    assert texts(extract(data, shown, TS)) == [
+        "AB[end]\n",
+        "ABCABC[end]\n",
+        "ABCAB[end]\n",
+    ]
+
+
+def test_a_fixed_string_whose_tail_is_not_fill_shows_it_after_its_end_token():
+    data = bytes.fromhex("41 00 43 EE DD EE")
+    cfg = BlockConfig(RangeSource(0, 6), FixedLength(6, True), "main", fill=WORD_FILL)
+    assert texts(extract(data, cfg, TS)) == ["A[end]C[$EE][$DD][$EE]"]
+    # A byte fill is repeated byte by byte, so this tail is not it either.
+    single = BlockConfig(RangeSource(0, 6), FixedLength(6, True), "main", fill=b"\xee")
+    data = bytes.fromhex("41 00 EE EE EE EE")
+    assert texts(extract(data, single, TS)) == ["A"]
+
+
+def test_a_run_of_fill_words_between_strings_is_padding():
+    data = bytes.fromhex("41 00 EE DD EE DD 42 00")
+    cfg = BlockConfig(RangeSource(0, 8), EndToken(), "main", fill=WORD_FILL)
+    assert texts(extract(data, cfg, TS)) == ["A[end]", "B[end]"]
+    cfg = BlockConfig(RangeSource(0, 8), EndToken(), "main", fill=b"\xee")
+    assert texts(extract(data, cfg, TS)) == ["A[end]", "[$DD][$EE][$DD]B[end]"]
+
+
+def test_a_text_saved_with_the_end_token_shown_is_respelled():
+    """A project saved before fixed strings hid their end token holds originals
+    that spell it: the one that is the bytes' old reading becomes today's, any
+    other loses the end token that closes it."""
+    data = bytes.fromhex("41 42 00 EE DD EE  41 00 43 EE DD EE")
+    cfg = BlockConfig(RangeSource(0, 12), FixedLength(6, True), "main", fill=WORD_FILL)
+    short, tail = extract(data, cfg, TS).strings
+    assert legacy_fixed_text(short, cfg) == "AB[end]"
+    assert legacy_fixed_text(tail, cfg) == "A[end]"
+    assert respell_fixed_end("AB[end]", short, cfg, TS) == "AB"
+    assert respell_fixed_end("CA[end]", short, cfg, TS) == "CA"
+    assert respell_fixed_end("A[end]", tail, cfg, TS) == "A[end]C[$EE][$DD][$EE]"
+    assert respell_fixed_end("ABCABC", short, cfg, TS) == "ABCABC"
+    shown = BlockConfig(
+        RangeSource(0, 12), FixedLength(6, True), "main", fill=WORD_FILL, show_end=True
+    )
+    short = extract(data, shown, TS).strings[0]
+    assert legacy_fixed_text(short, shown) == "AB[end][end]\n"
+    assert respell_fixed_end("AB[end][end]\n", short, shown, TS) == "AB[end]\n"
+    assert respell_fixed_end("C[end][end]\n", short, shown, TS) == "C[end]\n"

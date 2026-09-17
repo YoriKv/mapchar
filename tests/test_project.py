@@ -304,10 +304,10 @@ def test_missing_paths_and_relocate_follow_every_reference(tmp_path):
 
 def test_load_tolerates_a_missing_entry_list_and_a_boolean_current(tmp_path):
     proj = tmp_path / "p.mapchar"
-    proj.write_text('{"version": 1, "current": true}')
+    proj.write_text('{"version": 2, "current": true}')
     loaded = load_project(str(proj))
     assert loaded.entries == [] and loaded.current is None
-    assert loaded.migrated_from is None and loaded.version == 1
+    assert loaded.migrated_from is None and loaded.version == 2
 
 
 def test_load_walks_migrations_forward(tmp_path, monkeypatch):
@@ -723,3 +723,45 @@ def test_the_payload_keeps_a_folder_with_what_was_copied_with_it():
     # Copied alone, a row arrives loose for the paste to place.
     (alone,) = entries_from_payload(entries_payload([r["deep"]]))
     assert alone.folder is None
+
+
+def test_a_version_1_block_whose_fixed_strings_stop_at_an_end_is_marked(tmp_path):
+    """Version 2 hides a fixed string's end token, so the originals version 1
+    saved for such a block are marked to be respelled when it is first read —
+    and stay marked through a save that comes before that."""
+    import json
+
+    proj = tmp_path / "p.mapchar"
+    fixed = "source=range start=$0 stop=$C type=fixed:6:stop table=main"
+    proj.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": [
+                    {"kind": "file", "name": "r"},
+                    {
+                        "kind": "block",
+                        "name": "names",
+                        "parent": 0,
+                        "config": fixed,
+                        "strings": [{"i": 0, "o": "AB[end]"}],
+                    },
+                    {
+                        "kind": "block",
+                        "name": "text",
+                        "parent": 0,
+                        "config": "source=range start=$0 stop=$C type=end table=main",
+                        "strings": [{"i": 0, "o": "AB[end]"}],
+                    },
+                ],
+            }
+        )
+    )
+    loaded = load_project(str(proj))
+    assert loaded.migrated_from == 1 and loaded.version == 2
+    names, text = loaded.entries[1:]
+    assert names.fixed_ends_shown and not text.fixed_ends_shown
+    saved = project_dict(loaded.entries, None, str(tmp_path))["entries"]
+    assert saved[1]["fixed_ends_shown"] and "fixed_ends_shown" not in saved[2]
+    proj.write_text(json.dumps(saved and {"version": 2, "entries": saved}))
+    assert load_project(str(proj)).entries[1].fixed_ends_shown

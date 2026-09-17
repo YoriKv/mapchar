@@ -11,13 +11,14 @@ from mapchar.core.block import (
     BlockConfig,
     FixedLength,
     Lines,
+    NestedPointerSource,
     NextPointer,
     Pascal,
     PointerTableSource,
     RangeSource,
 )
 from mapchar.project.projectfile import load_project, save_project
-from mapchar.ui.reading_bar import RANGE
+from mapchar.ui.reading_bar import NESTED, RANGE
 from mapchar.ui.token_text import POINTER_TOKENS
 from mapchar.ui.widgets import select_data
 from window_helpers import add_block, make_window, open_rom_and_table
@@ -476,3 +477,103 @@ def test_fixed_length_strings_on_a_range_have_a_count_that_sets_stop(window, tmp
     assert block.config.source == RangeSource(0x10, 0x19)
     assert block.config.string_type == FixedLength(3)
     assert [s.start for s in block.doc.strings] == [0x10, 0x13, 0x16]
+
+
+NESTED_ROM = bytes.fromhex(
+    "08 00 0C 00 00 00 00 00  01 00 04 00 FF 41 42 00  42 00 FF FF"
+)
+"""One record naming an inner table at 8 counting from $C, reaching AB[end] and
+B[end], and a null record."""
+
+
+def test_a_nested_source_is_picked_and_edited_in_the_bar(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, NESTED_ROM)
+    block = add_block(window, entry, "b", PointerTableSource(0, 8, 2, 2))
+    window.show()
+    bar = window.reading_bar
+    assert not bar._groups["inner"].isVisibleTo(window)
+    select_data(bar.source_kind, NESTED)
+    assert isinstance(block.config.source, NestedPointerSource)
+    assert bar._groups["inner"].isVisibleTo(window)
+    assert bar._groups["ptr_stride"].isVisibleTo(window)
+    bar.ptr_stride.setValue(4)
+    bar.ptr_null.setText("0")
+    bar.ptr_null.editingFinished.emit()
+    bar.inner_null.setText("0")
+    bar.inner_null.editingFinished.emit()
+    assert block.config.source == NestedPointerSource(
+        0, 8, 2, 4, null=0, inner_size=2, inner_null=0
+    )
+    assert [s.current_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+    assert bar.bound.placeholderText() == "each group's end"
+    bar.fill.setText("EEDD")
+    bar.fill.editingFinished.emit()
+    assert block.config.fill == b"\xee\xdd"
+    # What the bar shows is what it reads back.
+    bar.load(block.config, block=True)
+    assert bar.config(block.config, "main") == block.config
+    assert bar.fill.text() == "EEDD"
+    # A file has no strings of its own to group.
+    window._activate_entry(entry)
+    window._on_mode(True)
+    assert not bar.source_kind.model().item(2).isEnabled()
+
+
+def test_an_edit_in_a_nested_block_reads_back_only_its_group_and_undoes(
+    window, tmp_path
+):
+    entry = open_rom_and_table(window, tmp_path, NESTED_ROM)
+    block = add_block(
+        window, entry, "b", NestedPointerSource(0, 8, 2, 4, null=0, inner_null=0)
+    )
+    assert window._set_translation(block, 1, "BB[end]") == []
+    assert window._doc.data[8:0x14] == bytes.fromhex(
+        "01 00 04 00 FF 41 42 00 42 42 00 FF"
+    )
+    assert [s.current_text() for s in block.doc.strings] == ["AB[end]", "BB[end]"]
+    window.undo_stack.undo()
+    assert window._doc.data == NESTED_ROM
+    assert [s.current_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+
+
+def test_a_version_1_project_s_fixed_strings_open_without_their_end_token(
+    window, tmp_path
+):
+    import json
+
+    open_rom_and_table(window, tmp_path, bytes.fromhex("41 42 00 FF  42 41 00 FF"))
+    proj = tmp_path / "p.mapchar"
+    proj.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": [
+                    {"kind": "file", "name": "rom.bin", "path": "rom.bin"},
+                    {"kind": "table", "name": "main.tbl", "path": "main.tbl"},
+                    {
+                        "kind": "block",
+                        "name": "names",
+                        "path": "rom.bin",
+                        "parent": 0,
+                        "config": "source=range start=$0 stop=$8 "
+                        "type=fixed:4:stop table=main",
+                        "strings": [
+                            {"i": 0, "o": "AB[end]"},
+                            {"i": 1, "o": "AA[end]", "s": "edited"},
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+    window._new_project()
+    assert window.open_project(str(proj))
+    block = next(e for e in window.workspace.entries if e.name == "names")
+    window._activate_entry(block)
+    assert [
+        (s.original, s.current_text(), s.status.value) for s in block.doc.strings
+    ] == [
+        ("AB", "AB", "untouched"),
+        ("AA", "BA", "edited"),
+    ]
+    assert not block.fixed_ends_shown

@@ -294,7 +294,13 @@ def write_command_file(
     table_id: str | None = None,
 ) -> tuple[str, list[str]]:
     """A Cartographer command file for a block, and what it could not express."""
-    from mapchar.core.block import Lines, Pascal, PointerListSource, WriteMode
+    from mapchar.core.block import (
+        Lines,
+        NestedPointerSource,
+        Pascal,
+        PointerListSource,
+        WriteMode,
+    )
 
     lines: list[str] = []
     notes: list[str] = []
@@ -336,7 +342,17 @@ def write_command_file(
     elif isinstance(src, PointerListSource):
         notes.append("pointer lists have no Cartographer form; block not exported")
         return "", notes
+    elif isinstance(src, NestedPointerSource):
+        notes.append(
+            "nested pointer tables have no Cartographer form; block not exported"
+        )
+        return "", notes
     else:
+        if src.null is not None:
+            notes.append(
+                f"a null pointer value has no Cartographer form; pointers holding "
+                f"{format_num(src.null)} are read as pointers"
+            )
         if src.mapping_id == "relative":
             lines.append("#METHOD: POINTER_RELATIVE_PC")
             lines.append(f"#BASE POINTER: {format_num(src.offset)}")

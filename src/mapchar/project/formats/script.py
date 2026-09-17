@@ -11,10 +11,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from mapchar.core.block import (
+    DEFAULT_FILL,
     BlockConfig,
     EndToken,
     FixedLength,
     Lines,
+    NestedPointerSource,
     NextPointer,
     Pascal,
     PointerListSource,
@@ -24,6 +26,8 @@ from mapchar.core.block import (
     StringRecord,
     StringType,
     WriteMode,
+    format_fill,
+    parse_fill,
 )
 from mapchar.core.errors import ScriptError
 from mapchar.core.numbers import format_num, parse_num
@@ -101,6 +105,25 @@ def format_config(config: BlockConfig) -> str:
             f"offset={s.offset}",
             f"bank={s.bank}",
         ]
+    elif isinstance(s, NestedPointerSource):
+        parts += [
+            "source=nested",
+            f"start={format_num(s.start)}",
+            f"stop={format_num(s.stop)}",
+            f"size={s.size}",
+            f"stride={s.stride}",
+            f"endian={s.endian}",
+            f"mapping={s.mapping_id}",
+            f"offset={s.offset}",
+            f"bank={s.bank}",
+        ]
+    null = getattr(s, "null", None)
+    if null is not None:
+        parts.append(f"null={format_num(null)}")
+    if isinstance(s, NestedPointerSource):
+        parts += [f"inner_size={s.inner_size}", f"inner_endian={s.inner_endian}"]
+        if s.inner_null is not None:
+            parts.append(f"inner_null={format_num(s.inner_null)}")
     st = config.string_type
     if isinstance(st, EndToken):
         parts.append("type=end")
@@ -136,8 +159,8 @@ def format_config(config: BlockConfig) -> str:
         parts.append(f"bound={format_num(config.bound)}")
     if config.write_mode is not None:
         parts.append(f"mode={config.write_mode.value}")
-    if config.fill != 0xFF:
-        parts.append(f"fill={format_num(config.fill)}")
+    if config.fill != DEFAULT_FILL:
+        parts.append(f"fill={format_fill(config.fill)}")
     return " ".join(parts)
 
 
@@ -208,6 +231,7 @@ def parse_config(spec: str) -> BlockConfig:
             fields.get("mapping", "linear"),
             int(fields.get("offset", "0")),
             int(fields.get("bank", "0")),
+            _null(fields, "null"),
         )
     elif kind == "list":
         source = PointerListSource(
@@ -217,6 +241,23 @@ def parse_config(spec: str) -> BlockConfig:
             fields.get("mapping", "linear"),
             int(fields.get("offset", "0")),
             int(fields.get("bank", "0")),
+            _null(fields, "null"),
+        )
+    elif kind == "nested":
+        size = int(fields["size"])
+        source = NestedPointerSource(
+            parse_num(fields["start"]),
+            parse_num(fields["stop"]),
+            size,
+            int(fields.get("stride", str(2 * size))),
+            fields.get("endian", "little"),
+            fields.get("mapping", "linear"),
+            int(fields.get("offset", "0")),
+            int(fields.get("bank", "0")),
+            int(fields.get("inner_size", "2")),
+            fields.get("inner_endian", "little"),
+            _null(fields, "null"),
+            _null(fields, "inner_null"),
         )
     else:
         raise ValueError(f"unknown source {kind!r}")
@@ -258,11 +299,16 @@ def parse_config(spec: str) -> BlockConfig:
         line_length=int(fields.get("lines", "0")),
         bound=parse_num(fields["bound"]) if "bound" in fields else None,
         write_mode=WriteMode(fields["mode"]) if "mode" in fields else None,
-        fill=parse_num(fields["fill"]) if "fill" in fields else 0xFF,
+        fill=parse_fill(fields["fill"]) if "fill" in fields else DEFAULT_FILL,
         show_end="show_end" in fields,
         end_label=fields.get("show_end", "end"),
         line_label=fields.get("line_label", "line"),
     )
+
+
+def _null(fields: dict[str, str], key: str) -> int | None:
+    """A null pointer value the fields name, or ``None``."""
+    return parse_num(fields[key]) if fields.get(key) else None
 
 
 def parse_script(text: str, path: str | None = None) -> Script:

@@ -17,7 +17,6 @@ from helpers import (
     relayout,
     texts,
 )
-from mapchar.core.block import WriteMode
 from mapchar.core.table import TableSet
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import layout_block
@@ -115,7 +114,7 @@ def test_mother_3(registry):
         res = layout_block(data, config, ts, ex.strings, registry)
         assert res.ok, (block.name, res.problems)
         blocks[block.name] = (config, ts, ex)
-    assert len(blocks) == 582
+    assert len(blocks) == 20
     assert sum(len(ex.strings) for _, _, ex in blocks.values()) == 12997
     unmatched = [
         (name, s.index)
@@ -137,25 +136,49 @@ def test_mother_3(registry):
         "－－－－－－[end]",
         "はい[end]",
     ]
-    _, _, ex = blocks["Item names"]
-    assert texts(ex)[1:3] == [
-        "ライタのカクザイ[end]",
+    # Names end at FFFF and are padded with it: neither is text.
+    config, ts, ex = blocks["Item names"]
+    assert texts(ex)[1:3] == ["ライタのカクザイ", "あたらしいカクザイ"]  # 9 wide
+    res, out = relayout(
+        data, config, ts, {1: "ライタ", 2: "あたらしいカクザイ"}, registry
+    )
+    assert res.ok, res.problems
+    s = ex.strings[1]
+    assert (
+        out[s.start : s.end].hex() == "c0017b019601" + "ff" * 12
+    )  # ライタ, [end], fill
+    assert texts(extract(out, config, ts, registry))[1:3] == [
+        "ライタ",
         "あたらしいカクザイ",
-    ]  # 9 wide, no end
+    ]
+
+    # The main script is one block, a group of strings per map.
+    config, ts, ex = blocks["Script"]
+    script = m3.archive(data, m3.MAIN_SCRIPT)
+
+    def group(n: int) -> list[int]:
+        return [
+            s.index for s in ex.strings if s.pointers[0].offset == script[2 * n + 1]
+        ]
+
+    assert len(ex.strings) == 7825
 
     # Mr. Saturn's font, its dakuten a mark of their own.
-    config, ts, ex = blocks["Script 0900"]
-    assert texts(ex)[4].startswith("[saturn]◆どせいさん おんせん[FF03][FF00]\n")
-    edits = {4: "[saturn]◆ぱぴぷ[line]です[end]", 0: "◇が[FF04 $0010]ぎ[end]"}
+    first, saturn = group(900)[0], group(900)[4]
+    assert texts(ex)[saturn].startswith("[saturn]◆どせいさん おんせん[FF03][FF00]\n")
+    edits = {saturn: "[saturn]◆ぱぴぷ[line]です[end]", first: "◇が[FF04 $0010]ぎ[end]"}
     res, out = relayout(data, config, ts, edits, registry)
     assert res.ok, res.problems
     again = extract(out, config, ts, registry)
-    assert [texts(again)[i] for i in (0, 4)] == [
+    assert [texts(again)[i] for i in (first, saturn)] == [
         "◇が[FF04 $0010]ぎ[end]",
         "[saturn]◆ぱぴぷ[line]\nです[end]",
     ]
-    s = again.strings[4]
+    s = again.strings[saturn]
     assert out[s.start : s.start + 10].hex() == "0bff3e001a003c001b00"
+    # Only map 900's text and offsets moved.
+    changed = [i for i in range(len(data)) if data[i] != out[i]]
+    assert script[1800] <= changed[0] and changed[-1] < script[1802]
 
     # Battle messages: FF20 and FF21 take no operand there.
     config, ts, ex = blocks["Battle text"]
@@ -164,9 +187,18 @@ def test_mother_3(registry):
     assert res.ok, res.problems
     assert texts(extract(out, config, ts, registry))[300] == "[FF21]は[FF20]！[end]"
 
-    # One string is the last page of another: slotted, and both still edit.
-    config, ts, ex = blocks["Script 0101"]
-    assert config.write_mode is WriteMode.SLOTTED
-    res, out = relayout(data, config, ts, {1: "◇ゴミ。[end]"}, registry)
+    # In map 101 one string is the last page of another: laid out once, it
+    # stays so while it is still that page, and both edit.
+    config, ts, ex = blocks["Script"]
+    whole, page = group(101)[:2]
+    assert ex.strings[page].start < ex.strings[whole].end == ex.strings[page].end
+    shorter = "◇かんばん。[FF03][FF00]\n◇あきかんは くずかごへ。[end]"
+    res, out = relayout(data, config, ts, {whole: shorter}, registry)
     assert res.ok, res.problems
-    assert texts(extract(out, config, ts, registry))[1] == "◇ゴミ。[end]"
+    again = extract(out, config, ts, registry)
+    assert texts(again)[page] == "◇あきかんは くずかごへ。[end]"
+    assert again.strings[page].end == again.strings[whole].end
+    res, out = relayout(out, config, ts, {page: "◇ゴミ。[end]"}, registry)
+    assert res.ok, res.problems
+    again = extract(out, config, ts, registry)
+    assert [texts(again)[i] for i in (whole, page)] == [shorter, "◇ゴミ。[end]"]

@@ -8,7 +8,9 @@ the decompressed buffer; nothing is written here.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
+from typing import Any
 
 from mapchar.core.bits import Bits, align_up
 from mapchar.core.block import (
@@ -16,18 +18,21 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     Lines,
+    NestedPointerSource,
     Pascal,
     StringRecord,
     WriteMode,
     block_bound,
+    fill_run,
+    string_groups,
 )
 from mapchar.core.errors import EncodeError
 from mapchar.core.mapping import pointer_bytes
-from mapchar.core.table import TableSet
+from mapchar.core.table import TableSet, TokenKind
 from mapchar.engines.decode import DecodeRules, decode
 from mapchar.engines.encode import encode
-from mapchar.pipeline.extract import strip_artificial
-from mapchar.plugins.registry import mapping_for
+from mapchar.pipeline.extract import nested_records, strip_artificial
+from mapchar.plugins.registry import default_registry, resolve_mapping
 
 
 @dataclass(frozen=True)
@@ -133,11 +138,40 @@ def _encode_fixed(text: str, config: BlockConfig, tables: TableSet) -> bytes:
     """A fixed-length string; fixed-line codes are dump formatting and go."""
     st = config.string_type
     length = config.fixed_length or 0
-    stop_at_end = isinstance(st, FixedLength) and st.stop_at_end
     body = "".join(strip_artificial(text, config))
-    r = encode(body, tables, end_terminated=stop_at_end)
-    if len(r.data) > length:
-        raise EncodeError(f"{len(r.data) - length} byte(s) too long for {length}")
+    if isinstance(st, FixedLength) and st.stop_at_end:
+        data = _encode_stopping(body, tables, length)
+    else:
+        data = encode(body, tables, end_terminated=False).data
+    if len(data) > length:
+        raise EncodeError(f"{len(data) - length} byte(s) too long for {length}")
+    return data
+
+
+def _encode_stopping(body: str, tables: TableSet, length: int) -> bytes:
+    """A fixed string that stops at an end token: the text, then an end token
+    where there is room for one — the fill after it is the layout's.
+
+    The end token is not text (:func:`~mapchar.pipeline.extract.is_hidden_end`),
+    so the text does not spell it; one that does is written as it stands, and
+    so is a text with more after its end token — a tail that is not fill, which
+    the reading shows after a visible end token.
+    """
+    try:
+        r = encode(body, tables, end_terminated=True)
+    except EncodeError:
+        return encode(body, tables, end_terminated=False).data
+    if r.ends_with_end or len(r.data) >= length:
+        return r.data
+    for entry in tables.start.entries.values():
+        if entry.kind is not TokenKind.END or not entry.text:
+            continue
+        try:
+            ended = encode(body + entry.text, tables, end_terminated=True)
+        except EncodeError:
+            continue
+        if ended.ends_with_end and len(ended.data) <= length:
+            return ended.data
     return r.data
 
 
@@ -157,12 +191,12 @@ def slot_ends(
     strings: list[StringRecord],
     bound: int,
     data: bytes | None = None,
-    fill: int | None = None,
+    fill: bytes | None = None,
 ) -> dict[int, int]:
     """Where each string's slot ends, by index.
 
-    A slot is the bytes the string itself holds plus the run of the block's
-    fill byte directly after them — the padding a shorter replacement left
+    A slot is the bytes the string itself holds plus the run of whole fill
+    patterns directly after them — the padding a shorter replacement left
     behind, which the next edit may use again — and stops at the next string
     in address order, at ``bound``, or at the end of ``data``, whichever comes
     first. Bytes between two strings that are not that padding belong to no
@@ -178,13 +212,68 @@ def slot_ends(
     limit = bound if data is None else min(bound, len(data))
     for i, rec in enumerate(ordered):
         stop = ordered[i + 1].start if i + 1 < len(ordered) else limit
-        if data is None or fill is None:
+        if data is None or not fill:
             ends[rec.index] = max(rec.end, stop)
             continue
         end = rec.end
-        while end < stop and end < len(data) and data[end] == fill:
-            end += 1
+        width = len(fill)
+        while end + width <= min(stop, len(data)) and data[end : end + width] == fill:
+            end += width
         ends[rec.index] = end
+    return ends
+
+
+def group_bounds(
+    data: bytes,
+    config: BlockConfig,
+    groups: list[list[StringRecord]],
+    registry=None,
+) -> list[int]:
+    """The exclusive end each group of a nested block may be written up to.
+
+    A group's own last byte, and past it the run of whole fill patterns a
+    shorter layout left — so room given up is room to take back — but never as
+    far as the next thing the outer table points at (another group's inner
+    table or text), nor past the block's ``bound``.
+    """
+    source = config.source
+    assert isinstance(source, NestedPointerSource)
+    records, _ = nested_records(data, source, registry)
+    marks = sorted({r.table for r in records} | {r.base for r in records})
+    fill = config.fill
+    bounds = []
+    for group in groups:
+        first = min(r.start for r in group)
+        own = max(r.end for r in group)
+        at = bisect_right(marks, first)
+        cap = marks[at] if at < len(marks) else len(data)
+        if config.bound is not None:
+            cap = min(cap, config.bound)
+        end = own
+        while fill and end + len(fill) <= cap and data[end : end + len(fill)] == fill:
+            end += len(fill)
+        bounds.append(max(own, min(end, cap)))
+    return bounds
+
+
+def string_ends(
+    data: bytes, config: BlockConfig, strings: list[StringRecord], registry=None
+) -> dict[int, int]:
+    """Where each string's room ends, by index: its slot's end
+    (:func:`slot_ends`), or for a packed nested block its group's bound
+    (:func:`group_bounds`). What :func:`room_for` reads a slot from."""
+    if not isinstance(config.source, NestedPointerSource):
+        return slot_ends(strings, block_bound(config, strings), data, config.fill)
+    groups = string_groups(config, strings)
+    ends: dict[int, int] = {}
+    slotted = config.effective_write_mode is WriteMode.SLOTTED
+    for group, bound in zip(
+        groups, group_bounds(data, config, groups, registry), strict=True
+    ):
+        if slotted:
+            ends |= slot_ends(group, bound, data, config.fill)
+        else:
+            ends |= {rec.index: bound for rec in group}
     return ends
 
 
@@ -195,91 +284,150 @@ def layout_block(
     strings: list[StringRecord],
     registry=None,
 ) -> LayoutResult:
+    """Lay the block out with every replacement in place.
+
+    Group by group (:func:`~mapchar.core.block.string_groups`): a nested
+    block's groups each lay out over their own text, and only those holding a
+    replacement are laid out at all — the rest stay as they are — so an edit
+    costs its group, not the block.
+    """
     result = LayoutResult()
     if not strings:
         return result
-    fill = bytes([config.fill])
-    for rec in strings:
-        enc = encode_string(rec, config, tables, data)
-        result.encoded[rec.index] = enc
-        if enc.problem is not None:
-            result.problems.append(enc.problem)
-    mode = config.effective_write_mode
-    fixed_len = config.fixed_length
-
-    if mode is WriteMode.SLOTTED:
-        out = bytearray()
-        first = min(s.start for s in strings)
-        ends = slot_ends(strings, block_bound(config, strings), data, config.fill)
-        last = min(max(max(s.end for s in strings), max(ends.values())), len(data))
-        out[:] = data[first:last]
-        used = 0
-        for rec in strings:
-            enc = result.encoded[rec.index]
+    groups = string_groups(config, strings)
+    if isinstance(config.source, NestedPointerSource):
+        groups = [
+            g for g in groups if any(r.replacement is not None for r in g)
+        ] or groups
+        bounds = group_bounds(data, config, groups, registry)
+    else:
+        bounds = [block_bound(config, strings)]
+    slotted = config.effective_write_mode is WriteMode.SLOTTED
+    for group, bound in zip(groups, bounds, strict=True):
+        for rec in group:
+            enc = encode_string(rec, config, tables, data)
+            result.encoded[rec.index] = enc
             if enc.problem is not None:
-                continue
-            if _crosses_skip(rec, config):
-                if rec.replacement is not None:
-                    result.problems.append(
-                        Problem(rec.index, "spans a skip range and cannot be rewritten")
-                    )
-                continue
-            # Never past the slot the block gives the string (:func:`slot_ends`
-            # — its own bytes and the padding after them, and nothing else),
-            # whatever the fixed length says: ``out`` is a bytearray, and a
-            # slice assignment longer than the slot would grow the buffer
-            # rather than stop, writing over — or past — the string that
-            # follows. Padding the chunk out to the slot writes the fill byte
-            # where the fill byte already is, so an unedited string's bytes,
-            # and every byte outside a slot, stay as they are.
-            extent = ends[rec.index] - rec.start
-            room = extent if fixed_len is None else min(fixed_len, extent)
-            if fixed_len is not None and fixed_len > extent:
-                result.problems.append(
-                    Problem(
-                        rec.index,
-                        f"its slot holds {extent} byte(s), "
-                        f"{fixed_len - extent} short of the fixed length",
-                    )
-                )
-                continue
-            if len(enc.data) > room:
-                result.problems.append(
-                    Problem(
-                        rec.index,
-                        f"{len(enc.data) - room} byte(s) too long for its slot",
-                        len(enc.data) - room,
-                    )
-                )
-                continue
-            used += len(enc.data)
-            chunk = enc.data + fill * (room - len(enc.data))
-            at = rec.start - first
-            out[at : at + room] = chunk
-        result.used = used
-        result.available = sum(
-            (fixed_len if fixed_len is not None else ends[s.index] - s.start)
-            for s in strings
-        )
-        if result.ok:
-            result.splices.append(Splice(first, bytes(out)))
-        return result
+                result.problems.append(enc.problem)
+        if slotted:
+            _layout_slotted(data, config, group, bound, result)
+        else:
+            _layout_packed(config, group, bound, result, registry)
+    if not result.ok:
+        result.splices.clear()
+    return result
 
-    # Packed: end to end from the first string, up to the bound.
-    first = strings[0].start
-    bound = block_bound(config, strings)
-    pos = first
+
+def _layout_slotted(
+    data: bytes,
+    config: BlockConfig,
+    strings: list[StringRecord],
+    bound: int,
+    result: LayoutResult,
+) -> None:
+    """Every string at its own address, within its slot."""
+    fixed_len = config.fixed_length
     out = bytearray()
-    m, o = config.realign
+    first = min(s.start for s in strings)
+    ends = slot_ends(strings, bound, data, config.fill)
+    last = min(max(max(s.end for s in strings), max(ends.values())), len(data))
+    out[:] = data[first:last]
+    used = 0
     for rec in strings:
         enc = result.encoded[rec.index]
         if enc.problem is not None:
             continue
+        if _crosses_skip(rec, config):
+            if rec.replacement is not None:
+                result.problems.append(
+                    Problem(rec.index, "spans a skip range and cannot be rewritten")
+                )
+            continue
+        # Never past the slot the block gives the string (:func:`slot_ends`
+        # — its own bytes and the padding after them, and nothing else),
+        # whatever the fixed length says: ``out`` is a bytearray, and a
+        # slice assignment longer than the slot would grow the buffer
+        # rather than stop, writing over — or past — the string that
+        # follows. Padding the chunk out to the slot writes the fill
+        # where the fill already is, so an unedited string's bytes, and
+        # every byte outside a slot, stay as they are.
+        extent = ends[rec.index] - rec.start
+        room = extent if fixed_len is None else min(fixed_len, extent)
+        if fixed_len is not None and fixed_len > extent:
+            result.problems.append(
+                Problem(
+                    rec.index,
+                    f"its slot holds {extent} byte(s), "
+                    f"{fixed_len - extent} short of the fixed length",
+                )
+            )
+            continue
+        if len(enc.data) > room:
+            result.problems.append(
+                Problem(
+                    rec.index,
+                    f"{len(enc.data) - room} byte(s) too long for its slot",
+                    len(enc.data) - room,
+                )
+            )
+            continue
+        used += len(enc.data)
+        chunk = enc.data + fill_run(config.fill, room - len(enc.data))
+        at = rec.start - first
+        out[at : at + room] = chunk
+    result.used += used
+    result.available += sum(
+        (fixed_len if fixed_len is not None else ends[s.index] - s.start)
+        for s in strings
+    )
+    if result.ok:
+        result.splices.append(Splice(first, bytes(out)))
+
+
+def _layout_packed(
+    config: BlockConfig,
+    strings: list[StringRecord],
+    bound: int,
+    result: LayoutResult,
+    registry,
+) -> None:
+    """End to end from the first string, up to ``bound``, pointers rewritten.
+
+    A string that lies inside the string laid out before it — the last page
+    of a message, with pointers of its own — is not written twice while its
+    bytes still end that string's: its pointers reach into that string where
+    its bytes are now. Only pointers reach into a string, and no two strings
+    may start at one address, which would make them one.
+    """
+    fill = config.fill
+    fixed_len = config.fixed_length
+    first = strings[0].start
+    pos = first
+    out = bytearray()
+    m, o = config.realign
+    container: tuple[StringRecord, bytes, int] | None = None
+    """The last string laid out whole, its bytes, and where they now end."""
+    tails: set[int] = set()
+    shares = config.has_pointers and fixed_len is None and not m
+    for rec in strings:
+        enc = result.encoded[rec.index]
+        if enc.problem is not None:
+            continue
+        if (
+            shares
+            and container is not None
+            and _is_tail(rec, enc.data, *container)
+            and container[2] - len(enc.data) not in tails
+        ):
+            at = container[2] - len(enc.data)
+            enc.new_start = at
+            tails.add(at)
+            continue
         aligned = align_up(pos, m, o)
-        out += fill * (aligned - pos)
+        out += fill_run(fill, aligned - pos)
         pos = aligned
         if fixed_len is not None:
-            chunk = enc.data + fill * (fixed_len - len(enc.data))
+            chunk = enc.data + fill_run(fill, fixed_len - len(enc.data))
         else:
             chunk = enc.data
         if pos + len(chunk) > bound:
@@ -292,24 +440,36 @@ def layout_block(
         enc.new_start = pos
         out += chunk
         pos += len(chunk)
-    result.used = pos - first
-    result.available = bound - first
+        container = (rec, enc.data, pos)
+    result.used += pos - first
+    result.available += bound - first
     if result.ok:
-        out += fill * (bound - first - len(out))
+        out += fill_run(fill, bound - first - len(out))
         result.splices.append(Splice(first, bytes(out)))
         result.splices.extend(_pointer_splices(config, strings, result, registry))
-    return result
+
+
+def _is_tail(
+    rec: StringRecord, data: bytes, whole: StringRecord, bytes_of: bytes, _end
+) -> bool:
+    """Whether ``rec``, now ``data``, lies inside ``whole``, now ``bytes_of``,
+    and can still be read as its end (:func:`_layout_packed`)."""
+    return (
+        whole.start < rec.start < whole.end
+        and 0 < len(data) < len(bytes_of)
+        and bytes_of.endswith(data)
+    )
 
 
 def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Splice]:
-    """Rewrite every pointer of a packed block to its string's new position."""
+    """Rewrite every pointer of a packed block to its string's new position,
+    each through its own mapping and from its own offset — a nested source's
+    inner pointers count from their group's base."""
     if not config.has_pointers:
         return []
     source = config.source
-    mapping = mapping_for(source, registry)
-    if mapping is None:
-        result.problems.append(Problem(-1, f"unknown mapping {source.mapping_id!r}"))
-        return []
+    registry = registry if registry is not None else default_registry()
+    mappings: dict[str, Any] = {}
     splices = []
     for rec in strings:
         enc = result.encoded.get(rec.index)
@@ -317,6 +477,14 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
         if new_start is None:
             continue
         for ref in rec.pointers:
+            if ref.mapping_id not in mappings:
+                mappings[ref.mapping_id] = resolve_mapping(registry, ref.mapping_id)
+            mapping = mappings[ref.mapping_id]
+            if mapping is None:
+                result.problems.append(
+                    Problem(-1, f"unknown mapping {ref.mapping_id!r}")
+                )
+                return []
             value = mapping.to_value(new_start - ref.offset, source.bank, ref.address)
             if value < 0 or value >= 1 << (ref.size * 8):
                 result.problems.append(
@@ -352,12 +520,17 @@ def room_for(
     """How many bytes ``rec`` may take: its slot (:func:`slot_ends`, which
     ``ends`` carries when the caller has them), the slot a fixed length gives
     it, or everything up to the block's ``bound``
-    (:func:`~mapchar.core.block.block_bound`) when it is packed."""
+    (:func:`~mapchar.core.block.block_bound`) when it is packed — up to its
+    group's (:func:`string_ends`) in a nested block."""
     if config is None:
         return rec.length
     if isinstance(config.string_type, FixedLength):
         return config.string_type.length
     if config.effective_write_mode is WriteMode.PACKED:
+        if isinstance(config.source, NestedPointerSource):
+            if ends is not None and rec.index in ends:
+                return max(ends[rec.index] - rec.start, 0)
+            return rec.length
         return max(bound - rec.start, 0)
     if _crosses_skip(rec, config):
         return rec.byte_length(config.skips)
@@ -372,7 +545,9 @@ __all__ = [
     "Splice",
     "apply_splices",
     "block_bound",
+    "group_bounds",
     "layout_block",
     "room_for",
     "slot_ends",
+    "string_ends",
 ]

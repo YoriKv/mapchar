@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from mapchar.core.block import Status
+from mapchar.core.block import FixedLength, Status
 from mapchar.core.errors import MapcharError
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.core.table import Table
@@ -27,7 +27,7 @@ from mapchar.project.workspace import (
     tree_order,
 )
 
-PROJECT_VERSION = 1
+PROJECT_VERSION = 2
 
 
 class ProjectError(MapcharError):
@@ -56,7 +56,36 @@ class LoadedProject:
 # A migration rewrites only what a rename or a reshape moved. A defaulted key or
 # a widened range is not its business: reading those tolerantly is already
 # :func:`_entry_from`'s job, and doing it twice leaves two answers to maintain.
-_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+
+
+def _mark_fixed_ends(data: dict[str, Any]) -> dict[str, Any]:
+    """1 → 2: a fixed-length string that stops at an end token no longer shows
+    the end token, so the strings version 1 saved for such a block spell one
+    today's reading does not. Respelling them takes the block's tables, so the
+    block is marked and its first reading does it."""
+    for raw in data.get("entries") or []:
+        if (
+            isinstance(raw, dict)
+            and raw.get("kind") == "block"
+            and raw.get("strings")
+            and _stops_at_end(raw.get("config"))
+        ):
+            raw["fixed_ends_shown"] = True
+    return data
+
+
+def _stops_at_end(spec: Any) -> bool:
+    try:
+        config = parse_config(spec) if isinstance(spec, str) else None
+    except (ValueError, KeyError):
+        return False
+    st = config.string_type if config is not None else None
+    return isinstance(st, FixedLength) and st.stop_at_end
+
+
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    1: _mark_fixed_ends
+}
 
 
 def _migrated(data: dict[str, Any]) -> tuple[dict[str, Any], int | None]:
@@ -195,6 +224,8 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
         strings = _string_records(entry)
         if strings:
             d["strings"] = strings
+            if entry.fixed_ends_shown:
+                d["fixed_ends_shown"] = True
     if entry.kind is EntryKind.BLOCK and entry.box is not None:
         b = entry.box
         d["box"] = {
@@ -590,5 +621,6 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
     # originals exist, and a save has to be able to write them back
     # (:func:`_string_records`).
     entry.pending_strings = saved or None
+    entry.fixed_ends_shown = bool(saved) and bool(raw.get("fixed_ends_shown"))
     parent = raw.get("parent")
     return entry, (int(parent) if isinstance(parent, int) else None)

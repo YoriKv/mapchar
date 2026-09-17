@@ -43,7 +43,16 @@ done well.[end]
   pairs, one per setting of the Reading bar
   ([features.md](features.md#blocks)). Import creates the block when the
   project has none of that name, and otherwise leaves the project's
-  configuration alone.
+  configuration alone. The source is `source=range`, `pointers`, `list` or
+  `nested`; a pointer source's `null=$0` is its null value, and a nested one
+  adds `inner_size`, `inner_endian` and `inner_null`, its `stride` defaulting
+  to two pointers. `fill=$FFFF` is a fill pattern, a byte for every two hex
+  digits:
+
+  ```
+  @block "Script" source=nested start=$136A6F8 stop=$136C640 size=4 stride=8 endian=little mapping=linear offset=20358900 bank=0 null=$0 inner_size=2 inner_endian=little inner_null=$0 type=end table=m3
+  @block "Item names" source=range start=$D22294 stop=$D23494 type=fixed:18:stop table=m3 fill=$FFFF
+  ```
 - **`@string N at $start-$end ptr $addr…`** — one string: its index in the
   block, its byte extent on disk (exclusive end), and the addresses of every
   pointer that reaches it (none for a range source).
@@ -124,7 +133,8 @@ and creates one block per `#BLOCK`:
 The block is then extracted. The exporter writes the reverse mapping for a
 block, and reports fields Cartographer has no command for (Pascal strings,
 banked mappings other than a constant base, slotted mode, a bound narrower
-than the source).
+than the source, a null pointer value); a pointer list or nested tables have
+no form at all, and the block is not exported.
 
 Cartographer *dump files* are not imported; the native script replaces them.
 A block imported from a command file dumps the same strings in native form.
@@ -147,9 +157,13 @@ inserts ([`../abcde/atlas.md`](../abcde/atlas.md)):
 - the translation text with `[$XX]` rewritten as `<$XX>`, one string per
   line group, and a blank line between strings.
 
-The text is what mapchar would insert; the pointer commands reproduce
+The text is what mapchar would insert — a fixed string's end token
+included, which its text leaves out; the pointer commands reproduce
 mapchar's *packed* layout. A block in *slotted* mode exports one `#JMP` per
-string. Every address the script carries is a **file offset** — Atlas writes to
+string. What Atlas cannot express is reported: a block over nested tables
+exports one `#JMP` per string and no pointer commands, and a fill wider than a
+byte pads with its first byte. Every address the script carries is a **file
+offset** — Atlas writes to
 the ROM file, so the container's header is added to it, and the import
 subtracts it back off.
 

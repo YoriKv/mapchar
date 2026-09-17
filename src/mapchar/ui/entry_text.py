@@ -11,6 +11,7 @@ from collections import Counter
 from typing import TYPE_CHECKING
 
 from mapchar.core.block import (
+    NestedPointerSource,
     PointerListSource,
     PointerTableSource,
     RangeSource,
@@ -245,6 +246,8 @@ def source_text(entry: Entry) -> str:
         return f"pointer table {source.start:X}–{source.stop:X}"
     if isinstance(source, PointerListSource):
         return f"{len(source.addresses)} pointers"
+    if isinstance(source, NestedPointerSource):
+        return f"nested pointer tables {source.start:X}–{source.stop:X}"
     return source.__class__.__name__
 
 

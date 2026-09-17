@@ -65,7 +65,13 @@ class TextViewMixin:
             source = view_source(
                 self._reading(), self._current_block() is not None, offset, end
             )
-            until = pointer_window(source, offset, self.text.lines_in_view() + 1)
+            until = pointer_window(
+                source,
+                offset,
+                self.text.lines_in_view() + 1,
+                doc.data,
+                self.registry,
+            )
             model = self._text_tokens(
                 doc, tables, offset, end if until is None else until
             )

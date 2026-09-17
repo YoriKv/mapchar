@@ -35,7 +35,9 @@ def window(qtbot, monkeypatch):
 
 def _block(window, tmp_path, name="b", rom_name="rom.bin"):
     file_entry = open_rom_and_table(window, tmp_path, DATA, rom_name=rom_name)
-    return file_entry, add_block(window, file_entry, name, RangeSource(0, 6), fill=0xEE)
+    return file_entry, add_block(
+        window, file_entry, name, RangeSource(0, 6), fill=b"\xee"
+    )
 
 
 # --- unsaved state follows undo -------------------------------------------

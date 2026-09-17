@@ -129,12 +129,21 @@ in bytes, which is the unit their results are reported and selected in.
 `core/block.py`:
 
 - **`BlockConfig`** — frozen: `source` (`RangeSource`, `PointerTableSource`,
-  `PointerListSource`), `string_type` (`EndToken`,
+  `PointerListSource`, `NestedPointerSource`), `string_type` (`EndToken`,
   `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens, endian)`,
   `NextPointer`, `Lines(count)`), `table_id`, `strings_per_pointer`,
   `realign`, `skips`, `line_length`, `bound`, `write_mode` (`PACKED`,
-  `SLOTTED`), `fill`, and the artificial codes a fixed string is shown with:
-  `show_end`, `end_label`, `line_label`.
+  `SLOTTED`), `fill` (a byte pattern: `fill_run` lays it down from the start
+  of the room it fills, `is_fill` recognises it), and the artificial codes a
+  fixed string is shown with: `show_end`, `end_label`, `line_label`.
+- **Pointer sources** — `PointerTableSource` and `PointerListSource` carry a
+  `null` value that reaches no string. `NestedPointerSource` is a table of
+  records, two outer pointers each — an inner table and the base its pointers
+  count from — with `inner_size`, `inner_endian` and `inner_null`; the inner
+  table runs from its address to the base. `PointerSource` names all three.
+- **`string_groups(config, strings)`** — the strings a layout handles apart:
+  all of them, or for a nested source one group per record, told by the base
+  the string's first pointer counts from.
 - **`StringRecord`** — one string: `index`, `start_bit`, `end_bit` (bits into
   the decompressed buffer, with `start`, `end` and `length` derived byte
   properties), `tokens: list[Token]` (the decode of the bytes as they are —
@@ -147,7 +156,8 @@ in bytes, which is the unit their results are reported and selected in.
   the texts (`refresh_status`); *review* is set; *overflows box* is computed
   on demand, never stored.
 - **`PointerRef`** — `address`, `size`, `endian`, `mapping_id`, `offset`, and
-  the `value` read from disk.
+  the `value` read from disk. A nested source's inner pointer is `linear`, its
+  `offset` the base of its group.
 - **`source_start(source)`** — where a source begins, or `None` when it does
   not say (an empty pointer list, no source): the one answer the Files panel's
   sort, the block bar and a restored view position all read.
@@ -378,10 +388,21 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   (reading and mapping pointer values, sorting numerically, merging
   duplicate targets into one string with several pointers), applies the
   string rule, and calls the decode engine per string.
+- **Nested sources** (`pipeline/extract.py`): `nested_records` maps the outer
+  table's records, `pointer_addresses` lists every pointer a source reads —
+  outer and inner — and `reextract` reads again only the groups a changed
+  stretch reaches, keeping every other record as it was, which is what keeps
+  an edit in a block of thousands of strings from reading them all.
+- **Fixed strings that stop at an end token** hide it: `_decode_fixed` marks
+  the end token `fallback` (`is_hidden_end`), so it renders as nothing and
+  keeps its bits, when all that follows it is fill; any other tail is read
+  after a visible end token. `legacy_fixed_text` and `respell_fixed_end` turn
+  what a version 1 project saved into today's spelling.
 - **View reading** (`pipeline/view_read.py`) is what the Hex and Text tabs
   show: the bytes in view cut by the reading's string type from the view's own
-  first byte, or read as pointers — each with its value and target — and the
-  string a target reaches, by the same `decode_one` extraction uses.
+  first byte, or read as pointers — each with its value, its target and
+  whether it is null, a nested source's outer and inner pointers alike — and
+  the string a target reaches, by the same `decode_one` extraction uses.
 - **Text view** (`pipeline/text_view.py`) turns those tokens into what the Text
   tab shows: a body, a map from characters to bytes (`TextModel`), and
   `TextDecode`, which keeps the tokens from one window to the next.
@@ -392,13 +413,18 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   string crosses its bound, reporting each offender. Its output is a list of
   `(offset, bytes)` splices over the decompressed buffer plus the pointer
   splices. A slotted string's slot (`slot_ends`) is its own bytes and the run
-  of the fill byte after them, up to the next string in address order, the
-  bound or the end of the buffer, whichever is first. The Room column and the
-  byte readout pass the bytes too, so what they report is the room the layout
-  will take; a caller with none to hand gets the whole gap to the next string,
-  and the layout, which has them, is the one that refuses. Nothing outside a
-  slot is written, so a splice never touches bytes no string owns and never
-  runs past the buffer.
+  of whole fill patterns after them, up to the next string in address order,
+  the bound or the end of the buffer, whichever is first. The Room column and
+  the byte readout pass the bytes too (`string_ends`), so what they report is
+  the room the layout will take; a caller with none to hand gets the whole gap
+  to the next string, and the layout, which has them, is the one that refuses.
+  Nothing outside a slot is written, so a splice never touches bytes no string
+  owns and never runs past the buffer. The layout runs per group
+  (`string_groups`): a nested block lays out only the groups holding a
+  replacement, each up to its own bound (`group_bounds`). A packed layout
+  writes a string that is the tail of the one before it once
+  (`_is_tail`). A fixed string that stops at an end token encodes its text,
+  then an end token where one fits (`_encode_stopping`).
   The window runs it on every edit (`string_edit.py`): the splices land in the
   buffer every entry over those bytes reads, as one undo step, after a
   re-extraction has shown the block reads as the same strings with the edited
@@ -413,8 +439,8 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   refuses a longer result; an *unbounded* one (no recorded length, which is not
   the same as a length of zero) is still bounded by the end of what holds it. A
   short result in a bounded slot is padded per the pathway's `SlotFill`: `fill`
-  writes the block's fill byte over the slack, `keep` writes short and leaves
-  the previous stream's tail standing.
+  writes the first byte of the block's fill over the slack, `keep` writes short
+  and leaves the previous stream's tail standing.
 - **Save** (`save`) then compresses, hands the container a `WriteTarget` over
   the destination's bytes **read at that moment** rather than remembered from
   the load, splits the result across joined files at the boundaries they have
@@ -635,7 +661,7 @@ and aliases for renamed plugin ids.
 
 ```jsonc
 {
-  "version": 1,
+  "version": 2,
   "current": 1,                                      // opt, an index into entries
   "entries": [
     { "kind": "file", "name": "rom.nes", "path": "rom.nes",
@@ -693,6 +719,12 @@ A block that was loaded but never opened keeps its own in
 the state of every block, not only the ones that were looked at. A translation
 (`t`) an older project still holds is put into the bytes by the first
 extraction, and written out again as it came until then.
+
+Version 2 hides a fixed string's end token (§4.1). Its migration marks each
+block whose strings stop at one with `"fixed_ends_shown": true`
+(`Entry.fixed_ends_shown`), since respelling the saved originals and
+translations takes the block's tables: its first extraction does it
+(`respell_fixed_end`), and a save before then writes the mark again.
 
 ### 6.4 Exchange
 
