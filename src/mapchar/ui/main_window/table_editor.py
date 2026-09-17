@@ -8,14 +8,12 @@ from dataclasses import replace
 
 from PySide6.QtWidgets import QInputDialog
 
-from mapchar.core.bits import Bits, bits_to_bytes
 from mapchar.core.capabilities import Capability, supports
-from mapchar.core.errors import MapcharError, TableError
+from mapchar.core.errors import TableError
 from mapchar.core.notices import notice_lines
 from mapchar.core.table import (
     ID_PATTERN,
     Table,
-    TableSet,
     TokenKind,
     inherited,
     resolve,
@@ -23,8 +21,6 @@ from mapchar.core.table import (
 from mapchar.core.table import (
     Entry as TableEntry,
 )
-from mapchar.core.tokens import render
-from mapchar.engines.decode import DecodeRules, decode
 from mapchar.project.formats.table_native import write_native
 from mapchar.project.tables import (
     capture_overlay,
@@ -36,9 +32,6 @@ from mapchar.project.tables import (
 )
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import TableCommand
-
-SAMPLE_BYTES = 24
-"""How far past an entry's key the sample line reads."""
 
 
 class TableEditorMixin:
@@ -61,29 +54,6 @@ class TableEditorMixin:
         # One entry per byte: a selection is usually a run of characters.
         keys = [format(b, "08b") for b in self._doc.data[s:e]]
         self.table_editor.prefill(keys, s)
-
-    def _table_sample(self, bits: str, at: int | None) -> str:
-        """The Table Editor's sample line: what ``bits`` decode to in the
-        file on screen, read on from ``at`` or from where they are first
-        found, through the table being edited."""
-        doc = self._doc
-        entry = self.table_editor.entry
-        if doc is None or entry is None or entry.table is None or len(bits) % 8:
-            return ""
-        key = bits_to_bytes(bits)
-        if at is None:
-            at = doc.data.find(key)
-            if at < 0:
-                return f"{key.hex(' ').upper()} is not in {self._entry.name}"
-        tables = self.workspace.tables()
-        try:
-            ts = TableSet.build(entry.table, tables)
-        except MapcharError as exc:
-            return str(exc)
-        end = min(len(doc.data), at + len(key) + SAMPLE_BYTES)
-        result = decode(Bits(doc.data[at:end]), ts, 0, DecodeRules())
-        text = render(result.tokens).replace("\n", "⏎")
-        return f"at {self.address_spelling.format(at)}  {text}"
 
     def _table_inheritance(
         self, table: Table

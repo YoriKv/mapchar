@@ -278,10 +278,8 @@ the preview system in [preview.md](preview.md).
     header sorts by that column (Key by width, then bits); a right-click
     chooses which columns show, kept between runs. Weight, left to itself,
     shows only when the table weights something;
-  - a **sample** line under the grid: what the bytes of the form's key decode
-    to in the file on screen, through the table being edited, read on from
-    where they are first found — or, for bytes the raw view sent, from where
-    they were;
+  - a **sample** line under the grid, for a key the raw view sent: where in
+    the file its bytes were taken from (`sampled from 0C4A10`);
   - an **entry form** under the grid, loaded from the selected row or blank
     for a new one: the key as hex or, for a width that is not whole digits,
     bits, with its width read out; the kind as a picker (Text, End, Code,

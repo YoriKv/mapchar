@@ -66,10 +66,6 @@ KEY, KIND, TEXT, DETAILS, WEIGHT, COMMENT = range(6)
 """The grid's columns."""
 HEADERS = ("Key", "Kind", "Text", "Details", "Weight", "Comment")
 
-Sampler = Callable[[str, int | None], str]
-"""What the window answers a sample request with: the text the bytes of an
-entry's key decode to from where they are found (or from a given offset),
-or nothing when there is no file to look in."""
 Speller = Callable[[int], str]
 """How the window spells a file offset."""
 Inheritance = Callable[[Table], tuple[dict[str, tuple[TableEntry, str]], str]]
@@ -118,7 +114,9 @@ class TableEditor(EscapeCloses, QWidget):
         selection, one entry per byte."""
         self._sample_at: int | None = None
         """Where the form's key was taken from, for the sample line."""
-        self.sampler: Sampler | None = None
+        self._sample_bits = ""
+        """The key :attr:`_sample_at` belongs to; the line hides once the form
+        holds another."""
         self.speller: Speller = lambda offset: f"{offset:X}"
         self.inheritance: Inheritance | None = None
         self._inherited: dict[str, tuple[TableEntry, str]] = {}
@@ -190,9 +188,7 @@ class TableEditor(EscapeCloses, QWidget):
         show_elided_tooltips(self.grid)
         layout.addWidget(self.grid, 1)
         self.sample = ElidedLabel("")
-        self.sample.setToolTip(
-            "The key's bytes decoded from where they occur in the file"
-        )
+        self.sample.setToolTip("Where in the file the key's bytes were taken from")
         layout.addWidget(self.sample)
 
         # -- the entry ----------------------------------------------------------
@@ -362,6 +358,7 @@ class TableEditor(EscapeCloses, QWidget):
         self._editing = None
         self._queue = list(keys[1:])
         self._sample_at = at
+        self._sample_bits = keys[0]
         self.form.set_entry(TableEntry(keys[0], TokenKind.TEXT, ""))
         self.form.text.setFocus()
         self._say_where()
@@ -557,16 +554,11 @@ class TableEditor(EscapeCloses, QWidget):
         self._show_sample()
 
     def _show_sample(self) -> None:
-        """What the form's key decodes to where its bytes are found."""
-        if self.sampler is None or self._table is None:
+        """Where the form's key came from, for the keys the raw view sent."""
+        if self._sample_at is None or self.form.key_bits() != self._sample_bits:
             self.sample.setText("")
             return
-        try:
-            entry = self.form.entry()
-        except ValueError:
-            self.sample.setText("")
-            return
-        self.sample.setText(self.sampler(entry.bits, self._sample_at))
+        self.sample.setText(f"sampled from {self.speller(self._sample_at)}")
 
     def _on_double_click(self, item: QTableWidgetItem) -> None:
         """A cell that is not edited in place opens its control in the form."""
@@ -669,6 +661,7 @@ class TableEditor(EscapeCloses, QWidget):
                 bits = self._queue.pop(0)
                 if self._sample_at is not None:
                     self._sample_at += 1
+                self._sample_bits = bits
                 self._say_where()
             else:
                 bits = _next_key(entry.bits)

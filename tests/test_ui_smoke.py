@@ -1823,7 +1823,7 @@ def test_the_editor_moves_on_to_the_next_key_and_removes_on_del(
     assert len(table.entries) == 4
 
 
-def test_the_editor_samples_the_file_and_adds_a_selection_byte_by_byte(
+def test_the_editor_says_where_a_selection_came_from_and_adds_it_byte_by_byte(
     window, tmp_path
 ):
     data = b"\x41\x42\x43\x00" + b"\xff" * 8
@@ -1831,19 +1831,18 @@ def test_the_editor_samples_the_file_and_adds_a_selection_byte_by_byte(
     table_entry = window.workspace.table_entries()[0]
     window._edit_table_entry(table_entry)
     editor = window.table_editor
-    # The sample reads the file from where the key's bytes are first found.
+    # A key typed in by hand came from nowhere, so the sample line stays out.
     editor.form.line.setText("42=B")
-    assert editor.sample.text() == "at 000001  B[$43][end]"
-    editor.form.line.setText("!F1=[x] @main:1")
-    assert "not in" in editor.sample.text()
+    assert editor.sample.text() == ""
     # Add to Table… queues the selected bytes one entry each, saying where.
     window._selection = (0, 3)
     window._add_selection_to_table()
     assert editor.form.key.text() == "41" and "2 more" in editor.status.text()
-    assert editor.sample.text().startswith("at 000000")
+    assert editor.sample.text() == "sampled from 000000"
     editor.form.text.setText("a")
     editor._add()
     assert editor.form.key.text() == "42" and "1 more" in editor.status.text()
+    assert editor.sample.text() == "sampled from 000001"
     editor.form.text.setText("b")
     editor._add()
     assert editor.form.key.text() == "43" and "more" not in editor.status.text()
