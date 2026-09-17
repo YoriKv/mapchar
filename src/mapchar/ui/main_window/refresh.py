@@ -26,7 +26,7 @@ from mapchar.ui.raw_widget import RowModel
 VIEWS = ("raw", "text", "strings")
 """A session's name for each central tab, in tab order: Hex, Text, Strings."""
 
-SETTLE_MS = 120
+DRAG_REST_MS = 120
 """How long after the last move of a dragged view the refresh it put off runs.
 Long enough that a drag never pays for it, short enough that letting go and
 reading the panels feels immediate."""
@@ -51,8 +51,8 @@ class RefreshMixin:
         ``live`` says the view is being dragged, so another move is already on
         its way: only the tab on screen is rendered, and everything that merely
         reads where the view sits — the other tab, the side panels, the title's
-        unsaved marker — waits for the drag to settle
-        (:meth:`_on_view_settled`). What the drag shows is what it costs.
+        unsaved marker — waits for the drag to come to rest
+        (:meth:`_on_drag_rest`). What the drag shows is what it costs.
         """
         doc, entry = self._doc, self._entry
         block = self._current_block()
@@ -83,7 +83,7 @@ class RefreshMixin:
         if not moved:
             self._text_decode = None
         if live:
-            self._settle.start()
+            self._drag_rest.start()
             if self.tabs.currentWidget() is self.text:
                 self._refresh_text_mode(doc, tables)
             else:
@@ -126,15 +126,23 @@ class RefreshMixin:
         self._sync_capabilities()
         self._sync_steps()
 
-    def _on_view_settled(self) -> None:
-        """The dragged view has stopped: run the refresh its moves put off.
+    def _on_drag_rest(self) -> None:
+        """The dragged view has come to rest: run the refresh its moves put off.
 
-        Reached by the settle timer and by letting go of the scrollbar, so a
-        drag that ends on a move the timer has not yet reached still catches up
-        at once. Harmless with nothing outstanding — it is the ordinary refresh
-        of a view that has not moved.
+        Reached by the timer and by letting go of the scrollbar, so a drag that
+        ends on a move the timer has not yet reached still catches up at once.
+        Harmless with nothing outstanding — it is the ordinary refresh of a view
+        that has not moved.
+
+        A drag that pauses with the handle still held has not come to rest: the
+        timer waits again rather than making the user pay for the whole refresh
+        in the middle of the gesture. It keeps running, so a handle that comes
+        up without a release ever reaching here is caught by the next round.
         """
-        self._settle.stop()
+        if self._dragging():
+            self._drag_rest.start()
+            return
+        self._drag_rest.stop()
         if self._doc is not None:
             self._refresh_view(moved=True)
 

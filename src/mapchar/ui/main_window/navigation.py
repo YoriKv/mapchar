@@ -222,7 +222,15 @@ class NavigationMixin:
         if entry is not self._entry and entry is not None:
             self._activate_entry(entry)
         self._offset = offset
-        self._refresh_view(moved=True)
+        self._refresh_view(moved=True, live=self._dragging())
+
+    def _dragging(self) -> bool:
+        """Whether the view is moving under the mouse: the scrollbar of the tab
+        on screen has its handle held. More moves are coming, so a refresh can
+        leave everything but that tab until they stop."""
+        if self.tabs.currentWidget() is self.text:
+            return self.text.bar.isSliderDown()
+        return self.raw.verticalScrollBar().isSliderDown()
 
     def _move(self, delta: int) -> None:
         self._go_to(self._clamped(self._offset + delta))

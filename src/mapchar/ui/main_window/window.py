@@ -85,7 +85,7 @@ from mapchar.ui.main_window.preview import PreviewMixin
 from mapchar.ui.main_window.project_strings import ProjectStringsMixin
 from mapchar.ui.main_window.projects import ProjectMixin
 from mapchar.ui.main_window.raw_view import RawViewMixin
-from mapchar.ui.main_window.refresh import SETTLE_MS, RefreshMixin
+from mapchar.ui.main_window.refresh import DRAG_REST_MS, RefreshMixin
 from mapchar.ui.main_window.relative_search import RelativeSearchMixin
 from mapchar.ui.main_window.relocate import RelocateMixin
 from mapchar.ui.main_window.search import SearchMixin
@@ -215,10 +215,10 @@ class MainWindow(
         self._text_up_guess = 0.0
         """How many bytes back a line of the text above the Text tab's window
         was, the last time one was looked for."""
-        self._settle = QTimer(self)
-        self._settle.setSingleShot(True)
-        self._settle.setInterval(SETTLE_MS)
-        self._settle.timeout.connect(self._on_view_settled)
+        self._drag_rest = QTimer(self)
+        self._drag_rest.setSingleShot(True)
+        self._drag_rest.setInterval(DRAG_REST_MS)
+        self._drag_rest.timeout.connect(self._on_drag_rest)
         """Restarted by every move of a dragged view, so the refresh the drag
         put off runs once it stops (:meth:`_refresh_view`)."""
         self._selection: tuple[int, int] | None = None
@@ -520,8 +520,8 @@ class MainWindow(
         self.text.offset_requested.connect(self._go_to)
         # Letting go settles the view at once, rather than after the timer the
         # last move of the drag started.
-        self.text.bar.sliderReleased.connect(self._on_view_settled)
-        self.raw.verticalScrollBar().sliderReleased.connect(self._on_view_settled)
+        self.text.bar.sliderReleased.connect(self._on_drag_rest)
+        self.raw.verticalScrollBar().sliderReleased.connect(self._on_drag_rest)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.raw.selection_changed.connect(self._on_selection)
         self.raw.context_menu_requested.connect(self._raw_menu)
@@ -859,9 +859,11 @@ class MainWindow(
         A missed one leaves only the *marker* briefly stale — the prompts that
         matter re-ask :meth:`_project_dirty` at the moment they need the answer,
         which is what makes it safe for :meth:`_push_command` to hold the question
-        back over a push and ask it once at the end.
+        back over a push and ask it once at the end — and for a dragged view to
+        hold it back until the drag settles, since answering it serialises the
+        whole project and each move of the drag pushes a command of its own.
         """
-        if self._defer_project_modified:
+        if self._defer_project_modified or self._dragging():
             return
         self.setWindowModified(self._project_dirty())
 

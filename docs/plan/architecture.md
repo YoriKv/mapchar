@@ -842,7 +842,13 @@ their own route out and never claim `workspace.current`.
 A refresh that only **moved** the view — a scroll, a step, a change of
 bounds — passes `moved=True` and leaves the Strings grid alone unless the move
 re-read the block: the grid shows the same strings wherever the view is, and
-filling it is the one part of a refresh that costs by the string. The Text tab
+filling it is the one part of a refresh that costs by the string. A move made
+by **dragging** the scrollbar also passes `live=True`, which renders the tab on
+screen and nothing else: the other tab, the side panels and the title's unsaved
+marker — answering which serialises the whole project — wait for the drag to
+come to rest, a timer's `DRAG_REST_MS` after its last move or the moment the
+handle is let go (`_on_drag_rest`). A drag that pauses mid-gesture has not come
+to rest. The Text tab
 keeps its decode between windows (`TextDecode`, in `pipeline/text_view.py`):
 a window, and the text above
 it that a step up lays out, are served from the tokens already decoded wherever
