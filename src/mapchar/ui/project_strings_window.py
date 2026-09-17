@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.text import fold
+from mapchar.core.textmatch import matches_words, words_of
 from mapchar.ui.strings_view import STATUS_FILTERS
 from mapchar.ui.widgets import ElidedLabel, EscapeCloses, ResultsTable, hint_field
 from mapchar.ui.window_layout import remember_layout
@@ -90,14 +90,13 @@ class ProjectStringsWindow(EscapeCloses, QWidget):
         self._fill()
 
     def _fill(self) -> None:
-        words = fold(self.filter.text()).split()
+        words = words_of(self.filter.text())
         status = self.status_filter.currentText()
         shown = []
         for s in self._all:
             if status != "all" and s.status != status:
                 continue
-            hay = fold(f"{s.block} {s.original} {s.translation} {s.notes}")
-            if words and not all(w in hay for w in words):
+            if not matches_words(words, s.block, s.original, s.translation, s.notes):
                 continue
             shown.append(s)
         self._shown = shown

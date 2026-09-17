@@ -97,33 +97,47 @@ class AutosaveMixin:
 
     def offer_session_recovery(self) -> None:
         """At start: a copy left by a session that had no project file is
-        offered back, and removed either way."""
+        offered back.
+
+        Declined, the copy goes. Recovered, it stays: it is this session's copy
+        again — and still the only place the work exists — until the session is
+        saved as a project. One that will not load is left where it is, with
+        the error, rather than deleted out from under the user.
+        """
         if self.project_path or self.workspace.entries:
             return
         path = self._autosave_path()
         if not path or not os.path.exists(path):
             return
-        wanted = self._ask(
+        if not self._ask(
             "Recover Session",
             f"A session autosaved at {self._stamp(path)} was never saved as a "
             "project. Recover it?\n\n'No' deletes the copy.",
-        )
-        if wanted:
-            self._open_recovered(path, None)
-        self._discard_autosave(path)
+        ):
+            self._discard_autosave(path)
+            return
+        self._open_recovered(path, None)
 
     def _open_recovered(self, copy: str, project_path: str | None) -> bool:
-        """Open the copy as the project it stands for."""
+        """Open the copy as the project it stands for, and write it again.
+
+        The copy is not discarded by the open: until the recovered project is
+        saved it is the newer of the two files, and deleting it would leave a
+        crash before the next save with nothing but the older project. It is
+        written again from what was just loaded, so it says what is now in
+        memory rather than waiting on the timer.
+        """
         try:
             load_project(copy)
         except ProjectError as exc:
             self._error(str(exc))
             return False
-        opened = self.open_project(copy, recovered_from=project_path)
+        opened = self.open_project(copy, recovered_from=project_path, recovered=True)
         if opened:
             self.project_path = project_path
             self._saved_snapshot = "" if project_path else None
             self._update_title()
+            self._autosave()
         return opened
 
     @staticmethod

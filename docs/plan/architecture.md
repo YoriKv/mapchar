@@ -176,6 +176,7 @@ They are frozen values whose mutators return new instances.
 | `bits.py` | `Bits` windows over a byte buffer, plus the bit/byte/hex conversions, key spelling, alignment and bit reversal every layer shares |
 | `numbers.py` | Every way a number is written: `parse_num`/`format_num` for the `$hex` spelling tables, scripts and command files share, and the one hex scanner behind `parse_hex`, `parse_hex_offset`/`format_hex_offset` and `parse_flat_hex`, which the UI's always-hex fields and `address.py` read through |
 | `text.py` | The Unicode model: `nfc`/`nfd`, `is_mark`, `graphemes` and `char_units` (a base character plus its combining marks — one glyph slot), and `fold` for a case- and form-insensitive comparison |
+| `textmatch.py` | The one filter every list runs: `words_of` folds and splits what was typed, and `matches_words` says whether each of those words is in one of a row's fields — fields folded apart, so no word matches over the seam between two |
 | `capabilities.py` | `EntryKind → frozenset[Capability]` (raw view, strings view, write, dump, pointers, preview, …) and `supports()` |
 | `address.py` | Offset ↔ `bank:addr` display layouts for the navigation bar |
 
@@ -357,13 +358,22 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   pointer values through the mappings, and refuse the whole block when any
   string crosses its bound, reporting each offender. Its output is a list of
   `(offset, bytes)` splices over the decompressed buffer plus the pointer
-  splices. A slotted string's slot (`slot_ends`) runs to the next string in
-  address order, or the bound, never short of its own end. The window runs
-  it on every edit (`string_edit.py`): the splices land in the buffer every
-  entry over those bytes reads, as one undo step, after a re-extraction has
-  shown the block reads as the same strings with the edited ones saying what
-  was typed. Extraction of a range skips a run of the fill byte between two
-  strings, which is what a shortened string leaves behind.
+  splices. A slotted string's slot (`slot_ends`) is its own bytes and the run
+  of the fill byte after them, up to the next string in address order, the
+  bound or the end of the buffer, whichever is first. The Room column and the
+  byte readout pass the bytes too, so what they report is the room the layout
+  will take; a caller with none to hand gets the whole gap to the next string,
+  and the layout, which has them, is the one that refuses. Nothing outside a
+  slot is written, so a splice never touches bytes no string owns and never
+  runs past the buffer.
+  The window runs it on every edit (`string_edit.py`): the splices land in the
+  buffer every entry over those bytes reads, as one undo step, after a
+  re-extraction has shown the block reads as the same strings with the edited
+  ones saying what was typed. Extraction passes over the fill byte a shortened
+  string leaves behind — between the strings of a range, and at the end of a
+  *next pointer* string, which keeps its whole extent — but only when the
+  table maps nothing beginning with it (`padding_bits`); a fill byte the table
+  maps is text and is read.
 - **Slots** (`compress_for_slot`) are the write minus the store, so the checks
   that make one safe hold however the bytes are delivered — through a container
   to a file, or spliced into a parent's buffer by a block. A *bounded* slot
@@ -469,11 +479,20 @@ file to its blocks and bookmarks, revision-token dirty tracking per entry,
 `invalidate_extractions` when a table changes. It answers every question
 about what is open — `find_file` / `find_table` by path, `entry_by_id` for a
 tree row, `entry_for_table`, `dirty_entries`, `files` / `fonts` /
-`table_entries` / `loaded_tables` / `tables` — so no widget walks `entries`
-itself. `tables` is every table a block can read through: the loaded ones over
-`builtin_tables`, the registry's charsets as tables
-(`plugins.charsets.CharsetTables`, each built on first read), which the window
-sets and resets with its registry.
+`table_entries` / `loaded_tables` / `tables`, `children` and `blocks_of` (a
+file's blocks alone, and with `loaded=True` only those holding a document) —
+so no widget walks `entries` itself. `tables` is every table a block can read
+through: the loaded ones over `builtin_tables`, the registry's charsets as
+tables (`plugins.charsets.CharsetTables`, each built on first read), which the
+window sets and resets with its registry.
+
+`entries_sharing` answers the other question the whole list settles: which
+loaded entries hold the *same bytes*. A plain block reads its file's buffer,
+so it shares with the file and its other plain blocks; a compressed block
+reads its slot's payload, so it shares with every block over that slot; a
+file's own compression is the whole file's, decoded on the way in, so it is
+never a slot. Loading a second block over one slot, splicing an edit, and
+writing a file all ask it.
 
 Two more jobs are the workspace's because both are questions about the whole
 list, not about one entry:
@@ -481,7 +500,11 @@ list, not about one entry:
 - **Dropping cached documents.** `drop_document` discards an entry's document
   but keeps what only it held (a block's originals, statuses and notes move to
   `pending_strings`, with the bits each string covered when the drop is for a
-  block edit), and `invalidate_path` does that for every entry reading a
+  block edit). It does not keep bytes, so nothing drops a buffer holding
+  unsaved edits: a block edit re-reads a compressed block over the payload it
+  already has, and where a drop is unavoidable — a container edit, a change of
+  compression scheme — the entry is marked saved with it, since an entry left
+  unsaved would claim edits no buffer holds. `invalidate_path` does that for every entry reading a
   path a write just rewrote — sparing the entry that wrote, the blocks under
   it, and anything with unsaved edits of its own.
 - **Missing files.** `missing_paths` is the de-duplicated worklist of
@@ -496,11 +519,14 @@ list, not about one entry:
 Blocks are to files what celPix slices are, with these differences:
 
 - a block's `Document` holds `strings`; a status or note edit stamps the
-  block, while a string edit stamps whichever entry owns the bytes — the file
-  for a plain block, the block for one decompressing its own slot;
+  block, while a string edit stamps every entry whose own buffer it changed —
+  the file for a plain block, and each block over a compressed slot, since one
+  payload is all of theirs;
 - a plain block reads its file's buffer, so several blocks over one file
   write in one deposit; blocks over one compressed slot share its payload and
-  write together.
+  write together. A write covers every block handed to it, and a block it
+  cannot write is reported by name rather than skipped: one left out of a
+  write that reported success would stay unsaved for ever.
 
 ### 6.2 Table files and scripts
 
@@ -781,7 +807,7 @@ invariants once, in `_StateCommand`:
   before.
 
 A write's step (`WriteCommand`) holds, per side, the file's buffer, each written
-block's buffer and string states, and a `FileChange` per file on disk: the run
+block's buffer, and a `FileChange` per file on disk: the run
 of bytes that differed and the file's size, from `pipeline/filechange.py`. Applying a side
 reads the file then and moves it only while it still holds the other side; the
 disk is written by the write itself, so the command's first redo finds its
@@ -789,7 +815,8 @@ files already there and lands the in-memory half alone.
 
 A string edit merges only within a **typing run** — the window bumps
 `_edit_run` when the selection or the entry moves — and a run that ends back
-where it began obsoletes its step and hands back the earlier revision. View
+where it began obsoletes its step and hands the earlier revision back to every
+entry the run stamped. View
 moves in one entry merge the same way.
 
 The project's dirty state is the other kind: a serialised comparison against

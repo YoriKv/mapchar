@@ -153,16 +153,38 @@ def _pascal(payload: bytes, st: Pascal, result, text: str, tables: TableSet) -> 
     return prefix + payload
 
 
-def slot_ends(strings: list[StringRecord], bound: int) -> dict[int, int]:
-    """Where each string's slot ends, by index: the start of the next string
-    in address order, or ``bound`` after the last — never short of the
-    string's own end. A string written shorter than the one before it keeps
-    the room it had, so the next edit can use it again."""
+def slot_ends(
+    strings: list[StringRecord],
+    bound: int,
+    data: bytes | None = None,
+    fill: int | None = None,
+) -> dict[int, int]:
+    """Where each string's slot ends, by index.
+
+    A slot is the bytes the string itself holds plus the run of the block's
+    fill byte directly after them — the padding a shorter replacement left
+    behind, which the next edit may use again — and stops at the next string
+    in address order, at ``bound``, or at the end of ``data``, whichever comes
+    first. Bytes between two strings that are not that padding belong to no
+    slot: nothing the block writes may touch them.
+
+    Without ``data`` and ``fill`` there is no telling padding from anything
+    else, and a slot is the whole gap to the next string — the room a block
+    whose strings sit end to end has, and what a surface with no bytes to hand
+    reports; the layout, which has them, is the one that decides.
+    """
     ordered = sorted(strings, key=lambda s: s.start)
     ends: dict[int, int] = {}
+    limit = bound if data is None else min(bound, len(data))
     for i, rec in enumerate(ordered):
-        following = ordered[i + 1].start if i + 1 < len(ordered) else bound
-        ends[rec.index] = max(rec.end, following)
+        stop = ordered[i + 1].start if i + 1 < len(ordered) else limit
+        if data is None or fill is None:
+            ends[rec.index] = max(rec.end, stop)
+            continue
+        end = rec.end
+        while end < stop and end < len(data) and data[end] == fill:
+            end += 1
+        ends[rec.index] = end
     return ends
 
 
@@ -188,8 +210,8 @@ def layout_block(
     if mode is WriteMode.SLOTTED:
         out = bytearray()
         first = min(s.start for s in strings)
-        ends = slot_ends(strings, block_bound(config, strings))
-        last = max(max(s.end for s in strings), max(ends.values()))
+        ends = slot_ends(strings, block_bound(config, strings), data, config.fill)
+        last = min(max(max(s.end for s in strings), max(ends.values())), len(data))
         out[:] = data[first:last]
         used = 0
         for rec in strings:
@@ -202,10 +224,14 @@ def layout_block(
                         Problem(rec.index, "spans a skip range and cannot be rewritten")
                     )
                 continue
-            # Never past the slot the block gives the string, whatever the
-            # fixed length says: ``out`` is a bytearray, and a slice assignment
-            # longer than the slot would grow the buffer rather than stop,
-            # writing over — or past — the string that follows.
+            # Never past the slot the block gives the string (:func:`slot_ends`
+            # — its own bytes and the padding after them, and nothing else),
+            # whatever the fixed length says: ``out`` is a bytearray, and a
+            # slice assignment longer than the slot would grow the buffer
+            # rather than stop, writing over — or past — the string that
+            # follows. Padding the chunk out to the slot writes the fill byte
+            # where the fill byte already is, so an unedited string's bytes,
+            # and every byte outside a slot, stay as they are.
             extent = ends[rec.index] - rec.start
             room = extent if fixed_len is None else min(fixed_len, extent)
             if fixed_len is not None and fixed_len > extent:

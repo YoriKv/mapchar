@@ -344,8 +344,8 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
 
     payload = b"HELLO HELLO HELLO\x00WORLD WORLD\x00" * 3
     packed = GbaLz77().compress(payload, PipelineContext())
-    slot = len(packed) + 8  # the compressed slot has spare room at its end
-    data = b"\xff" * 16 + packed + b"\xff" * 8 + b"\xff" * 24
+    slot = len(packed) + 9  # the compressed slot has spare room at its end
+    data = b"\xff" * 16 + packed + b"\xff" * 9 + b"\xff" * 24
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     window._preview_scheme = "gba_lz77"
     window._go_to(16)
@@ -355,7 +355,9 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
         file_entry,
         "Z",
         RangeSource(0, len(payload)),
-        fill=0x20,
+        # The fill byte is one the ASCII table maps nothing to, so what a
+        # shorter string leaves behind is padding and not text.
+        fill=0xFF,
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=slot,
@@ -366,7 +368,7 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     written = Path(file_entry.path).read_bytes()
     assert written[:16] == b"\xff" * 16 and written[16 + slot :] == b"\xff" * 24
     out = GbaLz77().decompress(written[16:], PipelineContext())
-    assert out.startswith(b"HI HI HI\x00" + b" " * 9 + b"WORLD WORLD\x00")
+    assert out.startswith(b"HI HI HI\x00" + b"\xff" * 9 + b"WORLD WORLD\x00")
     assert block.doc.strings[0].current_text() == "HI HI HI[end]"
     assert block.doc.strings[0].original == "HELLO HELLO HELLO[end]"
 
@@ -393,7 +395,7 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
         file_entry,
         "front",
         RangeSource(0, 30),
-        fill=0x20,
+        fill=0xFF,
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=slot,
@@ -403,7 +405,7 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
         file_entry,
         "back",
         RangeSource(30, 60),
-        fill=0x20,
+        fill=0xFF,
         compression_id="gba_lz77",
         slice_offset=16,
         slice_length=slot,
@@ -415,8 +417,8 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
     assert window._write_blocks([first, second])
     written = Path(file_entry.path).read_bytes()
     out = GbaLz77().decompress(written[16:], PipelineContext())
-    assert out.startswith(b"HI HI HI\x00" + b" " * 9)
-    assert out[30:].startswith(b"BYE\x00" + b" " * 14)
+    assert out.startswith(b"HI HI HI\x00" + b"\xff" * 9)
+    assert out[30:].startswith(b"BYE\x00" + b"\xff" * 14)
     assert not first.dirty and not second.dirty
 
 
@@ -433,7 +435,7 @@ def test_siblings_over_a_slot_share_its_payload_and_write_together(window, tmp_p
     data = b"\xff" * 16 + packed + b"\xff" * 16 + b"\xff" * 24
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     slice_fields = dict(
-        fill=0x20, compression_id="gba_lz77", slice_offset=16, slice_length=slot
+        fill=0xFF, compression_id="gba_lz77", slice_offset=16, slice_length=slot
     )
     written = add_block(
         window, file_entry, "written", RangeSource(0, 30), **slice_fields
@@ -1467,6 +1469,82 @@ def test_a_project_holding_translations_puts_them_in_the_bytes(window, tmp_path)
     assert not rom.dirty
 
 
+def test_a_project_holding_translations_keeps_them_while_its_table_is_gone(
+    window, tmp_path
+):
+    """The table a block reads through is not there, so nothing can be laid
+    out: the translations an older project was holding stay in the project,
+    the load says so in its notices, and they land when the table is back."""
+    import json
+
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    add_block(window, file_entry, "b", RangeSource(0, 6), fill=0xEE)
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    doc = json.loads(proj.read_text())
+    block_dict = next(e for e in doc["entries"] if e["kind"] == "block")
+    block_dict["strings"] = [{"i": 0, "t": "A[end]", "s": "edited"}]
+    proj.write_text(json.dumps(doc))
+    table_file = tmp_path / "main.tbl"
+    table_text = table_file.read_text()
+    table_file.unlink()
+    window._new_project()
+    assert window.open_project(str(proj))
+
+    back = window.workspace.of_kind(EntryKind.BLOCK)[0]
+    rom = window.workspace.files()[0]
+    # Nothing was read, so nothing landed — and nothing was dropped either.
+    assert not rom.dirty and not back.doc.strings
+    assert back.pending_strings[0].translation == "A[end]"
+    assert any("translation(s)" in n for n in window._load_notices)
+    # A save writes them out again, so they outlive the session that could not
+    # place them.
+    again = tmp_path / "q.mapchar"
+    assert window._write_project(str(again))
+    saved = next(
+        e for e in json.loads(again.read_text())["entries"] if e["kind"] == "block"
+    )
+    assert saved["strings"] == [{"i": 0, "t": "A[end]", "s": "edited"}]
+    # With the table back they land as they always would have.
+    table_file.write_text(table_text)
+    window.reload_table(window.workspace.of_kind(EntryKind.TABLE)[0])
+    window._extract_current(back, back.doc, window._table_set_of(back))
+    assert back.doc.strings[0].current_text() == "A[end]"
+    assert rom.dirty
+
+
+def test_an_older_project_s_translation_that_would_re_cut_the_block_is_refused(
+    window, tmp_path
+):
+    """The bytes are the translation, so they must say what the translator
+    said: a translation that would make the block read as other strings is
+    kept in the notes and reported, not written."""
+    import json
+
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    # The spare room a shorter string leaves is filled with the end token,
+    # which the table maps and the block therefore reads as text: it would
+    # read as three strings rather than two.
+    add_block(window, file_entry, "b", RangeSource(0, 6), fill=0x00)
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    doc = json.loads(proj.read_text())
+    block_dict = next(e for e in doc["entries"] if e["kind"] == "block")
+    block_dict["strings"] = [{"i": 0, "t": "A[end]", "s": "edited"}]
+    proj.write_text(json.dumps(doc))
+    window._new_project()
+    assert window.open_project(str(proj))
+
+    back = window.workspace.of_kind(EntryKind.BLOCK)[0]
+    rom = window.workspace.files()[0]
+    assert [r.current_text() for r in back.doc.strings] == ["AB[end]", "BA[end]"]
+    assert not rom.dirty
+    assert "unplaced: A[end]" in back.doc.strings[0].notes
+    assert any("3 strings instead of 2" in n for n in window._load_notices)
+
+
 def test_blocks_and_bookmarks_never_share_a_name(window, tmp_path):
     data = bytes.fromhex("41 42 00 42 41 00")
     file_entry = open_rom_and_table(window, tmp_path, data)
@@ -1946,7 +2024,42 @@ def test_autosave_writes_a_copy_and_offers_it_back(window, tmp_path, monkeypatch
     window._new_project()
     monkeypatch.setattr(window, "_ask", lambda *a, **k: True)
     assert window.open_project(str(proj))
-    assert window.project_path == str(proj) and not copy.exists()
+    assert window.project_path == str(proj)
     back = window.workspace.of_kind(EntryKind.BLOCK)[0]
     assert back.doc.strings[0].notes == "from the copy"
     assert window._project_dirty()  # the copy is not what the file holds
+    # And the copy is still there: until the project is saved it is the only
+    # place the recovered work exists, so a crash now finds it rather than the
+    # older file.
+    assert copy.exists() and "from the copy" in copy.read_text()
+    assert window._write_project(str(proj))
+    assert not copy.exists()  # saved: the file says it now
+
+
+def test_recovering_a_session_keeps_its_copy_and_never_names_it(
+    window, tmp_path, monkeypatch
+):
+    """A session that was never saved as a project is recovered from the copy
+    in the data folder: the copy stays until the session is saved, and it is
+    not a project the user has, so nothing lists it."""
+    window.plugin_dir = str(tmp_path / "data" / "plugins")
+    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    block.doc.strings[0].notes = "from the session"
+    window._autosave()
+    copy = tmp_path / "data" / "autosave" / "unsaved.mapchar"
+    assert copy.exists()
+
+    window._new_project()
+    assert not window.project_path and not window.workspace.entries
+    monkeypatch.setattr(window, "_ask", lambda *a, **k: True)
+    window.offer_session_recovery()
+    back = window.workspace.of_kind(EntryKind.BLOCK)[0]
+    assert back.doc.strings[0].notes == "from the session"
+    assert window.project_path is None
+    assert copy.exists()  # the session still has nowhere else to be
+    # The copy is not a project: Open Recent and the last folder used say
+    # nothing about it.
+    assert str(copy) not in window._recent()
+    assert str(copy.parent) != window.settings.value("last_dir", "")

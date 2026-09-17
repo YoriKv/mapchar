@@ -32,6 +32,7 @@ from mapchar.core.bits import format_key
 from mapchar.core.errors import TableError
 from mapchar.core.table import Entry as TableEntry
 from mapchar.core.table import Table, TokenKind
+from mapchar.core.textmatch import matches_words, words_of
 from mapchar.engines.relsearch import entries_from_base
 from mapchar.project.formats.table_native import format_entry, parse_entry
 from mapchar.project.workspace import Entry
@@ -424,12 +425,14 @@ class TableEditor(EscapeCloses, QWidget):
             self.grid.setItem(row, column, item)
 
     def _apply_filter(self, text: str) -> None:
-        words = text.casefold().split()
+        words = words_of(text)
         for row in range(self.grid.rowCount()):
-            key = self.grid.item(row, KEY).text().casefold()
-            shown = self.grid.item(row, TEXT).text().casefold()
-            comment = self.grid.item(row, COMMENT).text().casefold()
-            hit = all(w in key or w in shown or w in comment for w in words)
+            hit = matches_words(
+                words,
+                self.grid.item(row, KEY).text(),
+                self.grid.item(row, TEXT).text(),
+                self.grid.item(row, COMMENT).text(),
+            )
             self.grid.setRowHidden(row, not hit)
 
     def _focus_filter(self) -> None:

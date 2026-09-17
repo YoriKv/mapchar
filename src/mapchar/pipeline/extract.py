@@ -144,6 +144,32 @@ def pointer_target(
     return target if 0 <= target < size else None
 
 
+def padding_bits(config: BlockConfig, tables: TableSet) -> str | None:
+    """The block's fill byte as bits when a run of it is padding, else ``None``.
+
+    A fill byte no entry of the start table can begin a token with is padding
+    wherever it sits between strings: nothing in the block reads as it, so
+    what a shorter replacement left behind is safe to pass over. A fill byte
+    the table does map is text — a string may begin with it, or be nothing but
+    it — and every byte of it is read, which is why a block's fill byte should
+    be one no string begins with.
+    """
+    pad = format(config.fill & 0xFF, "08b")
+    for key in tables.start.entries:
+        if key.startswith(pad) or pad.startswith(key):
+            return None
+    return pad
+
+
+def _without_padding(bits: Bits, start: int, limit: int, pad: str | None) -> int:
+    """``limit`` pulled back over the run of padding bytes that ends there."""
+    if pad is None:
+        return limit
+    while limit - 8 >= start and limit % 8 == 0 and bits.window(limit - 8, 8) == pad:
+        limit -= 8
+    return limit
+
+
 def _extract_pointers(
     bits: Bits,
     config: BlockConfig,
@@ -162,6 +188,7 @@ def _extract_pointers(
     stop_bit = min(stop_bit, bits.length)
     strings: list[StringRecord] = []
     st = config.string_type
+    pad = padding_bits(config, tables) if isinstance(st, NextPointer) else None
     for i, target in enumerate(ordered):
         start = target * 8
         if start >= bits.length:
@@ -169,9 +196,13 @@ def _extract_pointers(
         limit = stop_bit if stop_bit > start else bits.length
         nxt = ordered[i + 1] * 8 if i + 1 < len(ordered) else None
         if isinstance(st, NextPointer) and nxt is not None and nxt > start:
-            # The string owns every bit up to the next pointer's target.
+            # The string owns every bit up to the next pointer's target, and
+            # keeps them whatever it says: the padding a shorter replacement
+            # left at its end is not text, so it is not read, but the slot
+            # stays whole so the string can grow back into it.
             limit = min(limit, nxt)
-            r = decode(bits, tables, start, _rules(config, limit, False))
+            read_to = _without_padding(bits, start, limit, pad)
+            r = decode(bits, tables, start, _rules(config, read_to, False))
             tokens, end, res_notices = r.tokens, limit, r.notices
         else:
             # A fixed string keeps its whole extent even when it stops early
@@ -252,9 +283,10 @@ def _extract_range(
 
     A string written shorter than the one it replaced leaves its slot padded
     with the block's fill byte, and the next string starts after the padding:
-    a run of the fill byte between two strings is padding, never text, and is
-    skipped — which is why a block's fill byte should be one no string begins
-    with. A fixed-length string keeps its whole slot, so nothing is skipped.
+    a run of the fill byte between two strings is passed over when it can only
+    be padding (:func:`padding_bits`) — a fill byte the table maps is text and
+    is read like any other. A fixed-length string keeps its whole slot, so
+    nothing is skipped.
     """
     strings: list[StringRecord] = []
     notices: list[Notice] = []
@@ -264,12 +296,11 @@ def _extract_range(
         notices.append(
             Notice("'next pointer' needs a pointer source; reading to end tokens")
         )
-    skip_fill = config.fixed_length is None
-    fill_bits = format(config.fill & 0xFF, "08b")
+    pad = padding_bits(config, tables) if config.fixed_length is None else None
     while pos < stop_bit:
         start = pos
-        if skip_fill and strings and start % 8 == 0:
-            while start + 8 <= stop_bit and bits.window(start, 8) == fill_bits:
+        if pad is not None and strings and start % 8 == 0:
+            while start + 8 <= stop_bit and bits.window(start, 8) == pad:
                 start += 8
             if start >= stop_bit:
                 break

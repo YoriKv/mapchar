@@ -6,7 +6,7 @@ import os
 
 from mapchar.core.context import KEY_HEADER_SIZE
 from mapchar.core.errors import MapcharError
-from mapchar.core.text import nfc
+from mapchar.core.text import same_text
 from mapchar.project.exchange.addresses import shift_config
 from mapchar.project.exchange.atlas import read_atlas, write_atlas
 from mapchar.project.exchange.cartographer import (
@@ -24,10 +24,6 @@ from mapchar.project.formats.translator import (
 )
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import StringFieldCommand
-
-
-def _same(a: str, b: str) -> bool:
-    return nfc(a).replace("\n", "") == nfc(b).replace("\n", "")
 
 
 class ImportExportMixin:
@@ -273,21 +269,15 @@ class ImportExportMixin:
                     i: t
                     for i, t in by_index.items()
                     if (rec := entry.doc.string_by_index(i)) is not None
-                    and not _same(rec.current_text(), t)
+                    and not same_text(rec.current_text(), t)
                 }
                 if not edits:
                     continue
                 if entry is not self._entry:
                     self._activate_entry(entry)
-                if not self._edit_strings(entry, edits, label):
-                    landed += len(edits)
-                    continue
-                for i, t in edits.items():
-                    problems = self._edit_strings(entry, {i: t}, label)
-                    if problems:
-                        notices += [f"{name}/{p}" for p in problems]
-                    else:
-                        landed += 1
+                went_in, problems = self._edit_each(entry, edits, label)
+                landed += went_in
+                notices += [f"{name}/{p}" for p in problems]
         return landed
 
     def import_file(self, path: str, kind: str, force: bool = False) -> None:

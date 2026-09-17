@@ -45,12 +45,44 @@ class ProjectMixin:
         return self._snapshot() != self._saved_snapshot
 
     def _snapshot(self) -> str:
+        """The project as its file would hold it: what the dirty check compares.
+
+        Taken after every commit and every status change, where a pointer
+        block's thousands of strings are nearly the whole of it. Each block's
+        strings are lifted out of the dictionary and serialised on their own,
+        and a block whose strings are as they were hands back the very list it
+        handed back before (:attr:`~mapchar.project.workspace.Entry.
+        strings_cache`) — so its text is the text already in hand, and only
+        what changed is written out again.
+        """
         import json
 
         self._capture_session()
         base = os.path.dirname(self.project_path) if self.project_path else None
         d = project_dict(self.workspace.entries, None, base, self.workspace.glossary)
-        return json.dumps(d, sort_keys=True)
+        texts: dict[int, tuple[list, str]] = {}
+        parts: list[str] = []
+        for at, (entry, written) in enumerate(
+            zip(self.workspace.entries, d["entries"], strict=True)
+        ):
+            records = written.pop("strings", None)
+            if records is None:
+                continue
+            kept = self._strings_texts.get(id(entry))
+            text = (
+                kept[1]
+                if kept is not None and kept[0] is records
+                else json.dumps(records, sort_keys=True)
+            )
+            texts[id(entry)] = (records, text)
+            # Whose strings these are goes in with them: two entries that
+            # differ only in which of them holds them would otherwise read the
+            # same, and a project that differs from its file would read clean.
+            parts += (f"\n{at}:", text)
+        # Rebuilt rather than added to, so it holds this project's entries and
+        # no others.
+        self._strings_texts = texts
+        return json.dumps(d, sort_keys=True) + "".join(parts)
 
     def _resolve_dirty_entries(
         self,
@@ -149,11 +181,18 @@ class ProjectMixin:
         if path:
             self.open_project(path)
 
-    def open_project(self, path: str, *, recovered_from: str | None = None) -> bool:
-        """Open a project file. ``recovered_from`` names the project an
-        autosaved copy stands for, when ``path`` is the copy: the copy is read
-        and the project keeps its own path and reads unsaved."""
-        if recovered_from is None:
+    def open_project(
+        self, path: str, *, recovered_from: str | None = None, recovered: bool = False
+    ) -> bool:
+        """Open a project file.
+
+        ``recovered`` says ``path`` is an autosaved copy: it is read, the
+        project keeps its own path — ``recovered_from``, or none at all for a
+        session that was never saved as a project — and reads unsaved. The copy
+        itself stays on disk until the project is saved, since until then it is
+        the only place the recovered work exists.
+        """
+        if not recovered:
             if not self._confirm_discard("open another project"):
                 return False
             if self._offer_autosave(path):
@@ -189,16 +228,30 @@ class ProjectMixin:
         self.workspace.glossary = loaded.glossary
         self._sync_glossary()
         self.undo_stack.clear()
-        self.project_path = recovered_from or path
-        self._discard_autosave()
-        if recovered_from is not None:
-            path = recovered_from
-        self._remember_dir(path)
-        self._add_recent(path)
+        self.project_path = recovered_from if recovered else path
+        if not recovered:
+            # Whatever copy sits beside the project just opened is older than
+            # the file, or was declined: either way it is not wanted. A
+            # recovered one is kept — it is what was just loaded.
+            self._discard_autosave()
+        # The copy is not a project the user has: Open Recent and the last
+        # folder name the project it stands for, and a recovered session that
+        # has none names nothing at all.
+        named = recovered_from if recovered else path
+        if named:
+            path = named  # what it is called from here on, and where it lives
+            self._remember_dir(path)
+            self._add_recent(path)
         self._refresh_table_picks()
+        # Reading the blocks has things of its own to say — a block whose table
+        # is not loaded, and the translations it is still holding — and they go
+        # in the same dialog: a status message at load time is gone before it
+        # can be read.
+        self._load_notices = []
         self._read_blocks()
-        if loaded.warnings:
-            TextDialog("Project Notices", "\n".join(loaded.warnings), self).exec()
+        notices = loaded.warnings + self._load_notices
+        if notices:
+            TextDialog("Project Notices", "\n".join(notices), self).exec()
         self._activate_entry(
             loaded.current
             or (self.workspace.files()[0] if self.workspace.files() else None)

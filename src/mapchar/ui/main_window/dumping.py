@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 
 from mapchar.project.formats.script import write_script
-from mapchar.project.workspace import EntryKind
 from mapchar.ui.dialogs import DumpDialog
 
 
@@ -26,9 +25,7 @@ class DumpingMixin:
         if file_entry is None:
             self._error("Open a ROM and create a block first.")
             return
-        blocks = [
-            e for e in self.workspace.children(file_entry) if e.kind is EntryKind.BLOCK
-        ]
+        blocks = self.workspace.blocks_of(file_entry)
         current = self._current_block()
         if not all_blocks and current is not None:
             blocks = [current]
@@ -45,11 +42,7 @@ class DumpingMixin:
         if dialog.exec() != DumpDialog.DialogCode.Accepted:
             return
         if dialog.all_blocks.isChecked():
-            blocks = [
-                e
-                for e in self.workspace.children(file_entry)
-                if e.kind is EntryKind.BLOCK
-            ]
+            blocks = self.workspace.blocks_of(file_entry)
         name = blocks[0].name if len(blocks) == 1 else file_entry.name
         path = self._pick_save(
             "Dump to Script", f"{name}.txt", "Scripts (*.txt);;All files (*)"

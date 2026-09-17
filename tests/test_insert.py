@@ -6,8 +6,10 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     Lines,
+    NextPointer,
     Pascal,
     PointerListSource,
+    PointerTableSource,
     RangeSource,
     WriteMode,
 )
@@ -160,3 +162,58 @@ def test_a_string_read_across_a_backwards_skip_keeps_both_pieces(registry):
     assert res.ok and out == data
     res, _ = relayout(data, cfg, ts, {1: "X[end]A[end]"}, registry)
     assert not res.ok and "skip range" in res.problems[0].message
+
+
+def test_a_slot_is_the_string_and_the_padding_after_it(registry):
+    """Bytes between two pointed-to strings that are not the block's padding
+    belong to no slot: an edit leaves them standing, and no string grows into
+    them. The padding a shorter string left is the slot's, and grows back."""
+    # Pointers to $4 and $9, A[end] and B[end], three bytes nothing points at
+    # between them, and two more past the last string up to the bound.
+    data = bytes.fromhex("04 00 09 00 41 00 5A 5A 5A 42 00 5A 5A")
+    cfg = BlockConfig(
+        PointerListSource((0, 2), 2),
+        EndToken(),
+        "main",
+        bound=13,
+        write_mode=WriteMode.SLOTTED,
+        fill=0xEE,
+    )
+    res, out = relayout(data, cfg, TS, {0: "A[end]", 1: "B[end]"}, registry)
+    assert res.ok and out == data
+    res, _ = relayout(data, cfg, TS, {0: "AB[end]"}, registry)
+    assert not res.ok and res.problems[0].index == 0 and res.problems[0].over == 1
+    # The same block once B[end] has been shortened to [end]: the fill byte
+    # after it is padding, so it is room the next edit may use.
+    padded = bytes.fromhex("04 00 09 00 41 00 5A 5A 5A 00 EE 5A 5A")
+    res, out = relayout(padded, cfg, TS, {1: "B[end]"}, registry)
+    assert res.ok and out == data
+
+
+def test_a_slotted_splice_never_grows_the_buffer():
+    """A bound past the end of the buffer bounds the last slot at the bytes
+    there are; a splice past them would lengthen what it is spliced into."""
+    data = bytes.fromhex("41 42 00 42 41 00")
+    cfg = BlockConfig(RangeSource(0, 16), EndToken(), "main", fill=0xEE)
+    res, out = relayout(data, cfg, TS, {0: "A[end]"})
+    assert res.ok and out == bytes.fromhex("41 00 EE 42 41 00")
+    assert all(s.end <= len(data) for s in res.splices)
+
+
+def test_a_next_pointer_string_reads_back_without_its_padding(registry):
+    """A shorter replacement in a *next pointer* block leaves fill bytes in its
+    slot. They are padding, not text, so the string reads back as what was
+    typed -- and the slot stays whole, so it can grow back."""
+    data = bytes.fromhex("06 00 09 00 FF FF") + b"ABCABC"
+    cfg = BlockConfig(
+        PointerTableSource(0, 4, 2, 2),
+        NextPointer(),
+        "main",
+        write_mode=WriteMode.SLOTTED,
+        fill=0xFF,
+    )
+    res, out = relayout(data, cfg, TS, {0: "A"}, registry)
+    assert res.ok and out == bytes.fromhex("06 00 09 00 FF FF 41 FF FF") + b"ABC"
+    assert texts(extract(out, cfg, TS, registry)) == ["A", "ABC"]
+    res, out = relayout(out, cfg, TS, {0: "ABC"}, registry)
+    assert res.ok and out == data

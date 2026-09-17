@@ -105,10 +105,17 @@ class ContainerMixin:
         bookmark under it is re-pointed with it — their offsets are counted
         against the join, so a change to the file list changes what they address
         — and a row still named after its first file follows the new one.
+
+        Every document dropped here is read from disk again, so the unsaved
+        edits in it are gone — which is what the gate in :meth:`_edit_container`
+        warned about and what its **Discard** chose. The entries are marked
+        saved with them: one left unsaved would claim edits no buffer holds and
+        no write could ever resolve.
         """
         entry.container_id = container_id
         for moved in retarget_files(self.workspace, entry, paths):
             self.workspace.drop_document(moved)
+            self.workspace.mark_saved(moved)
         if entry is self._entry or (
             self._entry is not None and self._entry.parent is entry
         ):

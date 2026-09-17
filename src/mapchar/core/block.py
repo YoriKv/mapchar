@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from mapchar.core.notices import Notice
-from mapchar.core.text import nfc
+from mapchar.core.text import nfc, same_text
 from mapchar.core.tokens import Token
 
 
@@ -302,7 +302,7 @@ class StringRecord:
 
     def matches_original(self, text: str) -> bool:
         """Whether ``text`` is the original text, line breaks and form aside."""
-        return nfc(text).replace("\n", "") == nfc(self.original).replace("\n", "")
+        return same_text(text, self.original)
 
     def refresh_status(self) -> None:
         """Settle *edited* or *untouched* from the texts; *review* and *done*

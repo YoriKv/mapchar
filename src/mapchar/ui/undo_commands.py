@@ -146,7 +146,13 @@ class _MergingCommand(_StateCommand):
 
     _stamps = False
     """Whether the state is a ``(value, revision)`` pair whose token is handed
-    back when the step is dropped."""
+    back when the step is dropped.
+
+    The token goes back to the command's own entry, which is right for
+    everything held here — a status, a note, a font, a text box all belong to
+    one entry. Bytes do not, so :class:`StringsEditCommand` overrides the merge
+    and hands the token back to every entry sharing them.
+    """
 
     def _mergeable(self, other) -> bool:
         """Whether ``other``, pushed straight after this one, is the same run."""
@@ -361,9 +367,9 @@ class StringsEditCommand(_MergingCommand, _EditContextCommand):
         self.after = (bytes(after), other.after[1])
         if self.after[0] == self.before[0]:
             self.setObsolete(True)
-            self.window.workspace.stamp(
-                self.window._bytes_owner(self.entry), self.before[1]
-            )
+            # Every entry the run stamped gets its token back, not only the one
+            # edited: the splices landed on each buffer sharing these bytes.
+            self.window._stamp_shared_bytes(self.entry, self.before[1])
         return True
 
     def _apply(self, state) -> None:
@@ -624,8 +630,12 @@ class PointerCommand(_CurrentEntryCommand):
 
 @dataclass(frozen=True)
 class BlockSide:
-    """One written compressed block on one side of a write: the payload its
-    slot decodes to, and its unsaved state."""
+    """One written block on one side of a write: the buffer it reads and its
+    unsaved state.
+
+    The payload its slot decodes to for a compressed block; the file's own
+    buffer for a plain one, which has no slot of its own.
+    """
 
     entry: Entry
     data: bytes

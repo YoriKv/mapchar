@@ -231,6 +231,29 @@ class MainWindow(
         """The compression scheme the Decompressed view previews a file through:
         the one Jump to Source or a bookmark arms, until another entry opens
         (:mod:`mapchar.ui.main_window.compression`)."""
+        self._load_notices: list[str] = []
+        """What reading the blocks had to say, kept for the dialog a project
+        load ends with (:meth:`~mapchar.ui.main_window.strings_view.
+        StringsViewMixin._note_load_problem`)."""
+        self._slots_cache: tuple | None = None
+        """Where each string's slot ends, with the records and the bytes it was
+        worked out from (:meth:`~mapchar.ui.main_window.strings_view.
+        StringsViewMixin._string_slots`)."""
+        self._same_counts: tuple | None = None
+        """How many of the current block's strings share each original, with the
+        records counted (:meth:`~mapchar.ui.main_window.strings_view.
+        StringsViewMixin._same_originals`)."""
+        self._checked_extraction: tuple | None = None
+        """The reading a string edit checked its own result against, kept for
+        the re-read that follows it (:meth:`~mapchar.ui.main_window.strings_view.
+        StringsViewMixin._extract_current`)."""
+        self._strings_texts: dict[int, tuple[list, str]] = {}
+        """Each block's strings as the project file would spell them, by entry,
+        with the records they were spelled from
+        (:meth:`~mapchar.ui.main_window.projects.ProjectMixin._snapshot`)."""
+        self._rows_patched = False
+        """Set while a string edit has refreshed the grid's changed rows itself,
+        so the refresh that follows leaves the grid alone."""
         self._step_icons: list[tuple[QPushButton, Glyph]] = []
         # Before anything can make an entry current: the first visit arms the
         # trail's two actions, and _build_menus puts them in the Navigate menu.

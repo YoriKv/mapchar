@@ -138,7 +138,14 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
             for i, st in sorted(entry.pending_strings.items())
         ]
     else:
+        entry.strings_cache = None
         return []
+    kept = entry.strings_cache
+    if kept is not None and kept[0] == states:
+        # The same list object, not an equal one: what serialises it can then
+        # tell by identity that its own text still stands
+        # (:attr:`~mapchar.project.workspace.Entry.strings_cache`).
+        return kept[1]
     records: list[dict[str, Any]] = []
     for index, original, status, notes, translation in states:
         s: dict[str, Any] = {"i": index}
@@ -151,6 +158,7 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
         if notes:
             s["n"] = notes
         records.append(s)
+    entry.strings_cache = (states, records)
     return records
 
 

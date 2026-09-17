@@ -8,7 +8,7 @@ from collections import Counter
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMenu
 
-from mapchar.core.block import Status, block_bound
+from mapchar.core.block import BlockConfig, Status, block_bound
 from mapchar.core.document import Document
 from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
@@ -70,11 +70,28 @@ class StringsViewMixin:
             entry.stash_strings(doc)
             changed = doc.extraction_key is not None
             doc.extraction_key = None
-            self.statusBar().showMessage(
+            message = (
                 f"{entry.name}: start table @{cfg.table_id} is not loaded; its "
-                "strings are kept but cannot be re-read.",
-                6000,
+                "strings are kept but cannot be re-read."
             )
+            held = sum(
+                1
+                for st in (entry.pending_strings or {}).values()
+                if st.translation is not None
+            )
+            if held:
+                # They are not in the bytes and cannot be put there until the
+                # table is back. The project keeps them meanwhile, so a save
+                # writes them out again and the next readable extraction lands
+                # them — but the user has to be told, in something that outlasts
+                # a status message the load's own overwrites.
+                message += (
+                    f" {held} translation(s) an older project was holding are "
+                    "still waiting for it and have not been written into the "
+                    "bytes; the project keeps them until the table is back."
+                )
+                self._note_load_problem(message)
+            self.statusBar().showMessage(message, 6000)
             self.files_panel.refresh_labels()
             return changed
         key = (
@@ -86,7 +103,9 @@ class StringsViewMixin:
         if doc.extraction_key == key:
             return False
         try:
-            ex = extract(doc.data, cfg, tables, self.registry)
+            ex = self._reuse_extraction(doc.data, cfg, tables)
+            if ex is None:
+                ex = extract(doc.data, cfg, tables, self.registry)
         except NotImplementedError as exc:
             # Same rule as a missing table set: the read failed, so there is
             # nothing to replace the translations with, and dropping them would
@@ -115,9 +134,14 @@ class StringsViewMixin:
                 if st is None:
                     continue
                 same = st.extent is None or st.extent == (rec.start_bit, rec.end_bit)
-                if same and st.original is not None:
-                    rec.original = st.original
-                rec.status, rec.notes = st.status, st.notes
+                if same:
+                    # State follows the string, not the index: a string the new
+                    # reading cuts at other bits is not the one that was
+                    # marked, so its original, its mark and its notes are all
+                    # about text that is no longer there and it starts afresh.
+                    if st.original is not None:
+                        rec.original = st.original
+                    rec.status, rec.notes = st.status, st.notes
                 if st.translation is not None:
                     legacy[rec.index] = st.translation
             entry.pending_strings = None
@@ -130,6 +154,47 @@ class StringsViewMixin:
             self._land_legacy_translations(entry, doc, legacy)
         self.files_panel.refresh_labels()
         return True
+
+    @staticmethod
+    def _reading_key(cfg: BlockConfig, tables: TableSet) -> tuple:
+        """What a reading of some bytes depends on besides the bytes: the
+        block's configuration and the tables as they stand."""
+        return (
+            cfg,
+            tables.start.id,
+            sum(len(t.entries) for t in tables.tables.values()),
+        )
+
+    def _remember_extraction(
+        self, data: bytes, cfg: BlockConfig, tables: TableSet, extraction
+    ) -> None:
+        """Keep the reading a string edit checked its own result against.
+
+        The edit lands by splicing exactly those bytes in, and the block is then
+        read again to say what they now mean — the same bytes through the same
+        tables, which is the reading already in hand
+        (:meth:`~mapchar.ui.main_window.string_edit.StringEditMixin._reads_back`).
+        """
+        self._checked_extraction = (data, self._reading_key(cfg, tables), extraction)
+
+    def _reuse_extraction(self, data: bytes, cfg: BlockConfig, tables: TableSet):
+        """The remembered reading when it is of exactly these bytes through
+        exactly this reading; ``None`` otherwise.
+
+        Taken once and then forgotten: its records become the block's, and no
+        second block may be given the same ones.
+        """
+        kept = self._checked_extraction
+        if kept is None or kept[1] != self._reading_key(cfg, tables) or kept[0] != data:
+            return None
+        self._checked_extraction = None
+        return kept[2]
+
+    def _note_load_problem(self, message: str) -> None:
+        """Keep something a block's read has to say where a project load shows
+        it (:meth:`~mapchar.ui.main_window.projects.ProjectMixin.open_project`),
+        rather than in a status message the load's own replaces."""
+        self._load_notices.append(message)
 
     def _land_legacy_translations(
         self, entry: Entry, doc: Document, texts: dict[int, str]
@@ -150,52 +215,137 @@ class StringsViewMixin:
                 rec.notes = (
                     rec.notes + "\n" if rec.notes else ""
                 ) + f"unplaced: {text}"
-        self.statusBar().showMessage(
+        message = (
             f"{entry.name}: {len(problems)} translation(s) from the older project "
-            "would not fit and were kept in the notes",
-            8000,
+            "would not fit and were kept in the notes"
         )
+        self._note_load_problem(message + ":\n  " + "\n  ".join(problems))
+        self.statusBar().showMessage(message, 8000)
 
     def _edit_strings_now(
         self, entry: Entry, doc: Document, texts: dict[int, str]
     ) -> list[str]:
-        """The edits of :meth:`_edit_strings` landed at once, with no undo step,
-        and one at a time so that one refused leaves the rest in."""
-        from mapchar.pipeline.insert import apply_splices, layout_block
+        """The edits of :meth:`_edit_strings` landed with no undo step, whole
+        where they all go in and one at a time where they do not, so that one
+        refused leaves the rest in.
 
+        Refused on the same terms as the checked path
+        (:meth:`~mapchar.ui.main_window.string_edit.StringEditMixin._reads_back`):
+        a text that does not fit, that re-cuts the block, or that would not read
+        back as itself does not land — the bytes are the translation, so they
+        must say what the translator said, and a project's word for it is not
+        enough.
+        """
         cfg = entry.config
         tables = self._table_set_of(entry)
         if cfg is None or tables is None:
             return ["table not loaded"]
-        problems: list[str] = []
-        for index, text in texts.items():
-            rec = doc.string_by_index(index)
-            if rec is None:
-                continue
-            rec.replacement = text
-            try:
-                result = layout_block(doc.data, cfg, tables, doc.strings, self.registry)
-            finally:
-                rec.replacement = None
-            if result.problems:
-                problems += [f"#{p.index}: {p.message}" for p in result.problems]
-                continue
-            new_data = apply_splices(doc.data, result.splices)
-            for shared in self._docs_sharing(entry):
-                shared.data = new_data
-                shared.extraction_key = None
-            self.workspace.stamp(self._bytes_owner(entry))
-            # Read again so the next edit lays out over the strings as they
-            # now sit, and the records keep their state by index.
-            self._extract_current(entry, doc, tables)
+        _, problems = self._edit_each(
+            entry,
+            texts,
+            "",
+            land=lambda _e, edits, _text: self._land_strings_now(
+                entry, doc, edits, cfg, tables
+            ),
+        )
         return problems
 
+    def _land_strings_now(
+        self,
+        entry: Entry,
+        doc: Document,
+        edits: dict[int, str],
+        cfg: BlockConfig,
+        tables: TableSet,
+    ) -> list[str]:
+        """One batch of :meth:`_edit_strings_now`: the layout, the read-back
+        check, and the splice onto every document that holds the same bytes."""
+        from mapchar.pipeline.insert import apply_splices, layout_block
+
+        recs = {i: r for i in edits if (r := doc.string_by_index(i)) is not None}
+        if not recs:
+            return []
+        edits = {i: edits[i] for i in recs}
+        try:
+            for i, rec in recs.items():
+                rec.replacement = edits[i]
+            result = layout_block(doc.data, cfg, tables, doc.strings, self.registry)
+        finally:
+            for rec in recs.values():
+                rec.replacement = None
+        if result.problems:
+            return [f"#{p.index}: {p.message}" for p in result.problems]
+        new_data = apply_splices(doc.data, result.splices)
+        back = self._reads_back(cfg, tables, doc, new_data, edits)
+        if back.block is not None:
+            return [f"#{min(edits)}: {back.block}"]
+        if back.string is not None:
+            return [back.string]
+        shared = self.workspace.entries_sharing(entry)
+        for holder in shared:
+            holder.doc.data = new_data
+            holder.doc.extraction_key = None
+        self._stamp_shared_bytes(entry, self.workspace.next_revision(), shared)
+        # Read again so the next edit lays out over the strings as they now
+        # sit, and the records keep their state by index.
+        self._remember_extraction(new_data, cfg, tables, back.extraction)
+        self._extract_current(entry, doc, tables)
+        return []
+
     def _fill_strings(self, doc: Document) -> None:
+        if self._rows_patched:
+            # A string edit has already refreshed the rows its bytes reached
+            # (:meth:`_patch_rows_over`); the grid is as current as a rebuild
+            # would leave it, and a rebuild costs every row.
+            return
         entry = self._entry
         tables = self._table_set()
         self.strings.set_codes(self._code_infos(tables, doc))
         self.strings.set_newline_code(self._newline_code(entry))
         self.strings.set_rows(self._row_data(entry, doc, tables))
+
+    def _patch_rows_over(self, entry, lo: int, hi: int) -> bool:
+        """Refresh the grid's rows that the bytes ``lo``–``hi`` could change.
+
+        A row shows what its string's bytes say, how much of its slot they take
+        and what its status is; a string the changed bytes do not reach shows
+        the same row it did. Its room can still move — a packed block's bound
+        is its last string's end — so a row whose address, use or room has
+        changed is refreshed too, and the rest are left alone.
+
+        ``False`` when the grid cannot be patched at all — the block edited is
+        not the one on screen, or the reading has cut it into other strings —
+        and the caller lays the grid out whole instead.
+        """
+        if entry is None or entry is not self._entry:
+            return False
+        doc, cfg = entry.doc, entry.config
+        if doc is None or doc is not self._doc or cfg is None:
+            return False
+        tables = self._table_set_of(entry)
+        if tables is None:
+            return False
+        self._extract_current(entry, doc, tables)
+        rows = self.strings.rows_by_index()
+        if len(rows) != len(doc.strings):
+            return False
+        bound = block_bound(cfg, doc.strings)
+        ends = self._string_slots(entry, doc, bound)
+        same = self._same_originals(doc)
+        for rec in doc.strings:
+            old = rows.get(rec.index)
+            if old is None:
+                return False
+            if (
+                (rec.end > lo and hi > rec.start)
+                or rec.start != old.address
+                or rec.byte_length(cfg.skips) != old.used
+                or room_for(rec, cfg, bound, ends) != old.room
+            ):
+                row = self._row_for(rec, cfg, bound, same, ends)
+                if row != old:
+                    self.strings.update_row(row)
+        return True
 
     @staticmethod
     def _code_infos(tables: TableSet | None, doc: Document) -> list[CodeInfo]:
@@ -230,13 +380,57 @@ class StringsViewMixin:
                 return f"[{label}]"
         return "[line]"
 
+    def _string_slots(self, entry, doc: Document, bound: int) -> dict[int, int] | None:
+        """Where each string's slot ends (:func:`slot_ends`), worked out once
+        per reading.
+
+        The bytes and the fill byte go in, so the Room column and the byte
+        readout report the slot the layout will actually accept — the string's
+        own bytes plus the fill after them — rather than the whole gap to the
+        next string. Sorting a pointer block's thousands of strings for every
+        row, and for every keystroke, is what the cache is for: the slots are
+        where the records sit in the bytes, so the very records and the very
+        bytes they were worked out from are what say the answer still stands.
+        Both are held rather than named, so no buffer that has gone can be
+        mistaken for one that is still there.
+        """
+        cfg = entry.config if entry is not None else None
+        if cfg is None:
+            return None
+        cached = self._slots_cache
+        if (
+            cached is not None
+            and cached[0] is doc.strings
+            and cached[1] is doc.data
+            and cached[2] == (bound, cfg.fill)
+        ):
+            return cached[3]
+        ends = slot_ends(doc.strings, bound, doc.data, cfg.fill)
+        self._slots_cache = (doc.strings, doc.data, (bound, cfg.fill), ends)
+        return ends
+
+    def _same_originals(self, doc: Document) -> Counter:
+        """How many of the block's strings share each original, by the key two
+        originals are the same under.
+
+        A record's original is settled before it becomes the block's, and a
+        re-reading makes new records, so the counts stand as long as the list
+        does: refreshing one row does not count the other thousands again.
+        """
+        cached = self._same_counts
+        if cached is not None and cached[0] is doc.strings:
+            return cached[1]
+        same = Counter(_same_key(rec.original) for rec in doc.strings)
+        self._same_counts = (doc.strings, same)
+        return same
+
     def _row_data(self, entry, doc: Document, tables) -> list[RowData]:
         cfg = entry.config if entry is not None else None
         # Once for the block, not once per row: the bound is the same for every
         # string, and a pointer block has thousands.
         bound = block_bound(cfg, doc.strings) if cfg is not None else 0
-        same = Counter(_same_key(rec.original) for rec in doc.strings)
-        ends = slot_ends(doc.strings, bound)
+        same = self._same_originals(doc)
+        ends = self._string_slots(entry, doc, bound)
         return [self._row_for(rec, cfg, bound, same, ends) for rec in doc.strings]
 
     def _row_for(
@@ -267,10 +461,12 @@ class StringsViewMixin:
         rec = doc.string_by_index(index)
         if rec is None:
             return
-        same = Counter(_same_key(r.original) for r in doc.strings)
+        same = self._same_originals(doc)
         bound = block_bound(entry.config, doc.strings)
         self.strings.update_row(
-            self._row_for(rec, entry.config, bound, same, slot_ends(doc.strings, bound))
+            self._row_for(
+                rec, entry.config, bound, same, self._string_slots(entry, doc, bound)
+            )
         )
         self._sync_preview()
 
@@ -364,13 +560,11 @@ class StringsViewMixin:
                 }
                 if not edits:
                     continue
-                failed = self._edit_strings(
+                landed, failed = self._edit_each(
                     block, edits, "Apply to identical originals"
                 )
-                if failed:
-                    problems += [f"{block.name} {p}" for p in failed]
-                else:
-                    n += len(edits)
+                n += landed
+                problems += [f"{block.name} {p}" for p in failed]
             if self._entry is not entry:
                 self._activate_entry(entry)
         self.strings.select_index(index)
@@ -411,12 +605,20 @@ class StringsViewMixin:
         if self._current_block(need_doc=True) is None:
             return
         if what == "untranslated":
-            wanted = lambda d: d.status == "untouched"  # noqa: E731
+            # The record's own status, not the row's: a row shows "overflows
+            # box" in place of it, and an untouched string is still untranslated
+            # whatever its box says about it.
+            wanted = lambda d: self._is_untouched(d.index)  # noqa: E731
         else:
             wanted = lambda d: d.status in FLAGGED  # noqa: E731
         self._show_view("strings")
         if not self.strings.step_to(wanted, backwards):
             self.statusBar().showMessage(f"No {what} string", 3000)
+
+    def _is_untouched(self, index: int) -> bool:
+        """Whether the current block's string at ``index`` is still untouched."""
+        rec = self._string(self._entry, index)
+        return rec is not None and rec.status is Status.UNTOUCHED
 
     def _progress_text(self, doc: Document) -> str:
         """How far the block and the project are: strings whose bytes no longer

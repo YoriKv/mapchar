@@ -21,6 +21,16 @@ def nfc(text: str) -> str:
     return unicodedata.normalize("NFC", text)
 
 
+def same_text(a: str, b: str) -> bool:
+    """Whether two script texts say the same thing.
+
+    Composed, so the spelling of a character does not matter, and line breaks
+    aside: a translation is laid out to its box, and where its lines fall is
+    not what it says.
+    """
+    return nfc(a).replace("\n", "") == nfc(b).replace("\n", "")
+
+
 def nfd(text: str) -> str:
     """``text`` decomposed: what the encoder splits into atoms, so a composed
     ``が`` and a table spelling it ``か`` plus a dakuten meet."""

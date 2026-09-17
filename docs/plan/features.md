@@ -289,7 +289,10 @@ and Strings tabs read again at once.
   undo step that re-reads the block, its originals, statuses and notes matched
   back by index — a string the new reading cuts at other bits is a new string
   and takes its original from the bytes afresh — and a run of changes to one control (a spin box stepped several times) is
-  one step. On a file, the file's session: saved with the project, carried by
+  one step. A compressed block is re-read over the payload it already holds,
+  since that is where its translations are; only changing its **compression**
+  cannot keep them — what the old scheme decoded is not what the new one
+  would — so that one change asks first, and discards them whole. On a file, the file's session: saved with the project, carried by
   a bookmark, and what **New Block** starts from. Anything else that changes a
   block's configuration — an import, **Use as Pointer Table**, an undo — shows
   in the bars at the next refresh.
@@ -607,12 +610,16 @@ The editing surface, opened on a block.
     the result into the buffer — the file's, or the payload of the slot a
     compressed block decodes — which then reads unsaved. A packed block moves
     the strings after the edit and rewrites their pointers; a slotted one
-    keeps the string in its slot, padded with the fill byte, and the slot
-    runs to the next string, so a string shortened once can grow back;
-  - a commit is **refused** — the editor stays open with the reason under it
-    — when the text does not encode, does not fit its room, would not read
-    back as typed, or would change how the bytes after it are cut into
-    strings;
+    keeps the string in its slot, padded with the fill byte, and the slot is
+    the string's own bytes and the padding after them, so a string shortened
+    once can grow back;
+  - leaving the cell — for another row, or another widget — commits the same
+    way Return does; a cell left as the bytes have it commits nothing, and
+    the window going inactive leaves the draft where it is;
+  - a commit is **refused** — the editor stays open on its row with the draft
+    and the reason under it — when the text does not encode, does not fit its
+    room, would not read back as typed, or would change how the bytes after
+    it are cut into strings;
   - **Shift+Return** writes the block's newline code — the code carrying the
     *newline* effect, else `[line]` — never a line break, which the script
     grammar drops;
@@ -626,7 +633,10 @@ The editing surface, opened on a block.
     Translation** (font and box bound) inserts line codes to fit the box; see
     [preview.md](preview.md#wrapping);
   - **Apply to Identical Originals**, in Block or in Project, puts the
-    selected string's text into every string whose original is the same.
+    selected string's text into every string whose original is the same. One
+    string with no room for it does not hold the others back: the block takes
+    them together where they all fit and one at a time where they do not, and
+    what is refused is listed with why.
 - **Editing pane** — under the grid, on the selected string, read whole:
   the original with its line breaks, codes dimmed and, with **Show codes**
   off, left out as the Text tab leaves them; beside it the same editor the
@@ -677,10 +687,17 @@ The editing surface, opened on a block.
     block's first string address, each pointer is rewritten to its string's
     new position, and leftover space up to the bound gets the fill byte;
   - **Slotted** (default without pointers, and always with skip ranges) —
-    every string stays at its address and may use up to its slot (the gap to
-    the next string, or its fixed length), padded with the fill byte. A run
-    of the fill byte between two strings of a range is padding and is never
-    read as text, so the fill byte should be one no string begins with.
+    every string stays at its address and may use up to its slot, padded with
+    the fill byte. A slot is the bytes the string holds itself and the run of
+    the fill byte after them — the padding a shorter string left, which the
+    next edit takes back — stopping at the next string, at the bound, or at
+    the end of the bytes, whichever comes first, and a fixed length caps it.
+    Bytes between two strings that are not that padding belong to no slot and
+    are left standing. A run of the fill byte between two strings is read as
+    padding rather than text only when the block's table maps nothing
+    beginning with the fill byte, so the fill byte should be one no string
+    begins with: one the table maps is read like any other byte, and a
+    shortened string's padding is then text in front of the next string.
 - **In place only** — a string that does not fit is refused at the edit, with
   the bytes over. Nothing is relocated; making room is the user's job.
 - **Encoding is verified** — every encoded string is decoded again and must
@@ -809,7 +826,11 @@ in the game. It is described in [preview.md](preview.md).
   relative to the project file; older versions are upgraded on load, which the
   status line says, and newer ones open with what this build understands. A
   project from before originals were kept still holds translations: opening
-  it puts them into the bytes, and the file reads unsaved until written.
+  it puts them into the bytes, and the file reads unsaved until written. One
+  that cannot be placed — the block's table is not loaded, or the bytes would
+  not read back as it — stays in the project, which saves it again, and is
+  said in the load's notices rather than in a status message the load
+  replaces.
   **Open Recent** lists projects by name, newest first, drops rows whose file
   has gone, and offers **Clear List**.
 - **Missing files** — a project that references files that are not there offers
@@ -829,7 +850,12 @@ in the game. It is described in [preview.md](preview.md).
   beside the project file, or under the application's data folder for a
   session with no project file. Saving the project removes the copy, as does
   quitting. A copy newer than its project is offered when the project is next
-  opened, and a session's copy is offered at the next start.
+  opened, and a session's copy is offered at the next start. A copy that was
+  recovered stays, written again from what it restored: until the project is
+  saved it is the only place that work exists. It is not a project of its own,
+  so Open Recent and the folder the pickers start in name the project it
+  stands for, and nothing at all for a recovered session that has no project
+  file.
 
 ## Plugins
 

@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.text import fold
+from mapchar.core.textmatch import matches_words, words_of
 from mapchar.project.glossary import GlossaryTerm, matching_terms
 from mapchar.ui.widgets import (
     EscapeCloses,
@@ -154,15 +154,13 @@ class GlossaryWindow(EscapeCloses, QWidget):
         self.insert.setEnabled(False)
 
     def _apply_filter(self) -> None:
-        words = fold(self.filter.text()).split()
+        words = words_of(self.filter.text())
         for r in range(self.table.rowCount()):
-            hay = fold(
-                " ".join(
-                    self.table.item(r, c).text() if self.table.item(r, c) else ""
-                    for c in range(len(HEADERS))
-                )
-            )
-            self.table.setRowHidden(r, bool(words) and not all(w in hay for w in words))
+            cells = [
+                self.table.item(r, c).text() if self.table.item(r, c) else ""
+                for c in range(len(HEADERS))
+            ]
+            self.table.setRowHidden(r, not matches_words(words, *cells))
 
     # --- edits ----------------------------------------------------------------
 

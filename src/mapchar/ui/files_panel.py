@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.text import fold
+from mapchar.core.textmatch import matches_words, words_of
 from mapchar.project.workspace import Entry, EntryKind, Workspace
 from mapchar.ui.entry_text import label, status_mark, string_preview, tooltip
 from mapchar.ui.entry_tree import EntryTree
@@ -527,11 +527,10 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         strings matches opens to show it. A block's stub is not a row that
         can match: it follows its block.
         """
-        words = fold(text).split()
+        words = words_of(text)
 
         def matches(item: QTreeWidgetItem) -> bool:
-            row = fold(item.text(0))
-            return all(w in row for w in words)
+            return matches_words(words, item.text(0))
 
         for group in self._groups.values():
             for i in range(group.childCount()):
@@ -544,13 +543,13 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
                     for k in range(c.childCount()):
                         s = c.child(k)
                         if self._is_stub(s):
-                            s.setHidden(bool(words) and not hit)
+                            s.setHidden(not hit)
                             continue
                         found = matches(s)
-                        s.setHidden(bool(words) and not found)
+                        s.setHidden(not found)
                         string_hit = string_hit or found
-                    c.setHidden(bool(words) and not (hit or string_hit))
+                    c.setHidden(not (hit or string_hit))
                     if words and string_hit:
                         c.setExpanded(True)
                     child_hit = child_hit or not c.isHidden()
-                item.setHidden(bool(words) and not (matches(item) or child_hit))
+                item.setHidden(not (matches(item) or child_hit))

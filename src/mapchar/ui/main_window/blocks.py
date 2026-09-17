@@ -149,8 +149,32 @@ class BlocksMixin:
             changes.get(name, value)
             for name, value in zip(_BLOCK_EDIT_FIELDS, before, strict=True)
         )
-        if after != before:
-            self._push_command(BlockEditCommand(self, entry, before, after, field))
+        if after == before or self._applying_undo:
+            return
+        scheme = after[_BLOCK_EDIT_FIELDS.index("compression_id")]
+        if not self._confirm_payload_loss(entry, scheme):
+            return
+        self._push_command(BlockEditCommand(self, entry, before, after, field))
+
+    def _confirm_payload_loss(self, entry: Entry, compression_id: str | None) -> bool:
+        """Ask before a block edit throws a compressed block's edits away.
+
+        A compressed block's translations are in the payload its scheme
+        decodes, and nowhere else. Every other edit re-reads the new
+        configuration over those same bytes and keeps them; a change of scheme
+        leaves nothing that can decode them, so it is the one block edit that
+        has to ask first.
+        """
+        if compression_id == entry.compression_id:
+            return True
+        if not (entry.dirty and entry.compression_id and entry.doc is not None):
+            return True
+        return self._ask(
+            "Edit Block",
+            f"{entry.name} has unsaved edits in its decompressed bytes, and "
+            "changing its compression reads the slot again and discards them. "
+            "Continue?",
+        )
 
     def apply_block_config(
         self, entry: Entry, name: str, config: BlockConfig, compression_id, spare_room
@@ -158,9 +182,17 @@ class BlocksMixin:
         """Re-point a block and read the region again — the application path for
         a block edit and its undo."""
         entry.name = name
-        if compression_id != entry.compression_id:
+        scheme = entry.compression_id
+        # A compressed block's translations are in its payload and nowhere else,
+        # so a re-reading keeps those bytes and reads the new configuration over
+        # them. Only a change of scheme cannot: what the old scheme decoded is
+        # not what the new one would, so the slot is decoded afresh.
+        keep_payload = (
+            bool(scheme) and compression_id == scheme and entry.doc is not None
+        )
+        if compression_id != scheme:
             entry.slice_length = None  # a new scheme finds its own end
-            if entry.compression_id is None:
+            if scheme is None:
                 # Read from the file until now, so its slot is where it began.
                 entry.slice_offset = self._block_file_offset(entry)
         entry.config = config
@@ -169,7 +201,19 @@ class BlocksMixin:
         # The re-read matches originals, statuses and notes back by index —
         # except onto a string the new reading cuts at other bits, which takes
         # its original afresh, as a string the old reading never had.
-        self.workspace.drop_document(entry, reconfigured=True)
+        if keep_payload:
+            entry.stash_strings(reconfigured=True)
+            entry.doc.strings = []
+            entry.doc.extraction_key = None
+        else:
+            was_dirty = entry.dirty and bool(scheme) and entry.doc is not None
+            self.workspace.drop_document(entry, reconfigured=True)
+            if was_dirty:
+                # Its payload held the only copy of its edits and nothing can
+                # decode it now, so the block is no longer unsaved: there is
+                # nothing left for a write to put back. _push_block_edit asked
+                # before it came to this.
+                self.workspace.mark_saved(entry)
         self.files_panel.refresh_labels()
         self._update_title()
         if entry is self._entry:

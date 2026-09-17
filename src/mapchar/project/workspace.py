@@ -149,6 +149,18 @@ class Entry:
     live_revision: int = 0
     saved_revision: int = 0
     missing: bool = False
+    strings_cache: tuple | None = field(default=None, repr=False)
+    """Blocks: the last serialisation of this block's strings, with the state it
+    was made from (:func:`~mapchar.project.projectfile._string_records`).
+
+    A project's dirty check serialises the whole project after every commit and
+    every status change, and a block's strings are nearly all of it. Building
+    the state the records are made of costs a tuple per string; building the
+    records costs a dictionary per string and serialising them costs more
+    again, so a block whose strings are as they were hands back the very list
+    it handed back last time, and the caller can tell by its identity that
+    nothing of it has to be written out afresh.
+    """
 
     @property
     def paths(self) -> tuple[str, ...]:
@@ -293,6 +305,49 @@ class Workspace:
 
     def children(self, parent: Entry) -> list[Entry]:
         return [e for e in self.entries if e.parent is parent]
+
+    def blocks_of(self, file_entry: Entry, *, loaded: bool = False) -> list[Entry]:
+        """The blocks under ``file_entry``, in list order.
+
+        A file's children are its blocks and its bookmarks; almost everything
+        that walks them wants the blocks alone. ``loaded`` narrows that to the
+        ones holding a document, which is what anything reading or writing
+        their bytes means by a block.
+        """
+        return [
+            e
+            for e in self.children(file_entry)
+            if e.kind is EntryKind.BLOCK and (not loaded or e.doc is not None)
+        ]
+
+    def entries_sharing(self, entry: Entry) -> list[Entry]:
+        """Every loaded entry whose document holds the same bytes as ``entry``'s.
+
+        A plain block reads its file's buffer, with every other plain block on
+        that file; a compressed *block* reads its slot's payload, with every
+        other block over the same slot. A file's own compression is the whole
+        file's — the pipeline decodes it on the way in and its buffer is the
+        result — so a compressed file is still read with its plain blocks and
+        never with a slot.
+
+        Only entries with a document are named, so ``entry`` itself is in the
+        list exactly when it is loaded.
+        """
+        if entry.kind is EntryKind.BLOCK and entry.compression_id:
+            slot = (entry.compression_id, entry.slice_offset)
+            return [
+                e
+                for e in self.of_kind(EntryKind.BLOCK)
+                if e.doc is not None
+                and e.parent is entry.parent
+                and (e.compression_id, e.slice_offset) == slot
+            ]
+        file_entry = entry.parent if entry.parent is not None else entry
+        shared = [file_entry] if file_entry.doc is not None else []
+        shared += [
+            b for b in self.blocks_of(file_entry, loaded=True) if not b.compression_id
+        ]
+        return shared
 
     def of_kind(self, kind: EntryKind) -> list[Entry]:
         return [e for e in self.entries if e.kind is kind]

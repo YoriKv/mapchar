@@ -67,7 +67,7 @@ class WritingMixin:
                 return
             self._write_blocks([entry] if entry.dirty else [], files=[entry.parent])
             return
-        blocks = [b for b in self.workspace.children(entry) if b.dirty]
+        blocks = [b for b in self.workspace.blocks_of(entry) if b.dirty]
         if entry.dirty or blocks:
             self._write_blocks(blocks, files=[entry])
         else:
@@ -158,24 +158,40 @@ class WritingMixin:
         Several blocks can sit over one compressed slot and share its payload,
         so each slot is compressed once, and every block over it — asked for
         or not — is written with it, since the payload is theirs too.
+
+        Every block handed here is written, and a block that cannot be is a
+        problem reported against its name: a block left out of a write that
+        reported success would stay unsaved for ever, with nothing able to
+        resolve it.
         """
         parent_doc = self._load_document(file_entry)
         if parent_doc is None:
             return None
         problems: list[str] = []
         new_data = parent_doc.data
-        slots: dict[tuple, list[Entry]] = {}
+        # A plain block's bytes are the file's own buffer, which is what is
+        # about to be written: it has no slot to compress, and is written with
+        # the file. A compressed one is read now if it is not loaded — its
+        # payload is what its slot is written from, and a dropped document must
+        # not turn into a block silently skipped.
+        plain = [b for b in file_blocks if not b.compression_id]
+        compressed: list[Entry] = []
         for block in file_blocks:
-            if block.doc is None or not block.compression_id:
+            if not block.compression_id:
                 continue
+            if self._load_document(block) is None:
+                problems.append(
+                    f"{block.name}: its compressed slot cannot be read, so it "
+                    "cannot be written."
+                )
+            else:
+                compressed.append(block)
+        slots: dict[tuple, list[Entry]] = {}
+        for block in compressed:
             slot = (block.compression_id, block.slice_offset)
             if slot not in slots:
-                slots[slot] = [
-                    e
-                    for e in self.workspace.children(file_entry)
-                    if e.doc is not None and (e.compression_id, e.slice_offset) == slot
-                ]
-        written: list[tuple[Entry, bytes]] = []
+                slots[slot] = self.workspace.entries_sharing(block)
+        written: list[tuple[Entry, bytes | None]] = [(b, None) for b in plain]
         for (_scheme, offset), sharing in slots.items():
             payload = sharing[0].doc.data
             packed, problem = self._recompress(sharing[0], payload)
@@ -214,7 +230,12 @@ class WritingMixin:
             file_entry.live_revision,
             file_entry.saved_revision,
             tuple(
-                BlockSide(block, payload, block.live_revision, block.saved_revision)
+                BlockSide(
+                    block,
+                    parent_doc.data if payload is None else payload,
+                    block.live_revision,
+                    block.saved_revision,
+                )
                 for block, payload in written
             ),
         )
@@ -224,7 +245,12 @@ class WritingMixin:
             file_entry.live_revision,
             file_entry.live_revision,
             tuple(
-                BlockSide(block, payload, block.live_revision, block.live_revision)
+                BlockSide(
+                    block,
+                    new_data if payload is None else payload,
+                    block.live_revision,
+                    block.live_revision,
+                )
                 for block, payload in written
             ),
         )
@@ -263,8 +289,8 @@ class WritingMixin:
                 bdoc.data = bs.data
                 bdoc.extraction_key = None
             self.workspace.set_revisions(bs.entry, bs.live, bs.saved)
-        for child in self.workspace.children(entry):
-            if child.doc is None or child in written:
+        for child in self.workspace.blocks_of(entry, loaded=True):
+            if child in written:
                 continue
             if not child.compression_id:
                 child.doc.data = side.data

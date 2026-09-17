@@ -3,8 +3,9 @@
 Presentation only: the window hands it rows and takes back edits. The
 Translation cell is a multi-line editor with code completion on ``[``;
 Return commits and moves to the next row, Ctrl+Return commits and stays,
-Shift+Return inserts the block's newline code, Esc cancels. A commit the
-window refuses keeps the editor open with the reason under it. Columns hide
+Shift+Return inserts the block's newline code, Esc cancels. Leaving the cell
+commits too, and a commit the window refuses — either one — keeps the editor
+open on its row with the draft and the reason under it. Columns hide
 and reorder from the header's context menu. Under the grid, the pane
 (:mod:`mapchar.ui.string_pane`) shows the selected string whole, on the same
 editor.
@@ -15,8 +16,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QTextCursor
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFocusEvent, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.text import fold
+from mapchar.core.textmatch import matches_words, words_of
 from mapchar.ui import settings, theme
 from mapchar.ui.code_editor import CodeEditor, CodeInfo
 from mapchar.ui.string_pane import StringPane
@@ -91,6 +92,16 @@ class RowData:
 
 
 class TranslationDelegate(QStyledItemDelegate):
+    """The Translation cell's editor, and the two ways an edit lands.
+
+    Return hands the text to :attr:`StringsView.commit_handler` here, and
+    leaving the cell hands it to the same handler through Qt's own
+    ``commitData``, which lands in :meth:`setModelData`. Either way a refusal
+    keeps what was typed: Return leaves the editor open on it, and a
+    focus-out — which Qt closes the editor on before the refusal is known —
+    opens it again on its row with the draft back in it.
+    """
+
     def __init__(self, view: StringsView):
         super().__init__(view)
         self.view = view
@@ -98,6 +109,13 @@ class TranslationDelegate(QStyledItemDelegate):
         self.newline_code = "[line]"
         self._editor: CodeEditor | None = None
         self._index = None
+        self._draft: tuple[int, str] | None = None
+        """A refused focus-out commit: the string's index and what was typed,
+        put back when the editor opens on that string again."""
+        self._reopen = QTimer(self)
+        """Opening the cell again, once Qt has finished closing it."""
+        self._reopen.setSingleShot(True)
+        self._reopen.timeout.connect(self._reopen_refused)
 
     def createEditor(self, parent, option, index):
         editor = CodeEditor(self.codes, self.newline_code, parent)
@@ -115,8 +133,8 @@ class TranslationDelegate(QStyledItemDelegate):
 
         A commit goes to the window first: an edit it refuses — too long, a
         code that does not encode — keeps the editor open with the reason shown,
-        rather than closing on text that went nowhere. Landing goes through
-        ``commitData`` as any cell's does, so a focus-out commits the same way.
+        rather than closing on text that went nowhere. Leaving the cell commits
+        through :meth:`setModelData` instead, on the same handler.
         """
         if commit:
             handler = self.view.commit_handler
@@ -139,11 +157,68 @@ class TranslationDelegate(QStyledItemDelegate):
         self._editor = None
 
     def setEditorData(self, editor, index) -> None:
-        editor.setPlainText(index.data(Qt.ItemDataRole.EditRole) or "")
+        """What the bytes say, or the draft a refused commit kept."""
+        text = index.data(Qt.ItemDataRole.EditRole) or ""
+        if self._draft is not None:
+            data = self.view._row_data(index.row())
+            if data is not None and data.index == self._draft[0]:
+                text = self._draft[1]
+            self._draft = None
+        editor.setPlainText(text)
         editor.moveCursor(QTextCursor.MoveOperation.End)
 
     def setModelData(self, editor, model, index) -> None:
-        model.setData(index, editor.toPlainText(), Qt.ItemDataRole.EditRole)
+        """Leaving the cell: the same commit Return makes.
+
+        The window takes the text and says why it would not go in; refused,
+        the bytes keep what they say and the draft comes back with the editor,
+        which Qt closes on its way here. A cell left as the bytes have it is
+        not a commit at all.
+        """
+        text = editor.toPlainText()
+        handler = self.view.commit_handler
+        data = self.view._row_data(index.row())
+        if handler is None or data is None:
+            model.setData(index, text, Qt.ItemDataRole.EditRole)
+            return
+        if text == data.translation:
+            return
+        problem = handler(data.index, text)
+        if problem:
+            self.view.problem_shown.emit(problem)
+            self._draft = (data.index, text)
+            self._reopen.start(0)
+
+    def eventFilter(self, editor, event) -> bool:  # noqa: N802 - Qt override
+        """Qt's commit-on-focus-out, minus the focus-outs that are not leaving.
+
+        The base filter commits and closes the editor whenever it loses the
+        focus; the completion popup taking it, or the window going inactive,
+        is neither leaving the cell nor a reason to hand the draft to the
+        bytes, so the editor stays open on it instead.
+        """
+        if (
+            isinstance(event, QFocusEvent)
+            and event.type() == QEvent.Type.FocusOut
+            and event.reason()
+            in (
+                Qt.FocusReason.PopupFocusReason,
+                Qt.FocusReason.ActiveWindowFocusReason,
+            )
+        ):
+            return False
+        return super().eventFilter(editor, event)
+
+    def _reopen_refused(self) -> None:
+        """Open the cell whose commit was refused again, on what was typed."""
+        if self._draft is not None:
+            self.view.edit_index(self._draft[0])
+
+    def destroyEditor(self, editor, index) -> None:
+        if editor is self._editor:
+            self._editor = None
+            self._index = None
+        super().destroyEditor(editor, index)
 
     def current_editor(self) -> CodeEditor | None:
         return self._editor
@@ -324,6 +399,14 @@ class StringsView(QWidget):
         else:
             self._show_in_pane()
 
+    def rows_by_index(self) -> dict[int, RowData]:
+        """The rows the grid holds now, by string index; read, never changed.
+
+        What a caller refreshing a few rows of many compares against, so it
+        hands back only the rows that have something else to say.
+        """
+        return self._by_index
+
     def update_row(self, data: RowData) -> None:
         for r, existing in enumerate(self._rows):
             if existing.index == data.index:
@@ -412,15 +495,27 @@ class StringsView(QWidget):
             r for r in range(self.table.rowCount()) if not self.table.isRowHidden(r)
         ]
 
+    def edit_row(self, r: int) -> None:
+        """Select row ``r`` and open its Translation cell."""
+        self.table.setCurrentCell(r, COL_TRANSLATION)
+        self.table.edit(self.table.model().index(r, COL_TRANSLATION))
+
+    def edit_index(self, index: int) -> None:
+        """Open the Translation cell of the string ``index``, wherever its row
+        is; nothing when the filter hides it or the block no longer holds it."""
+        for r in self._visible_rows():
+            data = self._row_data(r)
+            if data is not None and data.index == index:
+                self.edit_row(r)
+                return
+
     def edit_next_row(self) -> None:
         """Move to the next visible row and open its Translation cell."""
         rows = self._visible_rows()
         current = self.table.currentRow()
         after = [r for r in rows if r > current]
-        if not after:
-            return
-        self.table.setCurrentCell(after[0], COL_TRANSLATION)
-        self.table.edit(self.table.model().index(after[0], COL_TRANSLATION))
+        if after:
+            self.edit_row(after[0])
 
     def step_row(self, delta: int) -> bool:
         """Select the visible row ``delta`` rows on from the current one;
@@ -456,14 +551,13 @@ class StringsView(QWidget):
         return False
 
     def _apply_filter(self) -> None:
-        words = fold(self.filter.text()).split()
+        words = words_of(self.filter.text())
         status = self.status_filter.currentText()
         for r in range(self.table.rowCount()):
             d = self._row_data(r)
             if d is None:
                 continue
-            hay = fold(f"{d.original} {d.translation} {d.notes}")
-            hidden = bool(words) and not all(w in hay for w in words)
+            hidden = not matches_words(words, d.original, d.translation, d.notes)
             if status != "all" and d.status != status:
                 hidden = True
             self.table.setRowHidden(r, hidden)

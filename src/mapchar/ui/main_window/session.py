@@ -154,15 +154,15 @@ class SessionMixin:
         """
         # Another block over the same slot already holds its payload, edits
         # included: the slot is one stream, so this block reads that rather
-        # than decompressing the file's bytes underneath those edits.
-        for other in self.workspace.children(entry.parent):
-            if (
-                other is not entry
-                and other.doc is not None
-                and (other.compression_id, other.slice_offset)
-                == (entry.compression_id, entry.slice_offset)
-            ):
-                return Document(other.doc.data, other.doc.ctx, other.doc.writable)
+        # than decompressing the file's bytes underneath those edits. This
+        # block is not among them — it is the one with no document yet.
+        for other in self.workspace.entries_sharing(entry):
+            # The payload carries the other block's unsaved edits, so this
+            # block is exactly as unsaved as the one it took them from.
+            self.workspace.set_revisions(
+                entry, other.live_revision, other.saved_revision
+            )
+            return Document(other.doc.data, other.doc.ctx, other.doc.writable)
         cfg = self._block_pathway(entry, parent_doc)
         try:
             loaded = load(cfg, self.registry, parent_doc.ctx.inherit())

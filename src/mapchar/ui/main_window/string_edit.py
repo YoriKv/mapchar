@@ -3,18 +3,39 @@ notes and status, which live in the project."""
 
 from __future__ import annotations
 
-from mapchar.core.block import EndToken, Status, block_bound, source_span
+from collections.abc import Callable
+from typing import NamedTuple
+
+from mapchar.core.block import (
+    BlockConfig,
+    EndToken,
+    Extraction,
+    Status,
+    block_bound,
+    source_span,
+)
+from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
-from mapchar.core.text import nfc
+from mapchar.core.table import TableSet
+from mapchar.core.text import same_text
 from mapchar.engines.layout import char_layout
 from mapchar.pipeline.extract import extract
-from mapchar.pipeline.insert import apply_splices, layout_block, room_for, slot_ends
+from mapchar.pipeline.insert import apply_splices, layout_block, room_for
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import StringFieldCommand, StringsEditCommand
 
 
-def _same_text(a: str, b: str) -> bool:
-    return nfc(a).replace("\n", "") == nfc(b).replace("\n", "")
+class ReadBack(NamedTuple):
+    """Why a laid-out buffer may not stand for an edit, and what it reads as."""
+
+    block: str | None
+    """Why the block as a whole refuses it: it will not read at all, or not as
+    the same strings."""
+    string: str | None
+    """The first string that would not read as it must, named by its index."""
+    extraction: Extraction | None
+    """The reading, when nothing is against it — the one the re-read after the
+    edit lands takes, rather than reading the same bytes a second time."""
 
 
 class StringEditMixin:
@@ -68,31 +89,32 @@ class StringEditMixin:
             return entry
         return entry.parent
 
-    def _docs_sharing(self, entry: Entry) -> list:
-        """Every loaded document holding the same bytes as ``entry``'s.
+    def _stamp_shared_bytes(
+        self, entry: Entry, revision: int, shared: list[Entry] | None = None
+    ) -> None:
+        """Put ``revision`` on every entry holding a buffer the edit changed.
 
-        A plain block reads its file's buffer, with every other plain block on
-        that file; a compressed one reads its slot's payload, with every other
-        block over the same slot. A splice lands on all of them, so no view is
-        left showing bytes that are no longer there.
+        Not just the one edited: blocks over one compressed slot share its
+        payload, so an edit in any of them is in all of them and a write of any
+        of them writes it. One left unstamped would show no unsaved mark and
+        answer Write with "nothing to write" while its bytes said otherwise.
+        The entries that only *read* another's buffer — a plain block, whose
+        bytes are its file's — are not stamped: their file is
+        (:meth:`_bytes_owner`).
         """
-        if entry.compression_id:
-            slot = (entry.compression_id, entry.slice_offset)
-            return [
-                e.doc
-                for e in self.workspace.entries
-                if e.doc is not None
-                and e.parent is entry.parent
-                and (e.compression_id, e.slice_offset) == slot
-            ]
-        file_entry = entry.parent if entry.parent is not None else entry
-        docs = [file_entry.doc] if file_entry.doc is not None else []
-        docs += [
-            e.doc
-            for e in self.workspace.children(file_entry)
-            if e.doc is not None and not e.compression_id
-        ]
-        return docs
+        owner = self._bytes_owner(entry)
+        sharing = self.workspace.entries_sharing(entry) if shared is None else shared
+        for holder in sharing:
+            if holder is not owner and self._bytes_owner(holder) is holder:
+                self.workspace.stamp(holder, revision)
+        self.workspace.stamp(owner, revision)
+
+    def _docs_sharing(self, entry: Entry) -> list:
+        """The documents of
+        :meth:`~mapchar.project.workspace.Workspace.entries_sharing`. A splice
+        lands on all of them, so no view is left showing bytes that are no
+        longer there."""
+        return [e.doc for e in self.workspace.entries_sharing(entry)]
 
     def _edit_strings(
         self,
@@ -139,34 +161,92 @@ class StringEditMixin:
         before, after = doc.data[lo:hi], new_data[lo:hi]
         if before == after:
             return []
-        try:
-            check = extract(new_data, cfg, tables, self.registry)
-        except MapcharError as exc:
-            return [str(exc)]
-        if len(check.strings) != len(doc.strings):
-            return [
-                f"the block would read as {len(check.strings)} strings instead of "
-                f"{len(doc.strings)}"
-            ]
-        read = {r.index: r for r in check.strings}
-        for i, t in edits.items():
-            back = read[i].current_text()
-            if not _same_text(back, t):
-                return [f"#{i}: reads back as {back!r}"]
-        # Every other string must read as it did: an edit that changes how
-        # the bytes after it are cut has changed strings nobody asked to change.
-        for rec in doc.strings:
-            if rec.index in edits:
-                continue
-            back = read[rec.index].current_text()
-            if not _same_text(back, rec.current_text()):
-                return [f"#{rec.index}: would change to {back!r}"]
+        back = self._reads_back(cfg, tables, doc, new_data, edits)
+        if back.block is not None:
+            return [back.block]
+        if back.string is not None:
+            return [back.string]
         first = min(edits)
         label = text or ("Edit translation" if len(edits) == 1 else "Edit translations")
+        self._remember_extraction(new_data, cfg, tables, back.extraction)
         self._push_command(
             StringsEditCommand(self, entry, lo, before, after, first, label, run=run)
         )
         return []
+
+    def _reads_back(
+        self,
+        cfg: BlockConfig,
+        tables: TableSet,
+        doc: Document,
+        data: bytes,
+        edits: dict[int, str],
+    ) -> ReadBack:
+        """Whether ``data`` may stand for ``edits``, on the one set of terms.
+
+        The bytes are the translation, so they must say what the translator
+        said: the block must still read as the same strings, each edited string
+        must read back as its text, and every other one must read as it does
+        now — an edit that changes how the bytes after it are cut has changed
+        strings nobody asked to change. Both landings, the undo step and the
+        undo-free one a project load makes, refuse on these terms and no other.
+        """
+        try:
+            check = extract(data, cfg, tables, self.registry)
+        except MapcharError as exc:
+            return ReadBack(str(exc), None, None)
+        if len(check.strings) != len(doc.strings):
+            return ReadBack(
+                f"the block would read as {len(check.strings)} strings instead of "
+                f"{len(doc.strings)}",
+                None,
+                None,
+            )
+        read = {r.index: r for r in check.strings}
+        for i, t in edits.items():
+            back = read[i].current_text()
+            if not same_text(back, t):
+                return ReadBack(None, f"#{i}: reads back as {back!r}", None)
+        for rec in doc.strings:
+            if rec.index in edits:
+                continue
+            back = read[rec.index].current_text()
+            if not same_text(back, rec.current_text()):
+                return ReadBack(None, f"#{rec.index}: would change to {back!r}", None)
+        return ReadBack(None, None, check)
+
+    def _edit_each(
+        self,
+        entry: Entry,
+        edits: dict[int, str],
+        text: str,
+        *,
+        land: Callable[[Entry, dict[int, str], str], list[str]] | None = None,
+    ) -> tuple[int, list[str]]:
+        """``edits`` into the block's bytes: whole where they all go in, else
+        one string at a time.
+
+        A block is laid out as a whole, so one text it cannot take refuses the
+        rest with it. Going on string by string keeps everything the block does
+        have room for, and the translator is told about the rest. How many
+        strings landed comes back with the refusals.
+
+        ``land`` is what puts one batch in — :meth:`_edit_strings`, which makes
+        an undo step, unless the caller has a landing of its own.
+        """
+        if not edits:
+            return 0, []
+        land = land or self._edit_strings
+        if len(edits) > 1 and not land(entry, edits, text):
+            return len(edits), []
+        landed, problems = 0, []
+        for index, one in edits.items():
+            refused = land(entry, {index: one}, text)
+            if refused:
+                problems += refused
+            else:
+                landed += 1
+        return landed, problems
 
     def apply_strings_edit(
         self, entry: Entry, offset: int, data: bytes, revision: int
@@ -178,16 +258,30 @@ class StringEditMixin:
         an undo hands back exactly the unsaved-state the owner had before the
         edit, so undoing back to what was written reads clean again.
         """
-        for doc in self._docs_sharing(entry):
-            buf = bytearray(doc.data)
+        shared = self.workspace.entries_sharing(entry)
+        for holder in shared:
+            buf = bytearray(holder.doc.data)
             buf[offset : offset + len(data)] = data
-            doc.data = bytes(buf)
-            doc.extraction_key = None
-        self.workspace.stamp(self._bytes_owner(entry), revision)
+            holder.doc.data = bytes(buf)
+            holder.doc.extraction_key = None
+        self._stamp_shared_bytes(entry, revision, shared)
         self._reread_blocks_over(entry, offset, offset + len(data))
         self.files_panel.refresh_labels()
         self._update_title()
-        self._refresh_view()
+        # Every row of the grid is a font layout and a render of its string, so
+        # laying a pointer block's thousands out again for an edit that touched
+        # one of them is what every commit and every undo would cost. Only the
+        # rows the changed bytes reach are refreshed, and the refresh below is
+        # told to leave the grid alone.
+        self._rows_patched = self._patch_rows_over(entry, offset, offset + len(data))
+        try:
+            self._refresh_view()
+        finally:
+            self._rows_patched = False
+        # Whatever is left of the reading the edit checked is of bytes every
+        # block that wanted them has now read: holding it would hold a copy of
+        # the buffer with it.
+        self._checked_extraction = None
         self._refresh_project_strings()
 
     def _reread_blocks_over(self, entry: Entry, lo: int, hi: int) -> None:
@@ -271,7 +365,12 @@ class StringEditMixin:
         used = -(-len(result.bits) // 8)
         bound = block_bound(entry.config, entry.doc.strings)
         room = (
-            room_for(rec, entry.config, bound, slot_ends(entry.doc.strings, bound))
+            room_for(
+                rec,
+                entry.config,
+                bound,
+                self._string_slots(entry, entry.doc, bound),
+            )
             if rec
             else 0
         )

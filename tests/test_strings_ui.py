@@ -11,7 +11,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent, QTextCursor
 from PySide6.QtWidgets import QMessageBox
 
-from mapchar.core.block import RangeSource
+from mapchar.core.block import RangeSource, Status
 from mapchar.core.font import TextBox
 from mapchar.engines import scriptfind
 from mapchar.project.formats.table_native import HEADER
@@ -844,6 +844,21 @@ def test_chars_per_line_flags_overflow_and_wraps_without_a_font(window, tmp_path
     assert window.strings._row_data(0).status == "edited"
     window._on_box_changed(replace(box, lines_per_page=1))
     assert window.strings._row_data(0).status == "overflows box"
+
+
+def test_next_untranslated_finds_a_string_its_box_overflows(window, tmp_path):
+    """A row shows "overflows box" in place of the string's own status, and an
+    untouched string is still untranslated whatever its box says about it."""
+    data = b"\x41\x42\x00\x42\x41\x00" + b"\xff" * 8
+    _entry, block = block_with(window, tmp_path, data, stop=6)
+    window._show_view("strings")
+    window._on_box_changed(TextBox(chars_per_line=1))
+    window._set_translation(block, 1, "BB[end]")
+    assert window.strings._row_data(0).status == "overflows box"
+    assert block.doc.strings[0].status is Status.UNTOUCHED
+    window.strings.select_index(1)
+    window._step_strings("untranslated")
+    assert window.strings.selected_indices() == [0]
 
 
 def test_project_strings_lists_every_block_and_jumps(window, tmp_path):

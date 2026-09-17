@@ -110,3 +110,29 @@ def test_backwards_skip_reads_every_string(registry):
     ex = extract(data, cfg, ts, registry)
     assert texts(ex) == ["A[end]B[end]", "X[end]B[end]"]
     assert [(s.start, s.end) for s in ex.strings] == [(4, 8), (8, 8)]
+
+
+def test_padding_between_strings_is_passed_over():
+    """The fill bytes a shorter replacement left in its slot are padding: the
+    next string starts after them, whatever the block was written with."""
+    data = bytes.fromhex("41 00 FF FF 42 00")
+    cfg = BlockConfig(RangeSource(0, 6), EndToken(), "main")
+    assert texts(extract(data, cfg, TS)) == ["A[end]", "B[end]"]
+
+
+def test_a_mapped_fill_byte_is_read_as_text():
+    """Padding is passed over only when the table maps nothing beginning with
+    the fill byte. One it does map is text wherever it sits, so a string that
+    begins with it keeps its head -- and every later string its index."""
+    ts = table_set(ABC_TABLE + "FF=Z\n", "main")
+    data = bytes.fromhex("41 42 00 FF 41 00 41 00")
+    cfg = BlockConfig(RangeSource(0, 8), EndToken(), "main")
+    assert texts(extract(data, cfg, ts)) == ["AB[end]", "ZA[end]", "A[end]"]
+
+
+def test_a_fill_byte_that_is_the_end_token_keeps_its_empty_strings():
+    """A block filled with its own end token: every one of them ends a string
+    of its own, and none of them is passed over."""
+    data = bytes.fromhex("41 00 00 42 00")
+    cfg = BlockConfig(RangeSource(0, 5), EndToken(), "main", fill=0x00)
+    assert texts(extract(data, cfg, TS)) == ["A[end]", "[end]", "B[end]"]

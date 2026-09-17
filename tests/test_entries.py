@@ -114,11 +114,16 @@ def test_a_block_edit_that_cuts_a_string_elsewhere_takes_its_original_afresh(
 ):
     """A string the new reading cuts at other bits is not the same string, so
     the original it shows is what those bytes say, not what an older string at
-    that index said."""
+    that index said — and neither is it the string that was marked or annotated.
+    """
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     window._set_translation(block, 0, "BB[end]")
     assert block.doc.strings[0].original == "AB[end]"
+    block.doc.strings[0].status = Status.DONE
+    block.doc.strings[0].notes = "checked"
+    block.doc.strings[1].status = Status.REVIEW
+    block.doc.strings[1].notes = "kept"
     from dataclasses import replace
 
     window.apply_block_config(
@@ -126,6 +131,11 @@ def test_a_block_edit_that_cuts_a_string_elsewhere_takes_its_original_afresh(
     )
     assert [r.current_text() for r in block.doc.strings] == ["B[end]", "BA[end]"]
     assert [r.original for r in block.doc.strings] == ["B[end]", "BA[end]"]
+    # The mark and the notes were about text that is no longer there: the
+    # string cut elsewhere starts afresh, and the one still at its own bits
+    # keeps everything. A held mark would otherwise survive ``refresh_status``.
+    assert [r.status for r in block.doc.strings] == [Status.UNTOUCHED, Status.REVIEW]
+    assert [r.notes for r in block.doc.strings] == ["", "kept"]
 
 
 # -- the quit gate -------------------------------------------------------------

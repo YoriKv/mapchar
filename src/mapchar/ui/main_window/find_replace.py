@@ -114,17 +114,9 @@ class FindReplaceMixin:
                 # was made, and that is where it lands too.
                 if entry is not self._entry:
                     self._activate_entry(entry)
-                # One edit for the block; if that is refused, string by string,
-                # so one that will not fit does not hold the others back.
-                if not self._edit_strings(entry, edits, "Replace all"):
-                    n += len(edits)
-                    continue
-                for i, t in edits.items():
-                    problems = self._edit_strings(entry, {i: t}, "Replace all")
-                    if problems:
-                        refused += [f"{entry.name} {p}" for p in problems]
-                    else:
-                        n += 1
+                landed, problems = self._edit_each(entry, edits, "Replace all")
+                n += landed
+                refused += [f"{entry.name} {p}" for p in problems]
             if current is not None and self._entry is not current:
                 self._activate_entry(current)
         where = "the project" if project else "the block"
