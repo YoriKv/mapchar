@@ -3,7 +3,7 @@ tables, fonts, and under each block, its strings."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Container, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -152,13 +152,14 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
             self.tree.addTopLevelItem(group)
             group.setExpanded(True)
             self._groups[kind] = group
+        tables = self.workspace.tables()
         for entry in self.workspace.entries:
             if entry.is_child:
                 continue
-            item = self._make_item(entry)
+            item = self._make_item(entry, tables)
             self._groups[entry.kind].addChild(item)
             for child in self.workspace.children(entry):
-                item.addChild(self._make_item(child))
+                item.addChild(self._make_item(child, tables))
             item.setExpanded(True)
         # Blocks open before the rebuild open again, which builds their rows.
         self._expanded &= set(self._items)
@@ -169,18 +170,23 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self._apply_filter(self.filter.text())
         self._on_current(self.workspace.current)
 
-    def _make_item(self, entry: Entry) -> QTreeWidgetItem:
+    def _make_item(self, entry: Entry, tables: Container[str]) -> QTreeWidgetItem:
         item = QTreeWidgetItem([""])
         item.setData(0, Qt.ItemDataRole.UserRole, id(entry))
         self._items[id(entry)] = item
-        self._dress(entry, item)
+        self._dress(entry, item, tables)
         return item
 
-    def _dress(self, entry: Entry, item: QTreeWidgetItem) -> None:
-        """Put the row's label, marks, wash and tooltip on ``item``."""
+    def _dress(
+        self, entry: Entry, item: QTreeWidgetItem, tables: Container[str]
+    ) -> None:
+        """Put the row's label, marks, wash and tooltip on ``item``.
+
+        ``tables`` is the workspace's, which a pass over every row gathers once
+        rather than once a row."""
         item.setText(0, label(entry))
         item.setIcon(0, self._marker(entry))
-        mark, why = status_mark(entry, self.workspace.tables())
+        mark, why = status_mark(entry, tables)
         item.setText(STATUS_COL, mark)
         wash = QBrush(NOTICE_WASH) if mark else QBrush()
         for column in (0, STATUS_COL):
@@ -294,22 +300,25 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
 
     # -- what a row says ------------------------------------------------
 
-    def _update_item(self, entry: Entry) -> None:
+    def _update_item(self, entry: Entry, tables: Container[str] | None = None) -> None:
         item = self._items.get(id(entry))
         if item is None:
             return
+        if tables is None:
+            tables = self.workspace.tables()
         blocked = self.tree.signalsBlocked()
         self.tree.blockSignals(True)
         try:
-            self._dress(entry, item)
+            self._dress(entry, item, tables)
         finally:
             self.tree.blockSignals(blocked)
 
     def refresh_labels(self) -> None:
         if self._labels_held:
             return
+        tables = self.workspace.tables()
         for entry in self.workspace.entries:
-            self._update_item(entry)
+            self._update_item(entry, tables)
 
     @contextmanager
     def labels_held(self) -> Iterator[None]:

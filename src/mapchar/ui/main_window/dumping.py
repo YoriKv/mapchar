@@ -50,11 +50,12 @@ class DumpingMixin:
         if not path:
             return
         payload = []
-        for block in blocks:
-            strings = self._block_strings(block)
-            if strings is None:
-                continue
-            payload.append((block.name, block.config, strings))
+        with self.files_panel.labels_held():
+            for block in blocks:
+                strings = self._block_strings(block)
+                if strings is None:
+                    continue
+                payload.append((block.name, block.config, strings))
         table_paths = [
             os.path.relpath(e.path, os.path.dirname(path))
             for e in self.workspace.table_entries()

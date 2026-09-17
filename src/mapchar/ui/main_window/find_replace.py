@@ -28,15 +28,16 @@ class FindReplaceMixin:
         if not project:
             return [current] if current is not None else []
         blocks: list[Entry] = []
-        for entry in self.workspace.of_kind(EntryKind.BLOCK):
-            if entry.config is None:
-                continue
-            doc = self._load_document(entry)
-            if doc is None:
-                continue
-            self._extract_current(entry, doc, self._table_set_of(entry))
-            if doc.strings:
-                blocks.append(entry)
+        with self.files_panel.labels_held():
+            for entry in self.workspace.of_kind(EntryKind.BLOCK):
+                if entry.config is None:
+                    continue
+                doc = self._load_document(entry)
+                if doc is None:
+                    continue
+                self._extract_current(entry, doc, self._table_set_of(entry))
+                if doc.strings:
+                    blocks.append(entry)
         if current in blocks:
             blocks.remove(current)
             blocks.insert(0, current)

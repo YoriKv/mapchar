@@ -25,14 +25,15 @@ class ProjectStringsMixin:
         """Every string of every block that can be read, with its block: the
         blocks not yet open are loaded and read for it."""
         out: list[tuple[Entry, object]] = []
-        for block in self.workspace.of_kind(EntryKind.BLOCK):
-            if block.config is None:
-                continue
-            doc = self._load_document(block)
-            if doc is None:
-                continue
-            self._extract_current(block, doc, self._table_set_of(block))
-            out += [(block, rec) for rec in doc.strings]
+        with self.files_panel.labels_held():
+            for block in self.workspace.of_kind(EntryKind.BLOCK):
+                if block.config is None:
+                    continue
+                doc = self._load_document(block)
+                if doc is None:
+                    continue
+                self._extract_current(block, doc, self._table_set_of(block))
+                out += [(block, rec) for rec in doc.strings]
         return out
 
     def _refresh_project_strings(self) -> None:

@@ -81,8 +81,8 @@ mapchar/
   `sample-projects/Mother 3/Mother 3 (Japan).gba`, since nothing extracted
   from a ROM is checked in; its docstring says which ROM structure and routine
   each fact comes from. `tests/test_examples.py` reads every block and edits
-  through all three tables. The project reads every block as it opens, which
-  takes the Files panel about half a minute.
+  through all three tables. The project reads every block as it opens, in
+  about four seconds.
 - **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's
   extraction with abcde's Cartographer dump of the synthetic ROM in
   `tests/fixtures/abcde/`. The fixtures are checked in, so the suite never runs

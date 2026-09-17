@@ -644,6 +644,45 @@ def test_opening_a_project_reads_its_blocks(window, tmp_path):
     assert not window._project_dirty()
 
 
+def test_the_files_panel_dresses_each_row_a_bounded_number_of_times(
+    window, tmp_path, monkeypatch
+):
+    """Opening a project, and reading every block for Project Strings, costs the
+    Files panel a few passes over its rows, not one per block: a project of
+    hundreds of blocks would otherwise take the square of that."""
+    data = bytes.fromhex("41 42 00 42 41 00") * 40
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    for n in range(40):
+        add_block(window, file_entry, f"b{n}", RangeSource(n * 6, n * 6 + 6))
+    window._activate_entry(file_entry)
+    proj = tmp_path / "p.mapchar"
+    assert window._write_project(str(proj))
+    window._new_project()
+    panel = type(window.files_panel)
+    dressed: list[Entry] = []
+    dress = panel._dress
+
+    def counted(self, entry, *rest):
+        dressed.append(entry)
+        dress(self, entry, *rest)
+
+    monkeypatch.setattr(panel, "_dress", counted)
+    assert window.open_project(str(proj))
+    rows = len(window.workspace.entries)
+    assert rows == 42
+    assert len(dressed) <= 3 * rows
+    blocks = window.workspace.of_kind(EntryKind.BLOCK)
+    assert all(
+        window.files_panel._items[id(b)].text(0) == f"{b.name}  (2)" for b in blocks
+    )
+    dressed.clear()
+    window.workspace.invalidate_extractions()
+    window.project_strings.show()
+    window._refresh_project_strings()
+    assert window.project_strings.results.rowCount() == 80
+    assert len(dressed) <= 3 * rows
+
+
 def test_opening_a_project_leaves_a_missing_files_blocks_unread(window, tmp_path):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
     file_entry = open_rom_and_table(window, tmp_path, data)

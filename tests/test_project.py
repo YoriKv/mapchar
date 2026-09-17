@@ -233,7 +233,7 @@ def test_close_keeps_to_the_group_then_falls_back_to_string_data():
     assert ws.current is f  # no table left, so String Data
 
 
-def test_replace_resets_empty_then_adds_each_and_sets_current_last():
+def test_replace_resets_empty_then_resets_full_and_sets_current_last():
     ws = Workspace()
     ws.set_current(ws.add(Entry(EntryKind.FILE, "old", "/tmp/old")))
     log: list[str] = []
@@ -250,8 +250,7 @@ def test_replace_resets_empty_then_adds_each_and_sets_current_last():
     assert log == [
         "current:None:1",
         "reset:0",
-        "added:one",
-        "added:two",
+        "reset:2",
         "current:two:2",
     ]
 

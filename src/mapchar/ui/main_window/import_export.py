@@ -222,12 +222,13 @@ class ImportExportMixin:
 
     def _block_strings_by_name(self, file_entry: Entry | None) -> dict[str, list]:
         out: dict[str, list] = {}
-        for e in self.workspace.of_kind(EntryKind.BLOCK):
-            if file_entry and e.parent is not file_entry:
-                continue
-            strings = self._block_strings(e)
-            if strings is not None:
-                out[e.name] = strings
+        with self.files_panel.labels_held():
+            for e in self.workspace.of_kind(EntryKind.BLOCK):
+                if file_entry and e.parent is not file_entry:
+                    continue
+                strings = self._block_strings(e)
+                if strings is not None:
+                    out[e.name] = strings
         return out
 
     def _import(self, kind: str) -> None:

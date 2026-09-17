@@ -517,14 +517,15 @@ class StringsViewMixin:
         key = _same_key(rec.original)
         blocks = [entry]
         if project:
-            for other in self.workspace.of_kind(EntryKind.BLOCK):
-                if other is entry or other.config is None:
-                    continue
-                doc = self._load_document(other)
-                if doc is None:
-                    continue
-                self._extract_current(other, doc, self._table_set_of(other))
-                blocks.append(other)
+            with self.files_panel.labels_held():
+                for other in self.workspace.of_kind(EntryKind.BLOCK):
+                    if other is entry or other.config is None:
+                        continue
+                    doc = self._load_document(other)
+                    if doc is None:
+                        continue
+                    self._extract_current(other, doc, self._table_set_of(other))
+                    blocks.append(other)
         found: dict[Entry, list[int]] = {}
         for block in blocks:
             if block.doc is None:

@@ -509,16 +509,17 @@ class Workspace:
 
         The old list goes as one ``on_reset`` over an *empty* list, so a listener
         that rebuilds from ``entries`` tears down rather than re-reading rows
-        that are about to go; the new list arrives as an ``on_added`` per entry,
-        which is how it is built. ``current`` is set last, so the activation
-        lands on a populated list.
+        that are about to go; the new list arrives as a second ``on_reset`` over
+        the whole of it, not an ``on_added`` per entry — a listener rebuilding
+        on each would rebuild a project of hundreds of blocks hundreds of
+        times. ``current`` is set last, so the activation lands on a populated
+        list.
         """
         self.set_current(None)
         self.entries.clear()
         self._fire(self.on_reset)
         self.entries.extend(entries)
-        for entry in entries:
-            self._fire(self.on_added, entry)
+        self._fire(self.on_reset)
         self.set_current(current)
 
     def set_current(self, entry: Entry | None) -> None:
