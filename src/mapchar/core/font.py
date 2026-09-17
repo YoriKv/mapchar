@@ -71,6 +71,7 @@ class Effect(Enum):
     NONE = "none"
     NEWLINE = "newline"
     PAGE = "page"
+    PAUSE = "pause"
     SPACE = "space"
     GLYPH = "glyph"
     END = "end"

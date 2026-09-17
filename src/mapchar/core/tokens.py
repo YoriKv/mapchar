@@ -31,7 +31,11 @@ class Token:
     """Bits a frame consumed silently: the fallback bits that closed it, or
     the count that opened it. Shown as nothing."""
     newline: bool = False
-    """The block's line code: a line break follows it wherever it is shown."""
+    """A line code — the block's, or an entry with the *newline* effect: a line
+    break follows it wherever it is shown, and it counts as a line."""
+    page: bool = False
+    """An entry with the *page* effect: the text box ends after it, so a line
+    break follows it wherever it is shown too."""
 
     def encoded_bits(self) -> str:
         """Every bit this token stands for, operands included."""
@@ -77,7 +81,7 @@ def escape_text(text: str) -> str:
 
 def render_token(token: Token) -> str:
     text = _render(token)
-    if token.newline and not text.endswith("\n"):
+    if (token.newline or token.page) and not text.endswith("\n"):
         return text + "\n"
     return text
 

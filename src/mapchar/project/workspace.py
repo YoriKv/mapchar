@@ -127,6 +127,10 @@ class Entry:
     table_id: str | None = None
     """Tables: the id the project gives the table in place of its file's,
     set by Rename Table; ``None`` while the file's own applies."""
+    table_includes: tuple[str, ...] | None = None
+    """Tables: the ``@include`` list the project gives the table in place of
+    its file's — set in the Table Editor, or by renaming a table it includes;
+    ``None`` while the file's own applies."""
     table_charset: str | None = None
     """Tables: the charset the project puts on the table in place of its
     file's, set from the Table Editor; ``None`` while the file's own applies."""

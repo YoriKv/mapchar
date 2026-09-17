@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from mapchar.core.font import TextBox
+from mapchar.core.font import CodeEffect, TextBox
 from mapchar.core.table import TokenKind
 from mapchar.core.tokens import plain_text
+from mapchar.engines.layout import code_effects, with_code_effects
 from mapchar.project.workspace import Entry
 from mapchar.ui.undo_commands import BoxCommand
 
@@ -47,7 +48,9 @@ class PreviewMixin:
             return
         font_entry = self._bound_font(entry)
         self.preview_window.set_font(font_entry.font if font_entry else None)
-        self.preview_window.set_box(entry.box or TextBox(), self._code_labels())
+        self.preview_window.set_box(
+            entry.box or TextBox(), self._code_labels(), self._code_effects_of(entry)
+        )
         self.preview_window.set_table_chars(self._table_chars())
         selected = self.strings.selected_indices()
         rec = self._string(entry, selected[0]) if selected else None
@@ -75,9 +78,27 @@ class PreviewMixin:
         entry.box = box
         self.workspace.stamp(entry, revision)
         if self._applying_undo:
-            self.preview_window.set_box(box or TextBox(), self._code_labels())
+            self.preview_window.set_box(
+                box or TextBox(), self._code_labels(), self._code_effects_of(entry)
+            )
         self.preview_window.update_box(box or TextBox())
         self._refresh_view()
+
+    def _code_effects_of(self, entry: Entry | None) -> dict[str, CodeEffect]:
+        """What the codes ``entry`` reads through do to layout before its box
+        says otherwise: the effects their entries declare, and its line code."""
+        if entry is None:
+            return {}
+        cfg = entry.config
+        tables = self._table_set_of(entry)
+        return code_effects(tables, cfg.line_label if cfg is not None else "line")
+
+    def _layout_box(self, entry: Entry | None) -> TextBox | None:
+        """``entry``'s box as layout sees it: the codes' effects from its
+        tables under what the box itself sets."""
+        if entry is None or entry.box is None:
+            return None
+        return with_code_effects(entry.box, self._code_effects_of(entry))
 
     def _table_chars(self) -> str:
         """The start table's one-character text entries in key order.

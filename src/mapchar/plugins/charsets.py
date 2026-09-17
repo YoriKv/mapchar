@@ -49,7 +49,8 @@ def apply_charset(
     """Fill ``table`` with its charset's codes under the file's own entries.
 
     File entries win code for code; a file entry with empty text removes the
-    charset's code. Idempotent: a table already filled is left alone.
+    charset's code, and is kept where the charset has none, to remove what an
+    included table gives. Idempotent: a table already filled is left alone.
 
     A charset may also offer ``aliases()``: text the encoder accepts for a
     code whose own text is something else, which is how the yen sign reaches
@@ -70,10 +71,13 @@ def apply_charset(
         if bits in table.entries:
             continue
         table.add(entry)
+    charset_keys = table.charset_entries
     for text, bits in _charset_aliases(charset, notices):
         table.add_alias(escape_text(text), bits)
     for bits, entry in own.items():
-        if entry.kind is TokenKind.TEXT and entry.text == "":
+        # Empty text removes a charset code; anywhere else it is an entry of
+        # its own — one that removes a key an included table gives.
+        if entry.kind is TokenKind.TEXT and entry.text == "" and bits in charset_keys:
             table.remove(bits)
     table.charset_applied = True
 

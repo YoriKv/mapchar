@@ -561,6 +561,8 @@ class MainWindow(
         self.table_editor.table_requested.connect(self._edit_table_entry)
         self.table_editor.charset_chosen.connect(self._on_charset_chosen)
         self.table_editor.rename_requested.connect(self._rename_table)
+        self.table_editor.includes_chosen.connect(self._on_includes_chosen)
+        self.table_editor.inheritance = self._table_inheritance
         self.table_editor.sampler = self._table_sample
         self.table_editor.speller = self.address_spelling.format
         self.hex_panel.go_to_requested.connect(self._go_to)

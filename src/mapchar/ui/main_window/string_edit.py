@@ -377,7 +377,7 @@ class StringEditMixin:
         readout = f"{used} / {room} byte(s)" if room else f"{used} byte(s)"
         if room and used > room:
             readout += f" — {used - room} over"
-        box = entry.box
+        box = self._layout_box(entry)
         if box is not None and box.chars_per_line > 0:
             chars = char_layout(text, box)
             readout += f" · {chars.widest} / {box.chars_per_line} chars"

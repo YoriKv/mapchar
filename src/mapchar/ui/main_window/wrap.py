@@ -30,16 +30,20 @@ class WrapMixin:
         if font is None and entry.box.chars_per_line <= 0:
             self._error("Bind a font, or set the box's chars per line, first.")
             return
+        box = self._layout_box(entry)
         newline = next(
-            (lb for lb, e in entry.box.effects.items() if e.effect.value == "newline"),
+            (lb for lb, e in box.effects.items() if e.effect.value == "newline"),
             None,
         )
         page = next(
-            (lb for lb, e in entry.box.effects.items() if e.effect.value == "page"),
+            (lb for lb, e in box.effects.items() if e.effect.value == "page"),
             None,
         )
         if newline is None:
-            self._error("Give one code the 'newline' effect in the Codes tab first.")
+            self._error(
+                "Give one code the 'newline' effect, in its table entry or the "
+                "Codes tab, first."
+            )
             return
         indices = self.strings.selected_indices() or [
             r.index for r in entry.doc.strings[:1]
@@ -50,7 +54,7 @@ class WrapMixin:
             if rec is None:
                 continue
             text = rec.current_text()
-            wrapped, _ = wrap_text(text, font, entry.box, newline, page)
+            wrapped, _ = wrap_text(text, font, box, newline, page)
             if wrapped != text:
                 edits[index] = wrapped
         if not edits:

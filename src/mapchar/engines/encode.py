@@ -11,6 +11,7 @@ decoding it.
 from __future__ import annotations
 
 import heapq
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from itertools import count
 
@@ -38,9 +39,10 @@ from mapchar.core.tokens import (
 )
 from mapchar.engines.decode import DecodeRules, EndedBy, decode_run, innermost_index
 
-_Frame = tuple[str, int | None, bool, str | None, tuple | None]
-"""``(table_id, counter, shared, fallback_bits, count)``; counter None is
-unlimited. ``count`` is ``(spec, at, consumed)`` for a frame whose count the
+_Frame = tuple[str, int | None, bool, str | None, tuple | None, bool]
+"""``(table_id, counter, shared, fallback_bits, count, through)``; counter None is
+unlimited; ``through`` lets bits the table does not match fall to the frame
+beneath. ``count`` is ``(spec, at, consumed)`` for a frame whose count the
 data carries: the operand it is written as, the bit offset it was written at
 (``None`` until the frame is on top and writes its placeholder) and the weight
 matched so far, which closing the frame writes into the placeholder."""
@@ -69,6 +71,9 @@ class _Index:
     returns: list[Entry] = field(default_factory=list)
     longer: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """Entry bits to the suffixes that would complete a longer entry."""
+    keys: list[str] = field(default_factory=list)
+    """Every key, sorted: what a frame falling through over this table looks
+    up the keys that would take bits from the table beneath in."""
     min_bits_per_atom: float = 1.0
 
 
@@ -121,6 +126,7 @@ def _index(table: Table) -> _Index:
     # suffixes are found in one pass instead of comparing every pair — a
     # charset table is tens of thousands of entries.
     ordered = sorted(bits_list)
+    idx.keys = ordered
     for i, bits in enumerate(ordered):
         suffixes = []
         for other in ordered[i + 1 :]:
@@ -173,12 +179,19 @@ def _count(stack: list[_Frame], weight: int) -> list[_Frame]:
     stack = list(stack)
     i = len(stack) - 1
     while i >= 0:
-        tid, counter, shared, fb, cnt = stack[i]
+        tid, counter, shared, fb, cnt, through = stack[i]
         if counter is not None:
-            stack[i] = (tid, counter - weight, shared, fb, cnt)
+            stack[i] = (tid, counter - weight, shared, fb, cnt, through)
         elif cnt is not None:
             spec, at, consumed = cnt
-            stack[i] = (tid, counter, shared, fb, (spec, at, consumed + weight))
+            stack[i] = (
+                tid,
+                counter,
+                shared,
+                fb,
+                (spec, at, consumed + weight),
+                through,
+            )
         if not shared:
             break
         i -= 1
@@ -191,11 +204,20 @@ def _frames_for(params: tuple[SwitchParam, ...], owner: str = "") -> list[_Frame
     frames: list[_Frame] = []
     for p in reversed(params):
         if p.table_id == RETURN:
-            frames.append((f"{RETURN}@{owner}", None, False, None, None))
+            frames.append((f"{RETURN}@{owner}", None, False, None, None, False))
         else:
             operand = p.stop.operand
             count = (operand, None, 0) if operand is not None else None
-            frames.append((p.table_id, p.stop.count, p.shared, p.stop.fallback, count))
+            frames.append(
+                (
+                    p.table_id,
+                    p.stop.count,
+                    p.shared,
+                    p.stop.fallback,
+                    count,
+                    p.through,
+                )
+            )
     return frames
 
 
@@ -221,7 +243,7 @@ def encode(
     indexes = {tid: _index(t) for tid, t in tables.tables.items()}
     heuristic = min((i.min_bits_per_atom for i in indexes.values()), default=1.0)
     n = len(atoms)
-    root: _Frame = (tables.start.id, None, False, None, None)
+    root: _Frame = (tables.start.id, None, False, None, None, False)
     start_state = (0, (root,), (), 0, 0)
     max_chain = len(tables.tables)
     tie = count()
@@ -312,12 +334,26 @@ def _successors(
     bit_len,
 ):
     n = len(atoms)
-    tid, counter, shared, fallback, cnt = stack[-1]
+    tid, counter, shared, fallback, cnt, through = stack[-1]
 
-    def emit(bits: str, weight: int, new_stack=None, push=(), is_end=False, advance=1):
+    def emit(
+        bits: str,
+        weight: int,
+        new_stack=None,
+        push=(),
+        is_end=False,
+        advance=1,
+        shadows=(),
+    ):
         nf = _forbid(forbidden, bits)
         if nf is None:
             return None
+        # Bits taken from a table beneath: no table the frame falls through
+        # on the way there may match them, now or once more bits follow.
+        for shadow in shadows:
+            if tables.table(shadow).match(bits) is not None:
+                return None
+            nf = nf + _extensions(indexes[shadow], bits)
         if fallback is not None and bits:
             if bits.startswith(fallback):
                 return None
@@ -340,7 +376,14 @@ def _successors(
         if nf is None:
             return out
         placed = list(stack)
-        placed[-1] = (tid, counter, shared, fallback, (spec, bit_len, consumed))
+        placed[-1] = (
+            tid,
+            counter,
+            shared,
+            fallback,
+            (spec, bit_len, consumed),
+            through,
+        )
         return [(pos, placed, nf, zeros, False)]
     # Closing a count frame: what it matched, written where the placeholder is.
     if cnt is not None:
@@ -374,73 +417,148 @@ def _successors(
                     out.append(s)
         return out
 
-    table = tables.table(tid)
-    idx = indexes[tid]
-    # A return entry closes the innermost frame of this table.
-    if len(stack) > 1:
-        for ret in idx.returns:
-            new_stack = list(stack)
-            i = innermost_index(new_stack, lambda f: f[0] == tid)
-            if i is not None:
-                del new_stack[i:]
-            s = emit(ret.bits, 0, new_stack=new_stack, advance=0)
-            if s:
-                # The return counts its weight in the frame it was matched in
-                # before popping; charge it to the popped frame is moot.
-                out.append(s)
-    # Silent switches: zero-width, bounded so chains cannot loop.
-    if chain < max_chain:
-        for entry in idx.silent:
-            s = emit(
-                entry.bits, entry.weight, push=_frames_for(entry.params, tid), advance=0
-            )
-            if s:
-                out.append(_with_longer(s, idx, entry))
+    out.extend(
+        _table_successors(
+            atoms,
+            pos,
+            stack,
+            tables,
+            indexes,
+            end_terminated,
+            ends,
+            used,
+            chain,
+            max_chain,
+            emit,
+        )
+    )
+    return out
+
+
+def _layers(stack, tables: TableSet) -> list[tuple[str, tuple[str, ...]]]:
+    """The tables the top frame matches in, in the order the decoder tries
+    them, each with the tables tried before it: the frame's own, then while a
+    frame falls through, the one beneath. A pending return is passed over; a
+    ``raw`` or ``bits`` frame beneath matches nothing."""
+    layers: list[tuple[str, tuple[str, ...]]] = []
+    through = True
+    for frame in reversed(stack):
+        tid = frame[0]
+        if tid.startswith(f"{RETURN}@"):
+            continue
+        if not through or tid in (RAW, BITS) or tid not in tables.tables:
+            break
+        layers.append((tid, tuple(t for t, _ in layers)))
+        through = frame[5]
+    return layers
+
+
+def _extensions(idx: _Index, bits: str) -> tuple[str, ...]:
+    """The suffixes that would complete one of the table's keys after ``bits``."""
+    keys = idx.keys
+    out = []
+    for i in range(bisect_right(keys, bits), len(keys)):
+        if not keys[i].startswith(bits):
+            break
+        out.append(keys[i][len(bits) :])
+    return tuple(out)
+
+
+def _table_successors(
+    atoms,
+    pos,
+    stack,
+    tables: TableSet,
+    indexes,
+    end_terminated,
+    ends,
+    used,
+    chain,
+    max_chain,
+    emit,
+):
+    n = len(atoms)
+    out = []
+    layers = _layers(stack, tables)
+    for tid, shadows in layers:
+        idx = indexes[tid]
+        # A return entry closes the innermost frame of the table that holds it.
+        if len(stack) > 1:
+            for ret in idx.returns:
+                new_stack = list(stack)
+                i = innermost_index(new_stack, lambda f, tid=tid: f[0] == tid)
+                if i is not None:
+                    del new_stack[i:]
+                s = emit(ret.bits, 0, new_stack=new_stack, advance=0, shadows=shadows)
+                if s:
+                    # The return counts its weight in the frame it was matched in
+                    # before popping; charge it to the popped frame is moot.
+                    out.append(s)
+        # Silent switches: zero-width, bounded so chains cannot loop.
+        if chain < max_chain:
+            for entry in idx.silent:
+                s = emit(
+                    entry.bits,
+                    entry.weight,
+                    push=_frames_for(entry.params, tid),
+                    advance=0,
+                    shadows=shadows,
+                )
+                if s:
+                    out.append(_with_longer(s, idx, entry))
     if pos >= n:
         return out
     atom = atoms[pos]
     if isinstance(atom, CodeRef) and (atom.is_raw_byte or atom.is_raw_bits):
         raw = atom.raw_bits()
-        # Unmatched data in a table frame: the decoder must find no entry here.
+        # Unmatched data in a table frame: the decoder must find no entry here,
+        # in the frame's table or any it falls through to.
         if not any(
-            other.startswith(raw) or raw.startswith(other) for other in table.entries
+            other.startswith(raw) or raw.startswith(other)
+            for tid, _ in layers
+            for other in tables.table(tid).entries
         ):
             s = emit(raw, 0)
             if s:
                 out.append(s)
         return out
     key = _atom_key(atom)
-    for entry_atoms, entry in idx.by_first.get(key, ()):
-        k = len(entry_atoms)
-        if pos + k > n or not all(
-            _atoms_equal(entry_atoms[i], atoms[pos + i]) for i in range(k)
-        ):
-            continue
-        interior_end = entry.kind is TokenKind.END and pos + k != n
-        if interior_end and end_terminated and used + 1 >= ends:
-            continue
-        push = _frames_for(entry.params, tid) if entry.kind is TokenKind.SWITCH else ()
-        s = emit(
-            entry.bits,
-            entry.weight,
-            # The decoder starts the next run from the root frame.
-            new_stack=[stack[0]] if interior_end and end_terminated else None,
-            push=push,
-            is_end=entry.kind is TokenKind.END,
-            advance=k,
-        )
-        if s:
-            out.append(_with_longer(s, idx, entry))
-    if isinstance(atom, CodeRef):
-        entry = idx.codes.get(atom.label)
-        if entry is not None:
-            try:
-                values = operand_values(entry, atom.words)
-            except ValueError:
-                return out
-            s = emit(bits_for(entry, values), entry.weight)
+    for tid, shadows in layers:
+        idx = indexes[tid]
+        for entry_atoms, entry in idx.by_first.get(key, ()):
+            k = len(entry_atoms)
+            if pos + k > n or not all(
+                _atoms_equal(entry_atoms[i], atoms[pos + i]) for i in range(k)
+            ):
+                continue
+            interior_end = entry.kind is TokenKind.END and pos + k != n
+            if interior_end and end_terminated and used + 1 >= ends:
+                continue
+            push = (
+                _frames_for(entry.params, tid) if entry.kind is TokenKind.SWITCH else ()
+            )
+            s = emit(
+                entry.bits,
+                entry.weight,
+                # The decoder starts the next run from the root frame.
+                new_stack=[stack[0]] if interior_end and end_terminated else None,
+                push=push,
+                is_end=entry.kind is TokenKind.END,
+                advance=k,
+                shadows=shadows,
+            )
             if s:
                 out.append(_with_longer(s, idx, entry))
+        if isinstance(atom, CodeRef):
+            entry = idx.codes.get(atom.label)
+            if entry is not None:
+                try:
+                    values = operand_values(entry, atom.words)
+                except ValueError:
+                    continue
+                s = emit(bits_for(entry, values), entry.weight, shadows=shadows)
+                if s:
+                    out.append(_with_longer(s, idx, entry))
     return out
 
 

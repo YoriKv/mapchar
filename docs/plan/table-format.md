@@ -12,9 +12,11 @@ prefix character exactly one meaning, and names its dialect in a header line.
 3. [Entry kinds](#entry-kinds)
 4. [Codes and text](#codes-and-text)
 5. [Switch parameters](#switch-parameters)
-6. [Charsets](#charsets)
-7. [Validation](#validation)
-8. [Legacy dialects](#legacy-dialects)
+6. [Effects](#effects)
+7. [Charsets](#charsets)
+8. [Includes](#includes)
+9. [Validation](#validation)
+10. [Legacy dialects](#legacy-dialects)
 
 ---
 
@@ -46,13 +48,14 @@ Directives:
 | `@mapchar table 1`  | Header. The first non-blank, non-comment line of every native file; `1` is the grammar version. |
 | `@table id`         | Names the file's table `id`. Optional; a file without one names its table after the file. |
 | `@charset name`     | The built-in charset the table sits on ([Charsets](#charsets)).                      |
+| `@include id`       | A loaded table whose entries this one starts from ([Includes](#includes)); repeatable. |
 
 A table file holds exactly one table, as it does for every other tool: a
 second `@table` line is an error. `id` is `[\w.-]+` — letters and digits of
 any script, `_`, `.` and `-`, so `@table かんじ` names a table after what is
-in it — and is unique across every loaded file. Switch entries name tables by
-`id`, so renaming a file that has a `@table` line breaks nothing. Line order
-carries no meaning.
+in it — and is unique across every loaded file. Switch entries and includes
+name tables by `id`, so renaming a file that has a `@table` line breaks
+nothing. Line order carries no meaning, except among `@include` lines.
 
 ```
 @mapchar table 1
@@ -65,6 +68,7 @@ carries no meaning.
 %01=x
 /FF=[end]
 FE=[line]
+FD{page}=[next]
 $F0=[color],u8
 !F1=[item] @items:1
 !F2=[name] @names:*
@@ -88,6 +92,7 @@ The left-hand side of an entry is the bits it matches:
 | `41`, `0041`    | hex digits, 4 bits each, most significant first; leading zeros count, so `0041` is 16 bits and `41` is 8 |
 | `%0101`         | literal bits                                                      |
 | `41<2>`         | either form followed by a **weight** in angle brackets            |
+| `41{page}`      | either form, after any weight, followed by an **effect** in braces ([Effects](#effects)) |
 
 - Odd digit counts are allowed: `041` is 12 bits.
 - Matching is longest-prefix over the whole table, at any bit length; the
@@ -106,7 +111,8 @@ The left-hand side of an entry is the bits it matches:
 | `!KEY=return`               | **return**  | Leaves the current switch frame; at the top level, ends the string             |
 
 One prefix, one meaning: `/` end, `$` operands, `!` table control, `@`
-directive, `#` comment. Nothing else is special at the start of a line.
+directive, `#` comment. Nothing else is special at the start of a line. Every
+kind but return may carry an effect after its key.
 
 ### Operand entries
 
@@ -154,8 +160,9 @@ is:
 - In table text and in scripts, a literal bracket is written `\[` or `\]`.
   The other escapes are `\n` (a line break: emitted after the token on dump,
   ignored on insert, so dumps stay re-insertable) and `\\`. A block's line
-  code — `[line]` unless the block names another — breaks the line without
-  one, so `FE=[line]` and `80=A[line]` need no `\n`.
+  code — `[line]` unless the block names another — and an entry with the
+  *newline* or *page* effect break the line without one, so `FE=[line]`,
+  `80=A[line]` and `FD{page}=[next]` need no `\n`.
 - Text is NFC: an entry's text is composed when the file loads and written
   back composed. The encoder compares text decomposed, so a table that spells
   `が` in one entry and one that spells it as `か` plus a separate dakuten code
@@ -173,7 +180,7 @@ when the entry is matched:
 
 ```
 params    := param ( " " param )* [ " return" ]
-param     := "@" table ":" stop [ "+" ]
+param     := "@" table ":" stop [ "+" ] [ "|" ]
 stop      := N            exactly N weighted matches, then pop; 0 is no stop, as "*"
            | "*"          until the string ends, an end token, or a return entry
            | operand      N read from the data as that operand when the frame opens: u8, u16, u24, u32, u16be, u24be, u32be
@@ -190,6 +197,17 @@ Semantics, in the stack machine of [architecture.md](architecture.md#31-decode):
   frame decrements only that frame's counter, except that a `+` frame also
   decrements the frame beneath it. A frame pops when its counter reaches
   zero or below.
+- **A `|` frame falls through.** Bits its table does not match are matched in
+  the table of the frame beneath, and, while that frame falls through too, on
+  down; a pending `return` is passed over, and a `raw` or `bits` frame
+  beneath matches nothing. So a frame's table need hold only what differs from
+  the table that switched to it. A match found beneath counts in the frame
+  that read it, as any match does, and otherwise acts as in the table that
+  holds it: an end token ends the string, a switch pushes its frames, and a
+  `return` leaves the innermost frame of *its* table — everything above
+  included, so at the top level it ends the string. On encode, an entry is
+  taken from beneath only where no table above it would match the bits.
+  `|` reads as *or else*: the table, or else the one beneath.
 - **`*` frames** pop when the data or the string's bound ends, when an end
   token is matched, or when a `return` entry of the frame's table is matched.
 - **Fallback bits** (`$hex`, `%bits`) are checked before the table's entries
@@ -224,7 +242,37 @@ Semantics, in the stack machine of [architecture.md](architecture.md#31-decode):
 !02=[str] @upper:u8+         as many as the next byte says (Pascal strings)
 !FE=[raw] @raw:u8            a code followed by as many raw bytes as its next byte says
 !F4=[font2] @font2:*         switch until [end] or a return entry in font2
+!F5=[kana] @kana:*|          kana until [end]; bits kana lacks are read as here
 ```
+
+## Effects
+
+An entry can declare what it does to the text box, in braces after its key:
+
+```
+01FF{newline}=[line]
+00FF{page}=[FF00]
+$04FF{pause}=[FF04],u16
+```
+
+| Effect      | Meaning                                                              |
+|-------------|----------------------------------------------------------------------|
+| `newline`   | a line break: a line code, counted by a block's *Lines* string type  |
+| `page`      | the text box ends and the next starts: a line break wherever the text is shown, a new box in the Preview |
+| `pause`     | the text waits; nothing moves, and the Table Editor says so           |
+
+- A *newline* or *page* token is followed by a line break in the Text tab,
+  the Strings view, its editing pane and dumps, without a `\n` in its text.
+- A block's line code (`[line]`, or its `line_label`) is a *newline* without
+  saying so; a table effect only adds to it.
+- The Preview lays codes out by these effects, under what a block's box sets
+  per code ([preview.md](preview.md#code-effects)): the table says what a code
+  does wherever it is read, the box what it does in one block.
+- The effect sits with the key, not the text, because a text entry's text is
+  any characters at all: a trailing keyword would be text. Beside the weight's
+  angle brackets, the braces annotate the key the same way — what the matched
+  bits do beyond what they print.
+- An effect on a `return` entry is an error; any other kind may carry one.
 
 ## Charsets
 
@@ -259,6 +307,41 @@ Charsets are plugins; more can be added. Every charset is also offered as a
 table of its own, ending strings at its NUL
 ([features.md](features.md#tables)).
 
+## Includes
+
+`@include id` starts the table with every entry of the loaded table `id`, as
+that table resolves — its charset, its own includes and its entries. Several
+`@include` lines apply in the order written, each over the one before; the
+table's charset goes under them all, and the file's own entries over them:
+an entry overrides an included one key for key, and an entry with empty text
+removes the key an included table gives, as it does a charset's code.
+
+```
+@mapchar table 1
+@table battle
+@include script
+20FF=[FF20]
+0BFF=
+```
+
+`battle` is `script` with `FF20` taking no operand and `FF0B` gone.
+
+- **Resolved after all files load**, when a table set is built, as switch
+  targets are: an include no loaded table answers to, and tables that include
+  each other, fail that table set with the error named. A table edited in the
+  app reaches every table that includes it on the next read.
+- **Labels are unique in the merged table.** An override at the same key
+  replaces the included entry's label with its own; an entry whose label an
+  included table gives another key is an error.
+- **Written back, a table says only what its file says**: its `@include`
+  lines and its own entries (`Table.own_entries`), among them an empty-text
+  entry for each included key it removes. The table in the app holds the same;
+  what it includes is laid under it each time a table set is built.
+- `@include` is the directive's name because it says what happens, the way a
+  preprocessor's does: the other table's lines are in effect here, first.
+  Unlike a switch parameter it names no frame; the included table is read as
+  part of this one.
+
 ## Validation
 
 Loading fails with a line number for:
@@ -268,9 +351,13 @@ Loading fails with a line number for:
 - a second `@table` line;
 - the same bits twice in the table, in any notation;
 - the same label twice in the table;
-- a switch parameter naming a table that no loaded file defines (checked
-  after all files load);
-- `return` anywhere but last among a switch entry's parameters.
+- a switch parameter or `@include` naming a table that no loaded file
+  defines, tables that include each other, and a label twice in a table
+  merged with its includes (all checked after all files load);
+- the same `@include` twice in one file;
+- `return` anywhere but last among a switch entry's parameters;
+- an effect that is not `newline`, `page` or `pause`, or one on a `return`
+  entry.
 
 Not errors: the same text under two keys (decode is deterministic by bits;
 encode picks the cheapest), and the same bits in two different tables.

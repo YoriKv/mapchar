@@ -66,20 +66,32 @@ bounds the page when it is set.
 
 ## Code effects
 
-Codes in the table set can carry a **layout effect**, set per code in the
-Preview window's Codes tab:
+Codes in the table set carry a **layout effect**:
 
 | Effect      | Rendering                                                     |
 |-------------|---------------------------------------------------------------|
 | *none*      | draws nothing and advances nothing (the default)              |
 | *newline*   | moves to the start of the next line                           |
 | *page*      | clears the box and starts at the origin                       |
+| *pause*     | draws nothing and advances nothing; the code is known to wait |
 | *space(N)*  | advances `N` pixels                                           |
 | *glyph(i)*  | draws glyph `i`                                               |
 | *end*       | stops rendering                                               |
 
-Effects are saved with the block's box; a table shared by several blocks may
-mean different things in each.
+A code's effect comes from, last word first:
+
+1. the block's box, set per code in the Preview window's Codes tab and saved
+   with the box — *none* included, so a block can silence what its table
+   says;
+2. the code's table entry, which declares *newline*, *page* or *pause*
+   ([table-format.md](table-format.md#effects)) for every block that reads it;
+3. the block's line code, which is a *newline*.
+
+The Codes tab shows each code's effect from wherever it comes, with what it
+is without a pick in the tooltip, and the box keeps only picks that differ
+from that.
+*space* and *glyph* belong to a box alone: they are pixels and glyphs of one
+font.
 
 ## Rendering
 
@@ -117,6 +129,8 @@ line breaks to fit the box:
 - when the page's line count is reached, the block's *page* code is inserted
   when one exists, else the string is flagged as overflowing. A page starts on
   its own first line, so no newline code goes with it;
+- a *page* code already in the text starts the wrap over, on the first line
+  of the next page;
 - the result is applied directly and is one undo step;
 - with no font bound, the box's `chars per line` is the width and every
   character one cell; a *space* or *glyph* code advances one cell.

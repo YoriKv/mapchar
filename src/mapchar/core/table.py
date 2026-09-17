@@ -9,13 +9,18 @@ from __future__ import annotations
 
 import functools
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, TypeVar
 
 from mapchar.core.bits import bits_to_hex
 from mapchar.core.errors import TableError
+from mapchar.core.font import Effect
 from mapchar.core.numbers import parse_num
 from mapchar.core.text import nfc
+
+_T = TypeVar("_T")
 
 RAW = "raw"
 """Pseudo table id: one unmatched byte per match, shown ``[$XX]``."""
@@ -32,6 +37,10 @@ ID_PATTERN = re.compile(r"[\w.-]+")
 LABEL_PATTERN = re.compile(r"[^\[\]\s$%][^\[\]\s]*")
 BRACKETED = re.compile(r"\[(" + LABEL_PATTERN.pattern + r")\](?:\\n)*")
 """A text that is exactly one code, optionally followed by line-break escapes."""
+TABLE_EFFECTS = (Effect.NEWLINE, Effect.PAGE, Effect.PAUSE)
+"""The layout effects a table entry can declare: what a code does to the text
+box whatever font draws it. The rest (a space, a glyph, an end of drawing) are
+a block's box's to say."""
 
 
 class TokenKind(Enum):
@@ -168,11 +177,15 @@ class SwitchParam:
     table_id: str
     stop: Stop = Stop()
     shared: bool = False
+    through: bool = False
+    """The frame falls through: bits its table does not match are matched in
+    the frame beneath, and on down while that one falls through too."""
 
     def spec(self) -> str:
         if self.table_id == RETURN:
             return RETURN
-        return f"@{self.table_id}:{self.stop.spec()}{'+' if self.shared else ''}"
+        marks = ("+" if self.shared else "") + ("|" if self.through else "")
+        return f"@{self.table_id}:{self.stop.spec()}{marks}"
 
 
 @dataclass(frozen=True)
@@ -189,6 +202,9 @@ class Entry:
     comment: str = ""
     """The comment lines directly above the entry in its file, without their
     ``#``, joined by newlines. Written back above it."""
+    effect: Effect = Effect.NONE
+    """What the entry does to layout (:data:`TABLE_EFFECTS`): a *newline* or
+    *page* breaks the line wherever the text is shown, a *pause* is only known."""
 
     def __post_init__(self) -> None:
         # Every entry's text is NFC, whatever form the file it came from used,
@@ -219,9 +235,12 @@ class Entry:
         return self.kind is TokenKind.SWITCH and self.text == ""
 
     def is_newline(self, label: str) -> bool:
-        """Whether this entry is the line code ``[label]``: a code with that
-        label, or text that ends in it. Every rendering breaks the line after
-        such a token, without a ``\\n`` in its text."""
+        """Whether this entry is a line code: one that declares the *newline*
+        effect, or the block's line code ``[label]`` — a code with that label,
+        or text that ends in it. Every rendering breaks the line after such a
+        token, without a ``\\n`` in its text."""
+        if self.effect is Effect.NEWLINE:
+            return True
         if not label:
             return False
         if self.kind is TokenKind.CODE:
@@ -238,7 +257,13 @@ def _line_code(label: str) -> re.Pattern[str]:
 
 
 class Table:
-    """One logical table: entries keyed by bits, plus derived lookups."""
+    """One logical table: entries keyed by bits, plus derived lookups.
+
+    ``entries`` is what the table's own file says over its charset. The tables
+    it includes (``includes``) are not folded in: :func:`resolve` lays them
+    under it when a :class:`TableSet` is built, so an included table edited in
+    the app reaches every table that includes it.
+    """
 
     def __init__(self, id: str, charset: str = "none"):
         id = nfc(id)
@@ -266,11 +291,44 @@ class Table:
         read and every reload, and folding a charset in twice would re-add the
         entries a table removed. Cleared to re-apply after the plugins change.
         """
+        self.revision = 0
+        """Bumped by every change of entries, aliases or includes: what the
+        lookups derived from the table are cached against."""
+        self._includes: tuple[str, ...] = ()
         self._by_length: dict[int, dict[str, Entry]] = {}
         self._lengths: tuple[int, ...] = ()
+        self._cache: dict[str, tuple[Any, Any]] = {}
 
     def __repr__(self) -> str:
         return f"Table({self.id!r}, {len(self.entries)} entries)"
+
+    def __getstate__(self) -> dict:
+        # A copy (an undo snapshot) leaves the derived caches behind: a resolved
+        # table is as big as everything it includes.
+        state = dict(self.__dict__)
+        state["_cache"] = {}
+        return state
+
+    @property
+    def includes(self) -> tuple[str, ...]:
+        """The ids of the tables whose entries this one starts from, in order
+        (``@include``): each lays its entries over the one before, and the
+        table's own entries go over them all."""
+        return self._includes
+
+    @includes.setter
+    def includes(self, ids) -> None:
+        self._includes = tuple(ids)
+        self.revision += 1
+
+    def _cached(self, name: str, make: Callable[[], _T]) -> _T:
+        """``make()``, remembered until the table changes."""
+        hit = self._cache.get(name)
+        if hit is not None and hit[0] == self.revision:
+            return hit[1]
+        value = make()
+        self._cache[name] = (self.revision, value)
+        return value
 
     def add(self, entry: Entry, *, replace: bool = False) -> None:
         """Add an entry. Duplicate bits or labels are an error unless ``replace``."""
@@ -289,6 +347,7 @@ class Table:
             self.labels[label] = entry
         self._by_length.setdefault(len(entry.bits), {})[entry.bits] = entry
         self._lengths = tuple(sorted(self._by_length, reverse=True))
+        self.revision += 1
 
     def remove(self, bits: str) -> None:
         entry = self.entries.get(bits)
@@ -304,6 +363,7 @@ class Table:
         if not group:
             del self._by_length[len(entry.bits)]
             self._lengths = tuple(sorted(self._by_length, reverse=True))
+        self.revision += 1
 
     @property
     def max_bits(self) -> int:
@@ -324,14 +384,29 @@ class Table:
         text = nfc(text)
         if text and bits in self.entries and text != self.entries[bits].text:
             self.aliases[text] = bits
+            self.revision += 1
 
     def switch_targets(self) -> set[str]:
+        return set(self._cached("targets", self._switch_targets))
+
+    def _switch_targets(self) -> frozenset[str]:
         ids: set[str] = set()
         for entry in self.entries.values():
             for param in entry.params:
                 if param.table_id not in (RAW, BITS, RETURN):
                     ids.add(param.table_id)
-        return ids
+        return frozenset(ids)
+
+    def effects(self) -> dict[str, Effect]:
+        """Every label whose entry declares a layout effect, with the effect."""
+        return self._cached(
+            "effects",
+            lambda: {
+                label: e.effect
+                for label, e in self.labels.items()
+                if e.effect is not Effect.NONE
+            },
+        )
 
     def sorted_entries(self) -> list[Entry]:
         return sorted(self.entries.values(), key=lambda e: (len(e.bits), e.bits))
@@ -362,22 +437,139 @@ class Table:
         self.charset_entries = dict(other.charset_entries)
         self.charset_applied = other.charset_applied
         self.aliases = dict(other.aliases)
+        self.includes = other.includes
         for bits in list(self.entries):
             self.remove(bits)
         for entry in other.entries.values():
             self.add(entry)
 
 
+def inherited(
+    table: Table, available: Mapping[str, Table]
+) -> dict[str, tuple[Entry, str]]:
+    """What ``table``'s includes give it before its own entries apply: per key,
+    the entry and the id of the table whose own entry it is.
+
+    Raises :class:`~mapchar.core.errors.TableError` for an include no table in
+    ``available`` answers to and for tables that include each other; a label
+    the merged table holds twice is :func:`resolve`'s to report.
+    """
+    layers: dict[str, tuple[Entry, str]] = {}
+    for inc in table.includes:
+        layers.update(_layers(_included(table, inc, available), available, (table.id,)))
+    return layers
+
+
+def _included(table: Table, inc: str, available: Mapping[str, Table]) -> Table:
+    target = available.get(inc)
+    if target is None:
+        raise TableError(f"table {table.id!r} includes unknown table {inc!r}")
+    return target
+
+
+def _layers(
+    table: Table, available: Mapping[str, Table], visiting: tuple[str, ...]
+) -> dict[str, tuple[Entry, str]]:
+    """Every entry resolved ``table`` holds, with the table it is own to."""
+    if table.id in visiting:
+        cycle = " → ".join((*visiting[visiting.index(table.id) :], table.id))
+        raise TableError(f"tables include each other: {cycle}")
+    below: dict[str, tuple[Entry, str]] = {
+        bits: (e, table.id) for bits, e in table.charset_entries.items()
+    }
+    for inc in table.includes:
+        target = _included(table, inc, available)
+        below.update(_layers(target, available, (*visiting, table.id)))
+    return _lay_own(table, below)
+
+
+def _lay_own(
+    table: Table, below: dict[str, tuple[Entry, str]]
+) -> dict[str, tuple[Entry, str]]:
+    """``table``'s own entries over ``below``: an entry with empty text over a
+    key ``below`` gives removes that key, as it does a charset's code."""
+    merged = dict(below)
+    for e in table.own_entries():
+        if e.kind is TokenKind.TEXT and e.text == "" and e.bits in below:
+            del merged[e.bits]
+        else:
+            merged[e.bits] = (e, table.id)
+    return merged
+
+
+def resolve(table: Table, available: Mapping[str, Table]) -> Table:
+    """``table`` with everything it includes laid under its own entries.
+
+    A table that includes nothing is itself. Otherwise the answer is a table of
+    its own, remembered on ``table`` until it or anything it includes changes.
+    Raises :class:`~mapchar.core.errors.TableError` as :func:`inherited` does.
+    """
+    if not table.includes:
+        return table
+    key = _resolve_key(table, available, ())
+    hit = table._cache.get("resolved")
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    merged = _layers(table, available, ())
+    out = Table(table.id, table.charset)
+    out.comment = table.comment
+    out.charset_applied = table.charset_applied
+    out.charset_entries = dict(table.charset_entries)
+    out.includes = table.includes
+    seen: dict[str, tuple[str, str]] = {}
+    for bits, (entry, origin) in merged.items():
+        label = entry.label
+        if label is None:
+            continue
+        other = seen.get(label)
+        if other is not None:
+            where = sorted({origin, other[1]})
+            raise TableError(
+                f"duplicate label [{label}] in table {table.id!r}"
+                + (f" (from {' and '.join(where)})" if where != [table.id] else "")
+            )
+        seen[label] = (bits, origin)
+    for entry, _ in merged.values():
+        out.add(entry, replace=True)
+    for inc in table.includes:
+        for text, bits in resolve(available[inc], available).aliases.items():
+            if bits in out.entries:
+                out.aliases[text] = bits
+    for text, bits in table.aliases.items():
+        if bits in out.entries:
+            out.aliases[text] = bits
+    table._cache["resolved"] = (key, out)
+    return out
+
+
+def _resolve_key(
+    table: Table, available: Mapping[str, Table], visiting: tuple[str, ...]
+) -> tuple:
+    """What a resolution of ``table`` depends on: every table it reaches by
+    ``@include``, as the object and the revision it was at."""
+    if table.id in visiting:
+        cycle = " → ".join((*visiting[visiting.index(table.id) :], table.id))
+        raise TableError(f"tables include each other: {cycle}")
+    parts: list = [id(table), table.revision]
+    for inc in table.includes:
+        target = _included(table, inc, available)
+        parts.append(_resolve_key(target, available, (*visiting, table.id)))
+    return tuple(parts)
+
+
 @dataclass
 class TableSet:
-    """The start table plus every table reachable from it by switches."""
+    """The start table plus every table reachable from it by switches, each
+    resolved over what it includes (:func:`resolve`)."""
 
     start: Table
     tables: dict[str, Table] = field(default_factory=dict)
 
     @classmethod
-    def build(cls, start: Table, available: dict[str, Table]) -> TableSet:
-        """Close over switch targets, failing on one that is not ``available``."""
+    def build(cls, start: Table, available: Mapping[str, Table]) -> TableSet:
+        """Close over switch targets, failing on one that is not ``available``
+        and on an include that does not resolve."""
+        start = resolve(start, available)
         tables = {start.id: start}
         pending = [start]
         while pending:
@@ -389,8 +581,9 @@ class TableSet:
                     raise TableError(
                         f"table {table.id!r} switches to unknown table {target!r}"
                     )
-                tables[target] = available[target]
-                pending.append(available[target])
+                resolved = resolve(available[target], available)
+                tables[target] = resolved
+                pending.append(resolved)
         return cls(start, tables)
 
     def table(self, id: str) -> Table:

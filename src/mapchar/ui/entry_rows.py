@@ -183,12 +183,18 @@ class ParamRow(QWidget):
         }
         self.shared = QCheckBox("counts here too (+)")
         self.shared.setToolTip("Its matches also count in the table that switched here")
+        self.through = QCheckBox("falls through (|)")
+        self.through.setToolTip(
+            "Bytes its table has no entry for are read in the table that "
+            "switched here, so the table need hold only what differs"
+        )
         self.drop = _drop_button("Remove this parameter")
         row.addWidget(self.table)
         row.addWidget(self.stop)
         for widget in self.values.values():
             row.addWidget(widget)
         row.addWidget(self.shared)
+        row.addWidget(self.through)
         row.addStretch(1)
         row.addWidget(self.drop)
         self.table.currentIndexChanged.connect(lambda _: self.changed.emit())
@@ -198,6 +204,7 @@ class ParamRow(QWidget):
         self.bytes.textChanged.connect(lambda _: self.changed.emit())
         self.bits.textChanged.connect(lambda _: self.changed.emit())
         self.shared.toggled.connect(lambda _: self.changed.emit())
+        self.through.toggled.connect(lambda _: self.changed.emit())
         self.drop.clicked.connect(lambda: self.removed.emit(self))
         self._on_stop()
 
@@ -231,7 +238,12 @@ class ParamRow(QWidget):
             stop = Stop(fallback=self.bits.text().strip())
         else:
             stop = Stop()
-        return SwitchParam(self.table.currentData(), stop, self.shared.isChecked())
+        return SwitchParam(
+            self.table.currentData(),
+            stop,
+            self.shared.isChecked(),
+            self.through.isChecked(),
+        )
 
     def set_param(self, param: SwitchParam) -> None:
         if not select_data(self.table, param.table_id):
@@ -254,6 +266,7 @@ class ParamRow(QWidget):
         else:
             select_data(self.stop, STOP_ANY)
         self.shared.setChecked(param.shared)
+        self.through.setChecked(param.through)
 
 
 def _drop_button(tip: str) -> QToolButton:

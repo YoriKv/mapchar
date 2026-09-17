@@ -39,15 +39,14 @@ class StringsViewMixin:
     def _overflow_status(self, rec, entry: Entry) -> bool:
         """Whether the string overflows its box: through the bound font, or,
         with none, by the characters per line the box sets."""
-        if entry.box is None:
+        box = self._layout_box(entry)
+        if box is None:
             return False
         font_entry = self._bound_font(entry)
         if font_entry is not None and font_entry.font is not None:
-            return layout_glyphs(
-                rec.current_text(), font_entry.font, entry.box
-            ).overflows
-        if entry.box.chars_per_line > 0:
-            return char_layout(rec.current_text(), entry.box).overflows
+            return layout_glyphs(rec.current_text(), font_entry.font, box).overflows
+        if box.chars_per_line > 0:
+            return char_layout(rec.current_text(), box).overflows
         return False
 
     def _extract_current(
@@ -371,10 +370,10 @@ class StringsViewMixin:
             for label in sorted(shapes)
         ]
 
-    @staticmethod
-    def _newline_code(entry) -> str:
-        """What Shift+Return writes: the box's newline code, else ``[line]``."""
-        box = entry.box if entry is not None else None
+    def _newline_code(self, entry) -> str:
+        """What Shift+Return writes: the code carrying the *newline* effect —
+        by the box, the table or as the block's line code — else ``[line]``."""
+        box = self._layout_box(entry)
         for label, effect in (box.effects if box else {}).items():
             if effect.effect is Effect.NEWLINE:
                 return f"[{label}]"

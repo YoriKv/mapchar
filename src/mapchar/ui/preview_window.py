@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.core.tokens import Token
-from mapchar.engines.layout import Layout, layout, unspellable
+from mapchar.engines.layout import Layout, layout, unspellable, with_code_effects
 from mapchar.ui.font_tab import FontTab
 from mapchar.ui.glyph_sheet import GlyphSheet
 from mapchar.ui.glyphs import Glyph
@@ -54,6 +54,9 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         """The tokens or script text being previewed; ``None`` until one is."""
         self._page = 0
         self._labels: list[str] = []
+        self._defaults: dict[str, CodeEffect] = {}
+        """What each code does before the box says otherwise: the effects its
+        table entry declares, and the block's line code."""
         self._table_chars = ""
         self._syncing = False
         layout_ = QVBoxLayout(self)
@@ -199,9 +202,17 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         self._box = box
         self._paint()
 
-    def set_box(self, box: TextBox, labels: list[str]) -> None:
+    def set_box(
+        self,
+        box: TextBox,
+        labels: list[str],
+        defaults: dict[str, CodeEffect] | None = None,
+    ) -> None:
+        """Show ``box``, with a row per code in ``labels``; ``defaults`` is
+        what each code does where the box sets nothing for it."""
         self._box = box
         self._labels = labels
+        self._defaults = dict(defaults or {})
         self._syncing = True
         try:
             self.box_w.setValue(box.width)
@@ -214,13 +225,19 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
             self.origin_y.setValue(box.origin_y)
             self.codes.setRowCount(len(labels))
             for r, label in enumerate(labels):
-                effect = box.effects.get(label, CodeEffect())
+                effect = box.effects.get(label, self._defaults.get(label, CodeEffect()))
                 item = QTableWidgetItem(label)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.codes.setItem(r, 0, item)
                 combo = QComboBox()
                 combo.addItems([e.value for e in Effect])
                 combo.setCurrentText(effect.effect.value)
+                if label in self._defaults:
+                    combo.setToolTip(
+                        f"Left to its table or the line code, it is "
+                        f"{self._defaults[label].effect.value}; a pick here "
+                        "overrides that for this block"
+                    )
                 combo.currentIndexChanged.connect(lambda _: self._emit_box())
                 self.codes.setCellWidget(r, 1, combo)
                 self.codes.setItem(r, 2, QTableWidgetItem(str(effect.value)))
@@ -239,10 +256,11 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
             self.canvas.clear()
             self.status.setText("Bind a font to the block (Font tab).")
             return
-        self._result = layout(source, self._font, self._box)
+        box = with_code_effects(self._box, self._defaults)
+        self._result = layout(source, self._font, box)
         image = self._sheet.render(
             self._result,
-            self._box,
+            box,
             self._page,
             self.zoom.value(),
             self.grid.isChecked(),
@@ -297,8 +315,10 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
                 else 0
             )
             eff = Effect(combo.currentText()) if combo else Effect.NONE
-            if eff is not Effect.NONE:
-                effects[label] = CodeEffect(eff, value)
+            # Only what differs from what the table already says is the box's.
+            chosen = CodeEffect(eff, value)
+            if chosen != self._defaults.get(label, CodeEffect()):
+                effects[label] = chosen
         return replace(
             self._box,
             width=self.box_w.value(),

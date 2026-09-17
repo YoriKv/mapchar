@@ -83,20 +83,35 @@ Entries are compared by identity. Blocks, bindings and undo commands hold
 
 - **`Table`** — `id` (`[\w.-]+`, so kana and kanji name tables too),
   `entries` keyed by bit string, `labels` keyed by label, `aliases` (extra
-  text the encoder accepts for an entry's bits), `charset`, and derived
-  lookups kept as entries are added: `max_bits` and entries bucketed by key
-  length, which `match` scans longest length first. The encoder builds its own
+  text the encoder accepts for an entry's bits), `charset`, `includes` (the
+  ids of the tables it starts from), and derived lookups kept as entries are
+  added: `max_bits` and entries bucketed by key length, which `match` scans
+  longest length first. `revision` counts every change; what is derived from
+  the whole table — its switch targets, its labels' effects, its resolution —
+  is cached against it and left behind by a copy. The encoder builds its own
   text index per search (`engines/encode.py`), not held on the table.
+- **`resolve(table, available)`** — the table with its includes laid under its
+  own entries: charset, then each include resolved in order, then
+  `own_entries`, an empty text removing a key from below. A table that
+  includes nothing is itself; otherwise the result is a table of its own,
+  cached on the includer against every table it reaches and their revisions,
+  so an edit to an included table shows on the next build. It raises for an
+  include not in `available`, a cycle and a label twice. `inherited(table,
+  available)` is the include layer alone, with the table each entry is own to,
+  for the Table Editor.
 - **`Entry`** — frozen: `bits`, `kind` (text, end, code, switch, return),
   `text` (text or label, composed to NFC on construction, so every dialect and
   every charset agree on one form), `weight`, `operands: tuple[OperandSpec]`,
-  `params: tuple[SwitchParam]`.
+  `params: tuple[SwitchParam]`, `comment`, and `effect` (`core.font.Effect`:
+  *none*, or one of `TABLE_EFFECTS` — *newline*, *page*, *pause*).
 - **`SwitchParam`** — `table_id: str` (a table's id, or `raw`, `bits` or
   `return`), `stop: Stop` (a weighted `count`, `fallback` bits, or neither —
-  which `Stop.any` reports), `shared: bool`.
+  which `Stop.any` reports), `shared: bool`, `through: bool` (the frame falls
+  through to the one beneath).
 - **`TableSet`** — the start table plus the closure of tables its switches
-  reach, resolved by id from the loaded files, one table each. It is what decode and encode
-  run over.
+  reach, resolved by id from the loaded files, one table each, each through
+  `resolve`: a missing switch target or include fails `build`. It is what
+  decode and encode run over.
 - **`Token`** — one decoded unit: `entry` (or `None` for unmatched data),
   `bits`, `bit_start`, `operands: tuple[int]`, `text` (the rendered form,
   codes in brackets). A token list renders to text by concatenation and
@@ -163,8 +178,9 @@ only the bytes on either side of the conversion, `read_pointer` and
 
 ### 2.5 Fonts and boxes
 
-`core/font.py` holds `Font` (sheet geometry, glyph map, widths), `TextBox` and
-`CodeEffect` as described in [preview.md](preview.md); `engines/layout.py` is
+`core/font.py` holds `Font` (sheet geometry, glyph map, widths), `TextBox`,
+`Effect` (which table entries use too) and `CodeEffect` as described in
+[preview.md](preview.md); `engines/layout.py` is
 what lays a string out in one.
 They are frozen values whose mutators return new instances.
 
@@ -211,9 +227,15 @@ replication notes rather than to abcde's behaviour:
 - **End** — an end token ends the string in end-terminated rules, after
   which realignment applies. `strings_per_pointer` runs the machine that
   many times, restarting in the start table.
-- **Lines** — a token that is the rules' `line_label` code (`[line]`) is
-  marked `newline`, and renders with a line break; with `max_lines` set (the
-  *Lines* string type) the string ends after that many.
+- **Falling through** — with no match in the top frame's table, a frame with
+  `through` set hands the window to the frame beneath, passing a pending
+  return and stopping at a `raw` or `bits` frame; the match counts in the top
+  frame and acts as in the table holding it, whose id the token carries.
+- **Lines** — a token that is the rules' `line_label` code (`[line]`), or whose
+  entry has the *newline* effect, is marked `newline`; one whose entry has the
+  *page* effect is marked `page`. Both render with a line break; with
+  `max_lines` set (the *Lines* string type) the string ends after that many
+  `newline` tokens.
 - **Limits** — the tighter of the string rule's limit and the block's
   bound. Reaching the end of data ends the string with a notice, never an
   error.
@@ -247,6 +269,11 @@ searches for the cheapest bit string that **decodes back to the same tokens**:
   abcde omits.
 - **Fallback bits** are emitted whenever a fallback frame closes, including
   at the end of the string.
+- **Falling through** — the top frame's successors come from its table and,
+  while frames fall through, from each table beneath, in the decoder's order.
+  An entry taken from beneath carries the tables above it as shadows: bits a
+  shadow matches are refused, and its keys that extend them are forbidden
+  suffixes, so the decoder cannot find them first.
 - **A count read from the data** is a placeholder of the operand's width,
   emitted when its frame first comes on top, and filled in with the weight the
   frame matched when the frame closes — a move the search may make at any
@@ -309,7 +336,11 @@ had.
 `engines/layout.py` renders tokens through a `Font` into a `TextBox` as a
 list of glyph placements, records overflow, lists the text the font cannot
 spell, and implements Wrap ([preview.md](preview.md#wrapping)). It draws
-nothing; the UI paints the placements.
+nothing; the UI paints the placements. The box a block lays out in is its own
+with `code_effects(table_set, line_label)` — the effects its entries declare,
+then the line code as a *newline* — merged under it by `with_code_effects`;
+the window's `_layout_box` is that box for every overflow, readout, wrap and
+newline-code question.
 
 ### 3.7 Code-aware find and replace
 
@@ -578,7 +609,10 @@ two halves of one thing. The live table is the entry's `table`; what the file
 gave is kept as `file_table`, the edits as `table_overlay` (per entry key: the
 entry's lines in the native grammar — its comment lines, then its own — or
 `null` for one removed), a charset chosen in place of the file's as
-`table_charset`, and an id given in place of the file's as `table_id`:
+`table_charset`, an id given in place of the file's as `table_id`, and
+includes given in place of the file's as `table_includes`. Both tables hold
+only what their file says; includes are resolved when a table set is built,
+so the overlay never measures what an included table gives:
 
 | Function | When |
 |-------------------|------------------------------------------------------------|
@@ -630,6 +664,7 @@ and aliases for renamed plugin ids.
       "dialect": "native",                           // opt
       "charset": "shift-jis",                        // opt, in place of the file's
       "table": "font",                               // opt, an id in place of the file's
+      "includes": ["script"],                        // opt, includes in place of the file's
       "overlay": {"01000011": "# the letter C\n43=C", // opt, the in-app edits
                   "00000000": null} },               //   its lines, or null=removed
     { "kind": "table", "name": "kanji.tbl",          // no path: no file

@@ -11,9 +11,11 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import partial
 from typing import Any
 
 from mapchar.core.bits import Bits, align_up
+from mapchar.core.font import Effect
 from mapchar.core.notices import Notice
 from mapchar.core.table import (
     BITS,
@@ -49,7 +51,8 @@ class DecodeRules:
     realign: tuple[int, int] = (0, 0)
     """``(multiple, offset)`` in bits, applied after an end token."""
     line_label: str = "line"
-    """The block's line code; a token that is one renders with a line break."""
+    """The block's line code; a token that is one renders with a line break,
+    as one whose entry declares the *newline* or *page* effect does."""
     max_lines: int = 0
     """Stop after this many line codes (0: never)."""
 
@@ -75,6 +78,8 @@ class _Frame:
     pending: OperandSpec | None = None
     """A count still to be read from the data, the first time the frame is
     on top."""
+    through: bool = False
+    """Bits the frame's table does not match are matched in the frame beneath."""
 
 
 DEFAULT_RULES = DecodeRules()
@@ -153,10 +158,11 @@ def decode(
             _pop_finished(stack)
             continue
 
-        # 3. Longest-prefix match in the frame's table; else one unmatched
-        #    byte, which weighs nothing and does not disturb the frame.
-        entry = frame.table.match(window(pos, frame.table.max_bits))
-        if entry is None:
+        # 3. Longest-prefix match in the frame's table, falling through to the
+        #    frames beneath while they let it; else one unmatched byte, which
+        #    weighs nothing and does not disturb the frame.
+        entry, holder = _match(stack, partial(window, pos))
+        if entry is None or holder is None:
             chunk = window(pos, 8)
             end = _advance(pos, len(chunk), skips)
             tokens.append(Token(chunk, pos, end, table_id=frame.table_id))
@@ -178,16 +184,23 @@ def decode(
         newline = entry.is_newline(rules.line_label)
         tokens.append(
             Token(
-                entry.bits, start, pos, entry, operands, frame.table_id, newline=newline
+                entry.bits,
+                start,
+                pos,
+                entry,
+                operands,
+                holder.id,
+                newline=newline,
+                page=entry.effect is Effect.PAGE,
             )
         )
 
         # 4. Count the match in this frame, and beneath it while shared.
         _count(stack, entry.weight)
 
-        # 5. Kind-specific behaviour.
+        # 5. Kind-specific behaviour, as in the table that holds the entry.
         if entry.kind is TokenKind.RETURN:
-            if not _pop_table(stack, frame.table):
+            if not _pop_table(stack, holder):
                 return DecodeResult(tokens, pos, EndedBy.RETURN, notices)
             continue
         if entry.kind is TokenKind.END and rules.end_terminated:
@@ -202,7 +215,7 @@ def decode(
             _pop_finished(stack)
             # Innermost last, so the first parameter runs first.
             for param in reversed(entry.params):
-                stack.append(_frame_for(param, tables, frame.table_id))
+                stack.append(_frame_for(param, tables, holder.id))
             continue
         _pop_finished(stack)
 
@@ -278,6 +291,28 @@ def innermost_index(stack: Sequence[Any], match: Callable[[Any], bool]) -> int |
     return None
 
 
+def _match(
+    stack: list[_Frame], window: Callable[[int], str]
+) -> tuple[Entry | None, Table | None]:
+    """The entry the top frame matches and the table holding it.
+
+    A frame that falls through hands the bits its table does not match to the
+    frame beneath, and so on down; a pending ``return`` is passed over, and a
+    ``raw`` or ``bits`` frame beneath matches nothing for it.
+    """
+    through = True
+    for frame in reversed(stack):
+        if frame.table_id == RETURN:
+            continue
+        if not through or frame.table is None:
+            break
+        entry = frame.table.match(window(frame.table.max_bits))
+        if entry is not None:
+            return entry, frame.table
+        through = frame.through
+    return None, None
+
+
 def _frame_for(param: SwitchParam, tables: TableSet, owner: str) -> _Frame:
     if param.table_id == RETURN:
         return _Frame(RETURN, None, Stop(), False, None, owner)
@@ -289,6 +324,7 @@ def _frame_for(param: SwitchParam, tables: TableSet, owner: str) -> _Frame:
         param.shared,
         param.stop.count,
         pending=param.stop.operand,
+        through=param.through,
     )
 
 

@@ -1,8 +1,10 @@
 """The Table Editor: a table's entries in a grid, one of them in a form.
 
 The window edits one table entry's table in place: the grid shows every
-entry as key, kind, text, what it does and its weight; the form under it
-(:mod:`mapchar.ui.table_entry_form`) edits the selected one, or a new one,
+entry as key, kind, text, what it does and its weight, and — dimmed, naming
+the table they come from — the entries the tables it includes give it; the
+form under it (:mod:`mapchar.ui.table_entry_form`) edits the selected one, or
+a new one,
 with a picker for everything but the text. Every change is handed to the
 window with the table as it was, which makes it one undo step
 (:class:`~mapchar.ui.undo_commands.TableCommand`).
@@ -15,8 +17,9 @@ from copy import deepcopy
 from dataclasses import replace
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -30,8 +33,9 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.bits import format_key
 from mapchar.core.errors import TableError
+from mapchar.core.table import ID_PATTERN, Table, TokenKind
 from mapchar.core.table import Entry as TableEntry
-from mapchar.core.table import Table, TokenKind
+from mapchar.core.text import nfc
 from mapchar.core.textmatch import matches_words, words_of
 from mapchar.engines.relsearch import entries_from_base
 from mapchar.project.formats.table_native import format_entry, parse_entry
@@ -68,6 +72,12 @@ entry's key decode to from where they are found (or from a given offset),
 or nothing when there is no file to look in."""
 Speller = Callable[[int], str]
 """How the window spells a file offset."""
+Inheritance = Callable[[Table], tuple[dict[str, tuple[TableEntry, str]], str]]
+"""What the window answers for a table's includes: per key, the entry they give
+it and the table that entry is own to; and what is wrong with the merged table
+(an include not loaded, a cycle, a label twice), or nothing."""
+ORIGIN_ROLE = Qt.ItemDataRole.UserRole + 1
+"""On a Key cell: the id of the table an inherited row comes from, else ``None``."""
 
 
 class TableEditor(EscapeCloses, QWidget):
@@ -85,6 +95,8 @@ class TableEditor(EscapeCloses, QWidget):
     """The Charset picker put the table entry's table on a charset."""
     rename_requested = Signal(object)
     """Rename Table… on the table entry being edited."""
+    includes_chosen = Signal(object, tuple)
+    """The Includes field gave the table entry's table these ``@include`` ids."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
@@ -108,6 +120,11 @@ class TableEditor(EscapeCloses, QWidget):
         """Where the form's key was taken from, for the sample line."""
         self.sampler: Sampler | None = None
         self.speller: Speller = lambda offset: f"{offset:X}"
+        self.inheritance: Inheritance | None = None
+        self._inherited: dict[str, tuple[TableEntry, str]] = {}
+        """What the table's includes give it, as :data:`Inheritance` answers."""
+        self._problem = ""
+        """What was wrong with the merged table when the grid was filled."""
         self._columns: dict[int, bool] = _stored_columns()
         """The columns shown or hidden by choice; the rest follow the table."""
         layout = QVBoxLayout(self)
@@ -123,6 +140,14 @@ class TableEditor(EscapeCloses, QWidget):
             "the encoding's code for code"
         )
         head.add_group("Charset", self.charset_pick)
+        self.includes = hint_field(
+            QLineEdit(),
+            "table ids",
+            "The tables this one starts from (@include), in order: their entries "
+            "show dimmed, and an entry of this table's own overrides one key for key",
+        )
+        fit_chars(self.includes, 14)
+        head.add_group("Includes", self.includes)
         self.rename = QPushButton("Rename Table…")
         self.rename.setToolTip(
             "Change the table's id; switches and blocks that name it follow"
@@ -199,6 +224,7 @@ class TableEditor(EscapeCloses, QWidget):
 
         self.table_pick.currentIndexChanged.connect(self._on_table_pick)
         self.charset_pick.currentIndexChanged.connect(self._on_charset_pick)
+        self.includes.editingFinished.connect(self._on_includes_edited)
         self.filter.textChanged.connect(self._apply_filter)
         QShortcut(
             QKeySequence.StandardKey.Find,
@@ -280,6 +306,23 @@ class TableEditor(EscapeCloses, QWidget):
         if charset and charset != self._table.charset:
             self.charset_chosen.emit(self._entry, charset)
 
+    def _on_includes_edited(self) -> None:
+        if self._filling or self._entry is None or self._table is None:
+            return
+        ids = tuple(
+            nfc(word) for word in self.includes.text().replace(",", " ").split()
+        )
+        if ids == self._table.includes:
+            return
+        bad = [i for i in ids if not ID_PATTERN.fullmatch(i)]
+        if bad:
+            self.status.setText(f"{bad[0]!r} is not a table id.")
+            return
+        if len(set(ids)) != len(ids):
+            self.status.setText("A table is included once.")
+            return
+        self.includes_chosen.emit(self._entry, ids)
+
     # -- the table --------------------------------------------------------------
 
     @property
@@ -353,11 +396,24 @@ class TableEditor(EscapeCloses, QWidget):
         self.grid.setSortingEnabled(False)
         self.grid.setRowCount(0)
         weights_used = False
+        self._inherited, self._problem = {}, ""
         if self._table is not None:
-            entries = self._table.sorted_entries()
-            self.grid.setRowCount(len(entries))
-            for row, e in enumerate(entries):
-                self._set_row(row, e)
+            if self.inheritance is not None and self._table.includes:
+                self._inherited, self._problem = self.inheritance(self._table)
+            own = self._table.entries
+            rows: list[tuple[TableEntry, str | None]] = [
+                (e, None) for e in self._table.sorted_entries()
+            ]
+            rows += [
+                (e, origin)
+                for bits, (e, origin) in sorted(
+                    self._inherited.items(), key=lambda kv: (len(kv[0]), kv[0])
+                )
+                if bits not in own
+            ]
+            self.grid.setRowCount(len(rows))
+            for row, (e, origin) in enumerate(rows):
+                self._set_row(row, e, origin)
                 weights_used = weights_used or e.weight != 1
         self.grid.setSortingEnabled(True)
         self.grid.sortItems(sort_column, sort_order)
@@ -369,6 +425,12 @@ class TableEditor(EscapeCloses, QWidget):
         if self._entry is not None:
             select_data(self.table_pick, id(self._entry))
         self._show_charset()
+        self.includes.setText(
+            " ".join(self._table.includes) if self._table is not None else ""
+        )
+        self.includes.setEnabled(self._table is not None)
+        if self._problem:
+            self.status.setText(self._problem)
         self._apply_filter(self.filter.text())
         self.grid.verticalScrollBar().setValue(scroll)
         selected_row = self._row_of(selected) if selected is not None else None
@@ -404,16 +466,31 @@ class TableEditor(EscapeCloses, QWidget):
             COLUMNS_KEY, {str(c): on for c, on in self._columns.items()}
         )
 
-    def _set_row(self, row: int, e: TableEntry) -> None:
+    def _set_row(self, row: int, e: TableEntry, origin: str | None = None) -> None:
+        """One row: an entry of the table's own, or — ``origin`` naming the
+        table it is own to — one an include gives it, dimmed."""
+        details = describe(e)
+        hidden = self._inherited.get(e.bits) if origin is None else None
+        if hidden is not None and e.kind is TokenKind.TEXT and e.text == "":
+            details = f"removes @{hidden[1]}'s entry"
+        elif origin is not None:
+            details = f"from @{origin}" + (f" · {details}" if details else "")
         cells = [
             format_key(e.bits),
             KIND_NAMES[e.kind],
             # A code reads as the dump shows it; the form holds the bare label.
             f"[{e.text}]" if e.kind is TokenKind.CODE else e.text,
-            describe(e),
+            details,
             str(e.weight),
             e.comment.replace("\n", " ⏎ "),
         ]
+        dim = (
+            QApplication.palette().color(
+                QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text
+            )
+            if origin is not None
+            else None
+        )
         for column, text in enumerate(cells):
             item = _KeyItem(text) if column == KEY else QTableWidgetItem(text)
             if column == WEIGHT:
@@ -422,7 +499,23 @@ class TableEditor(EscapeCloses, QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if column == KEY:
                 item.setData(Qt.ItemDataRole.UserRole, e.bits)
+                item.setData(ORIGIN_ROLE, origin)
+            if dim is not None:
+                item.setForeground(dim)
+                item.setToolTip(
+                    f"From @{origin}; editing it gives this table its own entry"
+                )
             self.grid.setItem(row, column, item)
+
+    def _entry_at(self, bits: str) -> TableEntry | None:
+        """The table's own entry at ``bits``, else the one an include gives."""
+        if self._table is None:
+            return None
+        own = self._table.entries.get(bits)
+        if own is not None:
+            return own
+        inherited = self._inherited.get(bits)
+        return inherited[0] if inherited is not None else None
 
     def _apply_filter(self, text: str) -> None:
         words = words_of(text)
@@ -449,9 +542,10 @@ class TableEditor(EscapeCloses, QWidget):
         if self._filling or self._table is None:
             return
         bits = self._selected_bits()
-        if len(bits) == 1:
+        entry = self._entry_at(bits[0]) if len(bits) == 1 else None
+        if entry is not None:
             self._editing = bits[0]
-            self.form.set_entry(self._table.entries[bits[0]])
+            self.form.set_entry(entry)
         else:
             # Several rows, or none: the form is for one entry, so it is for
             # a new one until one row is picked.
@@ -538,6 +632,7 @@ class TableEditor(EscapeCloses, QWidget):
             if replace_bits is not None and replace_bits != entry.bits:
                 table.remove(replace_bits)
             table.add(entry, replace=True)
+            self._check_merged()
         except TableError as exc:
             self.status.setText(exc.message)
             table.replace_with(before)
@@ -549,6 +644,15 @@ class TableEditor(EscapeCloses, QWidget):
             self._editing = entry.bits
         self._emit_change(before)
         return True
+
+    def _check_merged(self) -> None:
+        """Raise what an edit newly breaks in the table merged with its
+        includes — a label an included table already gives another key."""
+        if self.inheritance is None or self._table is None or not self._table.includes:
+            return
+        _, problem = self.inheritance(self._table)
+        if problem and problem != self._problem:
+            raise TableError(problem)
 
     def _add(self) -> None:
         try:
@@ -577,7 +681,7 @@ class TableEditor(EscapeCloses, QWidget):
         if self._filling or self._table is None:
             return
         bits = self.grid.item(item.row(), KEY).data(Qt.ItemDataRole.UserRole)
-        old = self._table.entries.get(bits)
+        old = self._entry_at(bits)
         if old is None:
             return
         if item.column() == TEXT:
@@ -683,7 +787,12 @@ class TableEditor(EscapeCloses, QWidget):
         # No confirmation: it is one undo step, and says what it removed.
         before = self._snapshot()
         for bits in bits_list:
-            table.remove(bits)
+            if bits in table.entries:
+                # An override goes, and what the include gives shows again.
+                table.remove(bits)
+            elif bits in self._inherited:
+                # An inherited entry is removed by an empty one of the table's own.
+                table.add(TableEntry(bits, TokenKind.TEXT, ""))
         self._editing = None
         n = len(bits_list)
         self.status.setText(

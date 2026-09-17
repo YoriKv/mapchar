@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
-from mapchar.core.table import TokenKind
+from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.text import char_units, graphemes, nfc
 from mapchar.core.tokens import (
     CodeRef,
@@ -49,6 +49,33 @@ def glyph_advance(font: Font, text: str) -> int:
     if text == " " and font.space is not None:
         return font.space
     return font.advance(font.glyph_for(text))
+
+
+def code_effects(
+    table_set: TableSet | None, line_label: str = "line"
+) -> dict[str, CodeEffect]:
+    """What each code does to layout before a block's box says otherwise.
+
+    Every entry that declares an effect (``41{page}=[next]``) has it — the start
+    table's word first where two tables label a code alike — and the block's
+    line code is a *newline* unless its table says what it is.
+    """
+    effects: dict[str, CodeEffect] = {}
+    if table_set is not None:
+        for table in table_set.tables.values():  # the start table first
+            for label, effect in table.effects().items():
+                effects.setdefault(label, CodeEffect(effect))
+    if line_label:
+        effects.setdefault(line_label, CodeEffect(Effect.NEWLINE))
+    return effects
+
+
+def with_code_effects(box: TextBox, defaults: dict[str, CodeEffect]) -> TextBox:
+    """``box`` with ``defaults`` (:func:`code_effects`) under its own effects:
+    what a block's Codes tab sets for a code wins, *none* included."""
+    if not defaults:
+        return box
+    return replace(box, effects={**defaults, **box.effects})
 
 
 def code_cell(font: Font, box: TextBox, label: str) -> tuple[CodeEffect, int | None]:

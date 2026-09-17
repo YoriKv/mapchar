@@ -146,6 +146,8 @@ def adopt_table(
         table.replace_with(entry.file_table)
     if entry.table_id:
         table.id = entry.table_id
+    if entry.table_includes is not None:
+        table.includes = entry.table_includes
     apply_overlay(table, entry.table_overlay)
 
 
@@ -190,10 +192,11 @@ def set_charset(entry: WorkspaceEntry, charset: str, registry: Registry) -> None
     if entry.table is None:
         return
     edits = overlay_of(entry.file_table, entry.table)
-    table_id = entry.table.id
+    table_id, includes = entry.table.id, entry.table.includes
     rebase_charset(entry, charset, registry)
     entry.table.replace_with(entry.file_table)
     entry.table.id = table_id  # the file's id is not the table's when renamed
+    entry.table.includes = includes  # ...nor its includes when changed
     apply_overlay(entry.table, edits)
     capture_overlay(entry)
 
@@ -210,6 +213,12 @@ def capture_overlay(entry: WorkspaceEntry) -> None:
         entry.table_id = (
             entry.table.id if base is not None and entry.table.id != base.id else None
         )
+        includes = entry.table.includes
+        entry.table_includes = (
+            includes
+            if includes != (base.includes if base is not None else ())
+            else None
+        )
 
 
 def fold_overlay(entry: WorkspaceEntry) -> None:
@@ -220,3 +229,4 @@ def fold_overlay(entry: WorkspaceEntry) -> None:
     """
     entry.file_table = deepcopy(entry.table)
     entry.table_overlay = {}
+    entry.table_includes = None

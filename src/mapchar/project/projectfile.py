@@ -230,6 +230,8 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
         # reads keeps saying what it said until Save As File folds these in.
         if entry.table_charset:
             d["charset"] = entry.table_charset
+        if entry.table_includes is not None:
+            d["includes"] = list(entry.table_includes)
         if entry.table_overlay:
             d["overlay"] = dict(entry.table_overlay)
         # A table with no file is named nowhere else; one renamed in the app
@@ -517,6 +519,9 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
         entry.dialect = raw.get("dialect")
         charset = raw.get("charset")
         entry.table_charset = str(charset) if charset else None
+        includes = raw.get("includes")
+        if isinstance(includes, list):
+            entry.table_includes = tuple(str(i) for i in includes)
         if path and raw.get("table"):
             entry.table_id = str(raw["table"])
         # Kept until the file has been read, which is what it is laid over

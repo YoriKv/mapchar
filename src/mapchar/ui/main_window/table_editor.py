@@ -10,9 +10,19 @@ from PySide6.QtWidgets import QInputDialog
 
 from mapchar.core.bits import Bits, bits_to_bytes
 from mapchar.core.capabilities import Capability, supports
-from mapchar.core.errors import MapcharError
+from mapchar.core.errors import MapcharError, TableError
 from mapchar.core.notices import notice_lines
-from mapchar.core.table import ID_PATTERN, Table, TableSet, TokenKind
+from mapchar.core.table import (
+    ID_PATTERN,
+    Table,
+    TableSet,
+    TokenKind,
+    inherited,
+    resolve,
+)
+from mapchar.core.table import (
+    Entry as TableEntry,
+)
 from mapchar.core.tokens import render
 from mapchar.engines.decode import DecodeRules, decode
 from mapchar.project.formats.table_native import write_native
@@ -75,9 +85,34 @@ class TableEditorMixin:
         text = render(result.tokens).replace("\n", "⏎")
         return f"at {self.address_spelling.format(at)}  {text}"
 
+    def _table_inheritance(
+        self, table: Table
+    ) -> tuple[dict[str, tuple[TableEntry, str]], str]:
+        """What ``table``'s includes give it, and what is wrong with it merged
+        with them: the Table Editor's dimmed rows and its warning."""
+        tables = self.workspace.tables()
+        try:
+            given = inherited(table, tables)
+        except TableError as exc:
+            return {}, exc.message
+        try:
+            resolve(table, tables)
+        except TableError as exc:
+            return given, exc.message
+        return given, ""
+
+    def _on_includes_chosen(self, entry: Entry, ids: tuple) -> None:
+        """The Table Editor's Includes field: the table starts from other
+        tables' entries, as one undo step."""
+        if entry.table is None or tuple(ids) == entry.table.includes:
+            return
+        before = deepcopy(entry.table)
+        entry.table.includes = tuple(ids)
+        self._on_table_edited(entry, before)
+
     def _rename_table(self, entry: Entry | None) -> None:
-        """Give ``entry``'s table another id, and every switch, block and
-        reading that names it the new one, as one undo step."""
+        """Give ``entry``'s table another id, and every switch, include, block
+        and reading that names it the new one, as one undo step."""
         if entry is None or entry.table is None:
             return
         old = entry.table.id
@@ -99,7 +134,9 @@ class TableEditorMixin:
             )
             for other in self.workspace.table_entries():
                 table = other.table
-                if table is None or other is entry or old not in table.switch_targets():
+                if table is None or other is entry:
+                    continue
+                if old not in table.switch_targets() and old not in table.includes:
                     continue
                 self._push_command(
                     TableCommand(
@@ -184,8 +221,12 @@ class TableEditorMixin:
         # redo leave the project holding exactly what the table now says.
         capture_overlay(entry)
         self.workspace.stamp(entry, revision)
-        if self.table_editor.entry is entry:
-            self.table_editor.set_entry(entry)
+        shown = self.table_editor.entry
+        # A table that includes the one changed shows what it gives it anew.
+        if shown is entry or (
+            shown is not None and shown.table is not None and shown.table.includes
+        ):
+            self.table_editor.set_entry(shown)
         self._tables_changed()
 
     def _save_table_entry(self, entry: Entry | None, ask: bool = False) -> None:
@@ -240,8 +281,11 @@ def _renamed(table: Table, new_id: str) -> Table:
 
 
 def _retargeted(table: Table, old: str, new: str) -> Table:
-    """``table`` with every switch parameter naming ``old`` naming ``new``."""
+    """``table`` with every switch parameter and include naming ``old`` naming
+    ``new``."""
     after = deepcopy(table)
+    if old in after.includes:
+        after.includes = tuple(new if i == old else i for i in after.includes)
     for entry in list(after.entries.values()):
         if entry.kind is not TokenKind.SWITCH:
             continue

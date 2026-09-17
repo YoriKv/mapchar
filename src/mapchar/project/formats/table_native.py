@@ -15,12 +15,14 @@ from dataclasses import dataclass, field, replace
 
 from mapchar.core.bits import format_key, hex_to_bits
 from mapchar.core.errors import TableError
+from mapchar.core.font import Effect
 from mapchar.core.notices import Notice
 from mapchar.core.table import (
     COUNT_SPECS,
     ID_PATTERN,
     LABEL_PATTERN,
     RETURN,
+    TABLE_EFFECTS,
     Entry,
     OperandSpec,
     Stop,
@@ -33,17 +35,24 @@ from mapchar.project.formats.textfile import split_lines
 
 HEADER = "@mapchar table 1"
 
-KEY_FIELD = r"(?P<key>%[01]+|[0-9A-Fa-f]+)(?:<(?P<weight>-?\d+)>)?="
+KEY_HEAD = r"(?P<key>%[01]+|[0-9A-Fa-f]+)(?:<(?P<weight>-?\d+)>)?"
+KEY_FIELD = KEY_HEAD + "="
 """How every dialect spells an entry's key: ``%bits`` or hex digits, an
 optional ``<weight>``, then ``=``. The native grammar and abcde differ only in
 what may precede it, so they share the middle."""
 
-_ENTRY = re.compile(r"^(?P<prefix>[/$!]?)" + KEY_FIELD + r"(?P<rhs>.*)$")
+_ENTRY = re.compile(
+    r"^(?P<prefix>[/$!]?)"
+    + KEY_HEAD
+    + r"(?:\{(?P<effect>[^{}=]*)})?="
+    + r"(?P<rhs>.*)$"
+)
+"""The native entry: ``KEY_FIELD`` with an optional ``{effect}`` before ``=``."""
 _LABEL_HEAD = re.compile(r"^\[(" + LABEL_PATTERN.pattern + r")\]")
 _PARAM = re.compile(
     r"^@(?P<table>" + ID_PATTERN.pattern + r"):"
     r"(?P<stop>\*|\d+|" + "|".join(COUNT_SPECS) + r"|\$[0-9A-Fa-f]+|%[01]+)"
-    r"(?P<shared>\+?)$"
+    r"(?P<shared>\+?)(?P<through>\|?)$"
     r"|^return$"
 )
 
@@ -201,6 +210,13 @@ def parse_native(
                     raise TableError("a table file holds one table", path, n)
                 table.id = arg
                 named = True
+            elif keyword == "include":
+                arg = nfc(arg)
+                if not ID_PATTERN.fullmatch(arg):
+                    raise TableError(f"invalid table id {arg!r}", path, n)
+                if arg in table.includes:
+                    raise TableError(f"@include {arg} repeated", path, n)
+                table.includes = (*table.includes, arg)
             elif keyword == "charset":
                 if not arg:
                     raise TableError("@charset needs a name", path, n)
@@ -236,9 +252,27 @@ def parse_entry(line: str) -> Entry:
     m = _ENTRY.match(line)
     if not m:
         raise ValueError(f"not an entry: {line!r}")
-    prefix, key, weight, rhs = m.group("prefix", "key", "weight", "rhs")
-    bits = parse_key(key)
-    w = int(weight) if weight is not None else 1
+    prefix, key, weight, effect, rhs = m.group(
+        "prefix", "key", "weight", "effect", "rhs"
+    )
+    entry = _parse_entry(prefix, parse_key(key), int(weight or 1), rhs)
+    if effect is None:
+        return entry
+    if entry.kind is TokenKind.RETURN:
+        raise ValueError("a return entry takes no effect")
+    return replace(entry, effect=parse_effect(effect))
+
+
+def parse_effect(word: str) -> Effect:
+    """An entry's ``{effect}``: one of :data:`~mapchar.core.table.TABLE_EFFECTS`."""
+    for effect in TABLE_EFFECTS:
+        if word == effect.value:
+            return effect
+    names = ", ".join(e.value for e in TABLE_EFFECTS)
+    raise ValueError(f"unknown effect {{{word}}}: an entry's effect is one of {names}")
+
+
+def _parse_entry(prefix: str, bits: str, w: int, rhs: str) -> Entry:
     if prefix == "":
         _check_text(rhs)
         return Entry(bits, TokenKind.TEXT, rhs, w)
@@ -318,8 +352,8 @@ def parse_param(word: str) -> SwitchParam:
     m = _PARAM.match(word)
     if not m:
         raise ValueError(f"bad switch parameter {word!r}")
-    table, stop, shared = m.group("table", "stop", "shared")
-    return SwitchParam(table, parse_stop(stop), bool(shared))
+    table, stop, shared, through = m.group("table", "stop", "shared", "through")
+    return SwitchParam(table, parse_stop(stop), bool(shared), bool(through))
 
 
 def parse_entry_lines(text: str) -> Entry:
@@ -343,6 +377,8 @@ def format_entry(entry: Entry) -> str:
     key = format_key(entry.bits)
     if entry.weight != 1:
         key += f"<{entry.weight}>"
+    if entry.effect is not Effect.NONE:
+        key += f"{{{entry.effect.value}}}"
     if entry.kind is TokenKind.TEXT:
         return f"{key}={entry.text}"
     if entry.kind is TokenKind.END:
@@ -357,18 +393,21 @@ def format_entry(entry: Entry) -> str:
 
 
 def write_native(table: Table) -> str:
-    """The table as a native file: what it says beyond its charset
-    (:meth:`~mapchar.core.table.Table.own_entries`), each entry under its
-    comment, the file's own comment under the header."""
+    """The table as a native file: what it says beyond its charset and the
+    tables it includes (:meth:`~mapchar.core.table.Table.own_entries`), each
+    entry under its comment, the file's own comment under the header."""
     lines = [HEADER, *comment_lines(table.comment), f"@table {table.id}"]
     if table.charset != "none":
         lines.append(f"@charset {table.charset}")
+    lines.extend(f"@include {inc}" for inc in table.includes)
     for entry in table.own_entries():
         lines.extend(format_entry_lines(entry))
     return "\n".join(lines) + "\n"
 
 
 __all__ = [
+    "KEY_FIELD",
+    "KEY_HEAD",
     "Comments",
     "TableFile",
     "comment_lines",
@@ -377,6 +416,7 @@ __all__ = [
     "format_entry_lines",
     "is_native",
     "parse_entry",
+    "parse_effect",
     "parse_entry_lines",
     "parse_native",
     "parse_param",

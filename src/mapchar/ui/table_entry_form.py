@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.bits import bits_to_hex, hex_to_bits
+from mapchar.core.font import Effect
 from mapchar.core.table import (
     LABEL_PATTERN,
     RETURN,
@@ -74,12 +75,40 @@ KINDS = (
 
 KIND_NAMES = {kind: name for kind, name, _ in KINDS}
 
+EFFECTS = (
+    (Effect.NONE, "none", "The code does nothing to the text box"),
+    (
+        Effect.NEWLINE,
+        "newline",
+        "A line break: the text goes on at the start of the next line",
+    ),
+    (
+        Effect.PAGE,
+        "page",
+        "The text box ends and the next starts: a line break wherever the text "
+        "is shown, a new box in the Preview",
+    ),
+    (Effect.PAUSE, "pause", "The text waits; nothing moves"),
+)
+"""Every effect an entry can declare (none, then
+:data:`~mapchar.core.table.TABLE_EFFECTS`): its datum, its name and what it does."""
+
+EFFECT_NAMES = {effect: name for effect, name, _ in EFFECTS}
+
 
 _BIN = QRegularExpression(r"[01]*")
 
 
 def describe(entry: Entry) -> str:
     """What an entry does beyond its text, in words: the grid's Details."""
+    words = _describe_kind(entry)
+    if entry.effect is Effect.NONE:
+        return words
+    effect = EFFECT_NAMES[entry.effect]
+    return f"{words} · {effect}" if words else effect
+
+
+def _describe_kind(entry: Entry) -> str:
     if entry.kind is TokenKind.CODE:
         return "reads " + ", ".join(o.spec() for o in entry.operands)
     if entry.kind is TokenKind.SWITCH:
@@ -103,7 +132,11 @@ def describe_param(param: SwitchParam) -> str:
         how = "until " + stop.spec()
     else:
         how = "until the string ends"
-    return f"@{param.table_id} {how}" + (" +" if param.shared else "")
+    return (
+        f"@{param.table_id} {how}"
+        + (" +" if param.shared else "")
+        + (", falling through" if param.through else "")
+    )
 
 
 class TableEntryForm(QWidget):
@@ -147,6 +180,17 @@ class TableEntryForm(QWidget):
                 self.kind.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
             )
         head.add_group("Kind", self.kind, tip="What the entry does when its bits match")
+        self.effect = QComboBox()
+        for effect, name, tip in EFFECTS:
+            self.effect.addItem(name, effect)
+            self.effect.setItemData(
+                self.effect.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
+            )
+        self.effect_group = head.add_group(
+            "Effect",
+            self.effect,
+            tip="What the code does to the text box, wherever it is shown",
+        )
         self.weight = number_spin(-99, 9999, 4, value=1)
         self.weight_group = head.add_group(
             "Weight",
@@ -228,6 +272,7 @@ class TableEntryForm(QWidget):
         self.key_mode.chosen.connect(self._on_key_mode)
         self.kind.currentIndexChanged.connect(self._on_kind)
         self.weight.valueChanged.connect(self._on_form_changed)
+        self.effect.currentIndexChanged.connect(self._on_form_changed)
         self.text.textChanged.connect(self._on_form_changed)
         self.operands.changed.connect(self._on_form_changed)
         self.params.changed.connect(self._on_form_changed)
@@ -349,6 +394,7 @@ class TableEntryForm(QWidget):
         placeholder, tip = hints[kind]
         self.text.setPlaceholderText(placeholder)
         self.text.setToolTip(tip)
+        self.effect_group.setVisible(kind is not TokenKind.RETURN)
         self.operands_box.setVisible(kind is TokenKind.CODE)
         self.params_box.setVisible(kind is TokenKind.SWITCH)
         self._show_weight()
@@ -369,6 +415,9 @@ class TableEntryForm(QWidget):
         text = self.text.text()
         weight = self.weight.value()
         comment = self.comment.toPlainText().strip()
+        effect = (
+            self.effect.currentData() if kind is not TokenKind.RETURN else Effect.NONE
+        )
         if kind is TokenKind.CODE:
             if not LABEL_PATTERN.fullmatch(text):
                 raise ValueError(
@@ -390,6 +439,7 @@ class TableEntryForm(QWidget):
             entry = Entry(bits, kind, "", weight, comment=comment)
         else:
             entry = Entry(bits, kind, text, weight, comment=comment)
+        entry = replace(entry, effect=effect)
         # The grammar is the judge of the text: an unclosed bracket, a stray
         # one, a label the line cannot carry.
         parse_entry(format_entry(entry))
@@ -405,6 +455,7 @@ class TableEntryForm(QWidget):
                 self._apply_key_mode("hex")
                 select_data(self.kind, TokenKind.TEXT)
                 self.weight.setValue(1)
+                select_data(self.effect, Effect.NONE)
                 self.text.clear()
                 self.comment.clear()
                 self.operands.clear()
@@ -414,6 +465,7 @@ class TableEntryForm(QWidget):
                 self.set_key(entry.bits)
                 select_data(self.kind, entry.kind)
                 self.weight.setValue(entry.weight)
+                select_data(self.effect, entry.effect)
                 self.text.setText(entry.text)
                 self.comment.setPlainText(entry.comment)
                 self.operands.clear()

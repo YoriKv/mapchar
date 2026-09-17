@@ -228,6 +228,22 @@ the preview system in [preview.md](preview.md).
 - **Charsets** — a table can sit on a built-in charset (ASCII, Latin-1,
   Windows-1252, JIS X 0201, Shift-JIS as CP932, GBK, UTF-8, UTF-16 LE) and only
   list its overrides.
+- **Includes** — a table can start from other loaded tables (`@include`) and
+  only list what differs: a battle table that is the script's with a few codes
+  redefined, or two fonts' tables sharing one table of control codes. An
+  include that is not loaded, or tables that include each other, make every
+  reading through the table fail with that error, as a switch to a table that
+  is not loaded does; an edit to an included table reaches every table that
+  includes it.
+- **Effects** — a code's entry can say what it does to the text box: a
+  *newline*, a *page* (the box ends and the next starts) or a *pause*. A
+  *newline* or *page* code breaks the line after it in the Text tab, the
+  Strings view, its editing pane and dumps, and the Preview lays it out
+  ([preview.md](preview.md#code-effects)); a *pause* only says what the code
+  is.
+- **Falling through** — a switch parameter can let its frame read what its
+  table has no entry for in the table beneath, so a font switched to for the
+  rest of a string need not repeat the codes it shares.
 - **Encodings as tables** — every charset is also offered in the Table list as
   a table of its own, under the loaded tables: that encoding with a NUL of its
   code unit's width (`00`, `0000` in UTF-16) as the end token. They are built
@@ -240,19 +256,28 @@ the preview system in [preview.md](preview.md).
   - a header with the **Table** picker (every loaded table, to switch between
     them without the dock), the **Charset** picker (`none` or any registered
     charset; choosing one moves the table onto it keeping its own entries and
-    edits, as one undo step), **Rename Table…** (a new `@id`; every switch
-    parameter, block and reading that named the old one follows, as one undo
-    step, and the project carries the new id until Save As File writes it)
+    edits, as one undo step), **Includes** (the ids of the tables it starts
+    from, in order; a change is one undo step, carried by the project until
+    Save As File writes it), **Rename Table…** (a new `@id`; every switch
+    parameter, include, block and reading that named the old one follows, as
+    one undo step, and the project carries the new id until Save As File
+    writes it)
     and a **filter** (Ctrl+F) matching key, text or comment, under which the
     file and, for a converted table, its dialect are named;
   - a **grid** of one row per key — Key, Kind, Text (a code as `[label]`, as
     the dump shows it), Details (what the entry does, in words: `reads u8,
     u16`, `@items ×1, then return`), Weight, Comment — whose Text and Comment
     cells are edited in place, and whose other cells open their control in
-    the form on double-click. A click on a header sorts by that column (Key
-    by width, then bits); a right-click chooses which columns show, kept
-    between runs. Weight, left to itself, shows only when the table weights
-    something;
+    the form on double-click. The entries an include gives the table show
+    dimmed, their Details naming the table they come from (`from @script ·
+    reads u16`); editing one gives the table its own entry at that key, and
+    removing one gives it an empty one (`removes @script's entry`), while
+    removing an entry of its own brings back what the include gives. An edit
+    that would give the merged table a label twice is refused, and a problem
+    with the includes themselves is said on the status line. A click on a
+    header sorts by that column (Key by width, then bits); a right-click
+    chooses which columns show, kept between runs. Weight, left to itself,
+    shows only when the table weights something;
   - a **sample** line under the grid: what the bytes of the form's key decode
     to in the file on screen, through the table being edited, read on from
     where they are first found — or, for bytes the raw view sent, from where
@@ -260,12 +285,14 @@ the preview system in [preview.md](preview.md).
   - an **entry form** under the grid, loaded from the selected row or blank
     for a new one: the key as hex or, for a width that is not whole digits,
     bits, with its width read out; the kind as a picker (Text, End, Code,
-    Switch, Return) that shows only what that kind takes; the text or, for a
-    code, the label; the weight; a code's operands as a list of spec pickers
+    Switch, Return) that shows only what that kind takes; the **effect**
+    (none, newline, page, pause), which Details shows after what the entry
+    does; the text or, for a code, the label; the weight; a code's operands as a list of spec pickers
     (`u8`…`s16be`, N bytes, N bits); a switch's parameters as a list of rows —
     the table (loaded ones, `raw`, `bits`), how it stops (until the string
     ends, a count, a count read from the data as `u8`…`u32be`, until given
-    bytes or bits) and whether its matches count towards the parent (`+`) —
+    bytes or bits), whether its matches count towards the parent (`+`) and
+    whether bytes its table lacks fall through to the table beneath (`|`) —
     with **then return** after them; the comment; and, behind a **Line**
     disclosure kept between runs, the line the form spells in the native
     grammar, which also works the other way: a line typed or pasted into it
@@ -299,9 +326,9 @@ the preview system in [preview.md](preview.md).
     fuller detail in its tooltip.
 - **Where the edits live** — in the project, as an overlay of the entries
   added, changed and removed over the file, so the table file on disk keeps
-  saying what it said for every other tool that reads it; a charset chosen in
-  the app in place of the file's is carried the same way. **Save As File**
-  writes them out and spends the overlay. A table with no file of its own —
+  saying what it said for every other tool that reads it; a charset or
+  includes chosen in the app in place of the file's are carried the same way.
+  **Save As File** writes them out and spends the overlay. A table with no file of its own —
   from a relative search, or from **Add from selection** — is carried whole by
   the project the same way.
 - **Reload** — a table file edited outside the app is re-read when its
@@ -650,7 +677,8 @@ The editing surface, opened on a block.
     room, would not read back as typed, or would change how the bytes after
     it are cut into strings;
   - **Shift+Return** writes the block's newline code — the code carrying the
-    *newline* effect, else `[line]` — never a line break, which the script
+    *newline* effect, by the box, its table entry or as the block's line
+    code, else `[line]` — never a line break, which the script
     grammar drops;
   - **Insert code** buttons for the codes this block's strings use most,
     wrapping onto more rows when the view is narrow, each with the table's
