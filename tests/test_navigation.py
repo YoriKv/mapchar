@@ -21,6 +21,7 @@ from mapchar.core.address import (
 )
 from mapchar.core.block import PointerListSource, RangeSource
 from mapchar.core.numbers import format_hex_offset, parse_hex_offset
+from mapchar.project.formats.table_native import HEADER
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.main_window.navigation import CUSTOM_ID
 from window_helpers import add_block, make_window, open_rom_and_table
@@ -373,6 +374,22 @@ def test_walking_onto_a_string_selects_its_row_in_the_files_panel(window, tmp_pa
     item.setExpanded(False)
     window._history_step(1)
     assert item.isExpanded()
+    assert panel.string_of(panel.tree.selectedItems()[0]) == (block, 1)
+
+
+def test_changing_the_table_keeps_the_string_row_selected(window, tmp_path):
+    """Re-reading the block builds its string rows afresh, and the row for the
+    string on screen goes with the old ones: the panel selects it again, as the
+    Strings grid keeps the string it had selected."""
+    file_entry = _opened(window, tmp_path)
+    other = tmp_path / "other.tbl"
+    other.write_text(f"{HEADER}\n@table other\n41=a\n/00=[end]\n")
+    window.open_table(str(other))
+    block = add_block(window, file_entry, "b", RangeSource(0, 8))
+    panel = window.files_panel
+    window._show_string(block, 1)
+    window._choose_table("other")
+    assert block.config.table_id == "other"
     assert panel.string_of(panel.tree.selectedItems()[0]) == (block, 1)
 
 

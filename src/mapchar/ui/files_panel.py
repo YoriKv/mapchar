@@ -122,6 +122,10 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self._string_keys: dict[int, object] = {}
         """What each block's string rows were built from, so a refresh that
         changed nothing about the strings leaves the rows alone."""
+        self._shown_string: tuple[int, int] | None = None
+        """The block, by entry id, and string index the view is showing one
+        string of, so rows rebuilt under it select that string again: a refresh
+        makes the rows afresh and the selected one goes with the old ones."""
         self._labels_held = False
         self._collapsed: weakref.WeakSet[Entry] = weakref.WeakSet()
         """The folders the user closed. Held weakly, so the set is the open
@@ -196,6 +200,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
                 item.setExpanded(True)
         self._apply_filter(self.filter.text())
         self._on_current(self.workspace.current)
+        self._reselect_string()
 
     def _add_rows(
         self, item: QTreeWidgetItem, entry: Entry, tables: Container[str]
@@ -326,6 +331,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self._string_keys[id(entry)] = key
         item.takeChildren()
         item.addChildren([self._string_item(entry, rec) for rec in doc.strings])
+        self._reselect_string()
         if self.filter.text():
             self._apply_filter(self.filter.text())
 
@@ -475,6 +481,9 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
             return
         entry = self.entry_of(item)
         if entry is not None:
+            # An entry's own row backs out of the string that was on screen,
+            # even its block's, which stays current and so keeps its selection.
+            self._shown_string = None
             self.entry_activated.emit(entry)
             return
         string = self.string_of(item)
@@ -487,6 +496,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         """Select ``entry``'s row alone — what a view that left one of its
         strings for the block itself asks for, since the current entry did
         not change and so did not select it."""
+        self._shown_string = None
         self._on_current(entry)
 
     def select_string(self, entry: Entry, index: int) -> None:
@@ -496,15 +506,38 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         item = self._items.get(id(entry))
         if item is None:
             return
+        self._shown_string = (id(entry), index)
         if not item.isExpanded():
             item.setExpanded(True)  # builds the rows
+        child = self._string_child(item, index)
+        if child is not None:
+            self._select_item(child)
+            self.tree.scrollToItem(child)
+
+    def _reselect_string(self) -> None:
+        """Select the row of the string on screen again, after a pass that
+        rebuilt the rows under its block. The block's own row survives such a
+        pass and the string's does not, so an edit to the block — its table,
+        say — would otherwise leave the panel with nothing selected."""
+        if self._shown_string is None:
+            return
+        key, index = self._shown_string
+        item = self._items.get(key)
+        if item is None:
+            return
+        child = self._string_child(item, index)
+        if child is not None:
+            self._select_item(child)
+
+    @staticmethod
+    def _string_child(item: QTreeWidgetItem, index: int) -> QTreeWidgetItem | None:
+        """The row for string ``index`` under a block's row, else ``None``."""
         for i in range(item.childCount()):
             child = item.child(i)
             data = child.data(0, STRING_ROLE)
             if isinstance(data, tuple) and data[1] == index:
-                self._select_item(child)
-                self.tree.scrollToItem(child)
-                return
+                return child
+        return None
 
     def _select_item(self, item: QTreeWidgetItem) -> None:
         self.tree.blockSignals(True)
@@ -534,6 +567,10 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         self.context_menu_requested.emit(entry, self.tree.viewport().mapToGlobal(pos))
 
     def _on_current(self, entry: Entry | None) -> None:
+        # Another entry becoming current leaves the string behind; the block's
+        # own does not, since showing one of its strings makes it current first.
+        if self._shown_string is not None and self._shown_string[0] != id(entry):
+            self._shown_string = None
         item = self._items.get(id(entry)) if entry is not None else None
         self.tree.blockSignals(True)
         self.tree.clearSelection()
