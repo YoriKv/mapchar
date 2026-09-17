@@ -794,3 +794,115 @@ def test_one_character_too_wide_is_condensed_rather_than_sliced(qtbot):
     # was condensed to fit, not one the clip cut off at the boundary.
     assert painted, "the character was drawn"
     assert cell.left() < min(painted) and max(painted) < cell.right()
+
+
+# --- done, project strings and the glossary ----------------------------------
+
+
+def test_done_is_held_and_counted(window, tmp_path):
+    from mapchar.core.block import Status
+
+    data = b"\x41\x42\x00\x41\x00" + b"\xff" * 4
+    entry, block = block_with(window, tmp_path, data)
+    window._show_view("strings")
+    window.strings.select_index(0)
+    window._toggle_done_selected()
+    # A byte edit reads the strings again, so the record is looked up afresh.
+    status = lambda: block.doc.strings[0].status  # noqa: E731
+    assert status() is Status.DONE
+    # Done sticks whatever the bytes do, and is counted by the block bar.
+    window._on_translation_edited(0, "B[end]")
+    assert status() is Status.DONE
+    assert "done 1" in window.block_label.text()
+    window._on_translation_edited(0, "")
+    assert status() is Status.DONE
+    window._toggle_done_selected()
+    assert status() is Status.UNTOUCHED
+    window.undo_stack.undo()
+    assert status() is Status.DONE
+    window.strings.status_filter.setCurrentText("done")
+    assert window.strings._visible_rows() == [0]
+
+
+def test_chars_per_line_flags_overflow_and_wraps_without_a_font(window, tmp_path):
+    from dataclasses import replace
+
+    from mapchar.core.font import CodeEffect, Effect
+
+    # Room after the string: a line code makes the text a byte longer.
+    data = b"\x41\x42\x41\x42\x41\x00" + b"\xff" * 8
+    entry, block = block_with(window, tmp_path, data)
+    window._show_view("strings")
+    box = TextBox(chars_per_line=3, effects={"line": CodeEffect(Effect.NEWLINE)})
+    window._on_box_changed(box)
+    assert window.strings._row_data(0).status == "overflows box"
+    window.strings.select_index(0)
+    window._on_draft("ABAB")
+    assert "4 / 3 chars" in window.strings.pane.readout.text()
+    window._wrap_selected()
+    assert block.doc.strings[0].current_text() == "ABA[line]\nBA[end]"
+    assert window.strings._row_data(0).status == "edited"
+    window._on_box_changed(replace(box, lines_per_page=1))
+    assert window.strings._row_data(0).status == "overflows box"
+
+
+def test_project_strings_lists_every_block_and_jumps(window, tmp_path):
+    from mapchar.core.block import RangeSource
+
+    data = b"\x41\x00\x42\x00\x41\x42\x00"
+    entry, first = block_with(window, tmp_path, data, name="one", stop=4)
+    second = add_block(window, entry, "two", RangeSource(4, 7))
+    window._activate_entry(first)
+    window._show_project_strings()
+    listing = window.project_strings
+    assert listing.isVisible() and listing.results.rowCount() == 3
+    listing.filter.setText("two")
+    assert listing.results.rowCount() == 1
+    listing.filter.setText("")
+    listing.status_filter.setCurrentText("untouched")
+    assert listing.results.rowCount() == 3
+    # Enter or a double-click on a row opens its block on that string.
+    listing.results.selectRow(2)
+    listing._jump()
+    assert window._entry is second and window.strings.selected_indices() == [0]
+    assert window._current_view() == "strings"
+    # The list follows an edit while it is open.
+    listing.status_filter.setCurrentText("all")
+    window._on_translation_edited(0, "A[end]")
+    assert listing.results.item(2, 3).text() == "A[end]"
+    assert listing.results.item(2, 4).text() == "edited"
+
+
+def test_glossary_terms_are_kept_undone_and_typed_in(window, tmp_path):
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    from mapchar.project.glossary import GlossaryTerm
+
+    data = b"\x41\x42\x00\x41\x00" + b"\xff" * 4
+    entry, block = block_with(window, tmp_path, data)
+    window._show_view("strings")
+    window.strings.select_index(0)
+    window._show_glossary()
+    glossary = window.glossary_window
+    glossary._add()
+    glossary.table.closePersistentEditor(glossary.table.item(0, 0))
+    glossary.table.setItem(0, 0, QTableWidgetItem("AB"))
+    glossary.table.setItem(0, 1, QTableWidgetItem("BA"))
+    assert window.workspace.glossary == [GlossaryTerm("AB", "BA")]
+    assert "glossary" in window._snapshot()  # what the project file will hold
+    # The string on screen holds the term, so it is listed and can be typed in.
+    assert glossary.hits.rowCount() == 1
+    glossary.hits.selectRow(0)
+    glossary._insert()
+    assert window.strings.pane.editor.toPlainText() == "AB[end]BA"
+    window.strings.pane.cancel()
+    window.strings.select_index(1)
+    window._on_string_row(1)  # what a click on the row does
+    assert glossary.hits.rowCount() == 0
+    window.undo_stack.undo()
+    assert window.workspace.glossary == [] and glossary.table.rowCount() == 0
+    window.undo_stack.redo()
+    assert window.workspace.glossary == [GlossaryTerm("AB", "BA")]
+    glossary.table.selectRow(0)
+    glossary._remove()
+    assert window.workspace.glossary == []

@@ -82,7 +82,7 @@ the preview system in [preview.md](preview.md).
   back where a fresh install has them, leaving the window's own size alone.
 - **Tool windows** — separate top-level windows that remember their
   placement and close on Esc: Search, Scan, Table Editor, Preview, Decompressed
-  View, Find and Replace.
+  View, Find and Replace, Project Strings, Glossary.
 - **Long operations** — the text scan, the relative search, the structure scan
   and pointer discovery all run with a Stop button and a progress reading, and
   hand back whatever they found when stopped.
@@ -135,7 +135,7 @@ the preview system in [preview.md](preview.md).
     icon font; files and fonts sit under their group heading and carry
     none; a missing file shows a warning mark instead;
   - `●` for unsaved edits;
-  - a string count and a status summary on blocks (edited / review), there
+  - a string count and a status summary on blocks (edited / review / done), there
     from the start: opening a project, and locating its
     missing files, reads every block over a file that is on disk;
   - an entry count on tables;
@@ -589,10 +589,13 @@ The editing surface, opened on a block.
   context menu hides and shows columns, and dragging a header section reorders
   them; Translation stays.
 - **Status**, per string: **untouched** (the bytes still say the original),
-  **edited** (they say something else), **review** (set by hand or by
-  import), and, when a preview font is bound, **overflows box**. Nothing is
-  ever *too long* or *invalid*: the bytes cannot hold such a text, so an edit
-  that would need them is refused instead.
+  **edited** (they say something else), **review** and **done** (set by hand
+  — **Edit ▸ Toggle Review / Toggle Done on Selected**, Ctrl+Alt+D for done —
+  or by import, and kept whatever the text does), and **overflows box** when
+  a preview font is bound or the box sets characters per line (see
+  [preview.md](preview.md#text-boxes)). Nothing is ever *too long* or
+  *invalid*: the bytes cannot hold such a text, so an edit that would need
+  them is refused instead.
 - **Editing** — the Translation cell is a multi-line editor, opened on the
   text the bytes hold:
   - typing edits text; `[` opens code completion listing the table set's
@@ -635,11 +638,23 @@ The editing surface, opened on a block.
   selection stays on its row. A code button types into the cell being
   edited, else into the pane. The split between grid and pane is remembered
   per machine.
+- **Project Strings** — **Search ▸ Project Strings…** (Ctrl+Shift+G) lists
+  every string of every block, read as needed: block, index, original,
+  translation, status and notes, under a word filter and a status filter.
+  Double-click or Enter opens the block on that string. The list follows
+  edits while it is open; **Refresh** reads every block again.
+- **Glossary** — **Edit ▸ Glossary…** (Ctrl+Shift+L) opens the project's
+  terms: a term, its translation and notes, edited in place, added and
+  removed, filtered by words; every change is an undo step and the project
+  reads unsaved. Above them, **In this string** lists the terms the selected
+  string's original holds, case and form folded, longest first;
+  **Insert Translation** (or a double-click) types the term's translation
+  into the cell being edited, else into the pane.
 - **Stepping** — **Edit ▸ Next / Previous Untranslated** (F4 / Shift+F4) and
   **Next / Previous Flagged** (F6 / Shift+F6: review or overflows box) move
   among the rows the filter shows, wrapping round.
-- **Progress** — the Block bar says how many strings are translated, of the
-  block and of the project.
+- **Progress** — the Block bar says how many strings are translated, and how
+  many done, of the block and of the project.
 - **Filter** — words in any order over original, translation and notes; a
   status box narrows to one status.
 - **Selection sync** — selecting a string highlights its bytes in the raw
@@ -787,8 +802,8 @@ in the game. It is described in [preview.md](preview.md).
 - A `.mapchar` project stores **references and settings, never bytes**:
   every entry with its chain, block configuration, a file's reading; per
   string its **original**, status and notes; table edits made in-app; font
-  bindings and text boxes; the view position per entry. Translations are not
-  in it: they are the ROM's bytes.
+  bindings and text boxes; the glossary; the view position per entry.
+  Translations are not in it: they are the ROM's bytes.
 - Not saved: zoom, theme, window layout, undo history.
 - **New / Open / Open Recent / Save / Save As** as in celPix; paths are stored
   relative to the project file; older versions are upgraded on load, which the
@@ -869,10 +884,10 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Area | Keys |
 |---|---|
 | File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh Plugins · Ctrl+Q Quit |
-| Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · F4 / Shift+F4 next / previous untranslated · F6 / Shift+F6 next / previous flagged |
+| Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Shift+L Glossary · Ctrl+Alt+D toggle done · F4 / Shift+F4 next / previous untranslated · F6 / Shift+F6 next / previous flagged |
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
-| Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers |
+| Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers · Ctrl+Shift+G Project Strings |
 | Find bar | Enter next · Shift+Enter previous · Esc closes Find and Replace |
 | Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code · Esc cancel · the same keys in the pane under the grid |
 | Files panel | Up/Down or double-click open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename · right-click menu |

@@ -60,7 +60,12 @@ class AutosaveMixin:
             return
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            save_project(path, self.workspace.entries, self.workspace.current)
+            save_project(
+                path,
+                self.workspace.entries,
+                self.workspace.current,
+                self.workspace.glossary,
+            )
         except OSError:
             return
         self._autosaved_snapshot = snapshot

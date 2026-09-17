@@ -12,6 +12,7 @@ from mapchar.core.block import Status, block_bound
 from mapchar.core.document import Document
 from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
+from mapchar.engines.layout import char_layout
 from mapchar.engines.layout import layout as layout_glyphs
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import room_for, slot_ends
@@ -36,10 +37,18 @@ class StringsViewMixin:
     """
 
     def _overflow_status(self, rec, entry: Entry) -> bool:
-        font_entry = self._bound_font(entry)
-        if font_entry is None or font_entry.font is None or entry.box is None:
+        """Whether the string overflows its box: through the bound font, or,
+        with none, by the characters per line the box sets."""
+        if entry.box is None:
             return False
-        return layout_glyphs(rec.current_text(), font_entry.font, entry.box).overflows
+        font_entry = self._bound_font(entry)
+        if font_entry is not None and font_entry.font is not None:
+            return layout_glyphs(
+                rec.current_text(), font_entry.font, entry.box
+            ).overflows
+        if entry.box.chars_per_line > 0:
+            return char_layout(rec.current_text(), entry.box).overflows
+        return False
 
     def _extract_current(
         self, entry: Entry, doc: Document, tables: TableSet | None
@@ -286,16 +295,25 @@ class StringsViewMixin:
             self._refuse_edit(problems)
 
     def _toggle_review_selected(self) -> None:
-        for index in self.strings.selected_indices():
-            rec = self._string(self._entry, index)
-            if rec is None:
-                continue
-            new = Status.EDITED if rec.status is Status.REVIEW else Status.REVIEW
-            self._push_command(
-                StringFieldCommand(
-                    self, self._entry, index, "status", rec.status.value, new.value
+        self._toggle_status_selected(Status.REVIEW)
+
+    def _toggle_done_selected(self) -> None:
+        self._toggle_status_selected(Status.DONE)
+
+    def _toggle_status_selected(self, held: Status) -> None:
+        """Mark the selected strings ``held`` — review or done — or, when they
+        are, let the bytes settle their status again."""
+        with self._macro(f"Toggle {held.value}"):
+            for index in self.strings.selected_indices():
+                rec = self._string(self._entry, index)
+                if rec is None:
+                    continue
+                new = Status.EDITED if rec.status is held else held
+                self._push_command(
+                    StringFieldCommand(
+                        self, self._entry, index, "status", rec.status.value, new.value
+                    )
                 )
-            )
 
     def _identical_originals(self, rec, entry, project: bool) -> dict[Entry, list[int]]:
         """Every other string whose original is ``rec``'s, by block: the block's
@@ -364,6 +382,7 @@ class StringsViewMixin:
         menu = QMenu(self)
         menu.addAction("Re&vert to Original", self._revert_selected)
         menu.addAction("Toggle Revie&w", self._toggle_review_selected)
+        menu.addAction("Toggle &Done", self._toggle_done_selected)
         if indices:
             rec = self._string(self._entry, indices[0])
             if rec is not None:
@@ -403,29 +422,35 @@ class StringsViewMixin:
         """How far the block and the project are: strings whose bytes no longer
         say the original, over all of them."""
 
-        def counts(statuses) -> tuple[int, int]:
+        def counts(statuses) -> tuple[int, int, int]:
             statuses = list(statuses)
-            done = sum(s is not Status.UNTOUCHED for s in statuses)
-            return done, len(statuses)
+            touched = sum(s is not Status.UNTOUCHED for s in statuses)
+            done = sum(s is Status.DONE for s in statuses)
+            return touched, done, len(statuses)
 
-        done, total = counts(rec.status for rec in doc.strings)
-        all_done, all_total = 0, 0
+        touched, done, total = counts(rec.status for rec in doc.strings)
+        all_touched, all_done, all_total = 0, 0, 0
         for e in self.workspace.of_kind(EntryKind.BLOCK):
             if e.doc is not None:
-                d, t = counts(rec.status for rec in e.doc.strings)
+                a, d, t = counts(rec.status for rec in e.doc.strings)
             elif e.pending_strings:
-                d, t = counts(st.status for st in e.pending_strings.values())
+                a, d, t = counts(st.status for st in e.pending_strings.values())
             else:
                 continue
+            all_touched += a
             all_done += d
             all_total += t
 
         def pct(d: int, t: int) -> str:
             return f"{d} / {t} ({100 * d // t}%)" if t else "0 / 0"
 
-        text = f"translated {pct(done, total)}"
+        text = f"translated {pct(touched, total)}"
+        if done:
+            text += f", done {done}"
         if all_total != total:
-            text += f" · project {pct(all_done, all_total)}"
+            text += f" · project {pct(all_touched, all_total)}"
+            if all_done:
+                text += f", done {all_done}"
         return text
 
     def _on_string_row(self, index: int) -> None:
@@ -438,6 +463,7 @@ class StringsViewMixin:
         if not self._applying_undo:
             self._edit_run += 1
         self._sync_preview()
+        self._sync_glossary()
         if not (self._offset <= rec.start < self._offset + self._view_bytes()):
             self._go_to(rec.start)
         # Through the one selection path, so the Hex dock follows too — and

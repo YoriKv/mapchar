@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,6 +15,7 @@ from mapchar.core.table import Table
 from mapchar.plugins.aliases import current_config_ids, current_id
 from mapchar.project.formats.script import format_config, parse_config
 from mapchar.project.formats.table_native import sanitize_id
+from mapchar.project.glossary import GlossaryTerm, glossary_dicts, glossary_from
 from mapchar.project.tables import adopt_table
 from mapchar.project.workspace import (
     NAMED_UNIQUELY,
@@ -41,6 +42,7 @@ class LoadedProject:
     """The version the file claims, after any migration walked it forward."""
     migrated_from: int | None = None
     """The version it was written at, when a migration ran; ``None`` otherwise."""
+    glossary: list[GlossaryTerm] = field(default_factory=list)
 
 
 # -- migrations ------------------------------------------------------------
@@ -190,6 +192,7 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
             "line_height": b.line_height,
             "letter_spacing": b.letter_spacing,
             "lines_per_page": b.lines_per_page,
+            "chars_per_line": b.chars_per_line,
             "origin": [b.origin_x, b.origin_y],
             "effects": {k: [v.effect.value, v.value] for k, v in b.effects.items()},
         }
@@ -242,18 +245,29 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
 
 
 def project_dict(
-    entries: list[Entry], current: Entry | None, base: str | None
+    entries: list[Entry],
+    current: Entry | None,
+    base: str | None,
+    glossary: Iterable[GlossaryTerm] = (),
 ) -> dict[str, Any]:
     d: dict[str, Any] = {"version": PROJECT_VERSION}
     if current in entries:
         d["current"] = entries.index(current)
     d["entries"] = [entry_dict(e, entries, base) for e in entries]
+    terms = glossary_dicts(glossary)
+    if terms:
+        d["glossary"] = terms
     return d
 
 
-def save_project(path: str, entries: list[Entry], current: Entry | None) -> None:
+def save_project(
+    path: str,
+    entries: list[Entry],
+    current: Entry | None,
+    glossary: Iterable[GlossaryTerm] = (),
+) -> None:
     base = os.path.dirname(os.path.abspath(path))
-    data = project_dict(entries, current, base)
+    data = project_dict(entries, current, base, glossary)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
@@ -382,6 +396,7 @@ def load_project(path: str) -> LoadedProject:
         warnings,
         version if isinstance(version, int) else PROJECT_VERSION,
         migrated_from,
+        glossary_from(data.get("glossary")),
     )
 
 
@@ -472,6 +487,7 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
             int(origin[1]),
             effects,
             b.get("font_index"),
+            int(b.get("chars_per_line", 0)),
         )
     if kind is EntryKind.FONT:
         f = raw.get("font") or {}

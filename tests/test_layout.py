@@ -6,7 +6,7 @@ from dataclasses import replace
 from helpers import ASCII_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
-from mapchar.engines.layout import layout, measure, unspellable, wrap
+from mapchar.engines.layout import char_layout, layout, measure, unspellable, wrap
 from mapchar.pipeline.extract import extract
 
 FONT = Font(None, 8, 8, 16, 0, " ABCDEFGHIJKLMNOPQRSTUVWXYZ", widths=(4,) + (6,) * 26)
@@ -136,3 +136,44 @@ def test_a_multi_character_override_wins_over_its_first_kana():
     result = layout(text, KANA_FONT, TextBox(width=64, height=8, line_height=8))
     assert [p.glyph for p in result.placements] == [0x50, 0x40]
     assert unspellable(unicodedata.normalize("NFD", "が"), KANA_FONT) == ["が"]
+
+
+CHAR_BOX = replace(BOX, chars_per_line=5, lines_per_page=2)
+"""A box for a block with no font: five characters a line, two lines a page."""
+
+
+def test_char_layout_counts_characters_and_lines():
+    fit = char_layout("ABCDE[line]FG[end]", CHAR_BOX)
+    assert (fit.widest, fit.lines) == (5, 2) and not fit.overflows
+    over = char_layout("ABCDEF", CHAR_BOX)
+    assert over.overflow_width and not over.overflow_lines
+    tall = char_layout("A[line]B[line]C", CHAR_BOX)
+    assert tall.overflow_lines and tall.lines == 3
+    # A page code starts the count over; a space or glyph code takes a cell;
+    # a decomposed kana is one character; an end code stops the count.
+    paged = char_layout("A[line]B[page]C[line]D", CHAR_BOX)
+    assert paged.lines == 2 and not paged.overflows
+    effects = {**CHAR_BOX.effects, "sp": CodeEffect(Effect.SPACE, 4)}
+    cells = replace(CHAR_BOX, effects=effects)
+    assert char_layout("AB[sp]CD", cells).widest == 5
+    assert char_layout(unicodedata.normalize("NFD", "がぎ"), CHAR_BOX).widest == 2
+    wide = replace(CHAR_BOX, chars_per_line=9)
+    assert char_layout("ABCDEFG[end]HIJ", wide).widest == 7
+    # Nothing set, nothing overflows.
+    assert not char_layout("ABCDEFGHIJ", BOX).overflows
+
+
+def test_wrap_without_a_font_counts_characters():
+    text, over = wrap("AB CD EF GH", None, CHAR_BOX, "line")
+    assert text == "AB CD[line]EF GH" and not over
+    text, over = wrap("AB CD EF GH IJ", None, CHAR_BOX, "line")
+    assert over and text.count("[line]") == 2
+    text, over = wrap("AB CD EF GH IJ", None, CHAR_BOX, "line", "page")
+    assert not over and "[page]" in text
+    # A word longer than the line breaks at a character.
+    text, _ = wrap("ABCDEFG", None, CHAR_BOX, "line")
+    assert text == "ABCDE[line]FG"
+    # No line limit: a page is never forced and nothing overflows by lines.
+    unbounded = replace(CHAR_BOX, lines_per_page=0)
+    text, over = wrap("AB CD EF GH IJ KL", None, unbounded, "line")
+    assert not over and text.count("[line]") == 2

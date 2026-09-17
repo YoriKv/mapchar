@@ -6,6 +6,7 @@ from __future__ import annotations
 from mapchar.core.block import EndToken, Status, block_bound, source_span
 from mapchar.core.errors import MapcharError
 from mapchar.core.text import nfc
+from mapchar.engines.layout import char_layout
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import apply_splices, layout_block, room_for, slot_ends
 from mapchar.project.workspace import Entry, EntryKind
@@ -187,6 +188,7 @@ class StringEditMixin:
         self.files_panel.refresh_labels()
         self._update_title()
         self._refresh_view()
+        self._refresh_project_strings()
 
     def _reread_blocks_over(self, entry: Entry, lo: int, hi: int) -> None:
         """Read again every loaded block whose strings share ``entry``'s bytes
@@ -236,6 +238,7 @@ class StringEditMixin:
         self._refresh_string_row(entry, index)
         self.files_panel.refresh_labels()
         self._update_title()
+        self._refresh_project_strings()
 
     def _on_draft(self, text: str) -> None:
         """The Translation cell as it is typed: a live encode and a live preview.
@@ -275,6 +278,12 @@ class StringEditMixin:
         readout = f"{used} / {room} byte(s)" if room else f"{used} byte(s)"
         if room and used > room:
             readout += f" — {used - room} over"
+        box = entry.box
+        if box is not None and box.chars_per_line > 0:
+            chars = char_layout(text, box)
+            readout += f" · {chars.widest} / {box.chars_per_line} chars"
+            if box.lines_per_page > 0:
+                readout += f", {chars.lines} / {box.lines_per_page} lines"
         self.statusBar().showMessage(readout)
         self.preview_window.set_readout(readout)
         self.strings.set_readout(readout)

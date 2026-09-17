@@ -212,6 +212,62 @@ def layout(source: list[Token] | str, font: Font, box: TextBox) -> Layout:
     return result
 
 
+@dataclass
+class CharLayout:
+    """How script text lays out by characters alone: what a block with no
+    font, whose box sets ``chars_per_line``, knows of its fit."""
+
+    widest: int = 0
+    """Characters on the longest line."""
+    lines: int = 1
+    """Lines on the fullest page."""
+    overflow_width: bool = False
+    overflow_lines: bool = False
+
+    @property
+    def overflows(self) -> bool:
+        return self.overflow_width or self.overflow_lines
+
+
+def char_count(text: str) -> int:
+    """How many character cells a run of plain text takes: one per grapheme."""
+    return len(graphemes(nfc(text)))
+
+
+def char_layout(text: str, box: TextBox) -> CharLayout:
+    """Count the characters of each line and the lines of each page.
+
+    A *newline* code ends the line, a *page* code the page, a *space* or
+    *glyph* code takes one cell, an *end* code stops the count, any other
+    code takes nothing. Width overflows past ``chars_per_line`` when it is
+    set, lines past ``lines_per_page`` when it is.
+    """
+    result = CharLayout()
+    x, lines = 0, 1
+    for item in parse_text(text):
+        if isinstance(item, CodeRef):
+            effect = box.effects.get(item.label, CodeEffect()).effect
+            if effect is Effect.NEWLINE:
+                x, lines = 0, lines + 1
+                result.lines = max(result.lines, lines)
+            elif effect is Effect.PAGE:
+                x, lines = 0, 1
+            elif effect in (Effect.SPACE, Effect.GLYPH):
+                x += 1
+            elif effect is Effect.END:
+                break
+            else:
+                continue
+        else:
+            x += char_count(item.text)
+        result.widest = max(result.widest, x)
+    if box.chars_per_line > 0 and result.widest > box.chars_per_line:
+        result.overflow_width = True
+    if box.lines_per_page > 0 and result.lines > box.lines_per_page:
+        result.overflow_lines = True
+    return result
+
+
 def measure(text: str, font: Font, box: TextBox) -> int:
     """Pixel width of a run of plain text, the font's overrides included."""
     pieces: list[_Piece] = []
@@ -244,7 +300,7 @@ def unspellable(source: list[Token] | str, font: Font) -> list[str]:
 
 def wrap(
     text: str,
-    font: Font,
+    font: Font | None,
     box: TextBox,
     newline_label: str,
     page_label: str | None = None,
@@ -252,7 +308,10 @@ def wrap(
     """Re-break script text to fit the box; returns the text and whether it overflows.
 
     Existing newline codes go, except those right after a page code; words
-    are laid out greedily; a word wider than the box breaks at a glyph.
+    are laid out greedily; a word wider than the box breaks at a glyph. With a
+    font, widths are pixels through it; without one, the box's
+    ``chars_per_line`` is the width and every character is one cell, so a
+    block with no font wraps by count.
     """
     items = parse_text(text)
     # Drop existing newline codes, except one right after a page code: a page
@@ -273,14 +332,39 @@ def wrap(
     out: list[str] = []
     x = 0
     line = 0
-    limit = box.width - box.origin_x
     overflow = False
+    if font is not None:
+        limit = box.width - box.origin_x
+        max_lines = box.max_lines
+        spacing = box.letter_spacing
+        space_width = glyph_advance(font, " ")
+        overrides = overrides_of(font)
+
+        def width_of(word: str) -> int:
+            return measure(word, font, box)
+
+        def pieces_of(word: str) -> list[str]:
+            pieces: list[_Piece] = []
+            _split_text(word, overrides, 0, pieces)
+            return [piece.text for piece in pieces]
+
+    else:
+        limit = box.chars_per_line
+        max_lines = box.lines_per_page or 0
+        spacing = 0
+        space_width = 1
+
+        def width_of(word: str) -> int:
+            return char_count(word)
+
+        def pieces_of(word: str) -> list[str]:
+            return graphemes(nfc(word))
 
     def emit_newline() -> None:
         nonlocal x, line, overflow
         line += 1
         x = 0
-        if line >= box.max_lines:
+        if max_lines and line >= max_lines:
             if page_label:
                 # A page starts at its own first line: no newline goes with it.
                 out.append(f"[{page_label}]")
@@ -291,46 +375,48 @@ def wrap(
 
     def place_word(word: str) -> None:
         nonlocal x
-        w = measure(word, font, box)
+        w = width_of(word)
         if x and x + w > limit:
             emit_newline()
         if w > limit:
-            pieces: list[_Piece] = []
-            _split_text(word, overrides_of(font), 0, pieces)
-            for piece in pieces:
-                cw = measure(piece.text, font, box)
+            for piece in pieces_of(word):
+                cw = width_of(piece)
                 if x and x + cw > limit:
                     emit_newline()
-                out.append(escape_text(piece.text))
-                x += cw + box.letter_spacing
+                out.append(escape_text(piece))
+                x += cw + spacing
             return
         out.append(escape_text(word))
-        x += w + box.letter_spacing
+        x += w + spacing
 
     for item in kept:
         if isinstance(item, CodeRef):
             words = " ".join(item.words)
             out.append(f"[{item.label}{' ' + words if words else ''}]")
-            effect, glyph = code_cell(font, box, item.label)
+            if font is not None:
+                effect, glyph = code_cell(font, box, item.label)
+            else:
+                effect, glyph = box.effects.get(item.label, CodeEffect()), None
             if effect.effect is Effect.PAGE or item.label == page_label:
                 x, line = 0, 0
             elif effect.effect is Effect.NEWLINE:
                 x, line = 0, line + 1
             elif effect.effect is Effect.SPACE:
-                x += effect.value
-            elif glyph is not None:
-                x += font.advance(glyph) + box.letter_spacing
+                x += effect.value if font is not None else 1
+            elif effect.effect is Effect.GLYPH and font is None:
+                x += 1
+            elif glyph is not None and font is not None:
+                x += font.advance(glyph) + spacing
             continue
         parts = item.text.split(" ")
         for i, word in enumerate(parts):
             if i:
-                space = glyph_advance(font, " ")
-                w = measure(word, font, box)
-                if x and x + space + box.letter_spacing + w > limit:
+                w = width_of(word)
+                if x and x + space_width + spacing + w > limit:
                     emit_newline()
                 elif x:
                     out.append(" ")
-                    x += space + box.letter_spacing
+                    x += space_width + spacing
             if word:
                 place_word(word)
     result = "".join(out)

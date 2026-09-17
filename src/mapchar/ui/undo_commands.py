@@ -51,6 +51,7 @@ FONT_ID = 3
 BOX_ID = 4
 BLOCK_ID = 5
 STRINGS_ID = 6
+GLOSSARY_ID = 7
 
 
 class _StateCommand(QUndoCommand):
@@ -540,6 +541,42 @@ class BoxCommand(_ValueCommand):
     def _apply(self, state) -> None:
         box, revision = state
         self.window.apply_box(self.entry, box, revision)
+
+
+def _changed_row(before: tuple, after: tuple) -> int | None:
+    """The one row the edit is on: the index the two lists differ at, when
+    they differ at exactly one, or the last row when it was just appended —
+    a term typed into a new row, which its translation then joins. ``None``
+    otherwise."""
+    if len(after) == len(before) + 1 and before == after[:-1]:
+        return len(before)
+    if len(before) != len(after):
+        return None
+    rows = [i for i, (a, b) in enumerate(zip(before, after, strict=True)) if a != b]
+    return rows[0] if len(rows) == 1 else None
+
+
+class GlossaryCommand(_MergingCommand, _InPlaceCommand):
+    """The project's glossary, replaced whole: the terms before and after.
+
+    Consecutive edits of one row merge — a term typed and then its
+    translation is one step — while an added or removed row starts another.
+    """
+
+    def __init__(self, window, before: list, after: list):
+        super().__init__(window, None, "Edit glossary", tuple(before), tuple(after))
+
+    def id(self) -> int:
+        return GLOSSARY_ID
+
+    def _mergeable(self, other) -> bool:
+        if not isinstance(other, GlossaryCommand):
+            return False
+        row = _changed_row(self.before, self.after)
+        return row is not None and row == _changed_row(other.before, other.after)
+
+    def _apply(self, state) -> None:
+        self.window.apply_glossary(list(state))
 
 
 class TableCommand(_InPlaceCommand):

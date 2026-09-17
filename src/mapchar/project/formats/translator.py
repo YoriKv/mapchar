@@ -127,6 +127,11 @@ def _record_from_row(row: list[str], index: dict[str, int], cell_of) -> Record |
 # --- PO -------------------------------------------------------------------
 
 
+DONE_COMMENT = "# done"
+"""How a PO file says a string is done: a translator comment, PO having no
+flag for it, that survives the tools that keep such comments."""
+
+
 def _po_quote(text: str) -> str:
     return '"' + escape(text, '"') + '"'
 
@@ -145,6 +150,8 @@ def write_po(records: list[Record], rom: str = "rom") -> str:
         lines.append(f"#: {rom}:{format_num(r.address)}")
         if r.status == "review":
             lines.append("#, fuzzy")
+        elif r.status == "done":
+            lines.append(DONE_COMMENT)
         lines.append(f"msgctxt {_po_quote(r.id)}")
         lines.append(f"msgid {_po_quote(r.original)}")
         lines.append(f"msgstr {_po_quote(r.translation)}")
@@ -156,26 +163,30 @@ def read_po(text: str) -> list[Record]:
     records: list[Record] = []
     entry: dict[str, str] = {}
     notes: list[str] = []
-    fuzzy = False
+    fuzzy = done = False
     address = 0
     current: str | None = None
 
     def flush() -> None:
-        nonlocal entry, notes, fuzzy, address, current
+        nonlocal entry, notes, fuzzy, done, address, current
         if "msgctxt" in entry and entry.get("msgid", "") != "" or entry.get("msgctxt"):
+            if fuzzy:
+                status = "review"
+            elif done:
+                status = "done"
+            else:
+                status = "edited" if entry.get("msgstr") else "untouched"
             records.append(
                 Record(
                     entry.get("msgctxt", ""),
                     address,
                     entry.get("msgid", ""),
                     entry.get("msgstr", ""),
-                    "review"
-                    if fuzzy
-                    else ("edited" if entry.get("msgstr") else "untouched"),
+                    status,
                     "\n".join(notes),
                 )
             )
-        entry, notes, fuzzy, address, current = {}, [], False, 0, None
+        entry, notes, fuzzy, done, address, current = {}, [], False, False, 0, None
 
     for raw in split_lines(text):
         line = raw.strip()
@@ -186,6 +197,8 @@ def read_po(text: str) -> list[Record]:
             notes.append(line[2:].strip())
         elif line.startswith("#,") and "fuzzy" in line:
             fuzzy = True
+        elif line == DONE_COMMENT:
+            done = True
         elif line.startswith("#:"):
             m = re.search(r":\$([0-9A-Fa-f]+)", line)
             if m:
@@ -214,6 +227,8 @@ class ImportReport:
     """Per block, the text each record's string is to hold, by index."""
     review: dict[str, dict[int, bool]] = field(default_factory=dict)
     """Per block, the strings the records mark for review."""
+    done: dict[str, dict[int, bool]] = field(default_factory=dict)
+    """Per block, the strings the records mark done."""
     notes: dict[str, dict[int, str]] = field(default_factory=dict)
     """Per block, the notes the records carry."""
 
@@ -245,6 +260,8 @@ def apply_records(
             report.texts.setdefault(name, {})[rec.index] = r.translation
         if r.status == "review":
             report.review.setdefault(name, {})[rec.index] = True
+        elif r.status == "done":
+            report.done.setdefault(name, {})[rec.index] = True
         if r.notes:
             report.notes.setdefault(name, {})[rec.index] = r.notes
         report.applied += 1

@@ -37,7 +37,7 @@ app.py ─────────────► ui/ ────────�
 | `engines/`  | Pure algorithms over the model: decode, encode, relative search, text scan, pointer discovery, layout. No I/O. |
 | `pipeline/` | Runs the byte stages in both directions, extracts blocks into strings, and lays strings out for writing. |
 | `plugins/`  | The plugin API, registry, discovery, trust, detection, and every built-in plugin: containers, compressions, charsets, mappings. |
-| `project/`  | The open-entries model (`workspace.py`), the `.mapchar` file (`projectfile.py`), reading a table file from disk (`tables.py`), the table-file and script readers and writers (`formats/`), and the other tools' formats (`exchange/`). |
+| `project/`  | The open-entries model (`workspace.py`), the `.mapchar` file (`projectfile.py`), the glossary (`glossary.py`), reading a table file from disk (`tables.py`), the table-file and script readers and writers (`formats/`), and the other tools' formats (`exchange/`). |
 | `ui/`       | The PySide6 application: `MainWindow`, the raw and strings views, docks, tool windows, dialogs, undo commands, theme. |
 | `app.py`    | Entry point: `QApplication`, theme, plugin folders, trust store, registry, `MainWindow`. |
 | `resources/`| Package data: the plugin examples seeded into the user's folder, the icon font, the app icon. |
@@ -648,7 +648,7 @@ through `_push_command`.
 | Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `dumping.py`, `compression.py`, `plugins.py` |
 | Tables | `tables_dock.py`, `table_editor.py` |
 | Raw view | `raw_view.py` |
-| Blocks and strings | `blocks.py`, `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py` |
+| Blocks and strings | `blocks.py`, `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py`, `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary window and its undo steps) |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
 | Exchange | `import_export.py` |
 | Projects | `projects.py`, `relocate.py`, `autosave.py` |
@@ -700,6 +700,7 @@ the view constants `BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
 | View bounds (the stretch the Hex and Text tabs are confined to) | the window, live; re-derived from a block's source on every activation, so never saved |
 | View offset, view tab, a file's reading and Follow pointers, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
 | Container, compression, block configuration, font, box | the `Entry` |
+| The glossary | the `Workspace`, swapped with the entries when a project opens |
 | Bytes, table set, strings, notices | the `Document` |
 | Address format, last folder used, Follow selection, theme, window layouts, recent projects, and each tool surface's own view toggles | `QSettings` |
 | Undo history, visit trail | the window, for the session |

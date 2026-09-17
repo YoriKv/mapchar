@@ -123,12 +123,14 @@ class MenuBarMixin:
         self.find_replace_action = act(
             edit_menu, "&Find and Replace…", self._show_find_replace, "Ctrl+H"
         )
+        act(edit_menu, "&Glossary…", self._show_glossary, "Ctrl+Shift+L")
         edit_menu.addSeparator()
         self.string_actions = tuple(
             act(edit_menu, text, slot, key)
             for text, slot, key in (
                 ("Re&vert Selected Strings", self._revert_selected, None),
                 ("Toggle Revie&w on Selected", self._toggle_review_selected, None),
+                ("Toggle Don&e on Selected", self._toggle_done_selected, "Ctrl+Alt+D"),
                 (
                     "&Next Untranslated",
                     lambda: self._step_strings("untranslated"),
@@ -213,6 +215,11 @@ class MenuBarMixin:
         # this one needs a block's strings to look for pointers *to*.
         self.pointers_action = act(
             search_menu, "Find P&ointers…", self._find_pointers, "Ctrl+Shift+P"
+        )
+        # Not gated at all: it lists every block's strings, whatever is on
+        # screen, and says so itself when there are none.
+        act(
+            search_menu, "Project &Strings…", self._show_project_strings, "Ctrl+Shift+G"
         )
 
         panels_menu = bar.addMenu("&Panels")

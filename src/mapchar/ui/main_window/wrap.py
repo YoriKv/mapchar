@@ -21,13 +21,14 @@ class WrapMixin:
             return
         entry = self._entry
         font_entry = self._bound_font(entry)
-        if (
-            entry is None
-            or font_entry is None
-            or font_entry.font is None
-            or entry.box is None
-        ):
+        font = font_entry.font if font_entry is not None else None
+        # A block with no font wraps by characters, when its box says how
+        # many a line holds.
+        if entry is None or entry.box is None:
             self._error("Bind a font and a text box first.")
+            return
+        if font is None and entry.box.chars_per_line <= 0:
+            self._error("Bind a font, or set the box's chars per line, first.")
             return
         newline = next(
             (lb for lb, e in entry.box.effects.items() if e.effect.value == "newline"),
@@ -49,7 +50,7 @@ class WrapMixin:
             if rec is None:
                 continue
             text = rec.current_text()
-            wrapped, _ = wrap_text(text, font_entry.font, entry.box, newline, page)
+            wrapped, _ = wrap_text(text, font, entry.box, newline, page)
             if wrapped != text:
                 edits[index] = wrapped
         if not edits:

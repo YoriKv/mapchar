@@ -201,6 +201,12 @@ class Status(Enum):
     UNTOUCHED = "untouched"
     EDITED = "edited"
     REVIEW = "review"
+    DONE = "done"
+
+
+HELD = (Status.REVIEW, Status.DONE)
+"""The statuses set by hand, which the bytes do not settle: a string marked
+for review or done stays so whatever its text does."""
 
 
 @dataclass
@@ -299,8 +305,9 @@ class StringRecord:
         return nfc(text).replace("\n", "") == nfc(self.original).replace("\n", "")
 
     def refresh_status(self) -> None:
-        """Settle *edited* or *untouched* from the texts; *review* stays."""
-        if self.status is not Status.REVIEW:
+        """Settle *edited* or *untouched* from the texts; *review* and *done*
+        stay."""
+        if self.status not in HELD:
             self.status = Status.EDITED if self.edited else Status.UNTOUCHED
 
 

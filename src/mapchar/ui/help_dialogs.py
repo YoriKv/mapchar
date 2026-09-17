@@ -222,6 +222,10 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
                 "Marked for a second look, by hand or by an import",
             ),
             (
+                Swatch("done", ink=theme.DONE_INK),
+                "Marked done by hand: finished, whatever the text",
+            ),
+            (
                 Swatch("overflows box", ink=theme.ERROR_INK),
                 "The text does not fit the entry's box",
             ),

@@ -55,13 +55,24 @@ def test_tsv_and_csv_roundtrip():
 
 def test_po_roundtrip():
     recs = records()
+    recs[0].status = "done"
     text = write_po(recs, "game.nes")
-    assert "#, fuzzy" in text and "#: game.nes:$4" in text
+    assert "#, fuzzy" in text and "#: game.nes:$4" in text and "\n# done\n" in text
     back = read_po(text)
     assert [r.id for r in back] == ["Dialogue/0", "Dialogue/1"]
     assert back[0].original == "A[line]\nB[end]" and back[0].translation == ""
+    assert back[0].status == "done"
     assert back[1].translation == 'A "quoted"\ttab[end]' and back[1].status == "review"
     assert back[1].notes == "check\nme" and back[1].address == 4
+    # Done travels through the delimited files as any status does.
+    assert [r.status for r in read_delimited(write_delimited(recs))] == [
+        "done",
+        "review",
+    ]
+    report = apply_records(back, {"Dialogue": fresh()})
+    assert report.done == {"Dialogue": {0: True}} and report.review == {
+        "Dialogue": {1: True}
+    }
 
 
 def test_apply_records():

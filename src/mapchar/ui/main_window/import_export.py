@@ -297,6 +297,7 @@ class ImportExportMixin:
         file_entry = self._current_file()
         blocks = self._block_strings_by_name(file_entry)
         review: dict[str, dict[int, bool]] = {}
+        done: dict[str, dict[int, bool]] = {}
         notes: dict[str, dict[int, str]] = {}
         try:
             if kind == "script":
@@ -317,6 +318,7 @@ class ImportExportMixin:
                 records = read_po(text) if kind == "po" else read_delimited(text)
                 report = apply_records(records, blocks, force=force)
                 notices, review, notes = report.skipped, report.review, report.notes
+                done = report.done
         except (MapcharError, ValueError) as exc:
             self._error(f"Cannot import {path}: {exc}")
             return
@@ -336,10 +338,14 @@ class ImportExportMixin:
                 if entry is None:
                     continue
                 for rec in strs:
-                    if (
-                        review.get(name, {}).get(rec.index)
-                        and rec.status.value != "review"
-                    ):
+                    marked = (
+                        "review"
+                        if review.get(name, {}).get(rec.index)
+                        else "done"
+                        if done.get(name, {}).get(rec.index)
+                        else None
+                    )
+                    if marked is not None and rec.status.value != marked:
                         self._push_command(
                             StringFieldCommand(
                                 self,
@@ -347,7 +353,7 @@ class ImportExportMixin:
                                 rec.index,
                                 "status",
                                 rec.status.value,
-                                "review",
+                                marked,
                             )
                         )
                     note = notes.get(name, {}).get(rec.index)

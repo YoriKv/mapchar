@@ -52,6 +52,7 @@ from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.find_row import FindRow
 from mapchar.ui.fonts_panel import FontsPanel
+from mapchar.ui.glossary_window import GlossaryWindow
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.help_dialogs import (
     AboutDialog,
@@ -73,6 +74,7 @@ from mapchar.ui.main_window.files_menu import FilesMenuMixin
 from mapchar.ui.main_window.find_replace import FindReplaceMixin
 from mapchar.ui.main_window.fonts import FontsMixin
 from mapchar.ui.main_window.format_bar import FormatBarMixin
+from mapchar.ui.main_window.glossary import GlossaryMixin
 from mapchar.ui.main_window.hex_view import HexViewMixin
 from mapchar.ui.main_window.history import HistoryMixin
 from mapchar.ui.main_window.import_export import ImportExportMixin
@@ -82,6 +84,7 @@ from mapchar.ui.main_window.opening import OpeningMixin
 from mapchar.ui.main_window.plugins import PluginsMixin
 from mapchar.ui.main_window.pointers import PointerDiscoveryMixin
 from mapchar.ui.main_window.preview import PreviewMixin
+from mapchar.ui.main_window.project_strings import ProjectStringsMixin
 from mapchar.ui.main_window.projects import ProjectMixin
 from mapchar.ui.main_window.raw_view import RawViewMixin
 from mapchar.ui.main_window.refresh import RefreshMixin
@@ -98,6 +101,7 @@ from mapchar.ui.main_window.wrap import WrapMixin
 from mapchar.ui.main_window.writing import WritingMixin
 from mapchar.ui.number_fields import AddressEdit, AddressSpelling, HexEdit
 from mapchar.ui.preview_window import PreviewWindow
+from mapchar.ui.project_strings_window import ProjectStringsWindow
 from mapchar.ui.raw_widget import RawWidget
 from mapchar.ui.reading_bar import ReadingBar
 from mapchar.ui.scan_window import ScanWindow
@@ -141,6 +145,8 @@ class MainWindow(
     StringEditMixin,
     WrapMixin,
     FindReplaceMixin,
+    ProjectStringsMixin,
+    GlossaryMixin,
     SearchMixin,
     RelativeSearchMixin,
     PointerDiscoveryMixin,
@@ -458,6 +464,8 @@ class MainWindow(
         self.table_editor = TableEditor(self)
         self.table_editor.set_charsets(self.workspace.builtin_tables.names())
         self.find_replace = FindReplaceDialog(self)
+        self.project_strings = ProjectStringsWindow(self)
+        self.glossary_window = GlossaryWindow(self)
 
         self._connect_signals()
         self._start_autosave()
@@ -541,6 +549,10 @@ class MainWindow(
         self.find_replace.find_next.connect(self._fr_find_next)
         self.find_replace.replace_one.connect(self._fr_replace_one)
         self.find_replace.replace_all.connect(self._fr_replace_all)
+        self.project_strings.go_to.connect(self._jump_to_string)
+        self.project_strings.refresh_requested.connect(self._refresh_project_strings)
+        self.glossary_window.changed.connect(self._on_glossary_changed)
+        self.glossary_window.insert_requested.connect(self._insert_glossary)
         self.workspace.on_current_changed.append(self._record_visit)
         self.workspace.on_current_changed.append(lambda e: self._update_title())
         # A closed entry cannot be returned to. The whole trail going is a

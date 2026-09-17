@@ -120,6 +120,11 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         self.line_h = number_spin(1, 128, 2)
         self.spacing = number_spin(-8, 32, 2)
         self.lines = number_spin(0, 64, 2, special="fit")
+        self.chars = number_spin(0, 999, 3, special="off")
+        self.chars.setToolTip(
+            "Characters a line holds, for a block with no font: overflows box "
+            "and Wrap then count characters"
+        )
         self.origin_x = number_spin(0, 1024, 3)
         self.origin_y = number_spin(0, 1024, 3)
         for label, w in (
@@ -128,6 +133,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
             ("Line height", self.line_h),
             ("Letter spacing", self.spacing),
             ("Lines per page", self.lines),
+            ("Chars per line", self.chars),
             ("Origin X", self.origin_x),
             ("Origin Y", self.origin_y),
         ):
@@ -156,6 +162,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
             self.line_h,
             self.spacing,
             self.lines,
+            self.chars,
             self.origin_x,
             self.origin_y,
         ):
@@ -202,6 +209,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
             self.line_h.setValue(box.line_height)
             self.spacing.setValue(box.letter_spacing)
             self.lines.setValue(box.lines_per_page)
+            self.chars.setValue(box.chars_per_line)
             self.origin_x.setValue(box.origin_x)
             self.origin_y.setValue(box.origin_y)
             self.codes.setRowCount(len(labels))
@@ -298,6 +306,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
             line_height=self.line_h.value(),
             letter_spacing=self.spacing.value(),
             lines_per_page=self.lines.value(),
+            chars_per_line=self.chars.value(),
             origin_x=self.origin_x.value(),
             origin_y=self.origin_y.value(),
             effects=effects,

@@ -46,6 +46,8 @@ TINT_STRING_RULE = QColor(120, 120, 120, 160)
 # themes' surfaces.
 WARNING_INK = QColor(0xAE, 0x7A, 0x11)
 ERROR_INK = QColor(0xDC, 0x58, 0x58)
+DONE_INK = QColor(0x3C, 0x9A, 0x5F)
+"""A string marked done: readable on both themes."""
 # The Preview's paper. Named here with the rest of the fixed colours rather than
 # written into the renderer, because it is a *theme* decision that happens not to
 # vary: a glyph sheet's own palette is what the preview shows, and a paper that
@@ -131,6 +133,7 @@ def apply_theme(app: QApplication | None, name: str) -> None:
 __all__ = [
     "ERROR_INK",
     "NOTICE_WASH",
+    "DONE_INK",
     "PREVIEW_GRID",
     "PREVIEW_PAPER",
     "THEMES",

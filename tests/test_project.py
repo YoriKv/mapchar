@@ -6,10 +6,11 @@ from helpers import ABC_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
 from mapchar.core.context import PipelineContext
 from mapchar.core.document import Document
-from mapchar.core.font import Font
+from mapchar.core.font import Font, TextBox
 from mapchar.core.table import Entry as TableEntry
 from mapchar.core.table import Table, TokenKind
 from mapchar.pipeline.extract import extract
+from mapchar.project.glossary import GlossaryTerm, matching_terms
 from mapchar.project.projectfile import load_project, project_dict, save_project
 from mapchar.project.tables import (
     adopt_table,
@@ -61,11 +62,13 @@ def test_project_roundtrip(tmp_path):
     b.doc.strings[1].original = "C[end]"
     b.doc.strings[1].refresh_status()
     b.doc.strings[1].notes = "n"
+    b.box = TextBox(chars_per_line=18, lines_per_page=3)
     ws.add(Entry(EntryKind.BOOKMARK, "bm", str(rom), parent=f, bookmark_offset=2))
     ws.add(Entry(EntryKind.TABLE, "t", str(tmp_path / "t.tbl"), dialect="abcde"))
     ws.set_current(b)
+    ws.glossary = [GlossaryTerm("Slime", "Gluant", "the blue one"), GlossaryTerm("HP")]
     proj = tmp_path / "p.mapchar"
-    save_project(str(proj), ws.entries, ws.current)
+    save_project(str(proj), ws.entries, ws.current, ws.glossary)
     text = proj.read_text()
     assert '"path": "rom.bin"' in text and "strings" in text
     loaded = load_project(str(proj))
@@ -85,6 +88,18 @@ def test_project_roundtrip(tmp_path):
     assert loaded.entries[2].bookmark_offset == 2
     assert loaded.entries[3].dialect == "abcde"
     assert os.path.isabs(lb.path)
+    assert lb.box == TextBox(chars_per_line=18, lines_per_page=3)
+    assert loaded.glossary == ws.glossary
+    # An empty glossary writes nothing, and a project with none reads as empty.
+    assert "glossary" not in project_dict(ws.entries, None, None)
+    assert loaded.glossary is not ws.glossary
+
+
+def test_matching_terms_are_found_folded_and_longest_first():
+    terms = [GlossaryTerm("HP"), GlossaryTerm("slime"), GlossaryTerm("King Slime")]
+    found = matching_terms(terms, "The KING SLIME has 20 hp[end]")
+    assert [t.term for t in found] == ["King Slime", "slime", "HP"]
+    assert matching_terms(terms, "nothing here") == []
 
 
 def test_project_tolerates_broken_entries(tmp_path):

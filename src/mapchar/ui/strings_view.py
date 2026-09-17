@@ -65,6 +65,7 @@ STATUS_FILTERS = [
     "untouched",
     "edited",
     "review",
+    "done",
     "overflows box",
 ]
 FLAGGED = ("review", "overflows box")
@@ -254,7 +255,7 @@ class StringsView(QWidget):
             uses = f"{code.uses} use(s) in this block" if code.uses else "unused here"
             button.setToolTip(f"{code.comment}\n{uses}" if code.comment else uses)
             button.clicked.connect(
-                lambda _=False, text=code.insertion: self._insert_code(text)
+                lambda _=False, text=code.insertion: self.insert_text(text)
             )
             self.codes_layout.addWidget(button)
 
@@ -263,15 +264,16 @@ class StringsView(QWidget):
         self.delegate.newline_code = code
         self.pane.set_newline_code(code)
 
-    def _insert_code(self, code: str) -> None:
-        """A code button: into the cell being edited, else into the pane's
-        editor, which takes the focus so typing carries on there."""
+    def insert_text(self, text: str) -> None:
+        """A code button or a glossary term: into the cell being edited, else
+        into the pane's editor, which takes the focus so typing carries on
+        there."""
         editor = self.delegate.current_editor()
         if editor is None and self.pane.index is not None:
             editor = self.pane.editor
             editor.setFocus()
         if editor is not None:
-            editor.insert_code(code)
+            editor.insert_code(text)
 
     def set_readout(self, text: str, problem: bool = False) -> None:
         """The pane's byte readout: the draft's budget, or why a commit was
@@ -370,6 +372,8 @@ class StringsView(QWidget):
             return theme.ERROR_INK
         if status == "review":
             return theme.WARNING_INK
+        if status == "done":
+            return theme.DONE_INK
         return None
 
     def _row_data(self, row: int) -> RowData | None:

@@ -79,7 +79,7 @@ by `id`.
 | `address`     | `$start`                                                       |
 | `original`    | the original the project keeps, codes in brackets and line breaks after `\n` tokens |
 | `translation` | what the bytes say, empty when they still say the original     |
-| `status`      | `untouched`, `edited`, `review`                                |
+| `status`      | `untouched`, `edited`, `review`, `done`                        |
 | `notes`       | free text                                                      |
 
 - **TSV / CSV** — a header row then one row per string; line breaks inside
@@ -89,14 +89,15 @@ by `id`.
   and PO are written without one, and an import accepts either.
 - **PO** — one entry per string: `msgctxt "id"`, `msgid` original, `msgstr`
   translation, `#: rom:address` reference, `#. notes` as extracted comment,
-  `#, fuzzy` when the status is *review*. Multi-line strings use PO's
+  `#, fuzzy` when the status is *review*, and a `# done` translator comment
+  when it is *done*, PO having no flag for that. Multi-line strings use PO's
   standard continuation. Plural forms are not used.
 - **Import rules** — a record whose `original` differs from the project's
   original is skipped and listed, unless **Force** is on; the comparison is
   on NFC, so a round trip through an editor that decomposes text skips
   nothing. A translation goes into the bytes as an edit, and one that does not
-  fit or encode is refused and listed; *review* is set when the record says
-  so, and notes are taken as they come.
+  fit or encode is refused and listed; *review* or *done* is set when the
+  record says so, and notes are taken as they come.
 
 ## Cartographer
 

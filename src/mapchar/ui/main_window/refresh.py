@@ -95,6 +95,7 @@ class RefreshMixin:
         self.tables_panel.set_start_table(self._current_table_id())
         self._sync_hex_panel()
         self._sync_preview()
+        self._sync_glossary()
         self._update_title()
         # Last, so the capability table has the final word: every pass above
         # enables controls on grounds that are true in general and beside the

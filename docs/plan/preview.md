@@ -54,7 +54,15 @@ A **box** belongs to a block and says where text goes:
 | `line height`  | pixels per line                                           |
 | `letter spacing` | pixels added after every glyph                          |
 | `lines per page` | how many lines fit before the box must clear            |
+| `chars per line` | how many characters a line holds, for a block with no font; *off* by default |
 | `origin`       | where the first glyph's top-left sits inside the box      |
+
+A block with no font bound still has a box. With `chars per line` set, the
+**overflows box** status, the byte readout's `chars` and `lines` counts and
+**Wrap Translation** work by counting characters instead of measuring
+glyphs: every character is one cell, a *space* or *glyph* code one cell, a
+*newline* code ends the line, a *page* code the page, and `lines per page`
+bounds the page when it is set.
 
 ## Code effects
 
@@ -86,7 +94,9 @@ mean different things in each.
   as it is typed, not only what has been committed.
 - **Overflow** is reported per string, as the **overflows box** status in
   the Strings view: a line wider than the box, or more lines than a page
-  holds. The offending glyphs are tinted in the preview.
+  holds. The offending glyphs are tinted in the preview. With no font and
+  `chars per line` set, it is a line of more characters than that, or more
+  lines than `lines per page`.
 - **Pages** step with buttons when a string spans several.
 - **Zoom** and **Grid**, which rules the box in pixels; **Copy Image** puts
   the page as drawn on the clipboard.
@@ -107,6 +117,8 @@ line breaks to fit the box:
 - when the page's line count is reached, the block's *page* code is inserted
   when one exists, else the string is flagged as overflowing. A page starts on
   its own first line, so no newline code goes with it;
-- the result is applied directly and is one undo step.
+- the result is applied directly and is one undo step;
+- with no font bound, the box's `chars per line` is the width and every
+  character one cell; a *space* or *glyph* code advances one cell.
 
 Wrap applies to one string or to every selected string.

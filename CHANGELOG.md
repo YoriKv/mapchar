@@ -16,6 +16,14 @@
 - An editing pane under the Strings grid: the selected string's original with
   its line breaks and codes dimmed or hidden, a multi-line editor, the byte
   readout and the notes.
+- A fourth status, done, set by hand (Ctrl+Alt+D) or by import, carried by
+  the filters, the progress readout and the TSV, CSV and PO files.
+- A box's chars per line: with no font bound, overflows box, the readout and
+  Wrap Translation count characters against it and lines per page.
+- Search ▸ Project Strings lists every block's strings under one filter and
+  jumps to any of them.
+- Edit ▸ Glossary: the project's terms and translations, the ones found in
+  the selected string listed first, typed into the editor on a click.
 
 ## v0.1.2 - 2026-09-15
 

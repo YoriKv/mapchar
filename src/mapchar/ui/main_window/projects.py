@@ -49,7 +49,7 @@ class ProjectMixin:
 
         self._capture_session()
         base = os.path.dirname(self.project_path) if self.project_path else None
-        d = project_dict(self.workspace.entries, None, base)
+        d = project_dict(self.workspace.entries, None, base, self.workspace.glossary)
         return json.dumps(d, sort_keys=True)
 
     def _resolve_dirty_entries(
@@ -135,6 +135,8 @@ class ProjectMixin:
         self._load_project_plugins(None)  # drop the old project's plugins/ folder
         self._forget_all_visits()  # nothing the trail named survives the swap
         self.workspace.replace([], None)
+        self.workspace.glossary = []
+        self._sync_glossary()
         self.undo_stack.clear()
         self.project_path = None
         self._saved_snapshot = None
@@ -184,6 +186,8 @@ class ProjectMixin:
         # and the entry the swap makes current is the new trail's first visit.
         self._forget_all_visits()
         self.workspace.replace(loaded.entries, loaded.current)
+        self.workspace.glossary = loaded.glossary
+        self._sync_glossary()
         self.undo_stack.clear()
         self.project_path = recovered_from or path
         self._discard_autosave()
@@ -247,7 +251,12 @@ class ProjectMixin:
             return False
         self._capture_session()  # the on-screen entry's session must be current
         try:
-            save_project(path, self.workspace.entries, self.workspace.current)
+            save_project(
+                path,
+                self.workspace.entries,
+                self.workspace.current,
+                self.workspace.glossary,
+            )
         except OSError as exc:
             self._error(f"Cannot save project: {exc}")
             return False

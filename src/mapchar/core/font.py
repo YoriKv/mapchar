@@ -97,6 +97,9 @@ class TextBox:
     """Code label to its layout effect."""
     font_index: int | None = None
     """Index of the font entry in the project's entries, when bound."""
+    chars_per_line: int = 0
+    """How many characters a line holds, for a block with no font; 0 sets no
+    limit. With it, *overflows box* and Wrap work by counting characters."""
 
     @property
     def max_lines(self) -> int:

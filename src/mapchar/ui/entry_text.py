@@ -102,6 +102,7 @@ def block_extra(entry: Entry) -> str:
     for label, n in (
         ("edited", sum(s is Status.EDITED for s in statuses)),
         ("review", sum(s is Status.REVIEW for s in statuses)),
+        ("done", sum(s is Status.DONE for s in statuses)),
     ):
         if n:
             parts.append(f"{n} {label}")

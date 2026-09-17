@@ -14,6 +14,7 @@ from mapchar.core.document import Document
 from mapchar.core.font import Font, TextBox
 from mapchar.core.notices import Notice
 from mapchar.core.table import Table
+from mapchar.project.glossary import GlossaryTerm
 
 
 @dataclass
@@ -230,6 +231,9 @@ class Workspace:
         self.builtin_tables: Mapping[str, Table] = {}
         """The standard encodings as tables, under the loaded ones: never entries,
         never saved, and built by whoever holds the registry."""
+        self.glossary: list[GlossaryTerm] = []
+        """The project's terms and their translations; saved with the project,
+        and swapped by whoever swaps the entries."""
 
     # --- revisions -----------------------------------------------------
 
