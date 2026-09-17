@@ -7,6 +7,8 @@ reports; the widget itself knows only about items.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
@@ -15,17 +17,20 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QWidget,
 )
+from shiboken6 import isValid
 
 DUPLICATE_KEY = QKeySequence("Ctrl+D")
 
 
 class EntryTree(QTreeWidget):
-    """The Files tree: reorder by drag, and the keys that act on entries.
+    """The Files tree: reorder and regroup by drag, and the keys that act on
+    entries.
 
-    A drag never leaves the widget, so the dragged row is read off the tree
-    rather than out of the drop's mime data, and the drop only means anything
-    between two *siblings*: a row taken *onto* another would be a re-pointing,
-    which is a dialog's decision, not an aim's.
+    A drag never leaves the widget, so the dragged rows are read off the tree
+    rather than out of the drop's mime data. A drop lands *between* two rows,
+    or *onto* one to go last under it; which of those mean anything is the
+    panel's to say (:attr:`drop_allowed`) — a row taken onto a block would be a
+    re-pointing, which is a dialog's decision, not an aim's.
     """
 
     delete_pressed = Signal()
@@ -36,15 +41,25 @@ class EntryTree(QTreeWidget):
     rename_pressed = Signal()
     move_pressed = Signal(int)
     """Alt+Up / Alt+Down: step the selection one place, ``-1`` or ``+1``."""
-    reorder_dropped = Signal(object, object)
-    """The dragged row's entry key, and the key it should land in front of."""
+    dropped = Signal(list, object, object)
+    """The dragged rows' entry keys, the key of the row they land under
+    (``None`` for a group heading), and the key they land in front of
+    (``None``: last there)."""
     current_navigated = Signal(object)
     """A key moved the current row: the row it moved to, to be shown the same
     way a click on it would show it."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._dragged: QTreeWidgetItem | None = None
+        self._dragged: list[QTreeWidgetItem] = []
+        self.drop_allowed: (
+            Callable[
+                [list[QTreeWidgetItem], QTreeWidgetItem, QTreeWidgetItem | None], bool
+            ]
+            | None
+        ) = None
+        """Whether the dragged rows may land under a row, in front of another:
+        the panel's answer, since only it knows what the rows stand for."""
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
@@ -84,44 +99,74 @@ class EntryTree(QTreeWidget):
             self.current_navigated.emit(item)
 
     def startDrag(self, actions) -> None:  # noqa: N802 - Qt override
-        # A drag moves the one row it started on, so it has nothing to say
-        # about a set of them: Move Up/Down is what reorders a selection.
-        if len(self.selectedItems()) > 1:
+        # The selection moves when the drag starts inside it, and the row under
+        # the mouse alone otherwise; rows that are no entry — a block's
+        # strings — never move.
+        current = self.currentItem()
+        selected = self.selectedItems()
+        if any(current is s for s in selected):
+            rows = selected
+        else:
+            rows = [current] if current is not None else []
+        self._dragged = [
+            r for r in rows if r.data(0, Qt.ItemDataRole.UserRole) is not None
+        ]
+        if not self._dragged:
             return
-        self._dragged = self.currentItem()
         # Qt accepts a drop *between* two rows only when their parent is a drop
-        # target, so the group being rearranged is opened for the length of the
-        # drag; the rest of the time nothing here is a drop target at all.
-        group = self._dragged.parent() if self._dragged is not None else None
-        if group is not None:
-            group.setFlags(group.flags() | Qt.ItemFlag.ItemIsDropEnabled)
+        # target, so the groups being rearranged are opened for the length of
+        # the drag; the rest of the time no group heading is a drop target.
+        groups = []
+        for row in self._dragged:
+            group = row.parent()
+            if group is not None and not group.flags() & Qt.ItemFlag.ItemIsDropEnabled:
+                group.setFlags(group.flags() | Qt.ItemFlag.ItemIsDropEnabled)
+                groups.append(group)
         try:
             super().startDrag(actions)
         finally:
-            if group is not None:
-                group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
-            self._dragged = None
+            for group in groups:
+                # A drop that landed rebuilt the tree, and took the group with it.
+                if isValid(group):
+                    group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
+            self._dragged = []
+
+    def landing(
+        self, target: QTreeWidgetItem | None, position
+    ) -> tuple[QTreeWidgetItem, QTreeWidgetItem | None] | None:
+        """The row the dragged rows would land under and the row in front of
+        which, for a drop at ``position`` on ``target``; ``None`` when that
+        drop is refused."""
+        sources = self._dragged
+        if not sources or target is None:
+            return None
+        drop = QTreeWidget.DropIndicatorPosition
+        if position is drop.OnItem:
+            parent, before = target, None
+        elif position is drop.AboveItem:
+            parent, before = target.parent(), target
+        elif position is drop.BelowItem:
+            parent = target.parent()
+            index = parent.indexOfChild(target) + 1 if parent is not None else 0
+            before = (
+                parent.child(index)
+                if parent is not None and index < parent.childCount()
+                else None
+            )
+        else:
+            return None
+        if parent is None or any(parent is s for s in sources):
+            return None
+        if self.drop_allowed is not None and not self.drop_allowed(
+            sources, parent, before
+        ):
+            return None
+        return parent, before
 
     def _drop_before(self, event):
-        """The dragged item and the sibling it would land in front of, or
-        ``None`` when this drop is not a reorder we allow."""
-        source = self._dragged
-        if source is None:
-            return None
-        target = self.itemAt(event.position().toPoint())
-        if target is None or target is source:
-            return None
-        parent = source.parent()
-        if parent is None or target.parent() is not parent:
-            return None
-        position = self.dropIndicatorPosition()
-        if position is QTreeWidget.DropIndicatorPosition.AboveItem:
-            return source, target
-        if position is QTreeWidget.DropIndicatorPosition.BelowItem:
-            index = parent.indexOfChild(target) + 1
-            after = parent.child(index) if index < parent.childCount() else None
-            return source, after
-        return None
+        return self.landing(
+            self.itemAt(event.position().toPoint()), self.dropIndicatorPosition()
+        )
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
         # The base class decides where the indicator is drawn, so it runs
@@ -136,15 +181,25 @@ class EntryTree(QTreeWidget):
         if landing is None:
             event.ignore()
             return
-        source, before = landing
         # Accepted, but as IgnoreAction and without the base class: Qt's own
         # internal move would rearrange the view behind the workspace's back,
         # leaving an order nothing agreed to and no undo step for it.
         event.setDropAction(Qt.DropAction.IgnoreAction)
         event.accept()
-        self.reorder_dropped.emit(
-            source.data(0, Qt.ItemDataRole.UserRole),
-            before.data(0, Qt.ItemDataRole.UserRole) if before is not None else None,
+        self.drop_rows(self._dragged, *landing)
+
+    def drop_rows(
+        self,
+        rows: list[QTreeWidgetItem],
+        parent: QTreeWidgetItem,
+        before: QTreeWidgetItem | None,
+    ) -> None:
+        """Report ``rows`` dropped under ``parent`` in front of ``before``."""
+        role = Qt.ItemDataRole.UserRole
+        self.dropped.emit(
+            [r.data(0, role) for r in rows],
+            parent.data(0, role),
+            before.data(0, role) if before is not None else None,
         )
 
 

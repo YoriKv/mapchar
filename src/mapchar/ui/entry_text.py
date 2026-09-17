@@ -7,6 +7,7 @@ its tree items.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING
 
 from mapchar.core.block import (
@@ -21,7 +22,10 @@ from mapchar.core.text import fold
 from mapchar.project.workspace import Entry, EntryKind
 
 if TYPE_CHECKING:
-    from collections.abc import Container
+    from collections.abc import Callable, Container, Iterable
+
+    Counts = tuple[int, int, int, int]
+    """A block's strings, and how many of them are edited, in review and done."""
 
 PREVIEW_CHARS = 48
 """How much of a string a row shows before cutting it short."""
@@ -41,13 +45,20 @@ def string_preview(text: str) -> str:
     return flat[: PREVIEW_CHARS - 1] + "…"
 
 
-def entry_offset(entry: Entry) -> int:
+def entry_offset(
+    entry: Entry, rows_of: Callable[[Entry], list[Entry]] | None = None
+) -> int:
     """Where a row sits in its parent file — what an Offset sort orders by.
 
     A compressed block is addressed by its compressed slot; every other block
     by where its source begins, which for a pointer list is its first pointer.
-    A row that is not inside a file sorts first.
+    A folder is where the earliest row inside it is, asked of ``rows_of``. A
+    row that is not inside a file, and an empty folder, sorts first.
     """
+    if entry.kind is EntryKind.FOLDER:
+        inside = [entry_offset(e, rows_of) for e in (rows_of(entry) if rows_of else ())]
+        inside = [at for at in inside if at >= 0]
+        return min(inside) if inside else -1
     if entry.kind is EntryKind.BOOKMARK:
         return entry.bookmark_offset
     if entry.kind is not EntryKind.BLOCK:
@@ -58,17 +69,38 @@ def entry_offset(entry: Entry) -> int:
     return 0 if start is None else start
 
 
-def sorted_entries(entries: list[Entry], key: str) -> list[Entry]:
-    """``entries`` in ``key`` order — the group a Sort by acts on."""
+def sorted_entries(
+    entries: list[Entry],
+    key: str,
+    rows_of: Callable[[Entry], list[Entry]] | None = None,
+) -> list[Entry]:
+    """``entries`` in ``key`` order — the group a Sort by acts on.
+
+    By name and by type, folders come first, as a file manager lists them; by
+    offset a folder sits where the earliest row inside it does (``rows_of``
+    gives a folder's rows).
+    """
     if key == "Name":
-        return sorted(entries, key=lambda e: fold(e.name))
+        return sorted(
+            entries, key=lambda e: (e.kind is not EntryKind.FOLDER, fold(e.name))
+        )
     if key == "Type":
-        return sorted(entries, key=lambda e: (e.kind.value, fold(e.name)))
-    return sorted(entries, key=entry_offset)
+        return sorted(
+            entries,
+            key=lambda e: (e.kind is not EntryKind.FOLDER, e.kind.value, fold(e.name)),
+        )
+    return sorted(entries, key=lambda e: entry_offset(e, rows_of))
 
 
-def label(entry: Entry) -> str:
+def label(entry: Entry, extra: str | None = None) -> str:
+    """The row's text: the name, what the row holds, and ``●`` when unsaved.
+
+    ``extra`` stands in for what the row holds when the caller has worked it
+    out already — a folder's summary is its rows', which only the panel knows.
+    """
     mark = " ●" if entry.dirty else ""
+    if extra is not None:
+        return f"{entry.name}{extra}{mark}"
     extra = ""
     if entry.kind is EntryKind.BLOCK:
         extra = block_extra(entry)
@@ -85,28 +117,55 @@ def label(entry: Entry) -> str:
     return f"{entry.name}{extra}{mark}"
 
 
-def block_extra(entry: Entry) -> str:
-    """A block's string count and status summary.
+def status_counts(entry: Entry) -> Counts | None:
+    """A block's string count, and how many are edited, in review and done;
+    ``None`` when it has no strings to count.
 
     Counted off the records when the block is loaded, else off the state it
     is carrying with no document to hold it, so a block the session has not
     opened still says how much work is in it.
     """
     if entry.doc is not None:
-        statuses = [rec.status for rec in entry.doc.strings]
+        statuses = Counter(rec.status for rec in entry.doc.strings)
     elif entry.pending_strings:
-        statuses = [st.status for st in entry.pending_strings.values()]
+        statuses = Counter(st.status for st in entry.pending_strings.values())
     else:
-        return ""
-    parts = [str(len(statuses))]
-    for label, n in (
-        ("edited", sum(s is Status.EDITED for s in statuses)),
-        ("review", sum(s is Status.REVIEW for s in statuses)),
-        ("done", sum(s is Status.DONE for s in statuses)),
-    ):
+        return None
+    return (
+        statuses.total(),
+        statuses[Status.EDITED],
+        statuses[Status.REVIEW],
+        statuses[Status.DONE],
+    )
+
+
+def _summary(first: str, counts: Counts) -> str:
+    parts = [first]
+    for word, n in zip(("edited", "review", "done"), counts[1:], strict=True):
         if n:
-            parts.append(f"{n} {label}")
+            parts.append(f"{n} {word}")
     return f"  ({', '.join(parts)})"
+
+
+def block_extra(entry: Entry, counts: Counts | None = None) -> str:
+    """A block's string count and status summary (:func:`status_counts`,
+    unless ``counts`` already holds them)."""
+    if counts is None:
+        counts = status_counts(entry)
+    return "" if counts is None else _summary(str(counts[0]), counts)
+
+
+def folder_extra(items: int, counts: Iterable[Counts]) -> str:
+    """A folder's summary: how many rows it holds directly, and the statuses of
+    every block inside it at any depth, added up."""
+    strings = edited = review = done = 0
+    for c in counts:
+        strings += c[0]
+        edited += c[1]
+        review += c[2]
+        done += c[3]
+    words = f"{items} item{'' if items == 1 else 's'}"
+    return _summary(words, (strings, edited, review, done))
 
 
 def status_mark(entry: Entry, tables: Container[str]) -> tuple[str, str]:
@@ -147,6 +206,9 @@ def notices(entry: Entry, tables: Container[str]) -> tuple[list[str], list[str]]
 
 
 def tooltip(entry: Entry, why: str = "") -> str:
+    if entry.kind is EntryKind.FOLDER:
+        # Its file's path would say nothing the row above it does not.
+        return "folder: groups rows in the Files panel\ndouble-click or F2 to rename"
     lines = [entry.path or "(in memory)"]
     if entry.kind is EntryKind.FILE:
         for n, path in enumerate(entry.extra_paths, 2):
@@ -190,10 +252,12 @@ __all__ = [
     "PREVIEW_CHARS",
     "block_extra",
     "entry_offset",
+    "folder_extra",
     "label",
     "notices",
     "sorted_entries",
     "source_text",
+    "status_counts",
     "status_mark",
     "string_preview",
     "tooltip",

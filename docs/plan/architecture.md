@@ -59,8 +59,10 @@ Rules:
 ### 2.1 Entries and documents
 
 - **`project.workspace.Entry`** — the persistent identity of an open thing:
-  `EntryKind` (file, block, bookmark, table, font); where its bytes are
-  (`path`, `extra_paths`, block `offset`/`length`); its chain
+  `EntryKind` (file, block, bookmark, folder, table, font); where its bytes
+  are (`path`, `extra_paths`, block `offset`/`length`); for a file's rows —
+  blocks, bookmarks and folders — the file they belong to (`parent`) and the
+  folder they are shown in (`folder`, `None` directly under the file); its chain
   (`container_id`, `compression_id`); its `BlockConfig`; its
   `EntrySession` (a file's reading — a `BlockConfig` whose source has no
   addresses — its table, Follow pointers, view position, and the reading its
@@ -472,19 +474,34 @@ celPix's system, with these stages:
 ### 6.1 Workspace
 
 `project/workspace.py` is celPix's workspace: `entries`, one `current`,
-callback lists (`on_added`, `on_removed`, `on_reset`, `on_current_changed`,
-`on_dirty_changed`), deduplication by normalised path, cascade close from a
-file to its blocks and bookmarks, revision-token dirty tracking per entry,
+callback lists (`on_added`, `on_removed`, `on_reset`, `on_rows_changed`,
+`on_current_changed`, `on_dirty_changed`), deduplication by normalised path,
+cascade close from a file to its rows and from a folder to its contents,
+revision-token dirty tracking per entry,
 `free_name` (blocks and bookmarks never share a name), and
 `invalidate_extractions` when a table changes. It answers every question
 about what is open — `find_file` / `find_table` by path, `entry_by_id` for a
 tree row, `entry_for_table`, `dirty_entries`, `files` / `fonts` /
-`table_entries` / `loaded_tables` / `tables`, `children` and `blocks_of` (a
-file's blocks alone, and with `loaded=True` only those holding a document) —
-so no widget walks `entries` itself. `tables` is every table a block can read
+`table_entries` / `loaded_tables` / `tables`, `children` (a file's every row),
+`contents` (the rows directly under a file or folder), `descendants` (what
+goes with a row when it is removed, moved or copied) and `blocks_of` (the
+blocks of a file or a folder alone, and with `loaded=True` only those holding
+a document) — so no widget walks `entries` itself. `tables` is every table a block can read
 through: the loaded ones over `builtin_tables`, the registry's charsets as
 tables (`plugins.charsets.CharsetTables`, each built on first read), which the
 window sets and resets with its registry.
+
+The list is kept in tree order: a file's rows follow it, and a folder's
+contents follow the folder, so a row and what it holds are one run of the list.
+`add` puts a row after the last row its folder or file holds, `moved` lifts
+rows with what they hold and puts them back in one pass (`reordered` is it for
+one row), and a loaded project is laid out that way (`tree_order`). A folder is
+where a row is *shown*: `layout` is the order with each row's folder, and
+`arrange` lays one out as a single reset, which is what a reorder, a move
+between folders and their undo apply. `on_added` and `on_removed` fire per row;
+`on_rows_changed` fires once for an add or a close however many rows it took,
+and once for a whole `batch()` — a paste, a removal, the undo of either — and
+is what the tree docks rebuild on.
 
 `entries_sharing` answers the other question the whole list settles: which
 loaded entries hold the *same bytes*. A plain block reads its file's buffer,
@@ -606,7 +623,9 @@ and aliases for renamed plugin ids.
                "effects": {"line": ["newline", 0]} },                     // opt
       "session": {…} },
     { "kind": "bookmark", "name": "…", "path": "rom.nes", "parent": 0,
+      "folder": 3,                                   // opt, an index into entries
       "offset": 4096 },
+    { "kind": "folder", "name": "Battle", "path": "rom.nes", "parent": 0 },
     { "kind": "table", "name": "main.tbl", "path": "tables/main.tbl",
       "dialect": "native",                           // opt
       "charset": "shift-jis",                        // opt, in place of the file's
@@ -625,7 +644,11 @@ and aliases for renamed plugin ids.
 
 A block's configuration is the `@block` line of the script grammar, so one
 spelling covers the project file, a script and a file's session reading. `parent` is an
-index into `entries`; a `session` holds only what is not at its default, and its
+index into `entries`, and so is `folder` on a block, bookmark or folder that
+sits in one; a reference that is not a folder of the same file, or that loops,
+leaves the row directly under its file, and the loaded list is put in tree
+order. An older build drops a folder record with a notice and shows its rows
+directly under their file. A `session` holds only what is not at its default, and its
 `view` names the open tab: `raw` (Hex, the default), `text` or `strings`.
 
 Every string is written with its original (`o`), plus a status and notes where
@@ -822,7 +845,8 @@ moves in one entry merge the same way.
 The project's dirty state is the other kind: a serialised comparison against
 what was saved, shown through Qt's `[*]` placeholder and `setWindowModified`,
 and deferred over an undo push so one push re-serialises the project once
-rather than at each choke point it passes.
+rather than at each choke point it passes — and over a whole macro, so a paste
+of hundreds of rows re-serialises it once too.
 
 ### 7.5 Raw widget and input
 

@@ -28,11 +28,29 @@ class EntryClipboardMixin:
         A file takes its blocks and bookmarks the way a removal does: they are
         windows into it and mean nothing without it, so a copy that left them
         behind would paste a ROM and lose the work of finding things inside it.
+        A folder takes its contents the same way.
         """
         wanted = {id(e) for e in entries}
         for e in entries:
-            wanted.update(id(c) for c in self.workspace.children(e))
+            wanted.update(id(c) for c in self.workspace.descendants(e))
         return [e for e in self.workspace.entries if id(e) in wanted]
+
+    @staticmethod
+    def _roots(entries: list[Entry]) -> list[Entry]:
+        """``entries`` less the ones another of them holds, which go with it."""
+        ids = {id(e) for e in entries}
+
+        def held(e: Entry) -> bool:
+            if id(e.parent) in ids:
+                return True
+            folder = e.folder
+            while folder is not None:
+                if id(folder) in ids:
+                    return True
+                folder = folder.folder
+            return False
+
+        return [e for e in entries if not held(e)]
 
     def _copy_entries(self, entries: list[Entry]) -> None:
         """Put entries on the clipboard: references plus settings, never bytes."""
@@ -53,8 +71,8 @@ class EntryClipboardMixin:
         if not group:
             return
         self._copy_entries(entries)
-        roots = [e for e in entries if e.parent not in entries]
-        with self._macro("Cut entries"):
+        roots = self._roots(entries)
+        with self._macro("Cut entries"), self.workspace.batch():
             for e in roots:
                 if e in self.workspace.entries:
                     self._push_command(EntryCommand(self, e, add=False))
@@ -62,11 +80,12 @@ class EntryClipboardMixin:
     def _duplicate_entries(self, entries: list[Entry]) -> None:
         """A second row over the same region, without touching the clipboard.
 
-        Only where a second row can mean anything — a block or a bookmark. A
+        Only where a second row can mean anything — a block, a bookmark, or a
+        folder with its contents — and in the folder the original sits in. A
         file's identity is its path, and Ctrl+D doing nothing at all would read
         as a bug, so it answers with a message instead of a dead key.
         """
-        movable = [e for e in entries if e.is_child]
+        movable = self._roots([e for e in entries if e.is_child])
         if not movable:
             self.statusBar().showMessage(
                 "A ROM, table or font can only be open once — duplicate one of "
@@ -76,7 +95,11 @@ class EntryClipboardMixin:
             return
         # Round-tripped through the payload rather than copied by hand, so a
         # duplicate is the same operation as a paste and cannot drift from it.
-        copies = entries_from_payload(entries_payload(movable))
+        group = self._entry_group(movable)
+        copies = entries_from_payload(entries_payload(group))
+        for original, copy in zip(group, copies, strict=True):
+            if copy.folder is None and original in movable:
+                copy.folder = original.folder
         self._place_copies(copies, None, "Duplicated")
 
     def _paste_entries(self, target: Entry | None) -> None:
@@ -95,9 +118,15 @@ class EntryClipboardMixin:
         and its children stay behind with it, so pasting a whole ROM back into
         the project it came from selects that ROM rather than doubling its
         blocks. A child pasted on its own attaches to the file the paste aimed
-        at, which is how one finds the same regions in a second dump.
+        at, which is how one finds the same regions in a second dump — inside
+        the folder aimed at, or the one the row aimed at sits in.
         """
         host = target if target is None or not target.is_child else target.parent
+        into = None
+        if target is not None and target.kind is EntryKind.FOLDER:
+            into = target
+        elif target is not None and target.is_child:
+            into = target.folder
         placed: list[Entry] = []
         already: list[Entry] = []
         left_behind: set[int] = set()
@@ -126,6 +155,14 @@ class EntryClipboardMixin:
                 entry.parent = parent
                 entry.path = parent.path
                 entry.extra_paths = parent.extra_paths
+                if entry.folder is None or entry.folder not in copied:
+                    # A folder keeps what it was copied with; a loose row lands
+                    # where the paste aimed, when that is a folder of this file.
+                    held = entry.folder is not None and entry.folder.parent is parent
+                    if not held:
+                        entry.folder = (
+                            into if into is not None and into.parent is parent else None
+                        )
             elif id(entry.parent) in left_behind:
                 continue
             placed.append(entry)
@@ -140,7 +177,11 @@ class EntryClipboardMixin:
                 if existing is not None:
                     entry.parent = existing
         for entry in placed:
-            entry.name = self._free_name(entry.name)
+            if entry.folder is not None and entry.folder not in placed:
+                if entry.folder not in self.workspace.entries:
+                    entry.folder = None
+            if entry.kind is not EntryKind.FOLDER:
+                entry.name = self._free_name(entry.name)
         if not placed:
             if already:
                 self._activate_entry(already[0])
@@ -150,7 +191,7 @@ class EntryClipboardMixin:
             else:
                 self.statusBar().showMessage("Nothing to paste here", 4000)
             return
-        with self._macro(f"{verb} entries"):
+        with self._macro(f"{verb} entries"), self.workspace.batch():
             for entry in placed:
                 self._push_command(EntryCommand(self, entry, add=True))
         first = next((e for e in placed if e.kind is not EntryKind.BOOKMARK), None)

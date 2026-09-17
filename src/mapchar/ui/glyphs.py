@@ -21,6 +21,7 @@ class Glyph(Enum):
     FLAG = ""  # flag - a bookmark
     GRID = ""  # grid_on - a table file
     GRID_ROWS = ""  # view_list - a block: rows of strings
+    FOLDER = ""  # folder - a folder of blocks and bookmarks
     QUESTION = ""  # question_mark - this entry's file is unaccounted for
     EXCLAMATION = ""  # priority_high - it opened, but something had to give
 

@@ -51,8 +51,7 @@ class WorkspaceTreePanel(QWidget):
         self.box.setContentsMargins(0, 0, 0, 0)
         self.box.addWidget(self.tree)
         self.tree.itemDoubleClicked.connect(self._on_double)
-        workspace.on_added.append(lambda e: self.rebuild())
-        workspace.on_removed.append(lambda e: self.rebuild())
+        workspace.on_rows_changed.append(self.rebuild)
         workspace.on_reset.append(self.rebuild)
         if on_dirty:
             workspace.on_dirty_changed.append(lambda e: self.rebuild())

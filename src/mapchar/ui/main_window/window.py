@@ -507,6 +507,7 @@ class MainWindow(
         self.files_panel.remove_requested.connect(self._remove_entries)
         self.files_panel.rename_committed.connect(self._commit_rename)
         self.files_panel.reorder_requested.connect(self._reorder_entry)
+        self.files_panel.place_requested.connect(self._place_entries)
         self.files_panel.move_requested.connect(self._move_entries)
         self.files_panel.cut_requested.connect(self._cut_entries)
         self.files_panel.copy_requested.connect(self._copy_entries)
@@ -672,6 +673,10 @@ class MainWindow(
         finally:
             if self._macros.pop() is None:  # something was pushed, so it opened
                 self.undo_stack.endMacro()
+            if not self._macros and self._defer_project_modified:
+                # Held over every push inside, and asked once for the lot.
+                self._defer_project_modified = False
+                self._refresh_project_modified()
 
     def _push_command(self, command) -> None:
         """Push onto the session stack (``push()`` runs the command's redo).
@@ -686,7 +691,8 @@ class MainWindow(
         moves the stack index, and both are choke points
         :meth:`_refresh_project_modified` hangs off. Answering it costs the whole
         project re-serialised, so it is answered once — after, where the answer is
-        the same one every intermediate ask would have got.
+        the same one every intermediate ask would have got; inside a macro, once
+        after the macro, however many rows a paste pushed.
 
         **Nothing is pushed while an apply is running.** An apply restores widgets
         the user's own gestures drive, and every one of those is wired to a slot
@@ -708,8 +714,9 @@ class MainWindow(
         try:
             self.undo_stack.push(command)
         finally:
-            self._defer_project_modified = False
-            self._refresh_project_modified()
+            if not self._macros:
+                self._defer_project_modified = False
+                self._refresh_project_modified()
 
     def _ensure_current(self, entry: Entry | None) -> bool:
         """Make ``entry`` the current view for an entry-scoped command.

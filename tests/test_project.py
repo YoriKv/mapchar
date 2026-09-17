@@ -11,7 +11,13 @@ from mapchar.core.table import Entry as TableEntry
 from mapchar.core.table import Table, TokenKind
 from mapchar.pipeline.extract import extract
 from mapchar.project.glossary import GlossaryTerm, matching_terms
-from mapchar.project.projectfile import load_project, project_dict, save_project
+from mapchar.project.projectfile import (
+    entries_from_payload,
+    entries_payload,
+    load_project,
+    project_dict,
+    save_project,
+)
 from mapchar.project.tables import (
     adopt_table,
     capture_overlay,
@@ -26,6 +32,7 @@ from mapchar.project.workspace import (
     missing_paths,
     relocate_path,
     retarget_files,
+    tree_order,
 )
 
 
@@ -556,3 +563,163 @@ def test_repeated_block_names_are_numbered_on_load(tmp_path):
         "Script (3)",
     ]
     assert any("renamed Script (2)" in w for w in loaded.warnings)
+
+
+# -- folders -------------------------------------------------------------------
+
+
+def _foldered(rom: str) -> tuple[Workspace, dict[str, Entry]]:
+    """A file holding a folder with a block, a bookmark and a folder with a
+    block in it, plus a block and a bookmark straight under the file."""
+    ws = Workspace()
+    f = ws.open_file(rom)
+    cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
+
+    def row(kind, name, folder=None, **fields):
+        return ws.add(Entry(kind, name, rom, parent=f, folder=folder, **fields))
+
+    loose = row(EntryKind.BLOCK, "loose", config=cfg)
+    outer = row(EntryKind.FOLDER, "Outer")
+    inner = row(EntryKind.FOLDER, "Inner", outer)
+    deep = row(EntryKind.BLOCK, "deep", inner, config=cfg)
+    near = row(EntryKind.BLOCK, "near", outer, config=cfg)
+    mark = row(EntryKind.BOOKMARK, "mark", outer, bookmark_offset=2)
+    top = row(EntryKind.BOOKMARK, "top")
+    rows = dict(f=f, loose=loose, outer=outer, inner=inner, deep=deep, near=near)
+    return ws, rows | dict(mark=mark, top=top)
+
+
+def test_a_row_is_added_after_everything_its_folder_holds():
+    ws, r = _foldered("/tmp/a.nes")
+    names = [e.name for e in ws.entries]
+    assert names == ["a.nes", "loose", "Outer", "Inner", "deep", "near", "mark", "top"]
+    assert ws.contents(r["f"]) == [r["loose"], r["outer"], r["top"]]
+    assert ws.contents(r["outer"]) == [r["inner"], r["near"], r["mark"]]
+    assert ws.descendants(r["outer"]) == [r["inner"], r["deep"], r["near"], r["mark"]]
+    assert ws.blocks_of(r["outer"]) == [r["deep"], r["near"]]
+    assert len(ws.blocks_of(r["f"])) == 3
+
+
+def test_closing_a_folder_takes_what_it_holds_and_leaves_the_rest():
+    ws, r = _foldered("/tmp/a.nes")
+    ws.set_current(r["deep"])
+    removed = ws.close(r["outer"])
+    assert set(removed) == {r["outer"], r["inner"], r["deep"], r["near"], r["mark"]}
+    assert ws.entries == [r["f"], r["loose"], r["top"]]
+    assert ws.current is r["loose"]  # never the folder, nor a bookmark
+
+
+def test_moving_rows_lifts_what_they_hold_in_one_pass():
+    ws, r = _foldered("/tmp/a.nes")
+    order = Workspace.moved(ws.entries, [r["outer"]], r["f"], r["loose"])
+    assert [e.name for e in order] == [
+        "a.nes", "Outer", "Inner", "deep", "near", "mark", "loose", "top",
+    ]  # fmt: skip
+    # No row to land in front of: last among what the container holds.
+    r["top"].folder = r["inner"]
+    order = Workspace.moved(ws.entries, [r["top"]], r["inner"], None)
+    assert [e.name for e in order][3:6] == ["Inner", "deep", "top"]
+
+
+def test_the_tree_order_puts_each_row_after_its_holder():
+    ws, r = _foldered("/tmp/a.nes")
+    shuffled = list(reversed(ws.entries))
+    assert tree_order(shuffled)[0] is r["f"]
+    assert tree_order(ws.entries) == ws.entries
+    # A loop of folders reaches no root, and its rows still come out.
+    r["inner"].folder = r["near"]
+    r["near"].kind = EntryKind.FOLDER
+    r["near"].folder = r["inner"]
+    assert set(tree_order(ws.entries)) == set(ws.entries)
+
+
+def test_folders_round_trip_with_what_they_hold(tmp_path):
+    rom = tmp_path / "rom.bin"
+    rom.write_bytes(bytes.fromhex("41 00 42 00"))
+    ws, r = _foldered(str(rom))
+    proj = tmp_path / "p.mapchar"
+    save_project(str(proj), ws.entries, None)
+    raw = project_dict(ws.entries, None, None)["entries"]
+    assert raw[2] == {"kind": "folder", "name": "Outer", "path": str(rom), "parent": 0}
+    assert raw[3]["folder"] == 2 and "folder" not in raw[1]
+    loaded = load_project(str(proj))
+    assert [e.name for e in loaded.entries] == [e.name for e in ws.entries]
+    f, loose, outer, inner, deep, near, mark, top = loaded.entries
+    assert outer.kind is EntryKind.FOLDER and outer.parent is f
+    assert (inner.folder, deep.folder, near.folder, mark.folder) == (
+        outer,
+        inner,
+        outer,
+        outer,
+    )
+    assert loose.folder is None and top.folder is None
+    assert deep.parent is f  # a folder never changes a row's file
+    assert not loaded.warnings
+
+
+def test_a_folder_name_never_numbers_a_block_on_load(tmp_path):
+    rom = tmp_path / "rom.bin"
+    rom.write_bytes(bytes.fromhex("41 00 42 00"))
+    ws = Workspace()
+    f = ws.open_file(str(rom))
+    folder = ws.add(Entry(EntryKind.FOLDER, "Names", str(rom), parent=f))
+    cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
+    ws.add(
+        Entry(EntryKind.BLOCK, "Names", str(rom), parent=f, folder=folder, config=cfg)
+    )
+    proj = tmp_path / "p.mapchar"
+    save_project(str(proj), ws.entries, None)
+    assert [e.name for e in load_project(str(proj)).entries] == [
+        "rom.bin",
+        "Names",
+        "Names",
+    ]
+
+
+def test_a_broken_folder_reference_leaves_the_row_under_its_file(tmp_path):
+    proj = tmp_path / "p.mapchar"
+    proj.write_text(
+        """{"version": 1, "entries": [
+        {"kind": "file", "name": "a", "path": "a.bin"},
+        {"kind": "file", "name": "b", "path": "b.bin"},
+        {"kind": "folder", "name": "F", "path": "b.bin", "parent": 1},
+        {"kind": "bookmark", "name": "wrong file", "path": "a.bin", "parent": 0,
+         "folder": 2},
+        {"kind": "bookmark", "name": "no folder", "path": "a.bin", "parent": 0,
+         "folder": 9},
+        {"kind": "bookmark", "name": "not a folder", "path": "a.bin", "parent": 0,
+         "folder": 3},
+        {"kind": "folder", "name": "gone", "path": "a.bin", "parent": 99},
+        {"kind": "bookmark", "name": "in gone", "path": "a.bin", "parent": 0,
+         "folder": 6},
+        {"kind": "bookmark", "name": "in F", "path": "b.bin", "parent": 1,
+         "folder": 2}
+        ]}"""
+    )
+    loaded = load_project(str(proj))
+    by_name = {e.name: e for e in loaded.entries}
+    assert "gone" not in by_name  # its file is missing, so it is dropped
+    for name in ("wrong file", "no folder", "not a folder", "in gone"):
+        assert by_name[name].folder is None
+    assert by_name["in F"].folder is by_name["F"]
+    # Laid out with every row after what holds it.
+    assert [e.name for e in loaded.entries] == [
+        "a", "wrong file", "no folder", "not a folder", "in gone", "b", "F", "in F",
+    ]  # fmt: skip
+
+
+def test_the_payload_keeps_a_folder_with_what_was_copied_with_it():
+    ws, r = _foldered("/tmp/a.nes")
+    group = [r["outer"], *ws.descendants(r["outer"])]
+    copied = entries_from_payload(entries_payload(group))
+    outer, inner, deep, near, mark = copied
+    assert outer.folder is None and outer.kind is EntryKind.FOLDER
+    assert (inner.folder, deep.folder, near.folder, mark.folder) == (
+        outer,
+        inner,
+        outer,
+        outer,
+    )
+    # Copied alone, a row arrives loose for the paste to place.
+    (alone,) = entries_from_payload(entries_payload([r["deep"]]))
+    assert alone.folder is None

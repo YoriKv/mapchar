@@ -1,7 +1,8 @@
 """What kind of thing an entry holds, and which controls that kind supports.
 
-The editor shows five kinds of entry in the same window — a file, a block cut
-out of one, a bookmark into one, a table, a glyph sheet — and most of the
+The editor shows six kinds of entry in the same window — a file, a block cut
+out of one, a bookmark into one, a folder grouping them, a table, a glyph
+sheet — and most of the
 window applies to some of them and not others. Written per control, that answer
 is spread across every ``_sync_*`` method the window has, and the set a table
 entry supports is knowable only by reading all of them. So it is written down
@@ -23,7 +24,7 @@ from enum import Enum, auto
 
 class EntryKind(Enum):
     """What an entry is: a file, a block cut out of one, a bookmark into one, a
-    table, or a glyph sheet.
+    folder grouping a file's blocks and bookmarks, a table, or a glyph sheet.
 
     ``value`` is the string the project file stores, so the on-disk schema is a
     name rather than an ordinal that reordering this enum would silently change.
@@ -36,6 +37,7 @@ class EntryKind(Enum):
     FILE = "file"
     BLOCK = "block"
     BOOKMARK = "bookmark"
+    FOLDER = "folder"
     TABLE = "table"
     FONT = "font"
 
@@ -116,6 +118,9 @@ CAPABILITIES: dict[EntryKind, frozenset[Capability]] = {
     # owns those bytes there and leaves that entry current, so a bookmark is
     # never the entry on screen and has no controls of its own.
     EntryKind.BOOKMARK: frozenset(),
+    # A folder only groups rows in the Files panel: selecting one leaves the
+    # view as it was, as a group heading does, so it has no controls either.
+    EntryKind.FOLDER: frozenset(),
     # A table and a glyph sheet are each edited in one surface of their own —
     # the Table Editor, the Preview window's Font tab — and neither has a byte
     # window to navigate, search or write back.

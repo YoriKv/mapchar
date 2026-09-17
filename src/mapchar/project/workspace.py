@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 from collections import ChainMap
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from itertools import count
 
@@ -86,7 +87,14 @@ class Entry:
     config: BlockConfig | None = None
     """Blocks only."""
     parent: Entry | None = None
-    """Blocks and bookmarks: the file they belong to."""
+    """Blocks, bookmarks and folders: the file they belong to."""
+    folder: Entry | None = None
+    """Blocks, bookmarks and folders: the folder they sit in under their file,
+    ``None`` for a row directly under it.
+
+    Only where the row is shown: a folder has the same :attr:`parent` as what
+    it holds, and moving a row between folders changes nothing else about it.
+    """
     bookmark_offset: int = 0
     slice_offset: int = 0
     """Blocks with their own compression: where the compressed data starts."""
@@ -172,7 +180,8 @@ class Entry:
 
     @property
     def is_child(self) -> bool:
-        return self.kind in (EntryKind.BLOCK, EntryKind.BOOKMARK)
+        """Whether the row belongs to a file: a block, a bookmark or a folder."""
+        return self.kind in CHILD_KINDS
 
     def stash_strings(
         self, doc: Document | None = None, *, reconfigured: bool = False
@@ -197,6 +206,61 @@ class Entry:
         for rec in doc.strings:
             saved[rec.index] = string_state(rec, extent=reconfigured)
         self.pending_strings = saved or None
+
+
+CHILD_KINDS = frozenset({EntryKind.BLOCK, EntryKind.BOOKMARK, EntryKind.FOLDER})
+"""The kinds that sit under a file in the Files panel."""
+
+
+def within(entry: Entry, container: Entry) -> bool:
+    """Whether ``entry`` sits inside ``container``: any row of a file, or any
+    row of a folder at any depth."""
+    if entry.parent is container:
+        return True
+    folder = entry.folder
+    while folder is not None:
+        if folder is container:
+            return True
+        folder = folder.folder
+    return False
+
+
+def holder(entry: Entry) -> Entry | None:
+    """The row ``entry`` is shown under: its folder, else its file."""
+    return entry.folder if entry.folder is not None else entry.parent
+
+
+def tree_order(entries: list[Entry]) -> list[Entry]:
+    """``entries`` with every row straight after the row holding it, in the
+    order the list already had.
+
+    The order the workspace keeps: a file's rows follow it and a folder's
+    contents follow the folder, so a row and everything it holds are one run
+    of the list, which is what lifting one out and putting it back relies on.
+    A row whose holder is not in the list stands on its own.
+    """
+    present = {id(e) for e in entries}
+    held: dict[int, list[Entry]] = {}
+    roots: list[Entry] = []
+    for entry in entries:
+        above = holder(entry)
+        if above is not None and id(above) in present and above is not entry:
+            held.setdefault(id(above), []).append(entry)
+        else:
+            roots.append(entry)
+    out: list[Entry] = []
+    seen: set[int] = set()
+    stack = list(reversed(roots))
+    while stack:
+        entry = stack.pop()
+        if id(entry) in seen:
+            continue
+        seen.add(id(entry))
+        out.append(entry)
+        stack.extend(reversed(held.get(id(entry), ())))
+    # Rows caught in a loop of folders hold each other and reach no root.
+    out += [e for e in entries if id(e) not in seen]
+    return out
 
 
 def free_name(name: str, taken, pattern: str = "{name} ({n})") -> str:
@@ -238,6 +302,13 @@ class Workspace:
         self.on_added: list[Callable[[Entry], None]] = []
         self.on_removed: list[Callable[[Entry], None]] = []
         self.on_reset: list[Callable[[], None]] = []
+        self.on_rows_changed: list[Callable[[], None]] = []
+        """Rows came or went: once for an :meth:`add` or a :meth:`close`,
+        however many rows the close took, and once for a whole :meth:`batch`
+        — what a listener rebuilding from ``entries`` subscribes to, where
+        ``on_added`` and ``on_removed`` fire per row."""
+        self._batching = 0
+        self._rows_pending = False
         self.on_current_changed: list[Callable[[Entry | None], None]] = []
         self.on_dirty_changed: list[Callable[[Entry], None]] = []
         self.builtin_tables: Mapping[str, Table] = {}
@@ -304,19 +375,35 @@ class Workspace:
         return None
 
     def children(self, parent: Entry) -> list[Entry]:
+        """Every row of a file, folders and what they hold included."""
         return [e for e in self.entries if e.parent is parent]
 
-    def blocks_of(self, file_entry: Entry, *, loaded: bool = False) -> list[Entry]:
-        """The blocks under ``file_entry``, in list order.
+    def descendants(self, entry: Entry) -> list[Entry]:
+        """What goes with ``entry`` when it is removed, moved or copied: a
+        file's rows, or a folder's contents at every depth, in list order."""
+        return [e for e in self.entries if e is not entry and within(e, entry)]
 
-        A file's children are its blocks and its bookmarks; almost everything
-        that walks them wants the blocks alone. ``loaded`` narrows that to the
-        ones holding a document, which is what anything reading or writing
-        their bytes means by a block.
+    def contents(self, container: Entry) -> list[Entry]:
+        """The rows directly under a file or a folder, in list order."""
+        return [e for e in self.entries if holder(e) is container]
+
+    def blocks_of(self, file_entry: Entry, *, loaded: bool = False) -> list[Entry]:
+        """The blocks under ``file_entry`` — a file, or a folder at any depth —
+        in list order.
+
+        A file's children are its blocks, its bookmarks and its folders; almost
+        everything that walks them wants the blocks alone. ``loaded`` narrows
+        that to the ones holding a document, which is what anything reading or
+        writing their bytes means by a block.
         """
+        rows = (
+            self.children(file_entry)
+            if file_entry.kind is EntryKind.FILE
+            else self.descendants(file_entry)
+        )
         return [
             e
-            for e in self.children(file_entry)
+            for e in rows
             if e.kind is EntryKind.BLOCK and (not loaded or e.doc is not None)
         ]
 
@@ -376,11 +463,53 @@ class Workspace:
     def reordered(
         entries: list[Entry], entry: Entry, before: Entry | None
     ) -> list[Entry]:
-        """``entries`` with ``entry`` and its children lifted out and put back in
-        front of ``before`` (at the end when it is ``None``)."""
-        group = [entry] + [e for e in entries if e.parent is entry]
-        rest = [e for e in entries if e not in group]
-        at = rest.index(before) if before in rest else len(rest)
+        """``entries`` with ``entry`` and what it holds lifted out and put back
+        in front of ``before``.
+
+        With no ``before`` the run goes last among the rows under the row that
+        holds ``entry`` — its folder, else its file — so the list keeps its
+        :func:`tree_order`; a row with no holder goes to the end of the list.
+        """
+        return Workspace.moved(entries, [entry], holder(entry), before)
+
+    @staticmethod
+    def moved(
+        entries: list[Entry],
+        rows: list[Entry],
+        container: Entry | None,
+        before: Entry | None,
+    ) -> list[Entry]:
+        """``entries`` with ``rows`` and what they hold lifted out and put back,
+        in the order they had, in front of ``before`` — or, with no ``before``,
+        last among what ``container`` holds, else at the end of the list.
+
+        One pass however many rows move, so grouping a whole selection costs
+        what moving one row does.
+        """
+        ids = {id(r) for r in rows}
+
+        def lifted(e: Entry) -> bool:
+            if id(e) in ids or id(e.parent) in ids:
+                return True
+            folder = e.folder
+            while folder is not None:
+                if id(folder) in ids:
+                    return True
+                folder = folder.folder
+            return False
+
+        group: list[Entry] = []
+        rest: list[Entry] = []
+        for e in entries:
+            (group if lifted(e) else rest).append(e)
+        if before is not None and before in rest:
+            at = rest.index(before)
+        else:
+            at = len(rest)
+            if container is not None and container in rest:
+                at = rest.index(container) + 1
+                while at < len(rest) and within(rest[at], container):
+                    at += 1
         return rest[:at] + group + rest[at:]
 
     def drop_clean_documents(self) -> int:
@@ -433,18 +562,17 @@ class Workspace:
 
     def add(self, entry: Entry, index: int | None = None) -> Entry:
         if index is None or index > len(self.entries):
-            if entry.parent is not None and entry.parent in self.entries:
-                # Keep children right after their parent's last child.
-                index = self.entries.index(entry.parent) + 1
-                while (
-                    index < len(self.entries)
-                    and self.entries[index].parent is entry.parent
-                ):
+            above = holder(entry)
+            if above is not None and above in self.entries:
+                # Keep a row right after the last row its folder or file holds.
+                index = self.entries.index(above) + 1
+                while index < len(self.entries) and within(self.entries[index], above):
                     index += 1
             else:
                 index = len(self.entries)
         self.entries.insert(index, entry)
         self._fire(self.on_added, entry)
+        self._rows_changed()
         return entry
 
     def new_file(self, path: str, name: str | None = None, **fields) -> Entry:
@@ -459,8 +587,8 @@ class Workspace:
         return self.add(self.new_file(path, name, **fields))
 
     def close(self, entry: Entry) -> list[Entry]:
-        """Remove an entry and its children; returns what was removed."""
-        removed = [c for c in self.entries if c.parent is entry] + [entry]
+        """Remove an entry and what it holds; returns what was removed."""
+        removed = self.descendants(entry) + [entry]
         anchor = min(
             (self.entries.index(e) for e in removed if e in self.entries), default=0
         )
@@ -468,6 +596,7 @@ class Workspace:
             if e in self.entries:
                 self.entries.remove(e)
                 self._fire(self.on_removed, e)
+        self._rows_changed()
         if self.current in removed:
             self.set_current(self._neighbour(anchor, entry.kind))
         return removed
@@ -481,9 +610,10 @@ class Workspace:
         on; falling back to the end of the list only happens when nothing
         follows. The group is kept because the views show one kind of thing:
         closing a block must not swap the hex and text panels for a table.
-        Bookmarks are skipped — they can never be current.
+        Bookmarks and folders are skipped — they can never be current.
         """
-        group = STRING_DATA if kind in STRING_DATA else {kind}
+        # A folder's rows are String Data, and a folder is never shown itself.
+        group = STRING_DATA if kind in STRING_DATA | CHILD_KINDS else {kind}
         after = self.entries[anchor:]
         before = list(reversed(self.entries[:anchor]))
         for kinds in (group, STRING_DATA):
@@ -496,12 +626,24 @@ class Workspace:
         return None
 
     def reorder(self, entry: Entry, new_index: int) -> None:
-        group = [entry] + self.children(entry)
+        group = [entry] + self.descendants(entry)
         for e in group:
             self.entries.remove(e)
         new_index = max(0, min(new_index, len(self.entries)))
         self.entries[new_index:new_index] = group
         self._fire(self.on_reset)
+
+    def layout(self) -> list[tuple[Entry, Entry | None]]:
+        """The list's order with each row's folder: what a move between
+        folders changes, and what its undo puts back."""
+        return [(e, e.folder) for e in self.entries]
+
+    def arrange(self, layout: list[tuple[Entry, Entry | None]]) -> None:
+        """Lay the list out as :meth:`layout` captured it, folders and order
+        together, as one reset."""
+        for entry, folder in layout:
+            entry.folder = folder
+        self.replace([e for e, _ in layout], self.current)
 
     def replace(self, entries: list[Entry], current: Entry | None) -> None:
         """Swap the whole list for ``entries`` — a loaded project replaces the
@@ -525,8 +667,9 @@ class Workspace:
     def set_current(self, entry: Entry | None) -> None:
         if entry is self.current:
             return
-        # A bookmark is a place in another entry, never a thing to show.
-        assert entry is None or entry.kind is not EntryKind.BOOKMARK
+        # A bookmark is a place in another entry and a folder a group of rows,
+        # never a thing to show.
+        assert entry is None or entry.kind not in (EntryKind.BOOKMARK, EntryKind.FOLDER)
         assert entry is None or entry in self.entries
         self.current = entry
         self._fire(self.on_current_changed, entry)
@@ -569,6 +712,26 @@ class Workspace:
                 continue
             if any(normalize_path(p) == key for p in entry.paths):
                 self.drop_document(entry)
+
+    @contextmanager
+    def batch(self) -> Iterator[None]:
+        """Hold ``on_rows_changed`` until the end, and fire it once then if
+        any row came or went — for a paste, a removal or its undo that adds or
+        closes many rows one at a time."""
+        self._batching += 1
+        try:
+            yield
+        finally:
+            self._batching -= 1
+            if not self._batching and self._rows_pending:
+                self._rows_pending = False
+                self._fire(self.on_rows_changed)
+
+    def _rows_changed(self) -> None:
+        if self._batching:
+            self._rows_pending = True
+        else:
+            self._fire(self.on_rows_changed)
 
     def _fire(self, callbacks, *args) -> None:
         for cb in list(callbacks):

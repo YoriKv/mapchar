@@ -87,7 +87,7 @@ def main() -> int:
 
 def _mother3(window, rom: str) -> list:
     """Opens Mother 3 in ``window`` with its tables, written beside the ROM,
-    and its blocks."""
+    and its blocks, in their folders."""
     from mapchar.core.capabilities import EntryKind
     from mapchar.project.formats.script import parse_config
     from mapchar.project.workspace import Entry
@@ -101,12 +101,21 @@ def _mother3(window, rom: str) -> list:
             f.write(text)
         window.open_table(path, "native")
     blocks = []
+    folders: dict[str, Entry] = {}
     for block in mother3_sample.blocks(data):
+        folder = folders.get(block.folder) if block.folder else None
+        if block.folder and folder is None:
+            folder = Entry(
+                EntryKind.FOLDER, block.folder, file_entry.path, parent=file_entry
+            )
+            window._push_add(folder)
+            folders[block.folder] = folder
         entry = Entry(
             EntryKind.BLOCK,
             block.name,
             file_entry.path,
             parent=file_entry,
+            folder=folder,
             config=parse_config(block.spec),
         )
         window._push_add(entry)

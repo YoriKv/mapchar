@@ -36,7 +36,7 @@ What the ROM holds, and where each fact comes from:
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 ROM_NAME = "Mother 3 (Japan).gba"
 
@@ -102,6 +102,38 @@ class Block:
     name: str
     spec: str
     """The block's configuration line, as a native script's ``@block`` spells it."""
+    folder: str | None = None
+    """The Files panel folder the project puts the block in; ``None`` for none."""
+
+
+FOLDERS = {
+    "Names": (
+        "Item names",
+        "Character names",
+        "Battler names",
+        "Party battle names",
+        "Enemy names",
+        "PSI names",
+        "Status names",
+        "Area names",
+    ),
+    "Descriptions": (
+        "Item descriptions",
+        "Enemy profiles",
+        "PSI descriptions",
+        "Battle command descriptions",
+    ),
+    "Battle": ("Battle commands", "Battle text"),
+    "Menus": (
+        "Menu text",
+        "Menu labels",
+        "Save messages",
+        "Sound player titles",
+        "Debug menu",
+    ),
+}
+"""Which folder each block goes in, by name; a block named in none stands
+directly under the ROM."""
 
 
 def _u16(rom: bytes, at: int) -> int:
@@ -322,4 +354,5 @@ def blocks(rom: bytes) -> list[Block]:
     for group in range(len(script) // 2):
         if script[2 * group] is not None:
             out.append(_paired(rom, f"Script {group:04d}", MAIN_SCRIPT, 2 * group))
-    return out
+    folder_of = {name: folder for folder, names in FOLDERS.items() for name in names}
+    return [replace(b, folder=folder_of.get(b.name)) for b in out]

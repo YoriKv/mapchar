@@ -644,16 +644,25 @@ def test_opening_a_project_reads_its_blocks(window, tmp_path):
     assert not window._project_dirty()
 
 
+@pytest.mark.parametrize("folders", [0, 2])
 def test_the_files_panel_dresses_each_row_a_bounded_number_of_times(
-    window, tmp_path, monkeypatch
+    window, tmp_path, monkeypatch, folders
 ):
     """Opening a project, and reading every block for Project Strings, costs the
     Files panel a few passes over its rows, not one per block: a project of
-    hundreds of blocks would otherwise take the square of that."""
+    hundreds of blocks would otherwise take the square of that — with the
+    blocks in folders, one inside the other, as much as without."""
     data = bytes.fromhex("41 42 00 42 41 00") * 40
     file_entry = open_rom_and_table(window, tmp_path, data)
-    for n in range(40):
+    blocks = [
         add_block(window, file_entry, f"b{n}", RangeSource(n * 6, n * 6 + 6))
+        for n in range(40)
+    ]
+    holder = file_entry
+    for _ in range(folders):
+        holder = window._new_folder(holder, [holder])
+    if folders:
+        window._place_entries(blocks, holder, None)
     window._activate_entry(file_entry)
     proj = tmp_path / "p.mapchar"
     assert window._write_project(str(proj))
@@ -669,9 +678,10 @@ def test_the_files_panel_dresses_each_row_a_bounded_number_of_times(
     monkeypatch.setattr(panel, "_dress", counted)
     assert window.open_project(str(proj))
     rows = len(window.workspace.entries)
-    assert rows == 42
+    assert rows == 42 + folders
     assert len(dressed) <= 3 * rows
     blocks = window.workspace.of_kind(EntryKind.BLOCK)
+    assert all((b.folder is not None) == bool(folders) for b in blocks)
     assert all(
         window.files_panel._items[id(b)].text(0) == f"{b.name}  (2)" for b in blocks
     )

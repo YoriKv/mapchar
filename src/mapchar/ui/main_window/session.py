@@ -23,7 +23,8 @@ class SessionMixin:
         widgets, refresh once. Three kinds of entry never *become* the view and
         take their own route out: a table, which opens in the Table Editor, a
         font, which opens the Preview window's Font tab, and a bookmark, which
-        jumps the entry that owns its bytes. None of them touches
+        jumps the entry that owns its bytes. A folder is not even that: it
+        leaves the view as it was, as a group heading does. None of them touches
         ``workspace.current``, because a row that cannot be the view must not
         claim to be it — everything that reads ``current`` (the undo commands'
         reach, the visit trail, the title) would then be pointing at a document
@@ -43,6 +44,8 @@ class SessionMixin:
         if entry is not None and entry.kind is EntryKind.BOOKMARK:
             self._jump_to_bookmark(entry)
             return
+        if entry is not None and entry.kind is EntryKind.FOLDER:
+            return  # a folder groups rows; like a group heading, it shows nothing
         if entry is self._entry and self.workspace.current is entry:
             return
         # The widgets still show the outgoing entry, so its session is written

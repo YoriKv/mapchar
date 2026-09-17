@@ -1,8 +1,9 @@
-"""The Files panel: String Data — files with their blocks and bookmarks —
-tables, fonts, and under each block, its strings."""
+"""The Files panel: String Data — files with their blocks, bookmarks and
+folders — tables, fonts, and under each block, its strings."""
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Container, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -18,8 +19,16 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.textmatch import matches_words, words_of
-from mapchar.project.workspace import Entry, EntryKind, Workspace
-from mapchar.ui.entry_text import label, status_mark, string_preview, tooltip
+from mapchar.project.workspace import Entry, EntryKind, Workspace, within
+from mapchar.ui.entry_text import (
+    block_extra,
+    folder_extra,
+    label,
+    status_counts,
+    status_mark,
+    string_preview,
+    tooltip,
+)
 from mapchar.ui.entry_tree import EntryTree
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
@@ -29,6 +38,7 @@ from mapchar.ui.widgets import show_elided_tooltips
 
 if TYPE_CHECKING:
     from mapchar.core.block import StringRecord
+    from mapchar.ui.entry_text import Counts
 
 GROUPS = {
     EntryKind.FILE: "String Data",
@@ -39,6 +49,7 @@ GROUPS = {
 # own group headings and carry no mark; a bookmark wears the accent.
 MARKERS: dict[EntryKind, tuple[Glyph, QPalette.ColorRole]] = {
     EntryKind.BLOCK: (Glyph.GRID_ROWS, QPalette.ColorRole.Text),
+    EntryKind.FOLDER: (Glyph.FOLDER, QPalette.ColorRole.Text),
     EntryKind.BOOKMARK: (Glyph.FLAG, QPalette.ColorRole.Highlight),
     EntryKind.TABLE: (Glyph.GRID, QPalette.ColorRole.Text),
 }
@@ -70,6 +81,9 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
     """An inline rename was committed: entry, new name."""
     reorder_requested = Signal(object, object)
     """Put this entry in front of that one (``None``: last among its siblings)."""
+    place_requested = Signal(list, object, object)
+    """Put these rows of one file under that file or folder, in front of that
+    row (``None``: last there)."""
     move_requested = Signal(list, int)
     """Step these entries one place: ``-1`` up, ``+1`` down."""
     cut_requested = Signal(list)
@@ -106,9 +120,21 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         """The blocks open to their strings, by entry id, so a rebuild — a row
         added, removed or reordered — puts them back open."""
         self._string_keys: dict[int, object] = {}
-        self._labels_held = False
         """What each block's string rows were built from, so a refresh that
         changed nothing about the strings leaves the rows alone."""
+        self._labels_held = False
+        self._collapsed: weakref.WeakSet[Entry] = weakref.WeakSet()
+        """The folders the user closed. Held weakly, so the set is the open
+        project's: a project swap lets the old one's folders go with it."""
+        self._rows: dict[int, list[Entry]] = {}
+        """The rows under each file and folder, by its ``id()``, as the last
+        pass over the list found them."""
+        self._by_id: dict[int, Entry] = {}
+        self._counts: dict[int, Counts | None] | None = None
+        """Each block's status counts while a pass over the rows is under way,
+        so a folder adding up its blocks and the blocks' own rows count each
+        block once."""
+        self._filtering = False
         self.filter.textChanged.connect(self._apply_filter)
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.current_navigated.connect(self._activate)
@@ -129,7 +155,8 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         )
         self.tree.rename_pressed.connect(self._on_rename_pressed)
         self.tree.move_pressed.connect(self._on_move)
-        self.tree.reorder_dropped.connect(self._on_dropped)
+        self.tree.dropped.connect(self._on_dropped)
+        self.tree.drop_allowed = self._drop_allowed
         self.tree.itemDelegate().closeEditor.connect(self._on_editor_closed)
         workspace.on_current_changed.append(self._on_current)
         workspace.on_dirty_changed.append(lambda e: self._update_item(e))
@@ -153,14 +180,14 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
             group.setExpanded(True)
             self._groups[kind] = group
         tables = self.workspace.tables()
-        for entry in self.workspace.entries:
-            if entry.is_child:
-                continue
-            item = self._make_item(entry, tables)
-            self._groups[entry.kind].addChild(item)
-            for child in self.workspace.children(entry):
-                item.addChild(self._make_item(child, tables))
-            item.setExpanded(True)
+        with self._counting():
+            for entry in self.workspace.entries:
+                if entry.is_child:
+                    continue
+                item = self._make_item(entry, tables)
+                self._groups[entry.kind].addChild(item)
+                self._add_rows(item, entry, tables)
+                item.setExpanded(True)
         # Blocks open before the rebuild open again, which builds their rows.
         self._expanded &= set(self._items)
         for key in list(self._expanded):
@@ -169,6 +196,73 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
                 item.setExpanded(True)
         self._apply_filter(self.filter.text())
         self._on_current(self.workspace.current)
+
+    def _add_rows(
+        self, item: QTreeWidgetItem, entry: Entry, tables: Container[str]
+    ) -> None:
+        """The rows under a file or folder's ``item``, and theirs, all at once.
+
+        Added to an item already in the tree, so a folder can be opened: an
+        item outside one ignores being expanded.
+        """
+        rows = self._rows.get(id(entry))
+        if not rows:
+            return
+        items = [self._make_item(row, tables) for row in rows]
+        item.addChildren(items)
+        for row, child in zip(rows, items, strict=True):
+            if row.kind is EntryKind.FOLDER:
+                self._add_rows(child, row, tables)
+                child.setExpanded(row not in self._collapsed)
+
+    def _index_rows(self) -> None:
+        """Which rows sit directly under each file and folder, in list order.
+
+        A row whose folder is not in the list stands under its file; one whose
+        file is not either is not shown.
+        """
+        entries = self.workspace.entries
+        self._by_id = {id(e): e for e in entries}
+        rows: dict[int, list[Entry]] = {}
+        for entry in entries:
+            if not entry.is_child:
+                continue
+            above = entry.folder
+            if above is None or id(above) not in self._by_id:
+                above = entry.parent
+            if above is not None:
+                rows.setdefault(id(above), []).append(entry)
+        self._rows = rows
+
+    @contextmanager
+    def _counting(self) -> Iterator[None]:
+        """One pass over the rows: the rows indexed afresh, and each block's
+        status counted once however many folders add it up."""
+        self._index_rows()
+        outer = self._counts
+        if outer is None:
+            self._counts = {}
+        try:
+            yield
+        finally:
+            self._counts = outer
+
+    def _block_counts(self, entry: Entry) -> Counts | None:
+        if self._counts is None:
+            return status_counts(entry)
+        key = id(entry)
+        if key not in self._counts:
+            self._counts[key] = status_counts(entry)
+        return self._counts[key]
+
+    def _folder_counts(self, folder: Entry) -> Iterator[Counts]:
+        for row in self._rows.get(id(folder), ()):
+            if row.kind is EntryKind.BLOCK:
+                counts = self._block_counts(row)
+                if counts is not None:
+                    yield counts
+            elif row.kind is EntryKind.FOLDER:
+                yield from self._folder_counts(row)
 
     def _make_item(self, entry: Entry, tables: Container[str]) -> QTreeWidgetItem:
         item = QTreeWidgetItem([""])
@@ -184,7 +278,13 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
 
         ``tables`` is the workspace's, which a pass over every row gathers once
         rather than once a row."""
-        item.setText(0, label(entry))
+        extra = None
+        if entry.kind is EntryKind.BLOCK:
+            extra = block_extra(entry, self._block_counts(entry))
+        elif entry.kind is EntryKind.FOLDER:
+            rows = self._rows.get(id(entry), ())
+            extra = folder_extra(len(rows), self._folder_counts(entry))
+        item.setText(0, label(entry, extra))
         item.setIcon(0, self._marker(entry))
         mark, why = status_mark(entry, tables)
         item.setText(STATUS_COL, mark)
@@ -260,6 +360,10 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
 
     def _on_expanded(self, item: QTreeWidgetItem) -> None:
         entry = self.entry_of(item)
+        if entry is not None and entry.kind is EntryKind.FOLDER:
+            if not self._filtering:
+                self._collapsed.discard(entry)
+            return
         if entry is None or entry.kind is not EntryKind.BLOCK:
             return
         self._expanded.add(id(entry))
@@ -269,6 +373,9 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
 
     def _on_collapsed(self, item: QTreeWidgetItem) -> None:
         entry = self.entry_of(item)
+        if entry is not None and entry.kind is EntryKind.FOLDER:
+            self._collapsed.add(entry)
+            return
         if entry is not None and entry.kind is EntryKind.BLOCK:
             self._expanded.discard(id(entry))
             # The rows go with it, so a block with thousands of strings costs
@@ -317,8 +424,9 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         if self._labels_held:
             return
         tables = self.workspace.tables()
-        for entry in self.workspace.entries:
-            self._update_item(entry, tables)
+        with self._counting():
+            for entry in self.workspace.entries:
+                self._update_item(entry, tables)
 
     @contextmanager
     def labels_held(self) -> Iterator[None]:
@@ -411,7 +519,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         entry = self.entry_of(item)
         if entry is None:
             return
-        if entry.kind in (EntryKind.FILE, EntryKind.BLOCK):
+        if entry.kind in (EntryKind.FILE, EntryKind.BLOCK, EntryKind.FOLDER):
             self.begin_rename(entry)
             return
         self.entry_double_clicked.emit(entry)
@@ -459,6 +567,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         finally:
             self.tree.blockSignals(False)
+        self.tree.scrollToItem(item)  # opens the folders a row inside is under
         self.tree.editItem(item, 0)
 
     def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
@@ -489,7 +598,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
 
     def siblings(self, entry: Entry) -> list[Entry]:
         """The rows ``entry`` shares a parent with, in the order on screen —
-        one file's children, or one group's files."""
+        one file's or one folder's rows, or one group's files."""
         item = self._items.get(id(entry))
         parent = item.parent() if item is not None else None
         if parent is None:
@@ -521,44 +630,97 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         if entries:
             self.move_requested.emit(entries, delta)
 
-    def _on_dropped(self, key, before_key) -> None:
-        entry = self.workspace.entry_by_id(key)
-        before = self.workspace.entry_by_id(before_key) if before_key else None
-        if entry is not None:
-            self.reorder_requested.emit(entry, before)
+    def _dragged_entry(self, item: QTreeWidgetItem | None) -> Entry | None:
+        """``entry_of`` from the last pass's index: a drag asks it of every
+        dragged row at every move of the mouse."""
+        if item is None:
+            return None
+        return self._by_id.get(item.data(0, Qt.ItemDataRole.UserRole))
+
+    def _drop_allowed(
+        self,
+        sources: list[QTreeWidgetItem],
+        parent: QTreeWidgetItem,
+        before: QTreeWidgetItem | None,
+    ) -> bool:
+        """Whether rows may land under ``parent``: a file's or folder's rows
+        anywhere under that file — never into themselves — and a file, table or
+        font only between the rows of its own group."""
+        found = [self._dragged_entry(s) for s in sources]
+        entries = [e for e in found if e is not None]
+        if not entries or len(entries) != len(found):
+            return False
+        container = self._dragged_entry(parent)
+        if container is None:
+            return (
+                len(entries) == 1
+                and not entries[0].is_child
+                and sources[0].parent() is parent
+            )
+        if container.kind is EntryKind.FILE:
+            file_entry = container
+        elif container.kind is EntryKind.FOLDER:
+            file_entry = container.parent
+        else:
+            return False
+        return all(
+            e.is_child
+            and e.parent is file_entry
+            and e is not container
+            and not within(container, e)
+            for e in entries
+        )
+
+    def _on_dropped(self, keys: list, parent_key, before_key) -> None:
+        entries = [e for e in (self.workspace.entry_by_id(k) for k in keys) if e]
+        before = (
+            self.workspace.entry_by_id(before_key) if before_key is not None else None
+        )
+        if not entries:
+            return
+        if parent_key is None:
+            # Between the rows of a group: a file, table or font reordered.
+            self.reorder_requested.emit(entries[0], before)
+            return
+        container = self.workspace.entry_by_id(parent_key)
+        if container is not None:
+            self.place_requested.emit(entries, container, before)
 
     # -- filtering ------------------------------------------------------
 
     def _apply_filter(self, text: str) -> None:
         """Hide every row the words do not match, down to a block's strings.
 
-        A matching row keeps its parents visible, and a block one of whose
-        strings matches opens to show it. A block's stub is not a row that
-        can match: it follows its block.
+        A matching row keeps the rows above it visible, and a folder or block
+        with a match inside opens to show it. A block's stub is not a row that
+        can match: it follows its block. Clearing the filter closes again the
+        folders the user had closed.
         """
         words = words_of(text)
 
-        def matches(item: QTreeWidgetItem) -> bool:
-            return matches_words(words, item.text(0))
+        def show(item: QTreeWidgetItem) -> bool:
+            hit = matches_words(words, item.text(0))
+            inner = False
+            for i in range(item.childCount()):
+                child = item.child(i)
+                if self._is_stub(child):
+                    child.setHidden(not hit)
+                    continue
+                inner = show(child) or inner
+            item.setHidden(not (hit or inner))
+            if words and inner:
+                item.setExpanded(True)
+            return hit or inner
 
-        for group in self._groups.values():
-            for i in range(group.childCount()):
-                item = group.child(i)
-                child_hit = False
-                for j in range(item.childCount()):
-                    c = item.child(j)
-                    hit = matches(c)
-                    string_hit = False
-                    for k in range(c.childCount()):
-                        s = c.child(k)
-                        if self._is_stub(s):
-                            s.setHidden(not hit)
-                            continue
-                        found = matches(s)
-                        s.setHidden(not found)
-                        string_hit = string_hit or found
-                    c.setHidden(not (hit or string_hit))
-                    if words and string_hit:
-                        c.setExpanded(True)
-                    child_hit = child_hit or not c.isHidden()
-                item.setHidden(not (matches(item) or child_hit))
+        self._filtering = True
+        try:
+            for group in self._groups.values():
+                for i in range(group.childCount()):
+                    show(group.child(i))
+            if not words:
+                for entry in list(self._collapsed):
+                    item = self._items.get(id(entry))
+                    if item is not None:
+                        item.setExpanded(False)
+        finally:
+            self._filtering = False

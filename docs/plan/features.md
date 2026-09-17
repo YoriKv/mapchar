@@ -37,6 +37,8 @@ the preview system in [preview.md](preview.md).
     configuration (source, table set, string rules). The block is the unit of
     dumping, editing and writing, and the equivalent of a celPix slice;
   - **bookmark** — a saved offset and settings snapshot in a file;
+  - **folder** — a group of a file's blocks, bookmarks and folders in the
+    Files panel; it changes nothing about the rows it holds;
   - **table** — a table file registered for use by blocks and the raw view;
   - **font** — a glyph sheet registered for [preview](preview.md).
 - **Interpretation chain** — bytes reach the screen through three configurable
@@ -125,19 +127,27 @@ the preview system in [preview.md](preview.md).
 
 - **Grouping** — rows are grouped under **String Data**, **Tables** and
   **Fonts**.
-  Blocks and bookmarks nest under their file, and a block opens to its
-  strings: one row each, `index  text`, the text on one line and cut short
+  Blocks and bookmarks nest under their file, in folders or directly, and a
+  block opens to its strings: one row each, `index  text`, the text on one line and cut short
   with `…`; the tooltip has the string's address and its whole text. The rows
   are built while the block is open, and opening a block the session has not
   read reads it without showing it.
+- **Folders** group a file's blocks, bookmarks and other folders, to any
+  depth. A folder belongs to one file, and moving a row into or out of one
+  changes neither its file nor its configuration. A folder opens and closes
+  like any row, and stays as it was left over rebuilds for the rest of the
+  project's session; closing the project forgets it.
 - **Row markers:**
-  - icons for the kind on blocks, bookmarks and tables, from the bundled
+  - icons for the kind on blocks, bookmarks, folders and tables, from the bundled
     icon font; files and fonts sit under their group heading and carry
     none; a missing file shows a warning mark instead;
   - `●` for unsaved edits;
   - a string count and a status summary on blocks (edited / review / done), there
     from the start: opening a project, and locating its
     missing files, reads every block over a file that is on disk;
+  - on a folder, how many rows it holds directly, and the status summary of
+    every block inside it at any depth added up (`Battle  (12 items, 40
+    edited, 3 done)`);
   - an entry count on tables;
   - a joined-file count and a container tag on files;
   - **?** (file missing) or **!** (read notices), washing the row amber.
@@ -145,9 +155,10 @@ the preview system in [preview.md](preview.md).
   any notice text, each notice's fuller detail indented under it.
 - **Selecting** — click opens an entry, and an arrow key onto a row opens it
   the same way; a table opens the Table Editor and a font the Preview
-  window's Font tab, neither becoming the view; Shift/Ctrl extend the
-  selection; with several rows selected only Remove and Move
-  Up/Down apply. A block's row confines the view to its source, from its
+  window's Font tab, neither becoming the view; a folder, like a group
+  heading, leaves the view as it was; Shift/Ctrl extend the
+  selection; with several rows selected only Remove, Move
+  Up/Down and, on a file's rows, New Folder apply. A block's row confines the view to its source, from its
   start — the range, the fixed strings, the pointer table, or the stretch a
   pointer list's pointers lie in, unless it was left reading its strings, which
   it comes back on — and a string's row confines it to that
@@ -156,27 +167,45 @@ the preview system in [preview.md](preview.md).
   and the Reading bar only its **Strings** and **Writing** sections. A string
   row's context menu is its block's.
 - **Filter box** (Ctrl+F) matches every typed word in any order. A matching
-  child keeps its parent visible, and a block one of whose strings matches
-  opens to show it.
-- **Double-click** — bookmark jumps; table opens the Table Editor; file or
-  block renames inline. **F2** renames any row inline.
+  child keeps its parent and its folders visible, and a folder or a block
+  with a match inside opens to show it; clearing the filter closes again the
+  folders that were closed.
+- **Double-click** — bookmark jumps; table opens the Table Editor; file,
+  block or folder renames inline. **F2** renames any row inline.
 - **Names** — no two blocks or bookmarks share one: a new row, a rename, an
   import or a loaded project that would repeat a name gets it numbered
   (`Script (2)`), since dumps, translator files and Atlas scripts name a
-  string by its block.
-- **Reorder** by drag or Alt+Up/Down. **Sort by** Name, Type or (blocks)
-  Offset.
-- **Context menu**, by kind: New Block / from Selection, New Bookmark,
-  Edit File Container…, Container Info…, Dump All Blocks…, Dump…, Jump to
+  string by its block. A folder's name is free text and never counts: New
+  Folder numbers its default among the file's folders, and nothing else does.
+- **New Folder** on a file or a folder makes an empty folder last inside it;
+  on a block, a bookmark or a folder among selected rows, a folder in the
+  clicked row's place holding the selected rows of that file. Either is one
+  undo step, and the new row opens for its name.
+- **Reorder** by drag or Alt+Up/Down. A drag moves the selection when it
+  starts on it: dropped between two rows of a file or folder, the rows land
+  there; dropped onto a file or folder, they go last inside it. A file's rows
+  only move under that file and a folder never into itself; files, tables
+  and fonts only reorder within their group. **Sort by** Name, Type or
+  (a file's rows) Offset puts the rows the clicked row sits among in order —
+  one folder's, one file's top level, or one group's. By name and by type
+  folders come first; by offset a folder sits where its earliest row does.
+- **Context menu**, by kind: New Block / from Selection, New Bookmark, New
+  Folder, Edit File Container…, Container Info…, Dump All Blocks… (on a
+  folder, the blocks inside it), Dump…, Jump to
   Source, Jump to Bookmark, Edit…, Save As File…, New Table…, Write, Export ▸,
   Rename…, Cut / Copy / Paste / Duplicate, Move Up / Down, Sort By ▸, Show in
   File Manager, Remove. Empty space offers Open ROM…, Open Table…, New Table…
   and Paste.
 - **Cut / Copy / Paste / Duplicate** act on entries (references plus
   settings), never on bytes. The clipboard carries absolute paths, so entries
-  paste into another mapchar window.
-- **Remove (Del)** asks once for the whole selection and names child blocks
-  and bookmarks, unsaved edits being discarded, and blocks reading through a
+  paste into another mapchar window. A folder travels with what it holds.
+  Rows pasted onto a folder, or onto a row inside one, land in that folder;
+  a duplicate lands in the folder its original is in.
+- **Remove (Del)** asks once for the whole selection and names the rows that
+  go with it (a file's rows; a folder's contents, which a folder takes as a
+  file takes its rows and as a cut carries them, so one step and its undo
+  cover the whole group), unsaved edits being discarded, and blocks reading
+  through a
   removed table: they keep their originals and notes, but cannot be read or
   edited until the table is loaded again. When the current entry goes, the nearest
   row of the same group takes its place — after the hole, else before it —
@@ -817,7 +846,8 @@ in the game. It is described in [preview.md](preview.md).
 ## Projects
 
 - A `.mapchar` project stores **references and settings, never bytes**:
-  every entry with its chain, block configuration, a file's reading; per
+  every entry with its chain, block configuration, a file's reading; the
+  folders and which rows each holds; per
   string its **original**, status and notes; table edits made in-app; font
   bindings and text boxes; the glossary; the view position per entry.
   Translations are not in it: they are the ROM's bytes.
@@ -883,7 +913,8 @@ in the game. It is described in [preview.md](preview.md).
 
 ## Undo
 
-- **One history** for the session: entry open, close, paste, rename, reorder;
+- **One history** for the session: entry open, close, paste, rename, reorder,
+  new folders and moves between them;
   block, container and table edits; view moves; string edits, status changes
   and notes; hex overtypes; font and box edits; writes to disk.
 - **Ctrl+Z / Ctrl+Shift+Z** undo the latest action from any surface. Undoing

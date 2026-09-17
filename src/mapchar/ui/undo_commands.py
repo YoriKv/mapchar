@@ -173,7 +173,8 @@ class _MergingCommand(_StateCommand):
 
 
 class EntryCommand(QUndoCommand):
-    """Add (or remove) an entry together with its children.
+    """Add (or remove) an entry together with what it holds: a file's rows, a
+    folder's contents.
 
     Written out rather than a :class:`_StateCommand`: its two directions are
     genuinely different operations rather than one operation over a pair, and
@@ -451,18 +452,25 @@ class ContainerCommand(_CurrentEntryCommand):
 
 
 class EntryOrderCommand(_InPlaceCommand):
-    """The order of the whole entry list: a drag, Move Up/Down, or a sort.
+    """The layout of the whole entry list — its order and each row's folder: a
+    drag, Move Up/Down, a sort, or rows gathered into a folder.
 
-    Held as the two full orders rather than as a move, so redo lands exactly what
-    the first run did however the rows are grouped on screen.
+    Held as the two full layouts rather than as a move, so redo lands exactly
+    what the first run did however the rows are grouped on screen.
     """
 
-    def __init__(self, window, text: str, before: list[Entry], after: list[Entry]):
+    def __init__(
+        self,
+        window,
+        text: str,
+        before: list[tuple[Entry, Entry | None]],
+        after: list[tuple[Entry, Entry | None]],
+    ):
         # No entry of its own: the change is the list, which is why it reaches
         # nothing and why the base class's entry slot holds None.
         super().__init__(window, None, text, before, after)
 
-    def _apply(self, state: list[Entry]) -> None:
+    def _apply(self, state: list[tuple[Entry, Entry | None]]) -> None:
         self.window.apply_entry_order(state)
 
 

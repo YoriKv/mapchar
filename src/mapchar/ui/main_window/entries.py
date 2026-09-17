@@ -12,8 +12,11 @@ from mapchar.project.workspace import (
     NAMED_UNIQUELY,
     Entry,
     EntryKind,
+    Workspace,
     free_name,
+    holder,
     normalize_path,
+    within,
 )
 from mapchar.ui.entry_text import sorted_entries
 from mapchar.ui.undo_commands import EntryCommand, EntryOrderCommand, RenameEntryCommand
@@ -42,21 +45,28 @@ class EntriesMixin:
         self._push_command(EntryCommand(self, entry, add=True))
 
     def _remove_entries(self, entries: list[Entry]) -> None:
+        """Remove rows, once asked: a file takes its rows with it and a folder
+        its contents, which the question names."""
         entries = [e for e in entries if e in self.workspace.entries]
         if not entries:
             return
-        names = ", ".join(e.name for e in entries)
-        children = [c for e in entries for c in self.workspace.children(e)]
-        msg = f"Remove {names}?"
+        going = {id(e) for e in entries}
+        children: list[Entry] = []
+        for e in entries:
+            for c in self.workspace.descendants(e):
+                if id(c) not in going:
+                    going.add(id(c))
+                    children.append(c)
+        msg = f"Remove {_names(entries)}?"
         if children:
-            msg += f"\nAlso removes: {', '.join(c.name for c in children)}."
+            msg += f"\nAlso removes: {_names(children)}."
         if any(e.dirty for e in entries + children):
             msg += "\nUnsaved edits will be discarded."
         on_tables = self.workspace.blocks_on_tables(entries)
         orphaned = [b for b in on_tables if b not in children]
         if orphaned:
             msg += (
-                f"\n{', '.join(b.name for b in orphaned)} read through it: their "
+                f"\n{_names(orphaned)} read through it: their "
                 "originals and notes are kept, but they cannot be read or edited "
                 "until the table is loaded again."
             )
@@ -64,7 +74,7 @@ class EntriesMixin:
             return
         for block in orphaned:
             block.stash_strings()
-        with self._macro("Remove entries"):
+        with self._macro("Remove entries"), self.workspace.batch():
             for e in entries:
                 if e in self.workspace.entries:
                     self._push_command(EntryCommand(self, e, add=False))
@@ -72,9 +82,10 @@ class EntriesMixin:
     def apply_entry_add(
         self, entry: Entry, index: int | None, children: list[Entry]
     ) -> None:
-        self.workspace.add(entry, index)
-        for child in children:
-            self.workspace.add(child)
+        with self.workspace.batch():
+            self.workspace.add(entry, index)
+            for child in children:
+                self.workspace.add(child)
         self._refresh_table_picks()
         self._update_title()
 
@@ -102,10 +113,110 @@ class EntriesMixin:
         self._push_order("Reorder entries", order)
 
     def _push_order(self, text: str, order: list[Entry]) -> None:
-        before = list(self.workspace.entries)
-        if order == before:
+        """Push the list laid out in ``order``, each row in the folder it has."""
+        self._push_layout(text, [(e, e.folder) for e in order])
+
+    def _push_layout(self, text: str, layout: list[tuple[Entry, Entry | None]]) -> None:
+        before = self.workspace.layout()
+        if layout == before:
             return  # already there
-        self._push_command(EntryOrderCommand(self, text, before, order))
+        self._push_command(EntryOrderCommand(self, text, before, layout))
+
+    def _place_entries(
+        self, entries: list[Entry], container: Entry, before: Entry | None
+    ) -> None:
+        """Move rows under a file or folder, in front of ``before`` or last
+        there — a drop, or New Folder gathering a selection — as one step.
+
+        Only rows of the container's own file move, and never a folder into
+        itself; a row inside a folder that moves goes with it. A folder is
+        where a row is shown, so nothing else about the row changes.
+        """
+        if self._applying_undo or container.kind not in (
+            EntryKind.FILE,
+            EntryKind.FOLDER,
+        ):
+            return
+        file_entry = container if container.kind is EntryKind.FILE else container.parent
+        folder = container if container.kind is EntryKind.FOLDER else None
+        candidates = [
+            e
+            for e in entries
+            if e.is_child
+            and e.parent is file_entry
+            and e is not container
+            and not within(container, e)
+        ]
+        ids = {id(e) for e in candidates}
+
+        def carried(e: Entry) -> bool:
+            above = e.folder
+            while above is not None:
+                if id(above) in ids:
+                    return True
+                above = above.folder
+            return False
+
+        moving = [e for e in candidates if not carried(e)]
+        if not moving:
+            return
+        if before is not None and (
+            holder(before) is not container or id(before) in ids
+        ):
+            rows = self.workspace.contents(container)
+            at = rows.index(before) if before in rows else len(rows)
+            before = next((r for r in rows[at:] if id(r) not in ids), None)
+        layout = self.workspace.layout()
+        try:
+            for e in moving:
+                e.folder = folder
+            order = Workspace.moved(self.workspace.entries, moving, container, before)
+            after = [(e, e.folder) for e in order]
+        finally:
+            for e, above in layout:
+                e.folder = above
+        self._push_layout(f"Move to {container.name}", after)
+
+    def _new_folder(self, entry: Entry, rows: list[Entry]) -> Entry | None:
+        """New Folder: on a file or a folder, an empty folder last inside it;
+        on a row inside one, a folder in that row's place holding ``rows``.
+
+        One undo step, and the new row opens for its name.
+        """
+        if not entry.is_child and entry.kind is not EntryKind.FILE:
+            return None
+        if entry.kind is EntryKind.FILE or (
+            entry.kind is EntryKind.FOLDER and rows in ([], [entry])
+        ):
+            container, gathered = entry, []
+        else:
+            container, gathered = holder(entry), rows
+        if container is None:
+            return None
+        file_entry = container if container.kind is EntryKind.FILE else container.parent
+        taken = (
+            e.name
+            for e in self.workspace.children(file_entry)
+            if e.kind is EntryKind.FOLDER
+        )
+        folder = Entry(
+            EntryKind.FOLDER,
+            free_name("New Folder", taken),
+            file_entry.path,
+            file_entry.extra_paths,
+            parent=file_entry,
+            folder=container if container.kind is EntryKind.FOLDER else None,
+        )
+        add = EntryCommand(self, folder, add=True)
+        if gathered:
+            # In the clicked row's place, which is inside the container.
+            add.index = self.workspace.entries.index(entry)
+        with self._macro("New folder"):
+            self._push_command(add)
+            if gathered:
+                self._place_entries(gathered, folder, None)
+        self.files_panel.begin_rename(folder)
+        return folder
 
     def _move_entries(self, entries: list[Entry], delta: int) -> None:
         """Step every row in ``entries`` one place — Alt+Up/Down, Move Up/Down.
@@ -135,7 +246,9 @@ class EntriesMixin:
         """
         if self._applying_undo:
             return
-        wanted = sorted_entries(self.files_panel.siblings(entry), key)
+        wanted = sorted_entries(
+            self.files_panel.siblings(entry), key, self.workspace.contents
+        )
         # Laid out right to left: after each step the tail from that row on is
         # already in its final order, so the next move only has to reach its head.
         order = list(self.workspace.entries)
@@ -143,11 +256,12 @@ class EntriesMixin:
             order = self.workspace.reordered(order, wanted[at], wanted[at + 1])
         self._push_order(f"Sort by {key.lower()}", order)
 
-    def apply_entry_order(self, order: list[Entry]) -> None:
-        """Lay the whole entry list out in ``order`` — a reorder and its undo."""
+    def apply_entry_order(self, layout: list[tuple[Entry, Entry | None]]) -> None:
+        """Lay the whole entry list out as ``layout`` — each row with its
+        folder, in order: a reorder, a move between folders, and their undo."""
         self._applying_undo = True
         try:
-            self.workspace.replace(list(order), self.workspace.current)
+            self.workspace.arrange(list(layout))
         finally:
             self._applying_undo = False
 
@@ -167,7 +281,12 @@ class EntriesMixin:
     def _free_name(self, name: str, entry: Entry | None = None) -> str:
         """``name``, numbered up until no row but ``entry`` itself is called that."""
         return free_name(
-            name, (e.name for e in self.workspace.entries if e is not entry)
+            name,
+            (
+                e.name
+                for e in self.workspace.entries
+                if e is not entry and e.kind is not EntryKind.FOLDER
+            ),
         )
 
     def _show_entry(self, entry: Entry) -> None:
@@ -223,3 +342,12 @@ class EntriesMixin:
         self.files_panel.refresh_labels()
         self._refresh_view()
         self._update_title()
+
+
+def _names(entries: list[Entry], most: int = 12) -> str:
+    """The rows' names for a question, the tail counted rather than listed: a
+    folder can hold hundreds of blocks."""
+    names = [e.name for e in entries[:most]]
+    if len(entries) > most:
+        names.append(f"{len(entries) - most} more")
+    return ", ".join(names)

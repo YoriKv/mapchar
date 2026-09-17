@@ -25,10 +25,10 @@ class FilesMenuMixin:
         """The Files panel's context menu, by kind.
 
         A right-click inside a multi-row selection keeps it, and the menu is
-        then about the set: Remove and the two moves act on all of it and every
-        other row goes dead — each of them *is* something the clicked row could
-        do, just not while it is one of several, so it is greyed rather than
-        dropped.
+        then about the set: Remove, the two moves and, on a file's rows, New
+        Folder act on all of it and every other row goes dead — each of them
+        *is* something the clicked row could do, just not while it is one of
+        several, so it is greyed rather than dropped.
         """
         menu = QMenu(self)
         if entry is None:
@@ -40,6 +40,7 @@ class FilesMenuMixin:
             return menu
         selected = self.files_panel.selected_entries()
         acting = selected if len(selected) > 1 and entry in selected else [entry]
+        new_folder = None
         if entry.kind is EntryKind.FILE:
             menu.addAction(
                 "New &Block",
@@ -53,12 +54,25 @@ class FilesMenuMixin:
                 "New Boo&kmark",
                 lambda: (self._activate_entry(entry), self._new_bookmark()),
             )
+            new_folder = menu.addAction(
+                "New Fo&lder", lambda: self._new_folder(entry, [entry])
+            )
             menu.addSeparator()
             menu.addAction("Edit File Cont&ainer…", lambda: self._edit_container(entry))
             menu.addAction("Container In&fo…", lambda: self._container_info(entry))
             menu.addAction(
                 "&Dump All Blocks…",
                 lambda: (self._activate_entry(entry), self._dump(all_blocks=True)),
+            )
+        if entry.is_child:
+            # On a folder alone, a folder inside it; on rows, a folder holding them.
+            new_folder = menu.addAction(
+                "New Fo&lder", lambda: self._new_folder(entry, acting)
+            )
+        if entry.kind is EntryKind.FOLDER:
+            menu.addAction(
+                "&Dump All Blocks…",
+                lambda: self._dump(all_blocks=True, folder=entry),
             )
         if entry.kind is EntryKind.BLOCK:
             menu.addAction(
@@ -74,7 +88,8 @@ class FilesMenuMixin:
             )
             menu.addAction("New Ta&ble…", lambda: self._new_table_dialog())
         menu.addSeparator()
-        menu.addAction("&Write", lambda: self._write_entry(entry))
+        if entry.kind is not EntryKind.FOLDER:
+            menu.addAction("&Write", lambda: self._write_entry(entry))
         if entry.kind is EntryKind.BLOCK:
             export = menu.addMenu("E&xport")
             for label, kind in (("&TSV…", "tsv"), ("C&SV…", "csv"), ("&PO…", "po")):
@@ -105,12 +120,15 @@ class FilesMenuMixin:
         for key in SORT_KEYS:
             sort.addAction(f"&{key}", lambda key=key: self._sort_entries(entry, key))
         sort.actions()[SORT_KEYS.index("Offset")].setEnabled(entry.is_child)
-        if entry.path:
+        if entry.path and entry.kind is not EntryKind.FOLDER:
             menu.addAction("Show in File &Manager", lambda: self._reveal(entry.path))
         menu.addSeparator()
         remove = menu.addAction("Remo&ve", lambda: self._remove_entries(acting))
         if len(acting) > 1:
-            self._only_these_live(menu, [remove, up, down])
+            live = [remove, up, down]
+            if entry.is_child and new_folder is not None:
+                live.append(new_folder)
+            self._only_these_live(menu, live)
         return menu
 
     def _sel(self) -> tuple[int, int]:

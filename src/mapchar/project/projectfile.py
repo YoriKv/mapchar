@@ -24,6 +24,7 @@ from mapchar.project.workspace import (
     EntrySession,
     StringState,
     free_name,
+    tree_order,
 )
 
 PROJECT_VERSION = 1
@@ -173,8 +174,11 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
             d["container_id"] = entry.container_id
         if entry.compression_id:
             d["compression_id"] = entry.compression_id
-    if entry.kind in (EntryKind.BLOCK, EntryKind.BOOKMARK):
+    if entry.is_child:
         d["parent"] = entries.index(entry.parent) if entry.parent in entries else None
+        folder = entry.folder
+        if folder is not None and folder in entries:
+            d["folder"] = entries.index(folder)
     if entry.kind is EntryKind.BLOCK:
         if entry.compression_id:
             d["compression_id"] = entry.compression_id
@@ -285,13 +289,56 @@ CLIPBOARD_KEY = "mapchar-entries"
 """What marks a clipboard payload as a set of mapChar entries."""
 
 
+def _wire_folders(entries: list[Entry | None], raw: list[Any]) -> None:
+    """Put each row in the folder its record names by index.
+
+    A row whose folder is not a folder of the same file — a broken record, a
+    hand edit, a loop — stands directly under its file instead.
+    """
+    for entry, item in zip(entries, raw, strict=True):
+        at = (
+            item.get("folder") if entry is not None and isinstance(item, dict) else None
+        )
+        if not isinstance(at, int) or isinstance(at, bool):
+            continue
+        folder = entries[at] if 0 <= at < len(entries) else None
+        if (
+            entry is not None
+            and entry.is_child
+            and folder is not None
+            and folder.kind is EntryKind.FOLDER
+            and folder.parent is entry.parent
+        ):
+            entry.folder = folder
+    for entry in entries:
+        if entry is None:
+            continue
+        seen = {id(entry)}
+        folder = entry.folder
+        while folder is not None:
+            if id(folder) in seen:
+                entry.folder = None
+                break
+            seen.add(id(folder))
+            folder = folder.folder
+
+
+def _unfold_orphans(kept: list[Entry]) -> None:
+    """A row whose folder was dropped stands directly under its file."""
+    present = {id(e) for e in kept}
+    for entry in kept:
+        if entry.folder is not None and id(entry.folder) not in present:
+            entry.folder = None
+
+
 def entries_payload(entries: list[Entry]) -> str:
     """``entries`` as clipboard text: the same records a project stores, with
     **absolute** paths, so a copy pastes into another window and another project.
 
-    The parent index is taken within the copied list, so a block copied together
-    with its ROM stays attached to that ROM, and one copied alone arrives loose
-    for the paste to re-aim.
+    The parent and folder indices are taken within the copied list, so a block
+    copied together with its ROM stays attached to that ROM and one copied with
+    its folder stays in it, and one copied alone arrives loose for the paste to
+    re-aim.
     """
     return json.dumps(
         {
@@ -330,7 +377,10 @@ def entries_from_payload(text: str) -> list[Entry]:
         if entry is not None and parent_index is not None:
             if 0 <= parent_index < len(entries):
                 entry.parent = entries[parent_index]
-    return [e for e in entries if e is not None]
+    _wire_folders(entries, raw)
+    kept = [e for e in entries if e is not None]
+    _unfold_orphans(kept)
+    return kept
 
 
 def load_project(path: str) -> LoadedProject:
@@ -371,6 +421,7 @@ def load_project(path: str) -> LoadedProject:
         if entry is not None and parent_index is not None:
             parent = entries[parent_index] if 0 <= parent_index < len(entries) else None
             entry.parent = parent
+    _wire_folders(entries, raw_entries)
     kept = [e for e in entries if e is not None]
     current = None
     ci = data.get("current")
@@ -385,11 +436,17 @@ def load_project(path: str) -> LoadedProject:
         if e.is_child and e.parent is None:
             warnings.append(f"{e.name}: parent entry missing")
     kept = [e for e in kept if not (e.is_child and e.parent is None)]
+    _unfold_orphans(kept)
+    # Every row straight after what holds it, which a hand-edited file need not
+    # have kept, and which adding and moving rows rely on.
+    kept = tree_order(kept)
     # A file written by hand, or by a build that let names repeat: the rows
     # are numbered here so that everything that names a string by its block
     # (a dump, a translator file, an Atlas script) can find the block again.
     taken: set[str] = set()
     for e in kept:
+        if e.kind is EntryKind.FOLDER:
+            continue  # a folder is never what a string is named by
         if e.kind in NAMED_UNIQUELY:
             unique = free_name(e.name, taken)
             if unique != e.name:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from mapchar.project.formats.script import write_script
+from mapchar.project.workspace import Entry
 from mapchar.ui.dialogs import DumpDialog
 
 
@@ -15,22 +16,24 @@ class DumpingMixin:
     rest of the window only through ``self``.
     """
 
-    def _dump(self, all_blocks: bool = False) -> None:
+    def _dump(self, all_blocks: bool = False, folder: Entry | None = None) -> None:
+        """Dump the current block, or every block of its file — or, given a
+        ``folder``, every block inside that folder."""
         # Ctrl+D duplicates the selected row while the Files panel has the
         # keyboard, the way Ctrl+F becomes the filter there.
         if not all_blocks and self.files_panel.has_focus():
             self._duplicate_selection()
             return
-        file_entry = self._current_file()
+        file_entry = folder.parent if folder is not None else self._current_file()
         if file_entry is None:
             self._error("Open a ROM and create a block first.")
             return
-        blocks = self.workspace.blocks_of(file_entry)
+        blocks = self.workspace.blocks_of(folder or file_entry)
         current = self._current_block()
         if not all_blocks and current is not None:
             blocks = [current]
         if not blocks:
-            self._error("The file has no blocks.")
+            self._error(f"{'The folder' if folder else 'The file'} has no blocks.")
             return
         dialog = DumpDialog(self)
         dialog.all_blocks.setChecked(all_blocks)
@@ -41,9 +44,9 @@ class DumpingMixin:
         )
         if dialog.exec() != DumpDialog.DialogCode.Accepted:
             return
-        if dialog.all_blocks.isChecked():
+        if dialog.all_blocks.isChecked() and folder is None:
             blocks = self.workspace.blocks_of(file_entry)
-        name = blocks[0].name if len(blocks) == 1 else file_entry.name
+        name = blocks[0].name if len(blocks) == 1 else (folder or file_entry).name
         path = self._pick_save(
             "Dump to Script", f"{name}.txt", "Scripts (*.txt);;All files (*)"
         )
