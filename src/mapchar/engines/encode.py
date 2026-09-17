@@ -88,6 +88,16 @@ def _atoms_equal(a, b) -> bool:
 
 
 def _index(table: Table) -> _Index:
+    """``table``'s lookups, built once and kept on the table until it changes.
+
+    Every string encoded through a table walks the same entries, and a charset
+    table is tens of thousands of them: rebuilding the index per string is most
+    of what encoding a block would cost.
+    """
+    return table.cached("encode_index", lambda: _build_index(table))
+
+
+def _build_index(table: Table) -> _Index:
     idx = _Index()
     best = None
     bits_list = list(table.entries)

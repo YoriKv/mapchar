@@ -321,8 +321,13 @@ class Table:
         self._includes = tuple(ids)
         self.revision += 1
 
-    def _cached(self, name: str, make: Callable[[], _T]) -> _T:
-        """``make()``, remembered until the table changes."""
+    def cached(self, name: str, make: Callable[[], _T]) -> _T:
+        """``make()``, remembered until the table changes.
+
+        Public because the lookups derived from a table are not all its own:
+        the encoder's index over its entries is built the same way and kept
+        here too, so it outlives the one call that needed it.
+        """
         hit = self._cache.get(name)
         if hit is not None and hit[0] == self.revision:
             return hit[1]
@@ -387,7 +392,7 @@ class Table:
             self.revision += 1
 
     def switch_targets(self) -> set[str]:
-        return set(self._cached("targets", self._switch_targets))
+        return set(self.cached("targets", self._switch_targets))
 
     def _switch_targets(self) -> frozenset[str]:
         ids: set[str] = set()
@@ -400,7 +405,7 @@ class Table:
     def has_switch(self) -> bool:
         """Whether any entry switches table, so the decoder carries state
         across a token and no byte in the middle of a decode is a fresh start."""
-        return self._cached(
+        return self.cached(
             "has_switch",
             lambda: any(e.kind is TokenKind.SWITCH for e in self.entries.values()),
         )
@@ -408,7 +413,7 @@ class Table:
     def key_span(self) -> int:
         """The most bits one token of this table reads: its longest key with
         that entry's operands."""
-        return self._cached(
+        return self.cached(
             "key_span",
             lambda: max(
                 (
@@ -421,7 +426,7 @@ class Table:
 
     def effects(self) -> dict[str, Effect]:
         """Every label whose entry declares a layout effect, with the effect."""
-        return self._cached(
+        return self.cached(
             "effects",
             lambda: {
                 label: e.effect

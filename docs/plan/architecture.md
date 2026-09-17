@@ -88,8 +88,10 @@ Entries are compared by identity. Blocks, bindings and undo commands hold
   added: `max_bits` and entries bucketed by key length, which `match` scans
   longest length first. `revision` counts every change; what is derived from
   the whole table — its switch targets, its labels' effects, its resolution —
-  is cached against it and left behind by a copy. The encoder builds its own
-  text index per search (`engines/encode.py`), not held on the table.
+  is cached against it and left behind by a copy — `cached(name, make)` is how
+  anything derived asks for it, including the encoder's text index over the
+  entries (`engines/encode.py`), which every string encoded through the table
+  would otherwise rebuild.
 - **`resolve(table, available)`** — the table with its includes laid under its
   own entries: charset, then each include resolved in order, then
   `own_entries`, an empty text removing a key from below. A table that

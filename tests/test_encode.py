@@ -160,3 +160,18 @@ def test_a_count_read_from_the_data_is_written_back():
     for text in ("a[n][$01][$02]b[end]", "[items][Sword][Potion]a[end]", "[n][end]"):
         data = encode(text, ts).data
         assert render(decode(Bits(data), ts, 0).tokens) == text
+
+
+def test_the_table_keeps_the_index_until_it_changes():
+    # Building the index walks every entry, so it is built once per table and
+    # not once per string; a change to the table drops it.
+    ts = table_set("@table main\n41=A\n42=B\n/00=[end]\n", "main")
+    encode("A[end]", ts)
+    index = ts.start._cache["encode_index"]
+    encode("B[end]", ts)
+    assert ts.start._cache["encode_index"] is index
+    ts.start.remove("01000010")  # B, keyed by its bits
+    encode("A[end]", ts)
+    assert ts.start._cache["encode_index"] is not index
+    with pytest.raises(EncodeError):
+        encode("B[end]", ts)
