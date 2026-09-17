@@ -73,9 +73,16 @@ mapchar/
   unheadered USA ROM, located from the SMW disassembly). The ROM goes in
   `sample-projects/Super Mario World/` (gitignored) under the name
   `tools/make_sample_projects.py` lists; without it the test skips. `uv run
-  python tools/make_sample_projects.py` copies each game's tables and command
-  file beside its ROM and saves a `<game>.mapchar` project there, ready to
-  open.
+  python tools/make_sample_projects.py [game…]` copies each game's tables and
+  command file beside its ROM and saves a `<game>.mapchar` project there,
+  ready to open; named games are the only ones built.
+- **Mother 3**: `tools/mother3_sample.py` derives the sample's tables (`m3`,
+  `m3battle`, `saturn`) and its 582 blocks — 12,997 strings — from
+  `sample-projects/Mother 3/Mother 3 (Japan).gba`, since nothing extracted
+  from a ROM is checked in; its docstring says which ROM structure and routine
+  each fact comes from. `tests/test_examples.py` reads every block and edits
+  through all three tables. The project reads every block as it opens, which
+  takes the Files panel about half a minute.
 - **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's
   extraction with abcde's Cartographer dump of the synthetic ROM in
   `tests/fixtures/abcde/`. The fixtures are checked in, so the suite never runs

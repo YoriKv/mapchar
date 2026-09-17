@@ -1,10 +1,13 @@
-"""Build the sample projects from their Cartographer command files.
+"""Build the sample projects.
 
 For each game with its ROM under ``sample-projects/<game>/``, copies the
 game's tables and command file beside it -- from abcde's examples, or from
 ``tools/samples/<game>/`` for the games abcde has none for -- imports the
-command file into a fresh project and saves ``<game>.mapchar`` there.
-Headless; needs the offscreen Qt platform, which it sets itself.
+command file into a fresh project and saves ``<game>.mapchar`` there. Mother 3
+has no command file: ``mother3_sample.py`` derives its tables and blocks from
+the ROM, and they are written and added the same way. Names given on the
+command line build only those games. Headless; needs the offscreen Qt platform,
+which it sets itself.
 """
 
 from __future__ import annotations
@@ -16,6 +19,10 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import mother3_sample  # noqa: E402 - beside this script, not a package
+
 EXAMPLES = os.path.join(os.path.dirname(ROOT), "abcde", "eg", "NES")
 SAMPLES = os.path.join(ROOT, "tools", "samples")
 GAMES: dict[str, tuple[str, str]] = {
@@ -41,7 +48,8 @@ def main() -> int:
     from mapchar.ui import dialogs
     from mapchar.ui.main_window import MainWindow
 
-    app = QApplication(sys.argv)  # noqa: F841 - Qt needs one alive
+    wanted = set(sys.argv[1:])
+    app = QApplication(sys.argv[:1])  # noqa: F841 - Qt needs one alive
     # Headless: notices go to the terminal instead of a modal dialog.
     dialogs.TextDialog.exec = lambda self: print(  # type: ignore[method-assign]
         self.findChild(
@@ -50,6 +58,8 @@ def main() -> int:
     )
     made = 0
     for game, (rom_name, source) in GAMES.items():
+        if wanted and game not in wanted:
+            continue
         folder = os.path.join(ROOT, "sample-projects", game)
         rom = os.path.join(folder, rom_name)
         if not os.path.exists(rom):
@@ -61,16 +71,59 @@ def main() -> int:
         window = MainWindow()
         window.open_rom(rom)
         blocks = window.import_cartographer(os.path.join(folder, "Cartographer.txt"))
-        total = 0
-        for block in blocks:
-            window._activate_entry(block)  # extracts the block's strings
-            doc = window._load_document(block)
-            total += len(doc.strings) if doc else 0
-        project = os.path.join(folder, f"{game}.mapchar")
-        window._write_project(project)
-        print(f"{game}: {len(blocks)} block(s), {total} string(s) -> {project}")
+        _save(window, game, folder, blocks)
         made += 1
+    if not wanted or "Mother 3" in wanted:
+        folder = os.path.join(ROOT, "sample-projects", "Mother 3")
+        rom = os.path.join(folder, mother3_sample.ROM_NAME)
+        if os.path.exists(rom):
+            window = MainWindow()
+            _save(window, "Mother 3", folder, _mother3(window, rom))
+            made += 1
+        else:
+            print("Mother 3: ROM not present, skipped")
     return 0 if made else 1
+
+
+def _mother3(window, rom: str) -> list:
+    """Opens Mother 3 in ``window`` with its tables, written beside the ROM,
+    and its blocks."""
+    from mapchar.core.capabilities import EntryKind
+    from mapchar.project.formats.script import parse_config
+    from mapchar.project.workspace import Entry
+
+    with open(rom, "rb") as f:
+        data = f.read()
+    file_entry = window.open_rom(rom)
+    for name, text in mother3_sample.table_files(data).items():
+        path = os.path.join(os.path.dirname(rom), name)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        window.open_table(path, "native")
+    blocks = []
+    for block in mother3_sample.blocks(data):
+        entry = Entry(
+            EntryKind.BLOCK,
+            block.name,
+            file_entry.path,
+            parent=file_entry,
+            config=parse_config(block.spec),
+        )
+        window._push_add(entry)
+        blocks.append(entry)
+    return blocks
+
+
+def _save(window, game: str, folder: str, blocks: list) -> None:
+    """Read every block, then save the window's session as ``<game>.mapchar``."""
+    total = 0
+    for block in blocks:
+        window._activate_entry(block)  # extracts the block's strings
+        doc = window._load_document(block)
+        total += len(doc.strings) if doc else 0
+    project = os.path.join(folder, f"{game}.mapchar")
+    window._write_project(project)
+    print(f"{game}: {len(blocks)} block(s), {total} string(s) -> {project}")
 
 
 if __name__ == "__main__":
