@@ -39,7 +39,6 @@ class EntryKind(Enum):
     BOOKMARK = "bookmark"
     FOLDER = "folder"
     TABLE = "table"
-    FONT = "font"
 
 
 class Capability(Enum):
@@ -70,9 +69,8 @@ class Capability(Enum):
     # -- writing
     WRITE = auto()  # File ▸ Write on this entry
 
-    # -- the other two kinds
+    # -- the other kind
     TABLE_EDIT = auto()  # the Table Editor over this entry's tables
-    FONT_EDIT = auto()  # the Font tab's sheet geometry, alphabet and widths
 
 
 # Every entry that is a window on a run of bytes reads them the same way,
@@ -121,11 +119,9 @@ CAPABILITIES: dict[EntryKind, frozenset[Capability]] = {
     # A folder only groups rows in the Files panel: selecting one leaves the
     # view as it was, as a group heading does, so it has no controls either.
     EntryKind.FOLDER: frozenset(),
-    # A table and a glyph sheet are each edited in one surface of their own —
-    # the Table Editor, the Preview window's Font tab — and neither has a byte
-    # window to navigate, search or write back.
+    # A table is edited in one surface of its own — the Table Editor — and has
+    # no byte window to navigate, search or write back.
     EntryKind.TABLE: frozenset({Capability.TABLE_EDIT}),
-    EntryKind.FONT: frozenset({Capability.FONT_EDIT}),
 }
 
 

@@ -9,7 +9,6 @@ from PySide6.QtWidgets import QMessageBox
 
 from mapchar import APP_NAME
 from mapchar.core.errors import MapcharError
-from mapchar.core.font import Font
 from mapchar.plugins.registry import SIGNATURE_HEAD
 from mapchar.project.formats.script import HEADER as SCRIPT_HEADER
 from mapchar.project.formats.table_native import HEADER as TABLE_HEADER
@@ -88,17 +87,6 @@ class OpeningMixin:
             self._choose_table(tf.table.id)
         return entry
 
-    def _open_font_dialog(self) -> None:
-        path = self._pick_open("Open Font", "Images (*.png *.bmp);;All files (*)")
-        if path:
-            self.open_font(path)
-
-    def open_font(self, path: str) -> Entry:
-        self._remember_dir(path)
-        entry = Entry(EntryKind.FONT, os.path.basename(path), path, font=Font(path))
-        self._push_add(entry)
-        return entry
-
     @staticmethod
     def _dropped_paths(event) -> list[str]:
         """Every local-file path in a drag payload (empty when it has none)."""
@@ -163,8 +151,6 @@ class OpeningMixin:
         lower = path.lower()
         if lower.endswith(".tbl"):
             return "table"
-        if lower.endswith(".png"):
-            return "font"
         if lower.endswith((".tsv", ".csv")):
             return "delimited"
         if lower.endswith(".po"):
@@ -191,7 +177,6 @@ class OpeningMixin:
         buttons = {
             box.addButton("&ROM", role): "rom",
             box.addButton("&Table", role): "table",
-            box.addButton("&Font", role): "font",
             box.addButton("&Script", role): "script",
             box.addButton("T&SV / CSV", role): "delimited",
             box.addButton("&PO", role): "po",
@@ -205,7 +190,5 @@ class OpeningMixin:
             self.open_rom(path)
         elif kind == "table":
             self.open_table(path)
-        elif kind == "font":
-            self.open_font(path)
         else:
             self.import_file(path, kind)

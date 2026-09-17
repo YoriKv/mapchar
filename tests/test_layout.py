@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import string
 import unicodedata
 from dataclasses import replace
 
@@ -9,7 +10,17 @@ from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.engines.layout import char_layout, layout, measure, unspellable, wrap
 from mapchar.pipeline.extract import extract
 
-FONT = Font(None, 8, 8, 16, 0, " ABCDEFGHIJKLMNOPQRSTUVWXYZ", widths=(4,) + (6,) * 26)
+FONT = Font(
+    "Test",
+    16,
+    height=8,
+    ascent=6,
+    advances={" ": 4, **{c: 6 for c in string.ascii_uppercase}},
+    default_advance=8,
+    missing=frozenset(string.ascii_lowercase),
+)
+"""A measured font as the UI hands one over: capitals six pixels wide, a
+four-pixel space, and no lower case at all."""
 BOX = TextBox(
     width=32,
     height=16,
@@ -29,11 +40,11 @@ def test_layout_places_and_flags_overflow():
     )
     tokens = ex.strings[0].original
     result = layout(tokens, FONT, BOX)
-    xs = [(p.glyph, p.x, p.y) for p in result.placements]
-    assert xs[:3] == [(1, 0, 0), (2, 6, 0), (0, 12, 0)]
+    placed = [(p.text, p.x, p.y) for p in result.placements]
+    assert placed[:3] == [("A", 0, 0), ("B", 6, 0), (" ", 12, 0)]
     assert any(p.overflow for p in result.placements)  # CDEF runs past 32 px
     assert result.overflow_width and not result.overflow_lines
-    assert [p for p in result.placements if p.y == 8][0].glyph == 7  # G on line 2
+    assert [p for p in result.placements if p.y == 8][0].text == "G"  # G on line 2
     result = layout("A[line]B[line]C", FONT, BOX)
     assert result.overflow_lines
 
@@ -52,31 +63,33 @@ def test_measure_and_wrap():
     assert text == "AB[color $03]C"
 
 
-def test_space_without_a_glyph_is_never_a_gap():
-    """A space takes the font's space width and places nothing to tint."""
-    font = Font(None, 8, 8, 16, 1, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", space=4, missing=99)
+def test_a_space_the_font_cannot_draw_is_never_a_gap():
+    """A space advances and places nothing, drawable or not."""
+    font = replace(FONT, missing=frozenset(" "))
     result = layout("A B", font, BOX)
-    assert [(p.glyph, p.x) for p in result.placements] == [(1, 0), (2, 12)]
+    assert [(p.text, p.x) for p in result.placements] == [("A", 0), ("B", 10)]
 
 
-def test_unmatched_bytes_draw_the_missing_glyph():
-    font = replace(FONT, missing=99)
-    assert [p.glyph for p in layout("A[$FF]B", font, BOX).placements] == [1, 99, 2]
+def test_unmatched_bytes_draw_a_placeholder():
+    placed = [(p.text, p.missing, p.x) for p in layout("A[$FF]B", FONT, BOX).placements]
+    assert placed == [("A", False, 0), ("", True, 6), ("B", False, 14)]
     ts = table_set(ASCII_TABLE, "main")
     ex = extract(b"A\xff\x00", BlockConfig(RangeSource(0, 3), EndToken(), "main"), ts)
     tokens = ex.strings[0].original
-    assert [p.glyph for p in layout(tokens, font, BOX).placements] == [1, 99]
+    assert [p.missing for p in layout(tokens, FONT, BOX).placements] == [False, True]
 
 
-def test_multi_character_override_beats_single_characters():
-    font = replace(FONT, glyphs={"TH": 40})
-    assert [p.glyph for p in layout("THE", font, BOX).placements] == [40, 5]
-    assert measure("THE", font, BOX) == 14
-    # The same inside one multi-character text entry's token.
-    ts = table_set(ASCII_TABLE + "FD=THE\n", "main")
-    ex = extract(b"\xfd\x00", BlockConfig(RangeSource(0, 2), EndToken(), "main"), ts)
+def test_text_the_font_cannot_draw_is_placed_and_marked():
+    """It still takes room — only a box is drawn where the character was."""
+    placed = [(p.text, p.missing) for p in layout("Aq", FONT, BOX).placements]
+    assert placed == [("A", False), ("q", True)]
+
+
+def test_a_code_draws_nothing():
+    ts = table_set(ASCII_TABLE + "FD=[icon]\n", "main")
+    ex = extract(b"A\xfdB\x00", BlockConfig(RangeSource(0, 4), EndToken(), "main"), ts)
     tokens = ex.strings[0].original
-    assert [p.glyph for p in layout(tokens, font, BOX).placements] == [40, 5]
+    assert [p.text for p in layout(tokens, FONT, BOX).placements] == ["A", "B"]
 
 
 def test_unspellable_lists_what_the_font_cannot_draw():
@@ -95,51 +108,39 @@ def test_wrap_page_and_newline_in_either_order():
     assert wrap("AB[page][line]CD", FONT, BOX, "line", "page")[0] == "AB[page][line]CD"
 
 
-def test_wrap_measures_space_and_glyph_effects():
-    box = replace(
-        BOX,
-        effects={
-            **BOX.effects,
-            "pad": CodeEffect(Effect.SPACE, 20),
-            "icon": CodeEffect(Effect.GLYPH, 5),
-        },
-    )
+def test_wrap_measures_space_effects():
+    box = replace(BOX, effects={**BOX.effects, "pad": CodeEffect(Effect.SPACE, 20)})
     assert wrap("AB[pad]CD", FONT, box, "line")[0] == "AB[pad][line]CD"
-    assert wrap("AB[icon]CDE", FONT, box, "line")[0] == "AB[icon][line]CDE"
 
 
 KANA_FONT = Font(
-    None,
-    8,
-    8,
+    "Test",
     16,
-    0x40,
-    "あいうえお",
-    glyphs={"[line]": 0x7F, "がぎ": 0x50},
-    widths=(8,) * 0x60,
+    height=8,
+    ascent=6,
+    advances={c: 8 for c in "あいうえおぎ"},
+    default_advance=8,
+    missing=frozenset("が"),
 )
 
 
-def test_a_decomposed_kana_takes_one_glyph_slot():
+def test_a_decomposed_kana_is_one_character():
     decomposed = unicodedata.normalize("NFD", "い")  # い has no mark of its own
     assert decomposed == "い"
     text = unicodedata.normalize("NFD", "あい")
     result = layout(text, KANA_FONT, TextBox(width=64, height=8, line_height=8))
-    assert [p.glyph for p in result.placements] == [0x40, 0x41]
+    assert [p.text for p in result.placements] == ["あ", "い"]
     assert [p.x for p in result.placements] == [0, 8]
 
 
-def test_a_multi_character_override_wins_over_its_first_kana():
-    # A font may draw two kana in one cell; the override is matched whole,
-    # whatever form the text arrived in.
-    text = unicodedata.normalize("NFD", "がぎあ")
-    result = layout(text, KANA_FONT, TextBox(width=64, height=8, line_height=8))
-    assert [p.glyph for p in result.placements] == [0x50, 0x40]
+def test_a_decomposed_kana_is_reported_whole():
+    # However the text arrived, a kana the font cannot draw is one character
+    # missing, not a base character and a mark.
     assert unspellable(unicodedata.normalize("NFD", "が"), KANA_FONT) == ["が"]
 
 
 CHAR_BOX = replace(BOX, chars_per_line=5, lines_per_page=2)
-"""A box for a block with no font: five characters a line, two lines a page."""
+"""A box that counts: five characters a line, two lines a page."""
 
 
 def test_char_layout_counts_characters_and_lines():
@@ -149,8 +150,8 @@ def test_char_layout_counts_characters_and_lines():
     assert over.overflow_width and not over.overflow_lines
     tall = char_layout("A[line]B[line]C", CHAR_BOX)
     assert tall.overflow_lines and tall.lines == 3
-    # A page code starts the count over; a space or glyph code takes a cell;
-    # a decomposed kana is one character; an end code stops the count.
+    # A page code starts the count over; a space code takes a cell; a
+    # decomposed kana is one character; an end code stops the count.
     paged = char_layout("A[line]B[page]C[line]D", CHAR_BOX)
     assert paged.lines == 2 and not paged.overflows
     effects = {**CHAR_BOX.effects, "sp": CodeEffect(Effect.SPACE, 4)}

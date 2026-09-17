@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from mapchar.core.font import CodeEffect, TextBox
-from mapchar.core.table import TokenKind
-from mapchar.core.tokens import plain_text
+from mapchar.core.font import CodeEffect, Font, TextBox
+from mapchar.core.tokens import Token
 from mapchar.engines.layout import code_effects, with_code_effects
 from mapchar.project.workspace import Entry
+from mapchar.ui.preview_font import preview_font
 from mapchar.ui.undo_commands import BoxCommand
 
 
@@ -21,21 +21,10 @@ class PreviewMixin:
         entry = self._current_block(complain="Select a block to preview.")
         if entry is None:
             return
-        fonts = self.workspace.fonts()
         if entry.box is None:
-            bound = TextBox(font_index=0 if fonts else None)
-        elif entry.box.font_index is None and fonts:
-            from dataclasses import replace
-
-            bound = replace(entry.box, font_index=0)
-        else:
-            bound = entry.box
-        if bound != entry.box:
             # The first Preview of a block gives it a box; that is an edit the
             # project saves, so it is an undo step too.
-            self._push_command(BoxCommand(self, entry, entry.box, bound))
-        if not fonts:
-            self._error("Open a font (File ▸ Open Font…) first.")
+            self._push_command(BoxCommand(self, entry, None, TextBox()))
         self._sync_preview(force=True)
         self.preview_window.show()
         self.preview_window.raise_()
@@ -46,12 +35,9 @@ class PreviewMixin:
         entry = self._current_block(need_doc=True)
         if entry is None:
             return
-        font_entry = self._bound_font(entry)
-        self.preview_window.set_font(font_entry.font if font_entry else None)
         self.preview_window.set_box(
             entry.box or TextBox(), self._code_labels(), self._code_effects_of(entry)
         )
-        self.preview_window.set_table_chars(self._table_chars())
         selected = self.strings.selected_indices()
         rec = self._string(entry, selected[0]) if selected else None
         if rec is None and entry.doc.strings:
@@ -63,16 +49,14 @@ class PreviewMixin:
 
     def _on_box_changed(self, box: TextBox) -> None:
         entry = self._current_block()
-        if entry is None:
+        if entry is None or entry.box == box:
             return
-        from dataclasses import replace
+        self._push_command(BoxCommand(self, entry, entry.box, box))
 
-        after = replace(
-            box, font_index=entry.box.font_index if entry.box else box.font_index
-        )
-        if entry.box == after:
-            return
-        self._push_command(BoxCommand(self, entry, entry.box, after))
+    def _on_preview_font_changed(self) -> None:
+        """The app's preview font changed: every surface measured through it —
+        the *overflows box* status above all — is drawn again."""
+        self._refresh_view()
 
     def apply_box(self, entry: Entry, box: TextBox | None, revision: int) -> None:
         entry.box = box
@@ -93,29 +77,26 @@ class PreviewMixin:
         tables = self._table_set_of(entry)
         return code_effects(tables, cfg.line_label if cfg is not None else "line")
 
+    def _layout_font(
+        self, box: TextBox | None, *sources: list[Token] | str
+    ) -> Font | None:
+        """The font ``box`` lays out through: the app's preview font, measured
+        for everything ``sources`` draws.
+
+        ``None`` where the box counts characters instead — *chars per line* is
+        what a block whose own font is on a grid says so with, and counting is
+        then truer to it than measuring a stand-in family.
+        """
+        if box is None or box.chars_per_line > 0:
+            return None
+        return preview_font().measured(*sources)
+
     def _layout_box(self, entry: Entry | None) -> TextBox | None:
         """``entry``'s box as layout sees it: the codes' effects from its
         tables under what the box itself sets."""
         if entry is None or entry.box is None:
             return None
         return with_code_effects(entry.box, self._code_effects_of(entry))
-
-    def _table_chars(self) -> str:
-        """The start table's one-character text entries in key order.
-
-        What the Font tab's *Fill from table* lays over the sheet: a table
-        whose codes run in the sheet's order spells the font in one gesture.
-        """
-        tables = self._table_set()
-        if tables is None:
-            return ""
-        out = []
-        for e in tables.start.sorted_entries():
-            if e.kind is TokenKind.TEXT and e.label is None:
-                text = plain_text(e.text)
-                if len(text) == 1:
-                    out.append(text)
-        return "".join(out)
 
     def _code_labels(self) -> list[str]:
         """Every code label of the current table set, for the Codes tab."""

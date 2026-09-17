@@ -20,15 +20,8 @@ class WrapMixin:
         if not self._can(Capability.WRAP):
             return
         entry = self._entry
-        font_entry = self._bound_font(entry)
-        font = font_entry.font if font_entry is not None else None
-        # A block with no font wraps by characters, when its box says how
-        # many a line holds.
         if entry is None or entry.box is None:
-            self._error("Bind a font and a text box first.")
-            return
-        if font is None and entry.box.chars_per_line <= 0:
-            self._error("Bind a font, or set the box's chars per line, first.")
+            self._error("Give the block a text box first, in the Preview window.")
             return
         box = self._layout_box(entry)
         newline = next(
@@ -48,12 +41,16 @@ class WrapMixin:
         indices = self.strings.selected_indices() or [
             r.index for r in entry.doc.strings[:1]
         ]
-        edits = {}
+        texts = {}
         for index in indices:
             rec = self._string(entry, index)
-            if rec is None:
-                continue
-            text = rec.current_text()
+            if rec is not None:
+                texts[index] = rec.current_text()
+        # Measured once for every string about to be wrapped, so the font
+        # knows each character before the first word is placed.
+        font = self._layout_font(box, *texts.values())
+        edits = {}
+        for index, text in texts.items():
             wrapped, _ = wrap_text(text, font, box, newline, page)
             if wrapped != text:
                 edits[index] = wrapped

@@ -21,21 +21,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.font import CodeEffect, Effect, Font, TextBox
+from mapchar.core.font import CodeEffect, Effect, TextBox
 from mapchar.core.tokens import Token
 from mapchar.engines.layout import Layout, layout, unspellable, with_code_effects
 from mapchar.ui.font_tab import FontTab
-from mapchar.ui.glyph_sheet import GlyphSheet
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.number_fields import number_spin
+from mapchar.ui.preview_font import preview_font
+from mapchar.ui.preview_render import render
 from mapchar.ui.widgets import ElidedLabel, EscapeCloses, show_elided_tooltips
 from mapchar.ui.window_layout import remember_layout
 
 
 class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
-    font_changed = Signal(object)
-    """A new Font value for the bound font entry."""
+    font_changed = Signal()
+    """The app's preview font changed: redraw whatever was drawn through it."""
     box_changed = Signal(object)
     """A new TextBox value for the current block."""
     wrap_requested = Signal()
@@ -46,9 +47,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         # Size and position remembered between runs, like every tool
         # window (:mod:`mapchar.ui.window_layout`).
         self._layout = remember_layout(self, "preview_window")
-        self._font: Font | None = None
         self._box = TextBox()
-        self._sheet: GlyphSheet | None = None
         self._result: Layout | None = None
         self._source: list[Token] | str | None = None
         """The tokens or script text being previewed; ``None`` until one is."""
@@ -57,7 +56,6 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         self._defaults: dict[str, CodeEffect] = {}
         """What each code does before the box says otherwise: the effects its
         table entry declares, and the block's line code."""
-        self._table_chars = ""
         self._syncing = False
         layout_ = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -112,7 +110,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
 
         # Font tab.
         self.font_tab = FontTab()
-        self.font_tab.font_changed.connect(self.font_changed)
+        self.font_tab.font_changed.connect(self._on_font_changed)
         self.tabs.addTab(self.font_tab, "Font")
 
         # Box tab.
@@ -125,8 +123,8 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         self.lines = number_spin(0, 64, 2, special="fit")
         self.chars = number_spin(0, 999, 3, special="off")
         self.chars.setToolTip(
-            "Characters a line holds, for a block with no font: overflows box "
-            "and Wrap then count characters"
+            "Characters a line holds: overflows box and Wrap then count "
+            "characters instead of measuring them"
         )
         self.origin_x = number_spin(0, 1024, 3)
         self.origin_y = number_spin(0, 1024, 3)
@@ -181,21 +179,11 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         self.prev.setIcon(themed_icon(self, Glyph.ARROW_LEFT, role))
         self.next.setIcon(themed_icon(self, Glyph.ARROW_RIGHT, role))
 
-    def set_font(self, font: Font | None) -> None:
-        """Show ``font``: the Font tab's fields, and the preview through it."""
-        self.font_tab.set_font(font)
-        self._font, self._sheet = font, self.font_tab.sheet
+    def _on_font_changed(self) -> None:
+        """The Font tab picked another family: redraw, and tell the window so
+        every other surface measured through it catches up."""
         self._paint()
-
-    def update_font(self, font: Font | None) -> None:
-        """A new value for the font the fields already show: redraw only."""
-        self.font_tab.update_font(font)
-        self._font, self._sheet = font, self.font_tab.sheet
-        self._paint()
-
-    def set_table_chars(self, chars: str) -> None:
-        """The start table's single-character text, in key order, for Fill."""
-        self.font_tab.set_table_chars(chars)
+        self.font_changed.emit()
 
     def update_box(self, box: TextBox) -> None:
         """A new value for the box the fields already show: redraw only."""
@@ -252,28 +240,30 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
 
     def _paint(self) -> None:
         source = self._source
-        if self._font is None or self._sheet is None or source is None:
+        if source is None:
             self.canvas.clear()
-            self.status.setText("Bind a font to the block (Font tab).")
+            self.status.setText("Select a string to preview.")
             return
+        chosen = preview_font()
+        font = chosen.measured(source)
         box = with_code_effects(self._box, self._defaults)
-        self._result = layout(source, self._font, box)
-        image = self._sheet.render(
-            self._result,
+        result = self._result = layout(source, font, box)
+        image = render(
+            result,
+            font,
             box,
+            chosen.qfont,
             self._page,
             self.zoom.value(),
             self.grid.isChecked(),
         )
         self.canvas.setPixmap(QPixmap.fromImage(image))
-        parts = [f"page {self._page + 1}/{self._result.pages}"]
-        if self._result.overflow_width:
+        parts = [f"page {self._page + 1}/{result.pages}"]
+        if result.overflow_width:
             parts.append("too wide")
-        if self._result.overflow_lines:
+        if result.overflow_lines:
             parts.append("too many lines")
-        if not self._sheet.ok:
-            parts.append("sheet not found")
-        missing = unspellable(source, self._font)
+        missing = unspellable(source, font)
         if missing:
             parts.append(f"{len(missing)} not in font: " + ", ".join(missing[:8]))
         self.status.setToolTip(
@@ -281,7 +271,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         )
         self.status.setText("  ·  ".join(parts))
         self.prev.setEnabled(self._page > 0)
-        self.next.setEnabled(self._page + 1 < self._result.pages)
+        self.next.setEnabled(self._page + 1 < result.pages)
 
     def set_readout(self, text: str) -> None:
         """The byte budget of the draft being typed, from the window."""

@@ -266,7 +266,7 @@ class EntriesMixin:
             self._applying_undo = False
 
     def _same_named(self, entry: Entry) -> Entry | None:
-        """A table or font row already on ``entry``'s path."""
+        """A row of the same kind already on ``entry``'s path."""
         if not entry.path:
             return None
         return next(

@@ -20,12 +20,12 @@ class SessionMixin:
         """The single funnel for switching which entry is on screen.
 
         Capture the outgoing session, load the incoming document, restore the
-        widgets, refresh once. Three kinds of entry never *become* the view and
-        take their own route out: a table, which opens in the Table Editor, a
-        font, which opens the Preview window's Font tab, and a bookmark, which
-        jumps the entry that owns its bytes. A folder is not even that: it
-        leaves the view as it was, as a group heading does. None of them touches
-        ``workspace.current``, because a row that cannot be the view must not
+        widgets, refresh once. Two kinds of entry never *become* the view and
+        take their own route out: a table, which opens in the Table Editor, and
+        a bookmark, which jumps the entry that owns its bytes. A folder is not
+        even that: it leaves the view as it was, as a group heading does.
+        Neither touches ``workspace.current``, because a row that cannot be the
+        view must not
         claim to be it — everything that reads ``current`` (the undo commands'
         reach, the visit trail, the title) would then be pointing at a document
         that is not loaded.
@@ -37,9 +37,6 @@ class SessionMixin:
         """
         if entry is not None and entry.kind is EntryKind.TABLE:
             self._edit_table_entry(entry)
-            return
-        if entry is not None and entry.kind is EntryKind.FONT:
-            self._edit_font_entry(entry)
             return
         if entry is not None and entry.kind is EntryKind.BOOKMARK:
             self._jump_to_bookmark(entry)

@@ -43,10 +43,9 @@ if TYPE_CHECKING:
 GROUPS = {
     EntryKind.FILE: "String Data",
     EntryKind.TABLE: "Tables",
-    EntryKind.FONT: "Fonts",
 }
-# The row markers: a glyph in a palette role. Files and fonts sit under their
-# own group headings and carry no mark; a bookmark wears the accent.
+# The row markers: a glyph in a palette role. Files sit under their own group
+# heading and carry no mark; a bookmark wears the accent.
 MARKERS: dict[EntryKind, tuple[Glyph, QPalette.ColorRole]] = {
     EntryKind.BLOCK: (Glyph.GRID_ROWS, QPalette.ColorRole.Text),
     EntryKind.FOLDER: (Glyph.FOLDER, QPalette.ColorRole.Text),

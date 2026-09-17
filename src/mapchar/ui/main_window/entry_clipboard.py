@@ -88,7 +88,7 @@ class EntryClipboardMixin:
         movable = self._roots([e for e in entries if e.is_child])
         if not movable:
             self.statusBar().showMessage(
-                "A ROM, table or font can only be open once — duplicate one of "
+                "A ROM or table can only be open once — duplicate one of "
                 "its blocks or bookmarks instead.",
                 5000,
             )

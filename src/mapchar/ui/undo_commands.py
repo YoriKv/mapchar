@@ -7,7 +7,7 @@ handling for free while ``core``/``pipeline``/``project`` stay Qt-free.
 
 One **unified session stack** holds every command in chronological order — files
 panel structure, per-entry configuration, view moves, string edits, hex
-overtypes, table and font edits, writes to disk — so a single Ctrl+Z always
+overtypes, table edits, writes to disk — so a single Ctrl+Z always
 reverts the most recent action whichever surface made it. Three things follow
 from that, and they are what :class:`_StateCommand` exists to state once:
 
@@ -47,11 +47,10 @@ from mapchar.project.workspace import Entry
 # never merges; any other command landing in between breaks the chain.
 OFFSET_ID = 1
 FIELD_ID = 2
-FONT_ID = 3
-BOX_ID = 4
-BLOCK_ID = 5
-STRINGS_ID = 6
-GLOSSARY_ID = 7
+BOX_ID = 3
+BLOCK_ID = 4
+STRINGS_ID = 5
+GLOSSARY_ID = 6
 
 
 class _StateCommand(QUndoCommand):
@@ -149,7 +148,7 @@ class _MergingCommand(_StateCommand):
     back when the step is dropped.
 
     The token goes back to the command's own entry, which is right for
-    everything held here — a status, a note, a font, a text box all belong to
+    everything held here — a status, a note, a text box all belong to
     one entry. Bytes do not, so :class:`StringsEditCommand` overrides the merge
     and hands the token back to every entry sharing them.
     """
@@ -529,19 +528,6 @@ class _ValueCommand(_MergingCommand, _InPlaceCommand):
 
     def _apply(self, state) -> None:
         raise NotImplementedError
-
-
-class FontCommand(_ValueCommand):
-    """A font entry's ``Font``: sheet geometry, its alphabet and its widths."""
-
-    _id = FONT_ID
-
-    def __init__(self, window, entry: Entry, before, after):
-        super().__init__(window, entry, before, after, f"Edit font {entry.name}")
-
-    def _apply(self, state) -> None:
-        font, revision = state
-        self.window.apply_font(self.entry, font, revision)
 
 
 class BoxCommand(_ValueCommand):

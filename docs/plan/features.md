@@ -39,8 +39,7 @@ the preview system in [preview.md](preview.md).
   - **bookmark** — a saved offset and settings snapshot in a file;
   - **folder** — a group of a file's blocks, bookmarks and folders in the
     Files panel; it changes nothing about the rows it holds;
-  - **table** — a table file registered for use by blocks and the raw view;
-  - **font** — a glyph sheet registered for [preview](preview.md).
+  - **table** — a table file registered for use by blocks and the raw view.
 - **Interpretation chain** — bytes reach the screen through three configurable
   steps, each run in reverse on write:
   - **container** — unwraps the file: an iNES or SNES copier header, an N64
@@ -64,8 +63,7 @@ the preview system in [preview.md](preview.md).
 
 ## Window layout
 
-- **Left column:** the **Files** dock on top. Below it, **Tables** and
-  **Fonts** share one tabbed dock.
+- **Left column:** the **Files** dock, which lists the tables too.
 - **Right column:** the editing surface, top to bottom:
   - the **Format** bar: **Table** with **Edit…**, the **Show as**
     **Strings** / **Pointers** mode and, for pointers, **Follow pointers** (see
@@ -113,20 +111,18 @@ the preview system in [preview.md](preview.md).
   after the file, numbered up (`main_2`) past a loaded table of that name. The
   Table list and the Files panel's context menu offer it too; from the
   Table list the new table becomes the reading's table.
-- **File ▸ Open Font…** registers a glyph sheet.
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
   [Dump, export and import](#dump-export-and-import)).
 - **Drag and drop** onto the window: `.mapchar` opens the project and claims
-  the whole drop; `.tbl` registers a table; `.png` registers a font; `.tsv`,
+  the whole drop; `.tbl` registers a table; `.tsv`,
   `.csv` and `.po` import as translator files; a `.txt` carrying a native
   script or table header imports or registers as that; anything else opens as
   a ROM. Hold **Ctrl** while dropping to be asked instead.
 
 ## The Files panel
 
-- **Grouping** — rows are grouped under **String Data**, **Tables** and
-  **Fonts**.
+- **Grouping** — rows are grouped under **String Data** and **Tables**.
   Blocks and bookmarks nest under their file, in folders or directly, and a
   block opens to its strings: one row each, `index  text`, the text on one line and cut short
   with `…`; the tooltip has the string's address and its whole text. The rows
@@ -154,9 +150,8 @@ the preview system in [preview.md](preview.md).
 - **Tooltips** give paths, container, offset and length, the start table, and
   any notice text, each notice's fuller detail indented under it.
 - **Selecting** — click opens an entry, and an arrow key onto a row opens it
-  the same way; a table opens the Table Editor and a font the Preview
-  window's Font tab, neither becoming the view; a folder, like a group
-  heading, leaves the view as it was; Shift/Ctrl extend the
+  the same way; a table opens the Table Editor without becoming the view; a
+  folder, like a group heading, leaves the view as it was; Shift/Ctrl extend the
   selection; with several rows selected only Remove, Move
   Up/Down and, on a file's rows, New Folder apply. A block's row confines the view to its source, from its
   start — the range, the fixed strings, the pointer table, or the stretch a
@@ -184,8 +179,8 @@ the preview system in [preview.md](preview.md).
 - **Reorder** by drag or Alt+Up/Down. A drag moves the selection when it
   starts on it: dropped between two rows of a file or folder, the rows land
   there; dropped onto a file or folder, they go last inside it. A file's rows
-  only move under that file and a folder never into itself; files, tables
-  and fonts only reorder within their group. **Sort by** Name, Type or
+  only move under that file and a folder never into itself; files and tables
+  only reorder within their group. **Sort by** Name, Type or
   (a file's rows) Offset puts the rows the clicked row sits among in order —
   one folder's, one file's top level, or one group's. By name and by type
   folders come first; by offset a folder sits where its earliest row does.
@@ -216,9 +211,9 @@ the preview system in [preview.md](preview.md).
 
 - **One table per file** — a table file holds one table, named by its
   `@table` line or else after the file.
-- **Tables dock** lists one row per table, `@id` and its entry count, with the
-  file and dialect in the tooltip. The table the current entry reads through is
-  marked; double-click makes it the reading's table.
+- **The Files panel's Tables group** lists one row per table, with the file,
+  the dialect and the entry count in the tooltip. Which table the current entry
+  reads through is the Format bar's **Table** pick.
 - **Dialects** — the native grammar loads directly. romjuice, Cartographer,
   Atlas and abcde files load through their dialect and are shown converted;
   **Save As File** writes the conversion out in the native grammar. A legacy
@@ -230,7 +225,7 @@ the preview system in [preview.md](preview.md).
   list its overrides.
 - **Includes** — a table can start from other loaded tables (`@include`) and
   only list what differs: a battle table that is the script's with a few codes
-  redefined, or two fonts' tables sharing one table of control codes. An
+  redefined, or two scripts' tables sharing one table of control codes. An
   include that is not loaded, or tables that include each other, make every
   reading through the table fail with that error, as a switch to a table that
   is not loaded does; an edit to an included table reaches every table that
@@ -242,7 +237,7 @@ the preview system in [preview.md](preview.md).
   ([preview.md](preview.md#code-effects)); a *pause* only says what the code
   is.
 - **Falling through** — a switch parameter can let its frame read what its
-  table has no entry for in the table beneath, so a font switched to for the
+  table has no entry for in the table beneath, so a table switched to for the
   rest of a string need not repeat the codes it shares.
 - **Encodings as tables** — every charset is also offered in the Table list as
   a table of its own, under the loaded tables: that encoding with a NUL of its
@@ -681,8 +676,7 @@ The editing surface, opened on a block.
   **edited** (they say something else), **review** and **done** (set by hand
   — **Edit ▸ Toggle Review / Toggle Done on Selected**, Ctrl+Alt+D for done —
   or by import, and kept whatever the text does), and **overflows box** when
-  a preview font is bound or the box sets characters per line (see
-  [preview.md](preview.md#text-boxes)). Nothing is ever *too long* or
+  the block has a text box (see [preview.md](preview.md#text-boxes)). Nothing is ever *too long* or
   *invalid*: the bytes cannot hold such a text, so an edit that would need
   them is refused instead.
 - **Editing** — the Translation cell is a multi-line editor, opened on the
@@ -715,9 +709,9 @@ The editing surface, opened on a block.
     comment as its tooltip;
   - the byte readout updates as you type, from a live encode, against the
     room the string has; the Preview follows the draft and lists what the
-    font cannot spell;
+    font cannot draw;
   - **Revert** puts the original back; the Preview window's **Wrap
-    Translation** (font and box bound) inserts line codes to fit the box; see
+    Translation** inserts line codes to fit the block's box; see
     [preview.md](preview.md#wrapping);
   - **Apply to Identical Originals**, in Block or in Project, puts the
     selected string's text into every string whose original is the same. One
@@ -892,8 +886,8 @@ The editing surface, opened on a block.
 
 ## Preview
 
-A font entry plus a text box turn a string into a picture of how it lays out
-in the game. It is described in [preview.md](preview.md).
+A text box and the app's preview font turn a string into a picture of how it
+lays out in the game. It is described in [preview.md](preview.md).
 
 ## Hex panel
 
@@ -916,10 +910,10 @@ in the game. It is described in [preview.md](preview.md).
 - A `.mapchar` project stores **references and settings, never bytes**:
   every entry with its chain, block configuration, a file's reading; the
   folders and which rows each holds; per
-  string its **original**, status and notes; table edits made in-app; font
-  bindings and text boxes; the glossary; the view position per entry.
+  string its **original**, status and notes; table edits made in-app; text
+  boxes; the glossary; the view position per entry.
   Translations are not in it: they are the ROM's bytes.
-- Not saved: zoom, theme, window layout, undo history.
+- Not saved: zoom, theme, the preview font, window layout, undo history.
 - **New / Open / Open Recent / Save / Save As** as in celPix; paths are stored
   relative to the project file; older versions are upgraded on load, which the
   status line says, and newer ones open with what this build understands. A
@@ -984,7 +978,7 @@ in the game. It is described in [preview.md](preview.md).
 - **One history** for the session: entry open, close, paste, rename, reorder,
   new folders and moves between them;
   block, container and table edits; view moves; string edits, status changes
-  and notes; hex overtypes; font and box edits; writes to disk.
+  and notes; hex overtypes; box edits; writes to disk.
 - **Ctrl+Z / Ctrl+Shift+Z** undo the latest action from any surface. Undoing
   a change made elsewhere switches back to that entry **and** the view it was
   made in — the Strings tab on its row, the Hex tab at its offset.

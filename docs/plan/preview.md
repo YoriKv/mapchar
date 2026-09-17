@@ -1,48 +1,28 @@
 # Layout and preview
 
-The secondary system: rendering a string through a game's font to show how it
-fits its text box. It never changes what is written to the ROM; it reads the
-encoded bytes of a string and draws them.
+The secondary system: drawing a string into its text box to show how it fits.
+It never changes what is written to the ROM; it reads the encoded bytes of a
+string and draws them.
 
-## Fonts
+## The preview font
 
-A **font** entry is a glyph sheet image plus a map:
+The preview draws in a **system font**, not in the game's own art. One family
+and size serve the whole app: they are picked in the Preview window's **Font**
+tab and stored beside the theme, per machine and never in the project. Nothing
+about a font is a project entry, and no block binds one.
 
-- **Sheet** — a PNG, indexed or RGB, cut into cells of `cell width × cell
-  height` pixels, `columns` across, numbered row-major from zero.
-- **Map** — which glyph each table token draws:
-  - a **character string** laid over consecutive glyph indices from `base`
-    (`ABCDEFGHIJKLMNOPQRSTUVWXYZ…`), as celPix's Font Alphabet does; one glyph
-    per character, where a character is a base plus the combining marks that
-    follow it, so a decomposed dakuten kana takes one glyph and not two;
-  - explicit `text → glyph index` overrides for text the string cannot
-    express — a `[code]`, or several characters drawn as one glyph. Rendering
-    tries the longest override first, so `th → glyph` fires inside a word;
-  - a **space** width and a **missing** glyph.
-- **Widths** — for variable-width fonts, an advance width per glyph from a
-  width list in the map, or **Measure Widths** from the sheet: the last inked
-  column of each cell plus the **Gap** set beside the button. **Fixed Width**
-  gives every glyph the cell's full width.
-- **Colour** — on an indexed sheet the chosen palette index is transparent; an
-  RGB sheet takes the top-left pixel's colour, as does an indexed one with no
-  index given. The rest draw as in the sheet.
+The point is fit, not fidelity. A stand-in family says whether a translation is
+too long for its box long before anyone has ripped the game's glyphs, and a
+family that cannot draw a game's kana says so the moment it is picked — the tab
+shows a sample line in it.
 
-Fonts are listed in the **Fonts** panel, which shares a tabbed dock with
-**Tables**, and are edited in the Preview window's Font tab. The map is saved
-in the project; the PNG is referenced by path.
-
-The Font tab shows the sheet as a grid of cells, each captioned with what it
-spells, at its own zoom; a click picks one cell or a whole row, and the pick
-is where the alphabet starts:
-
-- **Fill from Table** lays the start table's one-character text over the
-  glyphs from the pick, in key order;
-- **Fill With…** does the same for `A–Z`, `a–z`, `0–9`, the three together,
-  printable ASCII, `あ-ん`, `ア-ン` or a typed string;
-- **Shift Up** / **Shift Down** move the whole alphabet one row of glyphs;
-- **Copy Alphabet** / **Paste Alphabet** carry it as `20=A` lines, one glyph
-  per line;
-- **Add Mapping** adds a row that draws a text or `[code]` as one glyph.
+Measuring a real font is Qt's work, so `ui/preview_font.py` does it and the
+Qt-free engine never sees a `QFont`. `PreviewFont.measured()` walks everything
+a string draws (`layout.drawn_text`), asks `QFontMetrics` for each character
+once, and freezes the answers into `core.font.Font`: the family and size, the
+line's height and baseline, an advance per character, and the set of characters
+the family has no glyph for. That value is what `engines/layout.py` measures
+with.
 
 ## Text boxes
 
@@ -52,17 +32,18 @@ A **box** belongs to a block and says where text goes:
 |----------------|-----------------------------------------------------------|
 | `width`, `height` | in pixels                                              |
 | `line height`  | pixels per line                                           |
-| `letter spacing` | pixels added after every glyph                          |
+| `letter spacing` | pixels added after every character                      |
 | `lines per page` | how many lines fit before the box must clear            |
-| `chars per line` | how many characters a line holds, for a block with no font; *off* by default |
-| `origin`       | where the first glyph's top-left sits inside the box      |
+| `chars per line` | how many characters a line holds; *off* by default      |
+| `origin`       | where the first character's top-left sits inside the box |
 
-A block with no font bound still has a box. With `chars per line` set, the
-**overflows box** status, the byte readout's `chars` and `lines` counts and
-**Wrap Translation** work by counting characters instead of measuring
-glyphs: every character is one cell, a *space* or *glyph* code one cell, a
-*newline* code ends the line, a *page* code the page, and `lines per page`
-bounds the page when it is set.
+`chars per line` is what a box says it counts by. With it set, the **overflows
+box** status, the byte readout's `chars` and `lines` counts and **Wrap
+Translation** count characters instead of measuring them: every character is
+one cell, a *space* code one cell, a *newline* code ends the line, a *page*
+code the page, and `lines per page` bounds the page when it is set. A game
+whose own font is on a grid is truer counted than measured through a stand-in
+family, so a box that sets it is never measured.
 
 ## Code effects
 
@@ -75,7 +56,6 @@ Codes in the table set carry a **layout effect**:
 | *page*      | clears the box and starts at the origin                       |
 | *pause*     | draws nothing and advances nothing; the code is known to wait |
 | *space(N)*  | advances `N` pixels                                           |
-| *glyph(i)*  | draws glyph `i`                                               |
 | *end*       | stops rendering                                               |
 
 A code's effect comes from, last word first:
@@ -89,26 +69,24 @@ A code's effect comes from, last word first:
 
 The Codes tab shows each code's effect from wherever it comes, with what it
 is without a pick in the tooltip, and the box keeps only picks that differ
-from that.
-*space* and *glyph* belong to a box alone: they are pixels and glyphs of one
-font.
+from that. *space* belongs to a box alone: it is pixels of one box.
 
 ## Rendering
 
 - The Preview window follows the selected string in the Strings view and
   draws its **translation** when one exists, else the original.
-- Rendering walks the string's tokens: text tokens draw their glyphs and
-  advance; codes apply their effect; unmatched bytes draw the missing glyph.
-  A space with no glyph of its own advances the font's space width and draws
-  nothing — a space is never a missing glyph.
-- Text the font cannot spell is listed under the preview, beside the byte
+- Rendering walks the string's tokens: text tokens draw their characters and
+  advance; codes apply their effect and draw nothing; unmatched bytes draw a
+  box. A character the family cannot draw takes its room and is boxed too —
+  except a space, which advances and draws nothing, drawable or not.
+- Text the font cannot draw is listed under the preview, beside the byte
   readout of the draft being typed. The Preview follows the Translation cell
   as it is typed, not only what has been committed.
 - **Overflow** is reported per string, as the **overflows box** status in
   the Strings view: a line wider than the box, or more lines than a page
-  holds. The offending glyphs are tinted in the preview. With no font and
-  `chars per line` set, it is a line of more characters than that, or more
-  lines than `lines per page`.
+  holds. The offending characters are tinted in the preview. With `chars per
+  line` set, it is a line of more characters than that, or more lines than
+  `lines per page`.
 - **Pages** step with buttons when a string spans several.
 - **Zoom** and **Grid**, which rules the box in pixels; **Copy Image** puts
   the page as drawn on the clipboard.
@@ -122,17 +100,16 @@ line breaks to fit the box:
   *page* code;
 - words (runs between spaces) are laid out greedily; a word that would cross
   the box width starts a new line with the block's chosen newline code; a
-  word wider than the box is broken at a glyph;
-- codes are measured as they render: a *space(N)* effect advances `N`, a
-  *glyph(i)* effect advances that glyph, and any *newline* or *page* effect
-  breaks the line as its own code would;
+  word wider than the box is broken at a character;
+- codes are measured as they render: a *space(N)* effect advances `N`, and any
+  *newline* or *page* effect breaks the line as its own code would;
 - when the page's line count is reached, the block's *page* code is inserted
   when one exists, else the string is flagged as overflowing. A page starts on
   its own first line, so no newline code goes with it;
 - a *page* code already in the text starts the wrap over, on the first line
   of the next page;
 - the result is applied directly and is one undo step;
-- with no font bound, the box's `chars per line` is the width and every
-  character one cell; a *space* or *glyph* code advances one cell.
+- with `chars per line` set, it is the width and every character is one cell;
+  a *space* code advances one cell.
 
 Wrap applies to one string or to every selected string.

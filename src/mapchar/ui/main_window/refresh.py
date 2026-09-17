@@ -26,6 +26,11 @@ from mapchar.ui.raw_widget import RowModel
 VIEWS = ("raw", "text", "strings")
 """A session's name for each central tab, in tab order: Hex, Text, Strings."""
 
+SETTLE_MS = 120
+"""How long after the last move of a dragged view the refresh it put off runs.
+Long enough that a drag never pays for it, short enough that letting go and
+reading the panels feels immediate."""
+
 
 class RefreshMixin:
     """The refresh cycle: the single choke point after any change.
@@ -34,7 +39,7 @@ class RefreshMixin:
     rest of the window only through ``self``.
     """
 
-    def _refresh_view(self, *, moved: bool = False) -> None:
+    def _refresh_view(self, *, moved: bool = False, live: bool = False) -> None:
         """Re-render everything from the document as it stands.
 
         ``moved`` says only the view changed — its offset, its bounds, whether
@@ -42,6 +47,12 @@ class RefreshMixin:
         wherever the view is, is left as it is unless the move re-read them.
         Filling it is the one part of a refresh that costs by the string, and a
         move must cost nothing.
+
+        ``live`` says the view is being dragged, so another move is already on
+        its way: only the tab on screen is rendered, and everything that merely
+        reads where the view sits — the other tab, the side panels, the title's
+        unsaved marker — waits for the drag to settle
+        (:meth:`_on_view_settled`). What the drag shows is what it costs.
         """
         doc, entry = self._doc, self._entry
         block = self._current_block()
@@ -71,6 +82,14 @@ class RefreshMixin:
         tables = self._table_set()
         if not moved:
             self._text_decode = None
+        if live:
+            self._settle.start()
+            if self.tabs.currentWidget() is self.text:
+                self._refresh_text_mode(doc, tables)
+            else:
+                self._refresh_raw(doc, tables)
+            self._update_nav_status()
+            return
         reread = block is not None and self._extract_current(entry, doc, tables)
         # A block whose configuration never made it back — a project file that
         # held none — is still a block; it just has no reading to spell out.
@@ -97,7 +116,6 @@ class RefreshMixin:
         self._update_nav_status()
         self.search_window.set_data(doc.data)
         self.scan_window.set_source(doc.data, tables)
-        self.tables_panel.set_start_table(self._current_table_id())
         self._sync_hex_panel()
         self._sync_preview()
         self._sync_glossary()
@@ -107,6 +125,18 @@ class RefreshMixin:
         # point for an entry of the wrong kind.
         self._sync_capabilities()
         self._sync_steps()
+
+    def _on_view_settled(self) -> None:
+        """The dragged view has stopped: run the refresh its moves put off.
+
+        Reached by the settle timer and by letting go of the scrollbar, so a
+        drag that ends on a move the timer has not yet reached still catches up
+        at once. Harmless with nothing outstanding — it is the ordinary refresh
+        of a view that has not moved.
+        """
+        self._settle.stop()
+        if self._doc is not None:
+            self._refresh_view(moved=True)
 
     def _refresh_raw(self, doc: Document, tables: TableSet | None) -> None:
         """The raw view's window: as many rows as it shows, and one more for

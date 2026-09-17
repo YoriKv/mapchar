@@ -5,7 +5,7 @@ romhacking, in the shape of celPix (`../celpix/`, whose `docs/` are the
 structural reference) but for the strings in a ROM rather than its graphics.
 It finds text, decodes it through table files, edits it beside the original,
 writes it back in place, and exchanges dumps with Cartographer, Atlas and
-abcde. A layout-and-preview system renders strings through a font sheet to
+abcde. A layout-and-preview system draws strings in a system font to
 show how they fit on screen; it is secondary to parsing, editing, export and
 import.
 
@@ -26,8 +26,8 @@ delivers; every phase is built.
   the romjuice, Cartographer, Atlas and abcde dialects import into it.
 - [script-format.md](script-format.md): the native script (dump) format,
   translator hand-off files, and Cartographer/Atlas import and export.
-- [preview.md](preview.md): the layout and preview system: fonts from image
-  files, text boxes, wrapping and overflow.
+- [preview.md](preview.md): the layout and preview system: the preview font,
+  text boxes, wrapping and overflow.
 - [phases.md](phases.md): the build order and what each phase delivers.
 
 ## Maintaining this section

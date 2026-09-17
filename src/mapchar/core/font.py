@@ -2,69 +2,52 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from enum import Enum
 
-from mapchar.core.text import char_units, nfc
+from mapchar.core.text import nfc
 
 
 @dataclass(frozen=True)
 class Font:
-    """A glyph sheet image cut into cells, plus which glyph each text draws."""
+    """A system font as the preview has measured it.
 
-    path: str | None
-    cell_width: int = 8
-    cell_height: int = 8
-    columns: int = 16
-    base: int = 0
-    """Glyph index of the first character of ``chars``."""
-    chars: str = ""
-    """Characters laid over consecutive glyphs from ``base``, one glyph each.
+    Measuring a real font is Qt's work and so the UI's
+    (:mod:`mapchar.ui.preview_font`); what layout needs is frozen here — how
+    tall a line stands, where its baseline sits, how far each character
+    advances, and which characters the font cannot draw.
+    """
 
-    A character is a grapheme: a base plus the combining marks that follow it,
-    so a decomposed dakuten kana takes one glyph slot, not two."""
-    glyphs: dict[str, int] = field(default_factory=dict)
-    """Explicit token text (or ``[label]``) to glyph index."""
-    widths: tuple[int, ...] = ()
-    """Advance width per glyph index; empty means the cell width."""
-    space: int | None = None
-    """Advance of a space; defaults to the glyph's width or the cell width."""
-    missing: int | None = None
-    """Glyph drawn for text with no glyph; None draws a box."""
-    transparent: int | None = 0
-    """Palette index or None; RGB sheets use the top-left pixel's colour."""
+    family: str = ""
+    size: int = 16
+    """Point size the family was measured at."""
+    height: int = 16
+    """Pixels a line of it occupies."""
+    ascent: int = 12
+    """Pixels from the top of a line down to the baseline."""
+    advances: dict[str, int] = field(default_factory=dict)
+    """Pixels each character advances, by grapheme."""
+    default_advance: int = 8
+    """Advance of a character nobody measured."""
+    missing: frozenset[str] = frozenset()
+    """Characters the family has no glyph for."""
 
     def __post_init__(self) -> None:
-        # The alphabet and the overrides are NFC, so text decoded from a table
-        # finds its glyph however the font's characters were typed.
-        object.__setattr__(self, "chars", nfc(self.chars))
-        composed = {nfc(t): g for t, g in self.glyphs.items()}
-        if composed != self.glyphs:
-            object.__setattr__(self, "glyphs", composed)
+        # Measured under NFC, so text decoded from a table is found however the
+        # table spelled it.
+        composed = {nfc(t): w for t, w in self.advances.items()}
+        if composed != self.advances:
+            object.__setattr__(self, "advances", composed)
+        absent = frozenset(nfc(t) for t in self.missing)
+        if absent != self.missing:
+            object.__setattr__(self, "missing", absent)
 
-    @property
-    def units(self) -> tuple[str, ...]:
-        """``chars`` as one string per glyph slot from ``base``."""
-        return char_units(self.chars)
+    def advance(self, text: str) -> int:
+        return self.advances.get(nfc(text), self.default_advance)
 
-    def glyph_for(self, text: str) -> int | None:
-        composed = nfc(text)
-        if composed in self.glyphs:
-            return self.glyphs[composed]
-        units = self.units
-        if composed in units:
-            return self.base + units.index(composed)
-        return None
-
-    def advance(self, glyph: int | None) -> int:
-        if glyph is None:
-            return self.cell_width
-        if glyph < len(self.widths):
-            return self.widths[glyph]
-        return self.cell_width
-
-    def with_widths(self, widths: tuple[int, ...]) -> Font:
-        return replace(self, widths=widths)
+    def spells(self, text: str) -> bool:
+        """Whether the family can draw ``text``."""
+        return nfc(text) not in self.missing
 
 
 class Effect(Enum):
@@ -73,7 +56,6 @@ class Effect(Enum):
     PAGE = "page"
     PAUSE = "pause"
     SPACE = "space"
-    GLYPH = "glyph"
     END = "end"
 
 
@@ -81,7 +63,7 @@ class Effect(Enum):
 class CodeEffect:
     effect: Effect = Effect.NONE
     value: int = 0
-    """Pixels for SPACE, a glyph index for GLYPH."""
+    """Pixels, for SPACE."""
 
 
 @dataclass(frozen=True)
@@ -96,11 +78,9 @@ class TextBox:
     origin_y: int = 0
     effects: dict[str, CodeEffect] = field(default_factory=dict)
     """Code label to its layout effect."""
-    font_index: int | None = None
-    """Index of the font entry in the project's entries, when bound."""
     chars_per_line: int = 0
-    """How many characters a line holds, for a block with no font; 0 sets no
-    limit. With it, *overflows box* and Wrap work by counting characters."""
+    """How many characters a line holds; 0 sets no limit. With it, *overflows
+    box* and Wrap work by counting characters rather than measuring them."""
 
     @property
     def max_lines(self) -> int:

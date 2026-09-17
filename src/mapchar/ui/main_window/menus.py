@@ -46,7 +46,6 @@ class MenuBarMixin:
         act(file_menu, "Open RO&M…", self._open_rom_dialog, "Ctrl+Shift+O")
         act(file_menu, "Open &Table…", self._open_table_dialog, "Ctrl+T")
         act(file_menu, "N&ew Table…", lambda: self._new_table_dialog())
-        act(file_menu, "Open &Font…", self._open_font_dialog)
         file_menu.addSeparator()
         # Named where :mod:`mapchar.ui.main_window.capability_sync` gates them:
         # what each row applies to is declared in the capability table, not here.
@@ -225,8 +224,6 @@ class MenuBarMixin:
         panels_menu = bar.addMenu("&Panels")
         for dock, text in (
             (self.files_dock, "&Files"),
-            (self.tables_dock, "&Tables"),
-            (self.fonts_dock, "F&onts"),
             (self.hex_dock, "&Hex"),
         ):
             toggle = dock.toggleViewAction()

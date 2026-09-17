@@ -143,8 +143,6 @@ class CompressionMixin:
             self.menuBar(),
             self.centralWidget(),
             self.files_dock,
-            self.tables_dock,
-            self.fonts_dock,
             self.hex_dock,
         ):
             widget.setEnabled(not active)

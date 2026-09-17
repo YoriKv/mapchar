@@ -39,9 +39,8 @@ No layout's minimum size may be set by text or a count that varies.
   window is split into two rows instead.
 - **Fields** keep a minimum from `fit_chars`, so no layout squeezes one below
   what it holds; pickers in a bar are `CompactComboBox`es of one fixed width.
-- **Content that grows** scrolls: the Preview canvas, the Font tab's fields,
-  the glyph sheet, and the raw view, which scrolls sideways when narrower than
-  its rows. The Hex and Text tabs are the exception: each holds the window its
+- **Content that grows** scrolls: the Preview canvas and the raw view, which
+  scrolls sideways when narrower than its rows. The Hex and Text tabs are the exception: each holds the window its
   box has room for, and what does not fit is reached by moving the view — its
   scrollbar is the file's (or the stretch of it the view is confined to),
   never the box's.
@@ -79,8 +78,8 @@ No layout's minimum size may be set by text or a count that varies.
 Wherever text can be cut short, hovering it shows the whole of it, ahead of any
 tooltip the control has of its own.
 
-- **Item views** — `show_elided_tooltips(view)` on the Files, Tables and Fonts
-  trees, the Strings table, every `ResultsTable`, the Table Editor grid, the
+- **Item views** — `show_elided_tooltips(view)` on the Files tree, the
+  Strings table, every `ResultsTable`, the Table Editor grid, the
   Preview's tables and the container's file list. A cell with room keeps the
   view's usual tooltip.
 - **Labels** — `ElidedLabel`; `text()` and `toolTip()` still read back what
@@ -115,7 +114,8 @@ tooltip the control has of its own.
   and Text views, the Hex panel and the Strings view draw, each beside a
   swatch painted from the same `theme` colour the view uses. A new tint or
   mark in a view is added there; the test suite holds that every `theme`
-  tint and ink appears in it.
+  tint and ink appears in it. The `PREVIEW_` colours are the exception: they
+  are a stand-in screen's paper, ink and grid, not marks put on the text.
 - Icon-only buttons wear the bundled icon font's arrows and always have a
   tooltip naming their key.
 

@@ -48,13 +48,14 @@ WARNING_INK = QColor(0xAE, 0x7A, 0x11)
 ERROR_INK = QColor(0xDC, 0x58, 0x58)
 DONE_INK = QColor(0x3C, 0x9A, 0x5F)
 """A string marked done: readable on both themes."""
-# The Preview's paper. Named here with the rest of the fixed colours rather than
-# written into the renderer, because it is a *theme* decision that happens not to
-# vary: a glyph sheet's own palette is what the preview shows, and a paper that
-# followed the window's surface would tint the art on one theme and not the
-# other. Deliberately not black — an all-black glyph still has to be visible on
-# it, and the grid lines above have to read without glowing.
+# The Preview's paper and ink. Named here with the rest of the fixed colours
+# rather than written into the renderer, because they are a *theme* decision
+# that happens not to vary: the preview stands for a screen the game draws, and
+# a paper that followed the window's surface would read as one thing on one
+# theme and another on the other. Deliberately not black and white — the grid
+# lines between them have to read without glowing.
 PREVIEW_PAPER = QColor(0x18, 0x18, 0x1C)
+PREVIEW_INK = QColor(0xE6, 0xE6, 0xEA)
 # The rule the Preview draws over that paper, one line per pixel of the box, as
 # the raw view rules string boundaries: faint enough that it does not compete
 # with the art, and fixed with the paper rather than following the window.
@@ -135,6 +136,7 @@ __all__ = [
     "NOTICE_WASH",
     "DONE_INK",
     "PREVIEW_GRID",
+    "PREVIEW_INK",
     "PREVIEW_PAPER",
     "THEMES",
     "WARNING_INK",

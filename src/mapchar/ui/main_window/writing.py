@@ -49,9 +49,6 @@ class WritingMixin:
                 "Save As File…, not through the ROM's write path."
             )
             return
-        if entry.kind is EntryKind.FONT:
-            self._error(f"{entry.name} is a glyph sheet; mapChar never writes to it.")
-            return
         doc = entry.doc if entry.doc is not None else self._load_document(entry)
         if doc is not None and not doc.writable:
             missing = ", ".join(doc.missing_plugins) or "a stage with no write-back"

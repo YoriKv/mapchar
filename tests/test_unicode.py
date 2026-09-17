@@ -164,18 +164,23 @@ def test_a_needle_is_composed_before_it_is_matched():
     assert fold("ガ") != fold(GA)  # katakana is not a case of hiragana
 
 
-# --- glyphs -----------------------------------------------------------------
+# --- fonts ------------------------------------------------------------------
 
 
-def test_a_dakuten_kana_is_one_glyph_slot():
-    font = Font(None, 8, 8, 16, 0x20, nfd(f"あ{GA}い"))
-    assert font.chars == f"あ{GA}い"
-    assert font.units == ("あ", GA, "い")
-    assert font.glyph_for(GA) == 0x21
-    assert font.glyph_for(GA_NFD) == 0x21
-    assert font.glyph_for(GA_NFD[1]) is None
+def test_a_dakuten_kana_is_one_character_to_a_font():
+    font = Font(
+        "Test",
+        16,
+        height=8,
+        ascent=6,
+        advances={c: 8 for c in f"あ{GA}い"},
+        default_advance=4,
+    )
+    # Measured under NFC, so a decomposed kana finds the width it was
+    # measured at rather than falling back on the default.
+    assert font.advance(GA_NFD) == 8 and font.advance(GA_NFD[1]) == 4
     result = layout(GA_NFD + "い", font, TextBox(width=64, height=8, line_height=8))
-    assert [p.glyph for p in result.placements] == [0x21, 0x22]
+    assert [(p.text, p.x) for p in result.placements] == [(GA, 0), ("い", 8)]
 
 
 def test_graphemes_and_units():

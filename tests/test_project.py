@@ -6,12 +6,13 @@ from helpers import ABC_TABLE, table_set
 from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
 from mapchar.core.context import PipelineContext
 from mapchar.core.document import Document
-from mapchar.core.font import Font, TextBox
+from mapchar.core.font import TextBox
 from mapchar.core.table import Entry as TableEntry
 from mapchar.core.table import Table, TokenKind
 from mapchar.pipeline.extract import extract
 from mapchar.project.glossary import GlossaryTerm, matching_terms
 from mapchar.project.projectfile import (
+    PROJECT_VERSION,
     entries_from_payload,
     entries_payload,
     load_project,
@@ -201,9 +202,9 @@ def test_invalidate_path_spares_the_saver_and_the_dirty(tmp_path):
     rom.write_bytes(b"abcd")
     ws = Workspace()
     saver = ws.open_file(str(rom))
-    borrower = ws.add(Entry(EntryKind.FONT, "sheet", str(rom)))
-    edited = ws.add(Entry(EntryKind.FONT, "edited", str(rom)))
-    elsewhere = ws.add(Entry(EntryKind.FONT, "other", str(tmp_path / "other.bin")))
+    borrower = ws.add(Entry(EntryKind.FILE, "borrowed", str(rom)))
+    edited = ws.add(Entry(EntryKind.FILE, "edited", str(rom)))
+    elsewhere = ws.add(Entry(EntryKind.FILE, "other", str(tmp_path / "other.bin")))
     for e in (saver, borrower, edited, elsewhere):
         e.doc = Document(b"abcd", PipelineContext(), True)
     ws.stamp(edited)
@@ -289,13 +290,10 @@ def test_missing_paths_and_relocate_follow_every_reference(tmp_path):
     pair = ws.add(
         Entry(EntryKind.FILE, "named by hand", str(here), extra_paths=(str(gone),))
     )
-    sheet = ws.add(Entry(EntryKind.FONT, "gone.bin", str(gone)))
-    sheet.font = Font(str(gone))
     # One row per distinct missing file, however many entries name it.
     assert missing_paths(ws) == [str(gone)]
     touched = relocate_path(ws, str(gone), str(moved))
-    assert set(touched) == {f, block, mark, pair, sheet}
-    assert sheet.font.path == str(moved)  # the sheet's own record follows too
+    assert set(touched) == {f, block, mark, pair}
     assert [e.path for e in (f, block, mark)] == [str(moved)] * 3
     assert f.name == "renamed.bin"  # it was named after the file
     assert pair.name == "named by hand" and pair.extra_paths == (str(moved),)
@@ -342,7 +340,7 @@ def test_a_project_file_with_a_byte_order_mark_still_loads(tmp_path):
     (tmp_path / "rom.bin").write_bytes(b"x")
     entries = [
         Entry(EntryKind.FILE, "ロム", str(tmp_path / "rom.bin")),
-        Entry(EntryKind.FONT, "かな", str(tmp_path / "font.png"), font=Font(None)),
+        Entry(EntryKind.TABLE, "かな", str(tmp_path / "kana.tbl")),
     ]
     d = project_dict(entries, None, str(tmp_path))
     proj = tmp_path / "p.mapchar"
@@ -351,27 +349,27 @@ def test_a_project_file_with_a_byte_order_mark_still_loads(tmp_path):
     assert [e.name for e in loaded.entries] == ["ロム", "かな"]
 
 
-def test_a_font_alphabet_is_composed_when_the_project_is_read(tmp_path):
+def test_a_font_entry_from_an_older_project_is_dropped_by_name(tmp_path):
+    """Glyph-sheet fonts are gone; a project that still has one loads without
+    it, and says so rather than naming a kind nobody recognises."""
     import json
-    import unicodedata
 
-    chars = unicodedata.normalize("NFD", "あが")
-    entries = [
-        Entry(
-            EntryKind.FONT,
-            "f",
-            str(tmp_path / "f.png"),
-            font=Font(None, chars=chars, glyphs={chars[1:]: 3}),
-        )
-    ]
     proj = tmp_path / "p.mapchar"
     proj.write_text(
-        json.dumps(project_dict(entries, None, str(tmp_path)), ensure_ascii=False),
+        json.dumps(
+            {
+                "version": PROJECT_VERSION,
+                "entries": [
+                    {"kind": "file", "name": "rom", "path": "rom.bin"},
+                    {"kind": "font", "name": "font.png", "path": "font.png"},
+                ],
+            }
+        ),
         encoding="utf-8",
     )
-    font = load_project(str(proj)).entries[0].font
-    assert font.chars == "あが" and font.units == ("あ", "が")
-    assert font.glyphs == {"が": 3}  # the override key is composed too
+    loaded = load_project(str(proj))
+    assert [e.name for e in loaded.entries] == ["rom"]
+    assert any("glyph-sheet fonts are gone" in w for w in loaded.warnings)
 
 
 def test_retarget_files_moves_a_file_its_children_and_its_name():

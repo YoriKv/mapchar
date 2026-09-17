@@ -222,7 +222,6 @@ class TableEditorMixin:
         entry.table_id = None  # ...nor its id
         self.workspace.mark_saved(entry)
         self.files_panel.refresh_labels()
-        self.tables_panel.rebuild()
         self.statusBar().showMessage(f"Saved {path}", 4000)
 
     def _new_table_dialog(self, *, start: bool = False) -> Entry | None:

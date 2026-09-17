@@ -17,7 +17,7 @@ into blocks and dump it.
 - Blocks with *range* and *fixed strings* sources, *end token* and *fixed
   length* string types, realign and skip ranges.
 - The native script writer.
-- The application shell: Files panel, Tables dock, the Format, Reading and
+- The application shell: Files panel, the Format, Reading and
   Block bars, Raw view with navigation and selection, Hex panel read-only,
   bookmarks, Table Editor, undo for entry and view changes, `.mapchar`
   projects.
@@ -80,9 +80,9 @@ Edit strings beside the original and write them back in place.
 
 ## 6. Layout and preview
 
-- Font entries from PNG sheets with maps and widths; text boxes; code
+- The app's system preview font; text boxes; code
   effects; the Preview window; the *overflows box* status; Wrap.
-- Complete when the fixtures' strings render against their fonts and Wrap
+- Complete when the fixtures' strings render in the preview font and Wrap
   produces strings that no longer overflow.
 - Everything listed above exists.
 

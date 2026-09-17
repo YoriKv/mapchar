@@ -30,6 +30,3 @@ class Glyph(Enum):
     ARROW_UP = ""  # arrow_upward
     ARROW_LEFT = ""  # arrow_back
     ARROW_RIGHT = ""  # arrow_forward
-
-    # A ring with a dot: "this is the one" - the start table in the Tables dock.
-    TARGET = ""  # adjust

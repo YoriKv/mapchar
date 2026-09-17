@@ -276,7 +276,6 @@ def test_a_drop_opens_each_file_as_its_name_says(window, tmp_path):
     kinds = {e.kind for e in window.workspace.entries}
     assert kinds == {EntryKind.FILE, EntryKind.TABLE}
     assert window._drop_kind("a.mapchar") == "rom"  # the project claims the drop itself
-    assert window._drop_kind("x.PNG") == "font"
     assert window._drop_kind("x.po") == "po"
     assert window._drop_kind("x.tsv") == "delimited"
     assert window._drop_kind("x.smc") == "rom"

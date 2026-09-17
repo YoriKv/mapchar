@@ -457,20 +457,15 @@ def test_a_reorder_keeps_the_trail(window, tmp_path):
 
 
 def test_only_entries_that_can_be_the_view_enter_the_trail(window, tmp_path):
-    """A table opens in the Table Editor, a font the Preview window's Font tab,
-    and a bookmark jumps somewhere else, so none of them is a place Back could
-    return to."""
+    """A table opens in the Table Editor and a bookmark jumps somewhere else,
+    so neither is a place Back could return to."""
     file_entry = _opened(window, tmp_path)
     block = add_block(window, file_entry, "b", RangeSource(0, 8))
     table_entry = window.workspace.entry_for_table("main")
     window._activate_entry(table_entry)
     assert window._history == [(file_entry, None), (block, None)]
     assert window._entry is block  # and the view never left
-    font_entry = window.open_font(str(tmp_path / "sheet.png"))
-    window._activate_entry(font_entry)
-    assert window._history == [(file_entry, None), (block, None)]
     assert window._entry is block and window.workspace.current is block
-    assert window.preview_window.tabs.currentIndex() == 1  # the Font tab
     window._new_bookmark()
     bookmark = window.workspace.entries[-1]
     window._activate_entry(bookmark)

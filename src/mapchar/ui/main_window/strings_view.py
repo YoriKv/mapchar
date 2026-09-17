@@ -37,17 +37,16 @@ class StringsViewMixin:
     """
 
     def _overflow_status(self, rec, entry: Entry) -> bool:
-        """Whether the string overflows its box: through the bound font, or,
-        with none, by the characters per line the box sets."""
+        """Whether the string overflows its box: measured through the preview
+        font, or counted where the box sets characters per line."""
         box = self._layout_box(entry)
         if box is None:
             return False
-        font_entry = self._bound_font(entry)
-        if font_entry is not None and font_entry.font is not None:
-            return layout_glyphs(rec.current_text(), font_entry.font, box).overflows
-        if box.chars_per_line > 0:
-            return char_layout(rec.current_text(), box).overflows
-        return False
+        text = rec.current_text()
+        font = self._layout_font(box, text)
+        if font is None:
+            return char_layout(text, box).overflows
+        return layout_glyphs(text, font, box).overflows
 
     def _extract_current(
         self, entry: Entry, doc: Document, tables: TableSet | None

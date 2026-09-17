@@ -25,12 +25,12 @@ freeze in
 deliberately absent, and the freeze reaches them anyway by disabling the menu
 bar and the central widget above them.
 
-:data:`_GATES` covers the *window's* controls. Four capabilities name surfaces
+:data:`_GATES` covers the *window's* controls. Three capabilities name surfaces
 that are not among them — the Preview window's Wrap button
 (:class:`~mapchar.core.capabilities.Capability.WRAP`), the Decompressed view's
-structure scan (``COMPRESSION_SCAN``), the Table Editor (``TABLE_EDIT``) and the
-Font tab (``FONT_EDIT``) — each a tool window that decides its own enablement
-from its own state, so a both-directions gate here would fight it. Those four are
+structure scan (``COMPRESSION_SCAN``) and the Table Editor (``TABLE_EDIT``) —
+each a tool window that decides its own enablement from its own state, so a
+both-directions gate here would fight it. Those three are
 asked instead by the mixin that drives the surface, through :meth:`_can` or
 :func:`~mapchar.core.capabilities.supports`, so every declared capability is
 enforced somewhere.

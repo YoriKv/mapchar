@@ -10,7 +10,7 @@ from typing import Any
 
 from mapchar.core.block import FixedLength, Status
 from mapchar.core.errors import MapcharError
-from mapchar.core.font import CodeEffect, Effect, Font, TextBox
+from mapchar.core.font import CodeEffect, Effect, TextBox
 from mapchar.core.table import Table
 from mapchar.plugins.aliases import current_config_ids, current_id
 from mapchar.project.formats.script import format_config, parse_config
@@ -229,7 +229,6 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
     if entry.kind is EntryKind.BLOCK and entry.box is not None:
         b = entry.box
         d["box"] = {
-            "font_index": b.font_index,
             "width": b.width,
             "height": b.height,
             "line_height": b.line_height,
@@ -238,19 +237,6 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
             "chars_per_line": b.chars_per_line,
             "origin": [b.origin_x, b.origin_y],
             "effects": {k: [v.effect.value, v.value] for k, v in b.effects.items()},
-        }
-    if entry.kind is EntryKind.FONT and entry.font is not None:
-        f = entry.font
-        d["font"] = {
-            "cell": [f.cell_width, f.cell_height],
-            "columns": f.columns,
-            "base": f.base,
-            "chars": f.chars,
-            "glyphs": dict(f.glyphs),
-            "widths": list(f.widths),
-            "space": f.space,
-            "missing": f.missing,
-            "transparent": f.transparent,
         }
     if entry.kind is EntryKind.BOOKMARK:
         d["offset"] = entry.bookmark_offset
@@ -499,6 +485,14 @@ def load_project(path: str) -> LoadedProject:
 
 
 def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
+    if str(raw.get("kind")) == "font":
+        # Projects written before the Preview drew in a system font kept a
+        # glyph-sheet entry per font. Dropped by name, so the warning says what
+        # happened rather than naming a kind nobody recognises.
+        raise ValueError(
+            "glyph-sheet fonts are gone; the Preview draws every block in the "
+            "system font its Font tab picks"
+        )
     kind = EntryKind(raw["kind"])
     path = _abs(raw.get("path"), base)
     if path is not None:
@@ -587,24 +581,7 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
             int(origin[0]),
             int(origin[1]),
             effects,
-            b.get("font_index"),
             int(b.get("chars_per_line", 0)),
-        )
-    if kind is EntryKind.FONT:
-        f = raw.get("font") or {}
-        cell = f.get("cell", [8, 8])
-        entry.font = Font(
-            path,
-            int(cell[0]),
-            int(cell[1]),
-            int(f.get("columns", 16)),
-            int(f.get("base", 0)),
-            str(f.get("chars", "")),
-            {str(k): int(v) for k, v in (f.get("glyphs") or {}).items()},
-            tuple(int(w) for w in f.get("widths", [])),
-            f.get("space"),
-            f.get("missing"),
-            f.get("transparent", 0),
         )
     saved: dict[int, StringState] = {}
     for s in raw.get("strings", []) or []:

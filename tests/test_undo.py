@@ -14,14 +14,12 @@ from pathlib import Path
 import pytest
 
 from mapchar.core.block import RangeSource, Status
-from mapchar.core.font import Font
 from mapchar.core.table import Entry as TableEntry
 from mapchar.core.table import TokenKind
 from mapchar.ui.undo_commands import (
     BlockEditCommand,
     BoxCommand,
     ContainerCommand,
-    FontCommand,
 )
 from window_helpers import add_block, make_window, open_rom_and_table
 
@@ -66,21 +64,6 @@ def test_an_undone_overtype_reads_clean_again(window, tmp_path):
     assert file_entry.dirty and file_entry.doc.data[1] == 0x43
     window.undo_stack.undo()
     assert not file_entry.dirty and file_entry.doc.data[1] == 0x42
-
-
-def test_an_undone_font_edit_reads_clean_again(window, tmp_path):
-    from PySide6.QtGui import QImage
-
-    sheet = tmp_path / "font.png"
-    QImage(16, 16, QImage.Format.Format_ARGB32).save(str(sheet))
-    entry = window.open_font(str(sheet))
-    window.apply_font(entry, Font(str(sheet), 8, 8), window.workspace.next_revision())
-    window.workspace.mark_saved(entry)
-    assert not entry.dirty
-    window._push_command(FontCommand(window, entry, entry.font, Font(str(sheet), 4, 4)))
-    assert entry.dirty
-    window.undo_stack.undo()
-    assert not entry.dirty and entry.font.cell_width == 8
 
 
 def test_an_undone_table_edit_reads_clean_again(window, tmp_path):
@@ -365,24 +348,16 @@ def test_undo_and_redo_of_a_table_edit_take_the_overlay_with_them(window, tmp_pa
     assert table_entry.table_overlay == {"01000011": "43=C"}
 
 
-def test_binding_a_font_from_the_files_panel_is_an_undo_step(window, tmp_path):
-    """A click on a font row binds the current block to it through a box edit,
+def test_previewing_a_block_first_gives_it_a_box_as_an_undo_step(window, tmp_path):
+    """The first Preview of a block gives it a text box; that is a saved edit,
     so it undoes and the block reads clean again."""
-    from mapchar.core.font import Font
-    from mapchar.project.workspace import Entry, EntryKind
-
     file_entry = open_rom_and_table(window, tmp_path, b"AB\x00")
     block = add_block(window, file_entry, "b", RangeSource(0, 3))
     window._activate_entry(block)
-    font_entry = Entry(
-        EntryKind.FONT, "f", path=str(tmp_path / "f.png"), font=Font(path="")
-    )
-    window.workspace.add(font_entry)
     assert block.box is None and not block.dirty
 
-    window._edit_font_entry(font_entry)
-    assert block.box is not None and block.box.font_index == 0
-    assert block.dirty
+    window._show_preview()
+    assert block.box is not None and block.dirty
 
     window.undo_stack.undo()
     assert block.box is None and not block.dirty

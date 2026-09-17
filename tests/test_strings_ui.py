@@ -223,19 +223,9 @@ def test_find_next_walks_into_the_next_block(window, tmp_path):
     assert window._entry.name == "b2"
 
 
-def test_font_box_and_table_edits_undo_in_one_step(window, tmp_path):
+def test_box_and_table_edits_undo_in_one_step(window, tmp_path):
     data = b"\x41\x42\x00" + b"\xff" * 8
     entry, block = block_with(window, tmp_path, data, stop=3)
-    font_entry = window.open_font(str(tmp_path / "sheet.png"))
-    window._edit_font_entry(font_entry)
-    before = font_entry.font
-
-    window._on_font_changed(replace(before, cell_width=16))
-    window._on_font_changed(replace(before, cell_width=12))
-    assert font_entry.font.cell_width == 12
-    # One field, one step: the two edits merged.
-    window.undo_stack.undo()
-    assert font_entry.font == before
 
     window._on_box_changed(TextBox(width=64))
     assert block.box.width == 64
@@ -374,95 +364,51 @@ def test_draft_reports_bytes_used_and_the_room(window, tmp_path):
     assert window.preview_window.readout.text()
 
 
-def test_font_sheet_view_and_alphabet_tools(qtbot, tmp_path):
-    from PySide6.QtGui import QImage
-
-    from mapchar.core.font import Font
+def test_the_preview_draws_in_the_app_font_and_names_what_it_cannot(qtbot):
+    """The Preview needs no font of its own: it measures the app's and says
+    which characters that family has no glyph for."""
     from mapchar.ui.preview_window import PreviewWindow
-
-    sheet = tmp_path / "sheet.png"
-    image = QImage(32, 16, QImage.Format.Format_ARGB32)
-    image.fill(0xFF000000)
-    image.setPixelColor(2, 2, Qt.GlobalColor.white)
-    assert image.save(str(sheet))
 
     win = PreviewWindow()
     qtbot.addWidget(win)
-    fonts: list[Font] = []
-    win.font_changed.connect(fonts.append)
-    win.set_font(Font(str(sheet), 8, 8, 4, 0, "ABCD"))
     win.set_box(win._box, ["line"])
-    win.show_string("ABq", "t")
-    # The font cannot spell 'q', and the preview says so.
-    assert "1 not in font: q" in win.status.text()
-
-    # The sheet draws, and a click maps to its glyph.
-    win.font_tab.sheet_view.repaint()
-    assert win.font_tab.sheet_view.glyph_at(25, 1) == 1
-    assert win.font_tab.sheet_view.glyph_at(25, 40) == 5
-    assert win.font_tab.sheet_view.glyph_at(25, 200) is None
+    win.show_string("AB", "t")
+    assert win.canvas.pixmap() is not None and not win.canvas.pixmap().isNull()
+    assert "page 1/1" in win.status.text()
     win.grid.setChecked(True)
-    win._paint()
+    win.zoom.setValue(4)
+    assert not win.canvas.pixmap().isNull()
 
-    # Fill from the table, from the picked glyph.
-    win.font_tab.sheet_view.set_pick(4)
-    win.set_table_chars("XYZ")
-    win.font_tab._fill_from_table()
-    assert (fonts[-1].base, fonts[-1].chars) == (4, "XYZ")
-
-    # Shift moves the alphabet one row of glyphs.
-    win.font_tab._shift(1)
-    assert fonts[-1].base == 4
-    win.font_tab._shift(-1)
-    assert fonts[-1].base == 0
-
-    # The measured gap is the user's, not a constant.
-    win.font_tab.gap.setValue(2)
-    win.font_tab._measure()
-    assert fonts[-1].widths[0] == 5
-
-    win.font_tab._copy_alphabet()
-    win.font_tab._paste_alphabet()
-    assert (fonts[-1].base, fonts[-1].chars) == (0, "ABCD")
-
-    # The sheet's own zoom and its tile/row switch.
-    win.font_tab.sheet_zoom.setValue(4)
-    assert win.font_tab.sheet_view.scale == 4
-    win.font_tab.sheet_mode.setCurrentIndex(1)
-    assert win.font_tab.sheet_view.rows
+    # A character no family on this machine is guaranteed to draw: whatever
+    # the answer, the status and the tooltip agree on it.
+    win.show_string("A\ue000", "t")
+    if "not in font" in win.status.text():
+        assert "\ue000" in win.status.toolTip()
 
 
-def test_fill_with_a_template(qtbot, monkeypatch):
-    from PySide6.QtWidgets import QInputDialog
+def test_the_font_tab_picks_the_app_font(qtbot):
+    """Its pick is the app's, kept for the next run and announced once."""
+    from PySide6.QtGui import QFontDatabase
 
-    from mapchar.core.font import Font
+    from mapchar.ui.preview_font import forget_preview_font, preview_font
     from mapchar.ui.preview_window import PreviewWindow
 
     win = PreviewWindow()
     qtbot.addWidget(win)
-    fonts: list[Font] = []
-    win.font_changed.connect(fonts.append)
-    win.set_font(Font(None, 8, 8, 4))
-    monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("0-9", True))
-    win.font_tab._fill_with()
-    assert fonts[-1].chars == "0123456789"
+    changes: list = []
+    win.font_changed.connect(lambda: changes.append(True))
+    families = QFontDatabase.families()
+    other = next(f for f in families if f != preview_font().family)
 
+    win.font_tab.family.setCurrentFont(win.font_tab.family.currentFont())
+    win.font_tab.size.setValue(20)
+    assert preview_font().size == 20 and changes
 
-def test_paste_alphabet_keeps_a_multi_character_override(qtbot):
-    """Copy then paste is lossless: a ``TH`` override sorts before the run and
-    must not be sliced off, nor a run character duplicated as an override."""
-    from mapchar.core.font import Font
-    from mapchar.ui.preview_window import PreviewWindow
-
-    win = PreviewWindow()
-    qtbot.addWidget(win)
-    fonts: list = []
-    win.font_changed.connect(fonts.append)
-    win.set_font(Font(None, 8, 8, 16, 0x20, "AB", glyphs={"TH": 0x10}))
-    win.font_tab._copy_alphabet()
-    win.font_tab._paste_alphabet()
-    f = fonts[-1]
-    assert (f.base, f.chars, f.glyphs) == (0x20, "AB", {"TH": 0x10})
+    win.font_tab.family.setCurrentText(other)
+    assert preview_font().family == other
+    # Stored, so the next run starts where this one left off.
+    forget_preview_font()
+    assert preview_font().family == other and preview_font().size == 20
 
 
 def test_build_table_offers_the_kana_a_hit_pinned_down(window, monkeypatch):
@@ -494,16 +440,13 @@ def test_wrap_is_one_undo_step(window, tmp_path):
     # Room after the string, for the line codes wrapping adds.
     data = b"\x41\x42\x41\x42\x41\x42\x00" + b"\xff" * 8
     entry, block = block_with(window, tmp_path, data, stop=15)
-    font_entry = window.open_font(str(tmp_path / "sheet.png"))
-    font_entry.font = replace(
-        font_entry.font, chars="AB", base=1, widths=(0,) + (8,) * 8
-    )
-    fonts = window.workspace.fonts()
+    # Counted rather than measured, so the wrap does not depend on which
+    # families the machine running the tests happens to have.
     block.box = Box(
         width=16,
         height=32,
         line_height=8,
-        font_index=fonts.index(font_entry),
+        chars_per_line=2,
         effects={"line": CodeEffect(Effect.NEWLINE)},
     )
     window.strings.select_index(0)
@@ -825,7 +768,6 @@ def test_done_is_held_and_counted(window, tmp_path):
 
 
 def test_chars_per_line_flags_overflow_and_wraps_without_a_font(window, tmp_path):
-    from dataclasses import replace
 
     from mapchar.core.font import CodeEffect, Effect
 

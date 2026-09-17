@@ -81,7 +81,6 @@ class FormatBarMixin:
             pick.add_command_row()
             self._select_reading()
         self._sync_table_edit()
-        self.tables_panel.set_start_table(self._current_table_id())
         self.table_editor.set_tables(self.workspace.table_entries())
 
     def _select_reading(self) -> None:

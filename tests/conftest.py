@@ -127,10 +127,11 @@ def isolated_settings(settings_root, tmp_path, monkeypatch):
     """Hand each test an empty settings store, and the same one to nothing else.
 
     The store is emptied either side of the test, so a preference one test
-    picks — an address format, a dock layout — is not what the
-    next test's window comes up in. The two environment variables stay for the
-    paths Qt reads live rather than caching: the plugin folder and the trust
-    store under ``AppData``.
+    picks — an address format, a dock layout, a preview font — is not what the
+    next test's window comes up in. Anything that caches a preference rather
+    than reading it each time is dropped with it. The two environment variables
+    stay for the paths Qt reads live rather than caching: the plugin folder and
+    the trust store under ``AppData``.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
@@ -138,7 +139,10 @@ def isolated_settings(settings_root, tmp_path, monkeypatch):
         yield
         return
     from mapchar.ui import settings
+    from mapchar.ui.preview_font import forget_preview_font
 
     settings().clear()
+    forget_preview_font()
     yield
     settings().clear()
+    forget_preview_font()

@@ -33,7 +33,7 @@ app.py ─────────────► ui/ ────────�
 
 | Package     | Role |
 |-------------|------|
-| `core/`     | The data model: tables and tokens, strings and blocks, pointers and mappings, fonts and boxes, the pipeline context, notices, errors, capabilities. |
+| `core/`     | The data model: tables and tokens, strings and blocks, pointers and mappings, the preview font and boxes, the pipeline context, notices, errors, capabilities. |
 | `engines/`  | Pure algorithms over the model: decode, encode, relative search, text scan, pointer discovery, layout. No I/O. |
 | `pipeline/` | Runs the byte stages in both directions, extracts blocks into strings, and lays strings out for writing. |
 | `plugins/`  | The plugin API, registry, discovery, trust, detection, and every built-in plugin: containers, compressions, charsets, mappings. |
@@ -59,7 +59,7 @@ Rules:
 ### 2.1 Entries and documents
 
 - **`project.workspace.Entry`** — the persistent identity of an open thing:
-  `EntryKind` (file, block, bookmark, folder, table, font); where its bytes
+  `EntryKind` (file, block, bookmark, folder, table); where its bytes
   are (`path`, `extra_paths`, block `offset`/`length`); for a file's rows —
   blocks, bookmarks and folders — the file they belong to (`parent`) and the
   folder they are shown in (`folder`, `None` directly under the file); its chain
@@ -67,7 +67,7 @@ Rules:
   `EntrySession` (a file's reading — a `BlockConfig` whose source has no
   addresses — its table, Follow pointers, view position, and the reading its
   last switch of mode set aside, which is not saved); kind-specific state (table
-  edits, font map, box); the `notices` its file's last read produced; and
+  edits, box); the `notices` its file's last read produced; and
   session-only state (the lazily loaded `doc`, revision tokens).
 - **`core.document.Document`** — the interpreted, mutable model the UI binds
   to: the decompressed `data` buffer, the `TableSet`, and for a block the
@@ -188,11 +188,12 @@ only the bytes on either side of the conversion, `read_pointer` and
 
 ### 2.5 Fonts and boxes
 
-`core/font.py` holds `Font` (sheet geometry, glyph map, widths), `TextBox`,
-`Effect` (which table entries use too) and `CodeEffect` as described in
-[preview.md](preview.md); `engines/layout.py` is
-what lays a string out in one.
-They are frozen values whose mutators return new instances.
+`core/font.py` holds `Font` (a system font as the UI measured it: its family
+and size, a line's height and baseline, an advance per character and the
+characters it cannot draw), `TextBox`, `Effect` (which table entries use too)
+and `CodeEffect` as described in [preview.md](preview.md); `engines/layout.py`
+is what lays a string out in one. They are frozen values; measuring the real
+font is `ui/preview_font.py`'s, so nothing here imports Qt.
 
 ### 2.6 Other core modules
 
@@ -343,9 +344,9 @@ had.
 
 ### 3.6 Layout
 
-`engines/layout.py` renders tokens through a `Font` into a `TextBox` as a
-list of glyph placements, records overflow, lists the text the font cannot
-spell, and implements Wrap ([preview.md](preview.md#wrapping)). It draws
+`engines/layout.py` lays tokens out through a `Font` into a `TextBox` as a
+list of character placements, records overflow, lists the text the font cannot
+draw, and implements Wrap ([preview.md](preview.md#wrapping)). It draws
 nothing; the UI paints the placements. The box a block lays out in is its own
 with `code_effects(table_set, line_label)` — the effects its entries declare,
 then the line code as a *newline* — merged under it by `with_code_effects`;
@@ -538,7 +539,7 @@ revision-token dirty tracking per entry,
 `free_name` (blocks and bookmarks never share a name), and
 `invalidate_extractions` when a table changes. It answers every question
 about what is open — `find_file` / `find_table` by path, `entry_by_id` for a
-tree row, `entry_for_table`, `dirty_entries`, `files` / `fonts` /
+tree row, `entry_for_table`, `dirty_entries`, `files` /
 `table_entries` / `loaded_tables` / `tables`, `children` (a file's every row),
 `contents` (the rows directly under a file or folder), `descendants` (what
 goes with a row when it is removed, moved or copied) and `blocks_of` (the
@@ -678,8 +679,9 @@ and aliases for renamed plugin ids.
                  type=end table=main bound=$A000",   // one @block line, see 6.2
       "strings": [ { "i": 0, "t": "Welcome to[line]Tantegel Castle.[end]",
                      "s": "edited", "n": "…" } ],
-      "box": { "font_index": 3, "width": 128, "height": 32, "line_height": 16,
-               "letter_spacing": 0, "lines_per_page": 0, "origin": [0, 0],
+      "box": { "width": 128, "height": 32, "line_height": 16,
+               "letter_spacing": 0, "lines_per_page": 0, "chars_per_line": 0,
+               "origin": [0, 0],
                "effects": {"line": ["newline", 0]} },                     // opt
       "session": {…} },
     { "kind": "bookmark", "name": "…", "path": "rom.nes", "parent": 0,
@@ -694,11 +696,7 @@ and aliases for renamed plugin ids.
       "overlay": {"01000011": "# the letter C\n43=C", // opt, the in-app edits
                   "00000000": null} },               //   its lines, or null=removed
     { "kind": "table", "name": "kanji.tbl",          // no path: no file
-      "table": "kanji", "overlay": {…} },            //   its id, and all of it
-    { "kind": "font", "name": "font.png", "path": "font.png",
-      "font": { "cell": [8, 8], "columns": 16, "base": 0, "chars": "ABC…",
-                "glyphs": {"[heart]": 96}, "widths": [8, 6, …],
-                "space": " ", "missing": "?", "transparent": 0 } }
+      "table": "kanji", "overlay": {…} }             //   its id, and all of it
   ]
 }
 ```
@@ -762,13 +760,13 @@ through `_push_command`.
 | Text view | `text_view.py` (the Text tab's window, and moving it by lines) |
 | Interpretation and position | `format_bar.py` (the Format and Reading bars, the reading of the entry on screen, the encodings as tables), `navigation.py`, `history.py` |
 | Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `dumping.py`, `compression.py`, `plugins.py` |
-| Tables | `tables_dock.py`, `table_editor.py` |
+| Tables | `table_files.py`, `table_editor.py` |
 | Raw view | `raw_view.py` |
 | Blocks and strings | `blocks.py`, `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py`, `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary window and its undo steps) |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
 | Exchange | `import_export.py` |
 | Projects | `projects.py`, `relocate.py`, `autosave.py` |
-| Preview and fonts | `preview.py`, `fonts.py`, `hex_view.py` |
+| Preview | `preview.py`, `hex_view.py` |
 
 Widgets outside the mixins: `reading_bar.py` (the Reading bar, loaded from and
 read back as a `BlockConfig`), `pointer_tokens.py` (pointers in view as tokens
@@ -776,8 +774,8 @@ the Hex and Text tabs place), `raw_widget.py` (the two-column byte view),
 `text_widget.py` (the plain-text display), `strings_view.py` (the string grid),
 `string_pane.py` (the pane under it, on the selected string), `code_editor.py`
 (the translation editor both open, with its code completion), `table_entry_form.py` (the Table Editor's entry form:
-one entry as pickers and fields, and as the line that spells it), the panels (`files_panel.py`, `tables_panel.py`,
-`fonts_panel.py`, `hex_panel.py`), the tool windows, and the dialogs.
+one entry as pickers and fields, and as the line that spells it), the panels (`files_panel.py`,
+`hex_panel.py`), the tool windows, and the dialogs.
 
 What more than one of them needs lives in small modules: `ui/widgets.py`
 (`ResultsTable`, the `CancellableRun` run/stop/progress mixin for a tool window
@@ -797,9 +795,10 @@ boxes sized to what they hold), `ui/marks.py` (the chip, tick, rule and notch
 the byte views and the legend both paint), `ui/token_text.py` (what a token
 covers and how it reads on one line, and script text with its codes left out,
 with no Qt), `ui/alphabets.py` (the canned
-runs of characters a fill offers), `ui/glyph_sheet.py` (`GlyphSheet` and
-`GlyphSheetView`), `ui/font_tab.py` (`FontTab`, the Preview window's font
-fields and their sheet), `ui/entry_tree.py` (the Files tree's drags and keys),
+runs of characters a fill offers), `ui/preview_font.py` (`PreviewFont`, the
+app's one system font and the `Font` values it measures),
+`ui/preview_render.py` (a laid-out page drawn into an image), `ui/font_tab.py`
+(`FontTab`, which picks that font), `ui/entry_tree.py` (the Files tree's drags and keys),
 `ui/entry_text.py` (what a Files row says, with no Qt), `ui/skips_picker.py`
 (the Reading bar's skip ranges and their popup), `ui/table_dialogs.py` (Shift
 Keys and Fill), `ui/entry_rows.py` (a code's operand rows and a switch's
@@ -815,19 +814,18 @@ the view constants `BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
 | View offset, selection, current view tab | the window, live, and re-read from its widgets on every refresh |
 | View bounds (the stretch the Hex and Text tabs are confined to) | the window, live; re-derived from a block's source on every activation, so never saved |
 | View offset, view tab, a file's reading and Follow pointers, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
-| Container, compression, block configuration, font, box | the `Entry` |
+| Container, compression, block configuration, box | the `Entry` |
 | The glossary | the `Workspace`, swapped with the entries when a project opens |
 | Bytes, table set, strings, notices | the `Document` |
-| Address format, last folder used, Follow selection, theme, window layouts, recent projects, and each tool surface's own view toggles | `QSettings` |
+| Address format, last folder used, Follow selection, theme, preview font, window layouts, recent projects, and each tool surface's own view toggles | `QSettings` |
 | Undo history, visit trail | the window, for the session |
 
 `SessionMixin._activate_entry` is the single funnel for switching entries:
 capture the outgoing session, load the incoming document, restore widgets with
 signals blocked, refresh once. Re-activating the entry already on screen is a
-no-op, and the three kinds that never become the view — a table, which opens in
-the Table Editor, a font, which opens the Preview window's Font tab, and a
-bookmark, which jumps the entry owning its bytes — take their own route out and
-never claim `workspace.current`.
+no-op, and the two kinds that never become the view — a table, which opens in
+the Table Editor, and a bookmark, which jumps the entry owning its bytes — take
+their own route out and never claim `workspace.current`.
 
 ### 7.3 The refresh cycle
 
@@ -852,7 +850,7 @@ they reach, and only what lies past them is decoded, from the last token
 boundary the decoder can be trusted to have read whole. The raw view lays its hex pairs and token texts out once per face
 (`QStaticText`) and places them; the Hex panel rebuilds its text only when the
 bytes, the window or the address column changed.
-4. **Sync dependent surfaces** — Tables dock, Block bar, Hex panel, Preview,
+4. **Sync dependent surfaces** — the table picks, Block bar, Hex panel, Preview,
    Search results, the window title. Each is synced here and nowhere else,
    unless it sits on a path that never reaches a refresh — a single string row
    updated in place is the one that does.
@@ -869,8 +867,8 @@ that table at the tail of the refresh, in place of each surface carrying its own
 this kind is hidden, one merely unavailable is disabled. Its `_GATES` table names
 window controls by attribute and resolves them strictly, so a gate naming
 something the window does not have raises on the first refresh rather than
-silently gating nothing. The four capabilities whose surface is a *tool window* —
-`WRAP`, `COMPRESSION_SCAN`, `TABLE_EDIT`, `FONT_EDIT` — are asked by the mixin
+silently gating nothing. The three capabilities whose surface is a *tool window* —
+`WRAP`, `COMPRESSION_SCAN`, `TABLE_EDIT` — are asked by the mixin
 that drives that window instead, since each window already decides its own
 enablement from its own state. (`EntryKind` lives in `core/capabilities.py`
 because it keys that table and `core/` is the bottom layer;

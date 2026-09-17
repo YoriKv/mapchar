@@ -461,36 +461,22 @@ def test_siblings_over_a_slot_share_its_payload_and_write_together(window, tmp_p
 
 
 def test_preview_and_wrap(window, tmp_path):
-    from PySide6.QtGui import QColor, QImage
-
     from mapchar.core.font import CodeEffect, Effect, TextBox
 
-    # A 16-column 8x8 glyph sheet: glyph i has i%8+1 inked columns.
-    sheet = QImage(128, 16, QImage.Format.Format_ARGB32)
-    sheet.fill(QColor(0, 0, 0))
-    for glyph in range(32):
-        col, row = glyph % 16, glyph // 16
-        for x in range(glyph % 8 + 1):
-            for y in range(8):
-                sheet.setPixelColor(col * 8 + x, row * 8 + y, QColor(255, 255, 255))
-    png = tmp_path / "font.png"
-    sheet.save(str(png))
     file_entry = open_rom_and_table(
         window, tmp_path, b"AB CD EF GH IJ\x00", table=ASCII_TABLE + "FE=[line]\\n\n"
     )
-    font_entry = window.open_font(str(png))
     block = add_block(window, file_entry, "F", RangeSource(0, 15))
     window._show_preview()
-    assert block.box is not None and block.box.font_index == 0
-    from dataclasses import replace
-
-    font_entry.font = replace(font_entry.font, base=0, chars=" ABCDEFGHIJ")
-    window._on_font_changed(font_entry.font.with_widths(tuple(range(1, 33))))
+    assert block.box is not None
+    # Counted, not measured: the wrap must not depend on which families the
+    # machine running the tests happens to have.
     window._on_box_changed(
         TextBox(
             width=24,
             height=16,
             line_height=8,
+            chars_per_line=5,
             effects={"line": CodeEffect(Effect.NEWLINE)},
         )
     )
@@ -505,13 +491,10 @@ def test_preview_and_wrap(window, tmp_path):
     assert window._write_project(str(proj))
     window._new_project()
     assert window.open_project(str(proj))
-    fonts = [e for e in window.workspace.entries if e.kind is EntryKind.FONT]
-    assert (
-        fonts[0].font.widths[:3] == (1, 2, 3) and fonts[0].font.chars == " ABCDEFGHIJ"
-    )
     blocks = [e for e in window.workspace.entries if e.kind is EntryKind.BLOCK]
     assert (
         blocks[0].box.width == 24
+        and blocks[0].box.chars_per_line == 5
         and blocks[0].box.effects["line"].effect is Effect.NEWLINE
     )
 
@@ -570,21 +553,6 @@ def test_hex_panel_overtypes_in_place(window, tmp_path, qtbot):
     window.undo_stack.undo()
     assert file_entry.doc.data[2] == 2
     assert isinstance(cursor, QTextCursor)
-
-
-def test_fonts_panel_lists_and_binds(window, tmp_path):
-    from PySide6.QtGui import QImage
-
-    file_entry = open_rom_and_table(window, tmp_path, b"AB\x00")
-    png = tmp_path / "f.png"
-    QImage(128, 8, QImage.Format.Format_ARGB32).save(str(png))
-    font_entry = window.open_font(str(png))
-    assert window.fonts_panel.tree.topLevelItemCount() == 1
-    block = add_block(window, file_entry, "B", RangeSource(0, 3))
-    window._edit_font_entry(font_entry)
-    assert block.box is not None and block.box.font_index == 0
-    window.fonts_panel.rebuild()
-    assert window.fonts_panel.tree.topLevelItem(0).childCount() == 1
 
 
 def test_cartographer_import_strips_the_header(window, tmp_path):
@@ -1152,7 +1120,11 @@ def test_the_legend_shows_every_colour_the_views_draw(window):
     drawn = {
         getattr(theme, name).name(QColor.NameFormat.HexArgb)
         for name in dir(theme)
-        if name.startswith("TINT_") or name.endswith("_INK")
+        # The Preview's own paper, ink and grid are the colours of a stand-in
+        # screen rather than marks a view puts on the text: nothing in the
+        # Legend would explain them.
+        if not name.startswith("PREVIEW_")
+        and (name.startswith("TINT_") or name.endswith("_INK"))
     }
     assert drawn - shown == {theme.TINT_STRING_RULE.name(QColor.NameFormat.HexArgb)}
     assert any(
@@ -1397,10 +1369,10 @@ def test_the_start_table_pick_ends_in_new_table(window, tmp_path, monkeypatch):
     pick.setCurrentIndex(pick.count() - 1)
     assert pick.currentData() == "kana" and kana.exists()
     assert pick.itemText(pick.count() - 1) == "New Table…"
-    # The Tables dock lists one row per table and marks the start table.
-    rows = window.tables_panel.tree
-    assert [rows.topLevelItem(i).text(0) for i in range(2)] == ["@main", "@kana"]
-    window.tables_panel._on_double(rows.topLevelItem(0), 0)
+    # Both tables are on offer, and picking one makes it the start table again.
+    from mapchar.ui.widgets import select_data
+
+    assert select_data(pick, "main")
     assert pick.currentData() == "main"
 
 

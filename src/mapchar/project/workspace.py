@@ -6,13 +6,13 @@ import os
 from collections import ChainMap
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from itertools import count
 
 from mapchar.core.block import BlockConfig, Status
 from mapchar.core.capabilities import EntryKind
 from mapchar.core.document import Document
-from mapchar.core.font import Font, TextBox
+from mapchar.core.font import TextBox
 from mapchar.core.notices import Notice
 from mapchar.core.table import Table
 from mapchar.project.glossary import GlossaryTerm
@@ -108,10 +108,8 @@ class Entry:
     """
     spare_room: str = "fill"
     """What fills a slot a shorter re-compression leaves: ``fill`` or ``keep``."""
-    font: Font | None = None
-    """Font entries: the glyph sheet and its map."""
     box: TextBox | None = None
-    """Blocks: the text box strings are previewed in, when bound to a font."""
+    """Blocks: the text box strings are previewed in."""
     dialect: str | None = None
     """Tables: the dialect the file was read with."""
     table: Table | None = None
@@ -547,9 +545,6 @@ class Workspace:
     def files(self) -> list[Entry]:
         return self.of_kind(EntryKind.FILE)
 
-    def fonts(self) -> list[Entry]:
-        return self.of_kind(EntryKind.FONT)
-
     def table_entries(self) -> list[Entry]:
         return self.of_kind(EntryKind.TABLE)
 
@@ -770,9 +765,9 @@ def relocate_path(ws: Workspace, old_path: str, new_path: str) -> list[Entry]:
     """Re-point every reference to ``old_path`` at ``new_path``; the entries
     touched.
 
-    Rewrites an entry's ``path``, any of its ``extra_paths`` naming the same
-    file, and a font's own record of where its sheet came from — so relocating a
-    shared ROM fixes the file and the blocks and bookmarks under it together.
+    Rewrites an entry's ``path`` and any of its ``extra_paths`` naming the same
+    file — so relocating a shared ROM fixes the file and the blocks and
+    bookmarks under it together.
     Pure data: the caller re-reads whatever was affected.
     """
     key = normalize_path(old_path)
@@ -786,8 +781,6 @@ def relocate_path(ws: Workspace, old_path: str, new_path: str) -> list[Entry]:
             # is theirs and survives the move.
             if entry.name == old_name:
                 entry.name = new_name
-            if entry.font is not None:
-                entry.font = replace(entry.font, path=new_path)
         moved_extra = tuple(
             new_path if normalize_path(p) == key else p for p in entry.extra_paths
         )

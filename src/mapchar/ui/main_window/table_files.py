@@ -9,7 +9,7 @@ from mapchar.project.tables import adopt_table, read_table_file
 from mapchar.project.workspace import Entry, EntryKind
 
 
-class TablesDockMixin:
+class TableFilesMixin:
     """Table files on disk: watching them and re-reading them.
 
     A slice of :class:`~mapchar.ui.main_window.window.MainWindow`, reaching the
@@ -43,9 +43,8 @@ class TablesDockMixin:
 
     def _tables_changed(self) -> None:
         """A table's entries changed: every document extracts again, and the
-        Tables dock, the table counts and the views catch up."""
+        table picks, the table counts and the views catch up."""
         self.workspace.invalidate_extractions()
-        self.tables_panel.rebuild()
         self._refresh_table_picks()
         self.files_panel.refresh_labels()
         self._refresh_view()

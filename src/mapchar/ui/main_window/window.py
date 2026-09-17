@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 
-from PySide6.QtCore import QFileSystemWatcher, Qt
+from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer
 from PySide6.QtGui import QPalette, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
@@ -51,7 +51,6 @@ from mapchar.ui.dialogs import (
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.find_row import FindRow
-from mapchar.ui.fonts_panel import FontsPanel
 from mapchar.ui.glossary_window import GlossaryWindow
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.help_dialogs import (
@@ -72,7 +71,6 @@ from mapchar.ui.main_window.entries import EntriesMixin
 from mapchar.ui.main_window.entry_clipboard import EntryClipboardMixin
 from mapchar.ui.main_window.files_menu import FilesMenuMixin
 from mapchar.ui.main_window.find_replace import FindReplaceMixin
-from mapchar.ui.main_window.fonts import FontsMixin
 from mapchar.ui.main_window.format_bar import FormatBarMixin
 from mapchar.ui.main_window.glossary import GlossaryMixin
 from mapchar.ui.main_window.hex_view import HexViewMixin
@@ -87,7 +85,7 @@ from mapchar.ui.main_window.preview import PreviewMixin
 from mapchar.ui.main_window.project_strings import ProjectStringsMixin
 from mapchar.ui.main_window.projects import ProjectMixin
 from mapchar.ui.main_window.raw_view import RawViewMixin
-from mapchar.ui.main_window.refresh import RefreshMixin
+from mapchar.ui.main_window.refresh import SETTLE_MS, RefreshMixin
 from mapchar.ui.main_window.relative_search import RelativeSearchMixin
 from mapchar.ui.main_window.relocate import RelocateMixin
 from mapchar.ui.main_window.search import SearchMixin
@@ -95,7 +93,7 @@ from mapchar.ui.main_window.session import SessionMixin
 from mapchar.ui.main_window.string_edit import StringEditMixin
 from mapchar.ui.main_window.strings_view import StringsViewMixin
 from mapchar.ui.main_window.table_editor import TableEditorMixin
-from mapchar.ui.main_window.tables_dock import TablesDockMixin
+from mapchar.ui.main_window.table_files import TableFilesMixin
 from mapchar.ui.main_window.text_view import TextViewMixin
 from mapchar.ui.main_window.wrap import WrapMixin
 from mapchar.ui.main_window.writing import WritingMixin
@@ -108,7 +106,6 @@ from mapchar.ui.scan_window import ScanWindow
 from mapchar.ui.search_window import SearchWindow
 from mapchar.ui.strings_view import StringsView
 from mapchar.ui.table_editor import TableEditor
-from mapchar.ui.tables_panel import TablesPanel
 from mapchar.ui.text_widget import TextWidget
 from mapchar.ui.widgets import (
     CommandComboBox,
@@ -137,7 +134,7 @@ class MainWindow(
     DumpingMixin,
     CompressionMixin,
     PluginsMixin,
-    TablesDockMixin,
+    TableFilesMixin,
     TableEditorMixin,
     RawViewMixin,
     BlocksMixin,
@@ -155,7 +152,6 @@ class MainWindow(
     AutosaveMixin,
     RelocateMixin,
     PreviewMixin,
-    FontsMixin,
     HexViewMixin,
     MenuBarMixin,
     ThemedIcons,
@@ -219,6 +215,12 @@ class MainWindow(
         self._text_up_guess = 0.0
         """How many bytes back a line of the text above the Text tab's window
         was, the last time one was looked for."""
+        self._settle = QTimer(self)
+        self._settle.setSingleShot(True)
+        self._settle.setInterval(SETTLE_MS)
+        self._settle.timeout.connect(self._on_view_settled)
+        """Restarted by every move of a dragged view, so the refresh the drag
+        put off runs once it stops (:meth:`_refresh_view`)."""
         self._selection: tuple[int, int] | None = None
         self._bars_show: tuple | None = None
         """The entry and reading the bars were last loaded with."""
@@ -289,22 +291,6 @@ class MainWindow(
         files_dock.setWidget(self.files_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, files_dock)
         self.files_dock = files_dock
-
-        self.tables_panel = TablesPanel(self.workspace)
-        tables_dock = QDockWidget("Tables", self)
-        tables_dock.setObjectName("tables_dock")
-        tables_dock.setWidget(self.tables_panel)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, tables_dock)
-        self.tables_dock = tables_dock
-
-        self.fonts_panel = FontsPanel(self.workspace)
-        fonts_dock = QDockWidget("Fonts", self)
-        fonts_dock.setObjectName("fonts_dock")
-        fonts_dock.setWidget(self.fonts_panel)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, fonts_dock)
-        self.tabifyDockWidget(tables_dock, fonts_dock)
-        tables_dock.raise_()
-        self.fonts_dock = fonts_dock
 
         # How every address field spells a position; the address format sets it.
         self.address_spelling = AddressSpelling(self)
@@ -517,8 +503,6 @@ class MainWindow(
         self.files_panel.copy_requested.connect(self._copy_entries)
         self.files_panel.paste_requested.connect(self._paste_entries)
         self.files_panel.duplicate_requested.connect(self._duplicate_entries)
-        self.tables_panel.table_chosen.connect(self._choose_table)
-        self.fonts_panel.edit_requested.connect(self._edit_font_entry)
         self.format_pick.chosen.connect(self._on_format_pick)
         self.table_edit.clicked.connect(self._edit_picked_table)
         self.format_pick.command.connect(lambda: self._new_table_dialog(start=True))
@@ -534,6 +518,10 @@ class MainWindow(
         self.text.scroll_requested.connect(self._on_text_scroll)
         self.text.page_requested.connect(self._step_pages)
         self.text.offset_requested.connect(self._go_to)
+        # Letting go settles the view at once, rather than after the timer the
+        # last move of the drag started.
+        self.text.bar.sliderReleased.connect(self._on_view_settled)
+        self.raw.verticalScrollBar().sliderReleased.connect(self._on_view_settled)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.raw.selection_changed.connect(self._on_selection)
         self.raw.context_menu_requested.connect(self._raw_menu)
@@ -556,7 +544,7 @@ class MainWindow(
         self.decompress_window.jump_next.connect(self._jump_next_structure)
         self.decompress_window.scan_next.connect(self._scan_next_structure)
         self.decompress_window.to_block.connect(self._structure_to_block)
-        self.preview_window.font_changed.connect(self._on_font_changed)
+        self.preview_window.font_changed.connect(self._on_preview_font_changed)
         self.preview_window.box_changed.connect(self._on_box_changed)
         self.preview_window.wrap_requested.connect(self._wrap_selected)
         self.table_editor.changed.connect(self._on_table_edited)
