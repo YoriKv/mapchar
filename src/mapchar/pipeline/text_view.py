@@ -166,15 +166,14 @@ class TextDecode:
         self.chars: list[int] = [0]
         """The character each token's text starts at, and after the last the
         length of them all."""
-        entries = [e for t in tables.tables.values() for e in t.entries.values()]
         # A string cut by length rather than at an end token starts where the
-        # one before it ended, not at any token boundary.
-        self.resumable = resumable and all(
-            e.kind is not TokenKind.SWITCH for e in entries
+        # one before it ended, not at any token boundary. Each table answers
+        # for itself and remembers it: a view that moves builds one of these
+        # per window, and a charset has thousands of entries.
+        self.resumable = resumable and not any(
+            t.has_switch() for t in tables.tables.values()
         )
-        self.margin = max(
-            (len(e.bits) + sum(o.bits for o in e.operands) for e in entries), default=8
-        )
+        self.margin = max((t.key_span() for t in tables.tables.values()), default=8)
 
     def serves(self, data: bytes, tables: TableSet, shown: Shown) -> bool:
         """Whether these tokens are of ``data`` read through ``tables``, shown
@@ -185,6 +184,16 @@ class TextDecode:
             and tables.start is self.tables.start
             and tables.tables == self.tables.tables
         )
+
+    def can_serve(self, offset: int) -> bool:
+        """Whether a window from ``offset`` could be served from these tokens.
+
+        Asked before growing them, since growing them cannot make an offset
+        they do not reach a token boundary: a view that jumped elsewhere —
+        the scrollbar dragged, an address typed — decodes its window once
+        rather than first decoding on from where the last one was.
+        """
+        return self._first(offset) is not None
 
     def _first(self, offset: int) -> int | None:
         """The index of the token a window from ``offset`` starts with, when

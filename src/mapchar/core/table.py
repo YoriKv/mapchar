@@ -397,6 +397,28 @@ class Table:
                     ids.add(param.table_id)
         return frozenset(ids)
 
+    def has_switch(self) -> bool:
+        """Whether any entry switches table, so the decoder carries state
+        across a token and no byte in the middle of a decode is a fresh start."""
+        return self._cached(
+            "has_switch",
+            lambda: any(e.kind is TokenKind.SWITCH for e in self.entries.values()),
+        )
+
+    def key_span(self) -> int:
+        """The most bits one token of this table reads: its longest key with
+        that entry's operands."""
+        return self._cached(
+            "key_span",
+            lambda: max(
+                (
+                    len(e.bits) + sum(o.bits for o in e.operands)
+                    for e in self.entries.values()
+                ),
+                default=8,
+            ),
+        )
+
     def effects(self) -> dict[str, Effect]:
         """Every label whose entry declares a layout effect, with the effect."""
         return self._cached(

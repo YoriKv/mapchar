@@ -47,7 +47,8 @@ class TextViewMixin:
 
         How many bytes fill a box of text cannot be known up front — a
         dictionary token is a word on one byte, a table switch is nothing on
-        several — so the window starts at the box's room in characters and
+        several — so the window starts at what the last one took, or, for the
+        first, at the box's room in characters, and
         doubles until the text overflows, the file ends or
         :data:`TEXT_WINDOW_LIMIT` is reached, and is then cut to whole lines.
         Unwrapped, a last line cut at the box's edge with room under it has not
@@ -80,8 +81,10 @@ class TextViewMixin:
         # The last window is the best guess at this one: as many bytes as
         # overflowed then, or, where the first try overflowed, twice what was
         # kept, so a guess grown over a stretch that decodes to little shrinks
-        # back once the text is dense again.
-        length = max(room, self._text_guess)
+        # back once the text is dense again. The box's room is only the first
+        # guess, before there is a window to go on — it counts characters, and
+        # text that spells a byte [$XX] fills the box on a fraction of them.
+        length = self._text_guess or room
         tries = 0
         while True:
             tries += 1
@@ -115,9 +118,11 @@ class TextViewMixin:
             return text_model(tokens, offset, stop - offset)
         shown = self.text.shown()
         cache = self._text_decode
-        if cache is None or not cache.serves(doc.data, tables, shown):
-            cache = None
-        else:
+        if (
+            cache is not None
+            and cache.serves(doc.data, tables, shown)
+            and cache.can_serve(offset)
+        ):
             cache.extend(stop, self._decode_window)
             model = cache.model(offset, stop)
             if model is not None:
@@ -136,6 +141,7 @@ class TextViewMixin:
 
     def _on_text_fit_changed(self) -> None:
         """The Text tab's box has room for a different window: fit one to it."""
+        self._text_guess = 0
         if self._doc is not None:
             self._refresh_text_mode(self._doc, self._table_set())
             self._sync_steps()
