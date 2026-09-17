@@ -21,10 +21,13 @@ from PySide6.QtGui import QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
     QPushButton,
+    QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -55,12 +58,14 @@ from mapchar.ui.widgets import (
     select_data,
     show_elided_tooltips,
 )
-from mapchar.ui.window_layout import remember_layout
+from mapchar.ui.window_layout import remember_layout, stored_bytes
 
 LINE_SHOWN_KEY = "table_editor/line_shown"
 """Whether the form shows the line code, remembered per machine."""
 COLUMNS_KEY = "table_editor/columns"
 """Which columns the grid shows, remembered per machine."""
+SPLITTER_KEY = "table_editor/splitter"
+"""Where the grid and the form under it are split, remembered per machine."""
 
 KEY, KIND, TEXT, DETAILS, WEIGHT, COMMENT = range(6)
 """The grid's columns."""
@@ -98,7 +103,9 @@ class TableEditor(EscapeCloses, QWidget):
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("Table Editor")
         # Size and position remembered between runs, like every tool
-        # window (:mod:`mapchar.ui.window_layout`).
+        # window (:mod:`mapchar.ui.window_layout`); the size set first is the
+        # one a machine with nothing stored opens at.
+        self.resize(720, 640)
         self._layout = remember_layout(self, "table_editor")
         self._entry: Entry | None = None
         self._table: Table | None = None
@@ -185,15 +192,47 @@ class TableEditor(EscapeCloses, QWidget):
             | QTableWidget.EditTrigger.EditKeyPressed
         )
         self.grid.verticalHeader().setVisible(False)
+        self.grid.setMinimumHeight(60)
         show_elided_tooltips(self.grid)
-        layout.addWidget(self.grid, 1)
-        self.sample = ElidedLabel("")
-        self.sample.setToolTip("Where in the file the key's bytes were taken from")
-        layout.addWidget(self.sample)
 
         # -- the entry ----------------------------------------------------------
+        self.sample = ElidedLabel("")
+        self.sample.setToolTip("Where in the file the key's bytes were taken from")
         self.form = TableEntryForm()
-        layout.addWidget(self.form)
+        self._lower = QWidget()
+        lower_box = QVBoxLayout(self._lower)
+        lower_box.setContentsMargins(0, 0, 0, 0)
+        lower_box.addWidget(self.sample)
+        lower_box.addWidget(self.form)
+        lower_box.addStretch(1)
+        # The form grows and shrinks as the kind picked changes what an entry
+        # takes, so it is scrolled inside a pane of its own: growing it would
+        # otherwise take height off the grid and move the rows under the cursor.
+        self.form_pane = QScrollArea()
+        self.form_pane.setWidget(self._lower)
+        self.form_pane.setWidgetResizable(True)
+        self.form_pane.setFrameShape(QFrame.Shape.NoFrame)
+        self.form_pane.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        # Split rather than sized to fit: how much of a long table to see at
+        # once against how much of the form is the user's answer, not ours.
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.addWidget(self.grid)
+        self.splitter.addWidget(self.form_pane)
+        self.splitter.setChildrenCollapsible(False)
+        # A taller window is more rows; the form stays the height it was put at.
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        state = stored_bytes(settings().value(SPLITTER_KEY))
+        if state is not None:
+            self.splitter.restoreState(state)
+        self._split_set = state is not None
+        """Whether the split is the user's. Until it is, the form is given the
+        height it asks for and the grid keeps the rest (:meth:`_fit_split`); a
+        handle once dragged is never moved again."""
+        self.splitter.splitterMoved.connect(self._remember_split)
+        layout.addWidget(self.splitter, 1)
         row = QHBoxLayout()
         self.add = QPushButton("Add")
         self.add.setToolTip("Put the entry in the table (Enter)")
@@ -249,7 +288,6 @@ class TableEditor(EscapeCloses, QWidget):
             lambda: self.save_requested.emit(self._entry, True)
         )
         self.set_charsets([])
-        self.resize(720, 640)
 
     @property
     def new_line(self) -> QLineEdit:
@@ -344,9 +382,40 @@ class TableEditor(EscapeCloses, QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
+        self._fit_split()
         # Opened on a table, the first thing to do is type a key.
         if self._editing is None and not self.form.key.text():
             self.form.focus_key()
+
+    def _fit_split(self) -> None:
+        """Give the form the height it asks for and the grid the rest.
+
+        What a splitter does for itself at first, except that the form's height
+        answers to the kind picked: a switch's parameters need room a text
+        entry does not. So it is fitted again whenever the form changes — up to
+        the moment the handle is dragged, after which the split is the user's
+        and nothing here moves it. The rows stay where they were either way:
+        the grid is left scrolled exactly where it was found, which is the
+        whole point of the form having a pane of its own.
+        """
+        if self._split_set:
+            return
+        sizes = self.splitter.sizes()
+        total = sum(sizes)
+        if total <= 0:  # not laid out yet; the first show asks again
+            return
+        # Half at the most: a window opened short is still a window of rows.
+        wanted = min(self._lower.sizeHint().height(), total // 2)
+        if wanted == sizes[1]:
+            return
+        bar = self.grid.verticalScrollBar()
+        at = bar.value()
+        self.splitter.setSizes([total - wanted, wanted])
+        bar.setValue(at)
+
+    def _remember_split(self) -> None:
+        self._split_set = True
+        settings().setValue(SPLITTER_KEY, self.splitter.saveState())
 
     def prefill(self, keys: list[str], at: int | None = None) -> None:
         """Start new entries on ``keys`` in turn — the raw view's selection,
@@ -552,6 +621,7 @@ class TableEditor(EscapeCloses, QWidget):
     def _on_form_changed(self) -> None:
         self._sync_buttons()
         self._show_sample()
+        self._fit_split()
 
     def _show_sample(self) -> None:
         """Where the form's key came from, for the keys the raw view sent."""

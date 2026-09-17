@@ -44,6 +44,13 @@ No layout's minimum size may be set by text or a count that varies.
   box has room for, and what does not fit is reached by moving the view — its
   scrollbar is the file's (or the stretch of it the view is confined to),
   never the box's.
+- **A pane whose height is a judgement is split**: the Strings view's grid and
+  pane, and the Table Editor's grid and form, sit in a `QSplitter` whose
+  position is kept in `QSettings`. A pane that grows with what it shows — a
+  form whose kind takes parameters — is fitted to it until the handle is
+  dragged, after which the split is the user's and the pane scrolls inside its
+  half instead. Either way the view above keeps the scroll position it had, so
+  the rows never move out from under the cursor.
 - **Dialogs fit a 768-pixel-high screen**: a long form is grouped into titled
   boxes in columns.
 - **Docks**: a tree's name column stretches and gives way first; count columns
@@ -103,6 +110,12 @@ tooltip the control has of its own.
 
 - **Esc closes a tool window** (`EscapeCloses`), as it closes a dialog; an
   open cell editor or popup spends its own Esc first.
+- **A tool window that edits the project carries Undo and Redo itself.** A
+  window shortcut reaches only the active top-level window, and a tool window
+  is one of its own, so the Edit menu's two actions are added to the Table
+  Editor, Find and Replace and the Glossary as well: Ctrl+Z means the same
+  thing wherever the focus is. Everything else on the menu bar is reached from
+  the main window.
 - **Enter runs** the Search window's query field; Find and Replace's default button
   is Find Next. A find field (`find_row.FindRow`, the Find bar's and the Hex
   panel's) finds the next match on Enter and the previous on Shift+Enter.

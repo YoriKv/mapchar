@@ -100,6 +100,13 @@ class MenuBarMixin:
         redo.setProperty("guideLabel", "Redo")
         edit_menu.addAction(undo)
         edit_menu.addAction(redo)
+        # A window shortcut reaches only the active top-level window, and a tool
+        # window is one of its own: a window that edits the project carries the
+        # two actions itself, so Ctrl+Z means the same thing wherever the focus
+        # is. Everything else on this bar is reached from the main window.
+        for window in (self.table_editor, self.find_replace, self.glossary_window):
+            window.addAction(undo)
+            window.addAction(redo)
         edit_menu.addSeparator()
         # Entry Cut/Copy/Paste are scoped to the Files panel rather than to the
         # window: as window actions they would take Ctrl+C and Ctrl+V away from

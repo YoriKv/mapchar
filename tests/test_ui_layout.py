@@ -102,6 +102,38 @@ def test_tool_windows_stay_usable_at_their_smallest(window):
         assert hint.width() < 700 and hint.height() < 400, tool
 
 
+def test_the_table_editors_form_grows_without_moving_the_grid(window, tmp_path, qtbot):
+    """The grid and the form are split rather than sized to fit: a kind that
+    takes parameters grows the form, and the rows stay where they were. Once
+    the handle is dragged the split is the user's, and the form growing then
+    scrolls inside its own pane rather than taking the grid's height."""
+    from mapchar.core.table import TokenKind
+
+    table = TABLE + "".join(f"{0x80 + i:02X}=c{i}\n" for i in range(200))
+    open_rom_and_table(window, tmp_path, DATA, table=table)
+    editor = window.table_editor
+    window._edit_table_entry(window.workspace.table_entries()[0])
+    qtbot.waitExposed(editor)
+    bar = editor.grid.verticalScrollBar()
+    bar.setValue(bar.maximum() // 2)
+    scrolled = bar.value()
+    assert scrolled > 0
+    kind = editor.form.kind
+    # Left to itself, the form is as tall as the kind picked needs.
+    text_split = editor.splitter.sizes()
+    kind.setCurrentIndex(kind.findData(TokenKind.SWITCH))
+    assert editor.form.params_box.isVisible()
+    assert editor.splitter.sizes()[1] > text_split[1]
+    assert bar.value() == scrolled
+    # A drag settles it: the form is scrolled from here on, not the grid.
+    kind.setCurrentIndex(kind.findData(TokenKind.TEXT))
+    editor.splitter.splitterMoved.emit(0, 1)
+    was = editor.grid.height()
+    kind.setCurrentIndex(kind.findData(TokenKind.SWITCH))
+    assert editor.grid.height() == was
+    assert bar.value() == scrolled
+
+
 # -- cut-short text reads in full --------------------------------------------
 
 
@@ -183,6 +215,26 @@ def test_esc_closes_every_tool_window(window, qtbot):
         assert tool.isVisible()
         qtbot.keyClick(tool, Qt.Key.Key_Escape)
         assert not tool.isVisible(), tool
+
+
+def test_ctrl_z_undoes_in_a_tool_window_that_edits_the_project(window, tmp_path, qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    open_rom_and_table(window, tmp_path, DATA)
+    table_entry = window.workspace.table_entries()[0]
+    window._edit_table_entry(table_entry)
+    editor = window.table_editor
+    qtbot.waitExposed(editor)
+    # A window shortcut matches against the *active* window, which the offscreen
+    # platform leaves unset until asked.
+    editor.activateWindow()
+    QApplication.processEvents()
+    editor.new_line.setText("43=C")
+    editor._add()
+    assert table_entry.table.entries["01000011"].text == "C"
+    qtbot.keyClick(editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert "01000011" not in table_entry.table.entries
 
 
 def test_f2_renames_the_files_row_in_place(window, tmp_path, qtbot):

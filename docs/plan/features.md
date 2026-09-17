@@ -272,7 +272,11 @@ the preview system in [preview.md](preview.md).
     with the includes themselves is said on the status line. A click on a
     header sorts by that column (Key by width, then bits); a right-click
     chooses which columns show, kept between runs. Weight, left to itself,
-    shows only when the table weights something;
+    shows only when the table weights something. The grid and the form under
+    it are **split** by a handle, where it is left kept between runs: a taller
+    window is more rows, and the form takes the height the kind picked needs
+    until the handle is dragged, after which it scrolls in its own pane
+    instead. The rows keep their place through either;
   - a **sample** line under the grid, for a key the raw view sent: where in
     the file its bytes were taken from (`sampled from 0C4A10`);
   - an **entry form** under the grid, loaded from the selected row or blank
@@ -1011,5 +1015,5 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code · Esc cancel · the same keys in the pane under the grid |
 | Files panel | Up/Down or double-click open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename · right-click menu |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
-| Tool windows | Esc close · Enter run the Search window's query · double-click a result to jump |
+| Tool windows | Esc close · Enter run the Search window's query · double-click a result to jump · Ctrl+Z / Ctrl+Shift+Z in one that edits the project (Table Editor, Find and Replace, Glossary) |
 | Table Editor | Enter put the entry in the table · Del remove the selected entries · Ctrl+F filter · F2 or double-click edit a Text or Comment cell, double-click opens any other in the form · click a header to sort, right-click to choose columns |
