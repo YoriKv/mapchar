@@ -18,9 +18,6 @@
 - File ▸ Refresh Tables (Shift+F5).
 - A reworked Table Editor, with Ctrl+Z in every tool window.
 - The Text tab ends a line at every string.
-- A Mother 3 sample project.
-- The Tables and Fonts docks are gone.
-- Dropped the EUC-JP, EUC-KR, Big5 and UTF-16 BE charsets.
 - Performance and bug fixes.
 
 ## v0.1.2 - 2026-09-15
