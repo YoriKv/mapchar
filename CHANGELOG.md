@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.3 - unreleased
+## v0.1.3 - 2026-09-18
 
 - Translations are edited straight into the ROM's bytes, and the project
   keeps each string's original.
