@@ -111,6 +111,9 @@ the preview system in [preview.md](preview.md).
   after the file, numbered up (`main_2`) past a loaded table of that name. The
   Table list and the Files panel's context menu offer it too; from the
   Table list the new table becomes the reading's table.
+- **File ▸ Refresh Tables (Shift+F5)** reads every registered table file again
+  and refreshes the ones whose contents changed, saying how many in the status
+  bar.
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
   [Dump, export and import](#dump-export-and-import)).
@@ -347,8 +350,11 @@ the preview system in [preview.md](preview.md).
   from a relative search, or from **Add from selection** — is carried whole by
   the project the same way.
 - **Reload** — a table file edited outside the app is re-read when its
-  timestamp changes, with a prompt if the in-app copy has edits. The edits stay
-  on top of what was re-read, and win where they overlap.
+  timestamp changes, with a prompt if the in-app copy has edits, and
+  **File ▸ Refresh Tables** asks for the same of every table file at once —
+  what an editor that replaces the file rather than writing over it leaves the
+  watcher blind to. The edits stay on top of what was re-read, and win where
+  they overlap.
 
 ## Reading the bytes
 
@@ -1038,7 +1044,7 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 
 | Area | Keys |
 |---|---|
-| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · F5 Refresh Plugins · Ctrl+Q Quit |
+| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · Shift+F5 Refresh Tables · F5 Refresh Plugins · Ctrl+Q Quit |
 | Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Shift+L Glossary · Ctrl+Alt+D toggle done · F4 / Shift+F4 next / previous untranslated · F6 / Shift+F6 next / previous flagged |
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |

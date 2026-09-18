@@ -864,6 +864,7 @@ ALWAYS_ON = frozenset(
         "Open ROM…",
         "Open Table…",
         "New Table…",
+        "Refresh Tables",
         "Open Font…",
         "Write All",
         "New Project",
@@ -2083,3 +2084,31 @@ def test_recovering_a_session_keeps_its_copy_and_never_names_it(
     # nothing about it.
     assert str(copy) not in window._recent()
     assert str(copy.parent) != window.settings.value("last_dir", "")
+
+
+def test_refresh_tables_reads_every_file_and_only_refreshes_changes(
+    window, tmp_path, monkeypatch
+):
+    rom = tmp_path / "r.bin"
+    rom.write_bytes(b"AB\x00")
+    quiet = tmp_path / "quiet.tbl"
+    quiet.write_text(TABLE)
+    edited = tmp_path / "edited.tbl"
+    edited.write_text(TABLE.replace("@table main", "@table other"))
+    window.open_rom(str(rom))
+    window.open_table(str(quiet))
+    changed = window.open_table(str(edited))
+    refreshed = []
+    monkeypatch.setattr(
+        type(window), "_tables_changed", lambda self: refreshed.append(True)
+    )
+
+    window.refresh_tables()
+    assert not refreshed
+    assert "up to date" in window.statusBar().currentMessage()
+
+    edited.write_text(TABLE.replace("@table main", "@table other") + "43=C\n")
+    window.refresh_tables()
+    assert refreshed == [True]
+    assert "01000011" in changed.table.entries
+    assert window.statusBar().currentMessage() == "Reloaded 1 table"

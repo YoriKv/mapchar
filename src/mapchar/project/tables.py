@@ -82,6 +82,24 @@ def read_table_file(
     return tf
 
 
+def same_table(a: Table | None, b: Table | None) -> bool:
+    """Whether two tables say the same thing.
+
+    What a reader of the table can tell apart — its id, charset, comment,
+    includes and entries — not the caches derived from them. How a re-read
+    decides whether anything reached the UI.
+    """
+    if a is None or b is None:
+        return a is b
+    return (
+        a.id == b.id
+        and a.charset == b.charset
+        and a.comment == b.comment
+        and a.includes == b.includes
+        and a.entries == b.entries
+    )
+
+
 def overlay_of(base: Table | None, live: Table) -> dict[str, str | None]:
     """How ``live`` differs from ``base``: the project's overlay.
 

@@ -48,6 +48,7 @@ class MenuBarMixin:
         act(file_menu, "Open RO&M…", self._open_rom_dialog, "Ctrl+Shift+O")
         act(file_menu, "Open &Table…", self._open_table_dialog, "Ctrl+T")
         act(file_menu, "N&ew Table…", lambda: self._new_table_dialog())
+        act(file_menu, "Re&fresh Tables", self.refresh_tables, "Shift+F5")
         file_menu.addSeparator()
         # Named where :mod:`mapchar.ui.main_window.capability_sync` gates them:
         # what each row applies to is declared in the capability table, not here.
