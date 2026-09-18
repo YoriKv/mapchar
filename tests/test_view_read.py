@@ -1,5 +1,6 @@
 """Reading the bytes in view: string rules in step with the block, pointers,
-the standard encodings as tables, and a new block's region."""
+the standard encodings as tables, a new block's region, and the line breaks the
+Text tab puts between strings the tokens do not end themselves."""
 
 from __future__ import annotations
 
@@ -15,7 +16,9 @@ from mapchar.core.block import (
 )
 from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.tokens import render
+from mapchar.pipeline.text_view import TextDecode, text_model
 from mapchar.pipeline.view_read import (
+    align_before,
     decode_strings,
     pointer_cells,
     target_string,
@@ -121,3 +124,73 @@ def test_a_view_s_pointer_window_holds_as_many_pointers_as_asked():
     listed = PointerListSource((30, 10, 20), 2)
     assert pointer_window(listed, 11, 2) == 32
     assert pointer_window(listed, 11, 3) is None
+
+
+def _fixed(length: int = 5) -> BlockConfig:
+    return BlockConfig(RangeSource(0, 0), FixedLength(length), "ascii")
+
+
+def test_the_text_breaks_after_the_last_token_at_a_string_start():
+    tokens = decode_strings(b"alpha", _fixed(), _ascii()).tokens
+    # Nothing starts past these tokens: the text ends as the last string does.
+    assert text_model(tokens, 0, 5, starts=[0]).body == "alpha"
+    # The string in view begins where they end, so the text above them ends
+    # with the break rather than running into the view's first line.
+    assert text_model(tokens, 0, 5, starts=[0, 40]).body == "alpha\n"
+
+
+def test_the_text_above_a_view_ends_where_the_view_s_string_begins():
+    data = b"alphabravo"
+    run = decode_strings(data, _fixed(), _ascii())
+    assert run.starts == [0, 40]
+    # A view at byte 5 starts a string: align_before keeps that start, so the
+    # text above it is a string of its own.
+    start, _tokens, starts = align_before(
+        data,
+        0,
+        5,
+        5,
+        lambda d, at: decode_strings(d, _fixed(), _ascii(), at),
+        tries=1,
+        lookahead=5,
+    )
+    assert (start, starts) == (5, [0])
+    start, tokens, starts = align_before(
+        data,
+        0,
+        4,
+        5,
+        lambda d, at: decode_strings(d, _fixed(), _ascii(), at),
+        tries=2,
+        lookahead=5,
+    )
+    assert starts[-1] == (5 - start) * 8
+    assert text_model(tokens, start, 5 - start, starts=starts).body.endswith("\n")
+
+
+def test_the_kept_tokens_break_where_a_fresh_decode_does():
+    data = b"alphabravo"
+    tables = _ascii()
+    cache = TextDecode(data, tables, 5)
+    cache.extend(10, lambda d, t, at: decode_strings(d, _fixed(), t, at))
+    above = decode_strings(data[:5], _fixed(), tables)
+    # The string above joins the kept tokens at the byte they start at, which
+    # is where a string begins: the junction breaks, as a fresh decode does.
+    assert cache.prepend(0, above.tokens, [0, 40])
+    fresh = text_model(above.tokens, 0, 5, starts=[0, 40])
+    assert cache.above(0, 5).body == fresh.body == "alpha\n"
+    assert cache.model(5, 10).body == "bravo"
+    assert cache.chars[-1] == len("alpha\nbravo")
+
+
+def test_a_view_reports_no_string_starting_past_its_data():
+    # Nothing breaks after the last token of a whole decode: every start is a
+    # string with tokens of its own, so the text gains no trailing break.
+    data = b"alphabravo"
+    tables = _ascii()
+    run = decode_strings(data, _fixed(), tables)
+    assert run.starts == [0, 40] and run.tokens[-1].bit_end == 80
+    assert text_model(run.tokens, 0, 10, starts=run.starts).body == "alpha\nbravo"
+    cache = TextDecode(data, tables, 0)
+    cache.extend(10, lambda d, t, at: decode_strings(d, _fixed(), t, at))
+    assert cache.model(0, 10).body == "alpha\nbravo"

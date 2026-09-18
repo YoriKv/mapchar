@@ -22,6 +22,15 @@ checks the ones a test can see.
 - **Words, never class names**: a source or string type is shown as the Block
   dialog names it (`Pointer table · End token`).
 
+## Modes
+
+- **A choice of mode is a `ModeToggle`**: buttons side by side, exactly one
+  down — the Format bar's Strings/Pointers, the Table Entry form's Hex/Bits.
+  The one down is painted in the palette's `Highlight` and `HighlightedText`,
+  since the checked bevel a style draws on its own vanishes into the dark
+  theme's surface; a mode that cannot be picked is disabled and keeps the
+  greyed look.
+
 ## Room running out
 
 No layout's minimum size may be set by text or a count that varies.
@@ -112,10 +121,13 @@ tooltip the control has of its own.
   open cell editor or popup spends its own Esc first.
 - **A tool window that edits the project carries Undo and Redo itself.** A
   window shortcut reaches only the active top-level window, and a tool window
-  is one of its own, so the Edit menu's two actions are added to the Table
-  Editor, Find and Replace and the Glossary as well: Ctrl+Z means the same
-  thing wherever the focus is. Everything else on the menu bar is reached from
-  the main window.
+  is one of its own, so `widgets.carry_undo` puts the Edit menu's two actions
+  on the Table Editor, Find and Replace and the Glossary as well: Ctrl+Z means
+  the same thing wherever the focus is. It means it inside their fields too —
+  a text field, a text box and a spin box each claim the key for their own
+  typing history, which in a window whose fields are typed and then applied is
+  no use and makes Ctrl+Z look dead, so the claim is declined. Everything else
+  on the menu bar is reached from the main window.
 - **Enter runs** the Search window's query field; Find and Replace's default button
   is Find Next. A find field (`find_row.FindRow`, the Find bar's and the Hex
   panel's) finds the next match on Enter and the previous on Shift+Enter.
@@ -134,6 +146,10 @@ tooltip the control has of its own.
 
 ## Menus in code
 
+- **A row that cannot act is greyed, never dropped.** A context menu keeps the
+  same shape wherever it is opened, so what does not apply to the row under the
+  pointer says so rather than disappearing and leaving the rows below it
+  somewhere else.
 - **Never call `QAction.menu()`.** Under PySide6 the wrapper it returns owns
   the menu and deletes it when collected, taking a menu the window keeps (Open
   Recent) with it. Walk submenus with `help_dialogs.submenus(owner)`.

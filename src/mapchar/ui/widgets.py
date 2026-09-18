@@ -10,11 +10,13 @@ the rules they implement.
 
 from __future__ import annotations
 
+import weakref
 from contextlib import contextmanager
+from functools import partial
 from typing import TYPE_CHECKING, TypeVar
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QTextOption
+from PySide6.QtGui import QAction, QFont, QKeySequence, QPalette, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -580,6 +582,11 @@ class ModeToggle(QWidget):
     :attr:`chosen` fires with the datum of a button the user pressed, when
     it was not the one already down; :meth:`set_value` shows one without
     firing.
+
+    The one down is drawn in the palette's selection colours, because a style
+    marks a checked button with a slightly darker bevel that the dark theme's
+    surface all but swallows. The colours come from the palette rather than a
+    stylesheet, so they follow the theme like any other selection.
     """
 
     chosen = Signal(object)
@@ -602,6 +609,8 @@ class ModeToggle(QWidget):
         self._group.button(0).setChecked(True)
         self._current = 0
         self._group.idClicked.connect(self._on_click)
+        self._group.idToggled.connect(lambda *_: self._paint_checked())
+        self._paint_checked()
 
     def _on_click(self, index: int) -> None:
         # Exclusive buttons report a click on the one already down too.
@@ -609,6 +618,29 @@ class ModeToggle(QWidget):
             return
         self._current = index
         self.chosen.emit(self._data[index])
+
+    def _paint_checked(self) -> None:
+        """Give the button that is down the selection colours, leaving the
+        disabled group alone so a mode that cannot be picked still reads as
+        unavailable."""
+        base = self.palette()
+        highlight = base.color(QPalette.ColorRole.Highlight)
+        ink = base.color(QPalette.ColorRole.HighlightedText)
+        groups = (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive)
+        for button in self._group.buttons():
+            palette = QPalette(base)
+            if button.isChecked():
+                for group in groups:
+                    palette.setColor(group, QPalette.ColorRole.Button, highlight)
+                    palette.setColor(group, QPalette.ColorRole.ButtonText, ink)
+            button.setPalette(palette)
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
+        # The buttons carry palettes of their own, so a theme change reaches
+        # them only by being painted again.
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            self._paint_checked()
 
     def value(self) -> object:
         return self._data[self._group.checkedId()]
@@ -636,6 +668,82 @@ class EscapeCloses:
             self.close()
             return
         super().keyPressEvent(event)
+
+
+def carry_undo(window: QWidget, *actions: QAction) -> QWidget:
+    """Give ``window`` the session's Undo and Redo, reachable from its fields.
+
+    Adding the actions is not enough on its own: a focused ``QLineEdit``, text
+    box or spin box claims Ctrl+Z for its own typing history and accepts the
+    ``ShortcutOverride`` Qt offers it, so the window's action never fires. In a
+    window whose fields are staged — typed, then applied — that history is no
+    use and its claim makes Ctrl+Z look dead, so it is declined
+    (:class:`_UndoKeys`) and the key reaches the actions wherever the focus is.
+    """
+    for action in actions:
+        window.addAction(action)
+    _UndoKeys.of().carry(window, actions)
+    return window
+
+
+class _UndoKeys(QObject):
+    """The application's one filter declining the ``ShortcutOverride`` a field
+    of a window that carries Undo raises for that window's keys.
+
+    A ``ShortcutOverride`` goes to the focused widget and a filter sees only the
+    object it is installed on, so catching one anywhere in a window means
+    filtering the application — and every event delivered to every object in the
+    application then crosses into Python here. So there is one filter however
+    many windows carry the actions (:meth:`of`), and its first move is to hand
+    back every event that is not a shortcut's keys.
+
+    Each window is held weakly and dropped as Qt destroys it, and a window is
+    only ever compared by identity, so nothing here outlives a window or reads
+    one that has been deleted.
+    """
+
+    @classmethod
+    def of(cls) -> _UndoKeys:
+        """The application's filter, made the first time one is wanted; it is
+        its child, so it is looked up there rather than kept in a global that
+        could outlive the application it filters."""
+        app = QApplication.instance()
+        found = app.findChild(cls, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        return found if found is not None else cls()
+
+    def __init__(self):
+        app = QApplication.instance()
+        super().__init__(app)
+        self._carried: list[tuple[weakref.ref[QWidget], tuple[QAction, ...]]] = []
+        app.installEventFilter(self)
+
+    def carry(self, window: QWidget, actions: Sequence[QAction]) -> None:
+        """Decline the keys of ``actions`` for fields of ``window``."""
+        held = weakref.ref(window)
+        self._carried.append((held, tuple(actions)))
+        # The reference itself is what the entry is found by, so forgetting a
+        # window never touches the window.
+        window.destroyed.connect(partial(self._forget, held))
+
+    def _forget(self, held: weakref.ref[QWidget], *_: object) -> None:
+        self._carried = [entry for entry in self._carried if entry[0] is not held]
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        # Whatever is going on in the application arrives here, so what this
+        # costs the rest of it is the one comparison on the way out.
+        if event.type() != QEvent.Type.ShortcutOverride or not isinstance(obj, QWidget):
+            return False
+        window = obj.window()
+        for held, actions in self._carried:
+            if held() is not window:
+                continue
+            pressed = QKeySequence(event.keyCombination())
+            if any(pressed in a.shortcuts() for a in actions):
+                # Ignored as well as swallowed: the sender reads the accepted
+                # flag, and an accepted override is what stops the shortcut.
+                event.ignore()
+                return True
+        return False
 
 
 class ResultsTable(QTableWidget):
@@ -901,6 +1009,7 @@ __all__ = [
     "ModeToggle",
     "ResultsTable",
     "WrapBar",
+    "carry_undo",
     "close_box",
     "column_menu",
     "fill_pick",

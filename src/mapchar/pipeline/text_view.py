@@ -129,7 +129,9 @@ def text_model(
 
     ``starts`` is the bit each string begins at, in the same frame: the line
     breaks between strings the tokens do not carry themselves. The first of
-    them starts the tokens, not a string, so nothing breaks there.
+    them starts the tokens, not a string, so nothing breaks there; one past the
+    last token breaks after it, which is how the text above a window ends where
+    the window's own first string begins.
     """
     texts: list[str] = []
     breaks = set(starts[1:])
@@ -137,6 +139,8 @@ def text_model(
         if token.bit_start in breaks:
             _break_before(texts)
         texts.append(shown.text(token))
+    if tokens and tokens[-1].bit_end in breaks:
+        _break_before(texts)
     spans: list[tuple[int, int, int, int]] = []
     at = 0
     base = offset * 8
@@ -270,7 +274,9 @@ class TextDecode:
         bit each string begins at, in the same frame.
 
         The first of them starts the decode, not a string: it resumes whatever
-        string the tokens before it were part of, so nothing breaks there.
+        string the tokens before it were part of, so nothing breaks there. One
+        past the last token breaks after it, so tokens put in front of the kept
+        ones (:meth:`prepend`) end where the string they run up to begins.
         """
         base *= 8
         breaks = {base + start for start in starts[1:]}
@@ -285,6 +291,8 @@ class TextDecode:
             self.byte_ends.append(max(start // 8 + 1, -(-end // 8)))
             self.texts.append(text)
             self.chars.append(self.chars[-1] + len(text))
+        if tokens and base + tokens[-1].bit_end in breaks:
+            self._break_at_end()
 
     def _break_at_end(self) -> None:
         """End the text so far with a line break, as :func:`_break_before` does,

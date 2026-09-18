@@ -143,9 +143,11 @@ in bytes, which is the unit their results are reported and selected in.
   records, two outer pointers each — an inner table and the base its pointers
   count from — with `inner_size`, `inner_endian` and `inner_null`; the inner
   table runs from its address to the base. `PointerSource` names all three.
-- **`string_groups(config, strings)`** — the strings a layout handles apart:
-  all of them, or for a nested source one group per record, told by the base
-  the string's first pointer counts from.
+- **`grouped_strings(config, strings)`** — the strings a layout handles
+  apart, each with the base it is told by: all of them under no base, or for a
+  nested source one group per record, told by the base the string's first
+  pointer counts from. **`string_groups(config, strings)`** is the same
+  without the bases.
 - **`StringRecord`** — one string: `index`, `start_bit`, `end_bit` (bits into
   the decompressed buffer, with `start`, `end` and `length` derived byte
   properties), `tokens: list[Token]` (the decode of the bytes as they are —
@@ -168,7 +170,10 @@ in bytes, which is the unit their results are reported and selected in.
   stretch from a pointer list's lowest pointer to the end of its highest. What
   a block's view is confined to.
 - **`Extraction`** — the result of running a block: the string records plus
-  notices (end of data reached, operand cut short, pointer out of range).
+  notices (end of data reached, operand cut short, pointer out of range), and
+  `inner_tables`, a nested source's inner pointer table address by the base
+  its pointers count from — the key `grouped_strings` tells a group by, so a
+  group can say which table reached it. The `Document` carries it on.
 
 ### 2.4 Pointers and mappings
 
@@ -404,8 +409,9 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
 - **View reading** (`pipeline/view_read.py`) is what the Hex and Text tabs
   show: the bytes in view cut by the reading's string type, or read as
   pointers — each with its value, its target and whether it is null, a nested
-  source's outer and inner pointers alike — and the string a target reaches, by
-  the same `decode_one` extraction uses. The cut is in step with the strings
+  source's outer and inner pointers alike, the outer ones carrying a `role` of
+  `table` or `base` since they reach structure rather than text — and the
+  string a target reaches, by the same `decode_one` extraction uses. The cut is in step with the strings
   the block reads: a range's fixed length runs from its start, so a view that
   starts part-way through a string is handed the byte it begins at and shows
   the rest of that one, then whole ones. Only a range of fixed strings has such
@@ -795,8 +801,9 @@ and `ModalProgress` for a menu row, `fill_pick` and `select_data` for combos,
 the Text tab and the strings pane share,
 `CompactComboBox`, the fixed-width picker of the bars whose open list
 widens to its longest item, `WrapBar`, a wrapping bar of labelled controls in
-optional framed sections, and `ModeToggle`, side-by-side buttons one of which
-is down),
+optional framed sections, `ModeToggle`, side-by-side buttons one of which
+is down, and `carry_undo`, which gives a tool window Undo and Redo and keeps
+its fields from spending their keys on their own typing history),
 `ui/panel.py` (`WorkspaceTreePanel`, which owns a
 dock's workspace subscription and its row-to-entry lookup), `ui/window_layout.py`
 (`WindowLayout` and `remember_layout`), `ui/find_row.py` (`FindRow`, the find

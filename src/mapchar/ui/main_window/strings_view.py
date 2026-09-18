@@ -154,6 +154,7 @@ class StringsViewMixin:
             rec.refresh_status()
         doc.strings = ex.strings
         doc.notices = ex.notices
+        doc.inner_tables = ex.inner_tables
         doc.extraction_key = key
         if legacy:
             self._land_legacy_translations(entry, doc, legacy)

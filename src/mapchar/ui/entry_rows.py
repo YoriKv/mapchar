@@ -290,7 +290,6 @@ class RowList(QWidget):
         self.box.setContentsMargins(0, 0, 0, 0)
         self.box.setSpacing(2)
         self.add = QPushButton(add_label)
-        self.add.setFlat(True)
         bottom = QHBoxLayout()
         bottom.setContentsMargins(0, 0, 0, 0)
         bottom.addWidget(self.add)

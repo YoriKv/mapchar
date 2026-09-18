@@ -128,6 +128,16 @@ the preview system in [preview.md](preview.md).
   with `…`; the tooltip has the string's address and its whole text. The rows
   are built while the block is open, and opening a block the session has not
   read reads it without showing it.
+- **A nested block opens to its inner tables**, not straight to its strings:
+  one row per group (see [Nested tables](#blocks)), `address  n strings`, with
+  that group's strings under it; the tooltip has the inner table's address,
+  the base its pointers count from and the count. The groups are what such a
+  block is — one archive entry's offset table and the text it reaches — and a
+  block of hundreds of them would otherwise open to one flat list of
+  thousands. A group's own rows are built only while its row is open.
+  Clicking a group takes the view to its inner table and leaves the block
+  current with all of its strings: a group is where to look, not a reading of
+  its own, so there is nothing to come back out of.
 - **Folders** group a file's blocks, bookmarks and other folders, to any
   depth. A folder belongs to one file, and moving a row into or out of one
   changes neither its file nor its configuration. A folder opens and closes
@@ -160,11 +170,15 @@ the preview system in [preview.md](preview.md).
   string's bytes, with none of them selected (see [Raw view](#raw-view)),
   read as text even when the block reads pointers: the mode shows **Strings**
   and the Reading bar only its **Strings** and **Writing** sections. A string
-  row's context menu is its block's.
+  row's context menu is its block's, with everything that edits the row —
+  Rename…, Cut, Copy, Duplicate, Move Up / Down, Sort By ▸, New Folder,
+  Remove — greyed, since those name the block and not the string clicked.
 - **Filter box** (Ctrl+F) matches every typed word in any order. A matching
-  child keeps its parent and its folders visible, and a folder or a block
-  with a match inside opens to show it; clearing the filter closes again the
-  folders that were closed.
+  child keeps its parent and its folders visible, and a folder, a block or a
+  nested block's group with a match inside opens to show it — a closed group
+  is matched by the strings it holds, and only one holding a match has its
+  rows built; clearing the filter closes again the folders that were closed
+  and the groups it opened, bar one the view has gone into.
 - **Double-click** — bookmark jumps; table opens the Table Editor; file,
   block or folder renames inline. **F2** renames any row inline.
 - **Names** — no two blocks or bookmarks share one: a new row, a rename, an
@@ -190,7 +204,11 @@ the preview system in [preview.md](preview.md).
   Source, Jump to Bookmark, Edit…, Save As File…, New Table…, Write, Export ▸,
   Rename…, Cut / Copy / Paste / Duplicate, Move Up / Down, Sort By ▸, Show in
   File Manager, Remove. Empty space offers Open ROM…, Open Table…, New Table…
-  and Paste.
+  and Paste. A row the clicked kind cannot do is greyed, never dropped: Write
+  on a bookmark or a table (a bookmark has no bytes of its own; a table is
+  written with Save As File…), Duplicate on a file or a table (either is its
+  path, so it can only be open once), Sort By ▸ Offset outside a file's rows,
+  and Paste with nothing on the clipboard.
 - **Cut / Copy / Paste / Duplicate** act on entries (references plus
   settings), never on bytes. The clipboard carries absolute paths, so entries
   paste into another mapchar window. A folder travels with what it holds.
@@ -380,6 +398,12 @@ and Strings tabs read again at once.
     target and the string;
   - the **Text** tab shows a line per pointer: its address, its value, where it
     points and, resolved, the string there;
+  - a nested source's **outer** pointers reach structure rather than text, so
+    they are never followed: the Text line says `inner table` or `base` for
+    which of its record's two pointers it is, the Hex cell keeps showing where
+    it points however **Follow pointers** is set, and the hover says the same.
+    Following them would read an inner pointer table's own bytes as characters.
+    Its inner pointers are pointers to strings and resolve like any other;
   - a line step in Text is a pointer;
   - a pointer's string is read for at most 256 bytes past its target and shown
     with a trailing `…` when that cut it short, so a pointer into anything but

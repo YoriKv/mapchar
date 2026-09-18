@@ -5,6 +5,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 
+from mapchar.ui.widgets import carry_undo
+
 
 class MenuBarMixin:
     """The menu bar: every row the window offers, and what it calls.
@@ -103,10 +105,10 @@ class MenuBarMixin:
         # A window shortcut reaches only the active top-level window, and a tool
         # window is one of its own: a window that edits the project carries the
         # two actions itself, so Ctrl+Z means the same thing wherever the focus
-        # is. Everything else on this bar is reached from the main window.
+        # is — including inside its fields, which is what `carry_undo` settles.
+        # Everything else on this bar is reached from the main window.
         for window in (self.table_editor, self.find_replace, self.glossary_window):
-            window.addAction(undo)
-            window.addAction(redo)
+            carry_undo(window, undo, redo)
         edit_menu.addSeparator()
         # Entry Cut/Copy/Paste are scoped to the Files panel rather than to the
         # window: as window actions they would take Ctrl+C and Ctrl+V away from

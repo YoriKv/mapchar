@@ -396,24 +396,33 @@ class StringRecord:
             self.status = Status.EDITED if self.edited else Status.UNTOUCHED
 
 
-def string_groups(
+def grouped_strings(
     config: BlockConfig, strings: list[StringRecord]
-) -> list[list[StringRecord]]:
-    """The block's strings in the groups a layout handles apart, each in the
-    order given.
+) -> list[tuple[int | None, list[StringRecord]]]:
+    """The block's strings in the groups a layout handles apart, each with the
+    base its pointers count from and in the order given.
 
-    One group of every string, except for a nested source, whose records each
-    reach strings of their own through their inner table: those are a group,
-    told by the base the string's first pointer counts from, since what lies
-    between one group's text and the next is not the block's to write over.
+    One group of every string, under no base, except for a nested source, whose
+    records each reach strings of their own through their inner table: those
+    are a group, told by the base the string's first pointer counts from, since
+    what lies between one group's text and the next is not the block's to write
+    over.
     """
     if not isinstance(config.source, NestedPointerSource):
-        return [strings] if strings else []
+        return [(None, strings)] if strings else []
     groups: dict[int | None, list[StringRecord]] = {}
     for rec in strings:
         key = rec.pointers[0].offset if rec.pointers else None
         groups.setdefault(key, []).append(rec)
-    return list(groups.values())
+    return list(groups.items())
+
+
+def string_groups(
+    config: BlockConfig, strings: list[StringRecord]
+) -> list[list[StringRecord]]:
+    """The block's strings in the groups a layout handles apart
+    (:func:`grouped_strings`), without the base each is told by."""
+    return [group for _, group in grouped_strings(config, strings)]
 
 
 def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:
@@ -433,3 +442,7 @@ def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:
 class Extraction:
     strings: list[StringRecord]
     notices: list[Notice] = field(default_factory=list)
+    inner_tables: dict[int, int] = field(default_factory=dict)
+    """A nested source's inner pointer table address, by the base its pointers
+    count from — which is what :func:`string_groups` keys a group by, so a
+    group can say which table reached it. Empty for every other source."""

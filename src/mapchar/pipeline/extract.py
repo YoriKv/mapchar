@@ -158,6 +158,7 @@ def reextract(
     return Extraction(
         [placed.get(rec.index, rec) for rec in strings],
         notices + [n for n in part.notices if n not in notices],
+        part.inner_tables,
     )
 
 
@@ -371,6 +372,13 @@ def _extract_pointers(
     bases=None,
 ) -> Extraction:
     refs, targets, notices = _read_pointers(bits.data, source, registry, bases)
+    inner_tables: dict[int, int] = {}
+    if isinstance(source, NestedPointerSource):
+        # Each group is keyed by the base its pointers count from
+        # (:func:`~mapchar.core.block.string_groups`); this is how that key
+        # says which inner table reached it.
+        records, _ = nested_records(bits.data, source, registry)
+        inner_tables = {rec.base: rec.table for rec in records}
     # One string per distinct target, in address order, with every pointer.
     by_target: dict[int, list[PointerRef]] = {}
     for ref, target in zip(refs, targets, strict=True):
@@ -418,7 +426,7 @@ def _extract_pointers(
                 notices=res_notices,
             )
         )
-    return Extraction(strings, notices)
+    return Extraction(strings, notices, inner_tables)
 
 
 def string_at(

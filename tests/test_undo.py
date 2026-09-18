@@ -12,6 +12,9 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from mapchar.core.block import RangeSource, Status
 from mapchar.core.table import Entry as TableEntry
@@ -361,3 +364,95 @@ def test_previewing_a_block_first_gives_it_a_box_as_an_undo_step(window, tmp_pat
 
     window.undo_stack.undo()
     assert block.box is None and not block.dirty
+
+
+def _claims_key(widget, key, modifiers) -> bool:
+    """Whether ``widget`` takes a key for itself, as Qt asks it to say before it
+    runs a window shortcut: a text field claims Ctrl+Z for its own typing
+    history unless something declines the claim on its behalf."""
+    event = QKeyEvent(QEvent.Type.ShortcutOverride, key, modifiers)
+    event.ignore()
+    QApplication.sendEvent(widget, event)
+    return event.isAccepted()
+
+
+def test_the_table_editors_fields_leave_ctrl_z_to_the_windows_undo(
+    window, tmp_path, qtbot
+):
+    """An entry applied in the form is one step, and Ctrl+Z reaches it from
+    anywhere in the window: every field of the form declines the key it would
+    otherwise spend on its own typing history (``widgets.carry_undo``)."""
+    from mapchar.ui.table_editor import KEY
+
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    open_rom_and_table(window, tmp_path, DATA)
+    table_entry = window.workspace.entry_for_table("main")
+    window.workspace.mark_saved(table_entry)
+    window._edit_table_entry(table_entry)
+    editor = window.table_editor
+    qtbot.waitExposed(editor)
+
+    row = next(
+        r
+        for r in range(editor.grid.rowCount())
+        if editor.grid.item(r, KEY).text() == "41"
+    )
+    editor.grid.selectRow(row)
+    editor.form.text.setText("Z")
+    editor._add()
+    assert table_entry.table.entries["01000001"].text == "Z"
+    assert table_entry.dirty
+
+    form = editor.form
+    for field in (form.key, form.text, form.line, form.comment, form.weight):
+        assert not _claims_key(field, Qt.Key.Key_Z, ctrl), field
+        assert not _claims_key(
+            field, Qt.Key.Key_Z, ctrl | Qt.KeyboardModifier.ShiftModifier
+        ), field
+    # Only the windows that carry the two actions; elsewhere a field is its own.
+    assert _claims_key(QLineEdit(window), Qt.Key.Key_Z, ctrl)
+
+    # The stack's own action, which names the step it would revert.
+    undo = next(a for a in editor.actions() if a.text().startswith("&Undo"))
+    assert undo.isEnabled()
+    undo.trigger()
+    assert table_entry.table.entries["01000001"].text == "A"
+    assert not table_entry.dirty
+
+
+def test_one_filter_carries_every_windows_undo(window):
+    """Every event in the application crosses the filter that declines Ctrl+Z,
+    so there is one of it however many windows carry the two actions, and a
+    window is forgotten as Qt destroys it."""
+    from mapchar.ui.widgets import _UndoKeys, carry_undo
+
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    app = QApplication.instance()
+    direct = Qt.FindChildOption.FindDirectChildrenOnly
+    assert len(app.findChildren(_UndoKeys, options=direct)) == 1
+    keys = app.findChildren(_UndoKeys, options=direct)[0]
+
+    carried = [held() for held, _ in keys._carried]
+    for tool in (window.table_editor, window.find_replace, window.glossary_window):
+        assert any(seen is tool for seen in carried), tool
+    count = len(keys._carried)
+
+    undo = next(
+        a for a in window.table_editor.actions() if a.text().startswith("&Undo")
+    )
+    other = QWidget()
+    carry_undo(other, undo)
+    assert len(app.findChildren(_UndoKeys, options=direct)) == 1
+    assert len(keys._carried) == count + 1
+    assert not _claims_key(QLineEdit(other), Qt.Key.Key_Z, ctrl)
+
+    # Deleted, the window is forgotten, and the ones still open are not.
+    dead = keys._carried[-1][0]
+    del other
+    assert len(keys._carried) == count
+    assert all(held is not dead for held, _ in keys._carried)
+    carried = [held() for held, _ in keys._carried]
+    for tool in (window.table_editor, window.find_replace, window.glossary_window):
+        assert any(seen is tool for seen in carried), tool
+    # The filter still runs, with nothing left of the window it forgot.
+    assert _claims_key(QLineEdit(window), Qt.Key.Key_Z, ctrl)

@@ -1,5 +1,5 @@
-"""Shared pytest setup: headless Qt, automatic ``qt`` marking, and a fresh
-plugin registry."""
+"""Shared pytest setup: headless Qt, automatic ``qt`` marking, a fresh plugin
+registry, and closed widgets deleted as each test ends."""
 
 from __future__ import annotations
 
@@ -78,6 +78,27 @@ def unattended_dialogs(monkeypatch):
     )
     monkeypatch.setattr(box, "about", lambda *a, **k: None)
     return reported
+
+
+@pytest.fixture(autouse=True)
+def closed_widgets_are_deleted():
+    """Delete the widgets a test closed, rather than keep them for the run.
+
+    pytest-qt closes what a test registered and asks Qt to delete it later, but
+    later never comes: a deferred delete is only carried out by a running event
+    loop, and a test run has none — ``processEvents`` passes them over. Every
+    window of every test would otherwise stay alive to the end of the run, with
+    its timers, its signal connections and whatever it installed on the
+    application, and the suite slows with each one. pytest-qt has closed the
+    widgets by the time a fixture is torn down, so this is where they go.
+
+    Guarded on Qt already being imported, so the headless suites stay Qt-free.
+    """
+    yield
+    qtcore = sys.modules.get("PySide6.QtCore")
+    if qtcore is None or qtcore.QCoreApplication.instance() is None:
+        return
+    qtcore.QCoreApplication.sendPostedEvents(None, qtcore.QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture(scope="session", autouse=True)

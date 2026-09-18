@@ -491,6 +491,7 @@ class MainWindow(
         """
         self.files_panel.entry_activated.connect(self._show_entry)
         self.files_panel.string_activated.connect(self._show_string)
+        self.files_panel.group_activated.connect(self._show_group)
         self.files_panel.strings_requested.connect(self._read_block_strings)
         self.files_panel.entry_double_clicked.connect(self._on_entry_double)
         self.files_panel.context_menu_requested.connect(self._files_menu)

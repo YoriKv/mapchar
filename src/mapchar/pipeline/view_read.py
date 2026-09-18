@@ -120,6 +120,11 @@ def align_before(
     gets, and the tries stop there. ``first`` is as far back as the view reaches,
     and ``lookahead`` how far past ``offset`` is decoded to see whether a token
     starts there.
+
+    A string beginning at ``offset`` itself is kept among the starts, though no
+    token of the text above is part of it: it is what ends the last string above
+    with a line break, so the text above does not run into the view's first
+    line.
     """
     best: tuple[tuple[int, bool], int, list[Token], list[int]] | None = None
     start = max(first, start)
@@ -130,7 +135,7 @@ def align_before(
         unmatched = sum(t.entry is None and not t.fallback for t in before)
         score = (unmatched, not any(t.bit_start == rel for t in run.tokens))
         if best is None or score < best[0]:
-            best = (score, at, before, [s for s in run.starts if s < rel])
+            best = (score, at, before, [s for s in run.starts if s <= rel])
         if score == (0, False):
             break
     return best[1], best[2], best[3]
@@ -165,6 +170,11 @@ class PointerCell:
     """The byte it reaches, or ``None`` when it maps outside the data."""
     null: bool = False
     """It holds the source's null value: it reaches nothing."""
+    role: str | None = None
+    """What a nested source's outer pointer is, since it reaches structure
+    rather than text: ``"table"`` for the one at its record's inner pointer
+    table, ``"base"`` for the one at the base those pointers count from.
+    ``None`` for every pointer that reaches a string."""
 
 
 def pointer_cells(
@@ -204,7 +214,8 @@ def _nested_cells(
     data: bytes, source: NestedPointerSource, lo: int, hi: int, registry
 ) -> list[PointerCell]:
     """A nested source's pointers in bytes ``lo`` to ``hi``: each record's two
-    outer pointers, mapped, and every inner pointer, counted from its base."""
+    outer pointers, mapped and marked for which of the two they are, and every
+    inner pointer, counted from its base."""
     mapping = mapping_for(source, registry)
     cells: list[PointerCell] = []
     stride = max(source.stride, 1)
@@ -213,7 +224,7 @@ def _nested_cells(
         min(source.stop, hi),
         stride,
     ):
-        for address in (record, record + source.size):
+        for address, role in ((record, "table"), (record + source.size, "base")):
             if not lo <= address < hi:
                 continue
             value = read_pointer(data, address, source.size, source.endian)
@@ -225,7 +236,7 @@ def _nested_cells(
                 if mapping is not None and not null
                 else None
             )
-            cells.append(PointerCell(address, source.size, value, target, null))
+            cells.append(PointerCell(address, source.size, value, target, null, role))
     width = source.inner_size
     records, _ = nested_records(data, source, registry)
     for rec in records:

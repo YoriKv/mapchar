@@ -396,6 +396,39 @@ def test_a_preview_is_read_once_and_marked_where_it_was_cut():
     assert preview_reader(None)(1) == ""
 
 
+def test_a_nested_source_s_outer_pointers_are_labelled_not_followed():
+    """Following one would read an inner pointer table's bytes as characters."""
+    from mapchar.core.tokens import render
+    from mapchar.pipeline.view_read import PointerCell
+    from mapchar.ui.pointer_tokens import hex_tokens, text_tokens
+
+    cells = [
+        PointerCell(0, 2, 8, 8, role="table"),
+        PointerCell(2, 2, 0xC, 0xC, role="base"),
+        PointerCell(8, 2, 1, 0xD),
+    ]
+    preview = lambda target: "AB"  # noqa: E731 - every target reads as text
+    assert render(text_tokens(cells, 0, preview, True)).splitlines() == [
+        "000000  $0008 → 8  inner table",
+        "000002  $000C → C  base",
+        "000008  $0001 → D  AB",
+    ]
+    # The label stands whether or not Follow pointers is on: it says what the
+    # pointer is, not what a reading of its target came to.
+    assert render(text_tokens(cells, 0, preview, False)).splitlines() == [
+        "000000  $0008 → 8  inner table",
+        "000002  $000C → C  base",
+        "000008  $0001 → D",
+    ]
+    tokens, tips = hex_tokens(cells, 0, preview, True)
+    assert render(tokens) == "→8→CAB"
+    assert [tips[t.bit_start] for t in tokens] == [
+        "pointer $0008 → 8\ninner table",
+        "pointer $000C → C\nbase",
+        "pointer $0001 → D\nAB",
+    ]
+
+
 def test_switching_a_file_to_strings_and_back_restores_its_pointers(window, tmp_path):
     rom = tmp_path / "game.smc"
     rom.write_bytes(bytes(0x10000))

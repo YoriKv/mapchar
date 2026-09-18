@@ -51,6 +51,19 @@ def _target(cell: PointerCell) -> str:
     return "?" if cell.target is None else f"{cell.target:X}"
 
 
+ROLE_LABELS = {"table": "inner table", "base": "base"}
+"""What a nested source's outer pointer is shown as. It reaches an inner
+pointer table or the base those pointers count from, so there is no string
+there to follow it to — decoding those bytes as text would read the pointer
+table itself as characters."""
+
+
+def _role(cell: PointerCell) -> str:
+    """What the cell reaches when that is structure rather than text; ``""``
+    for a pointer that reaches a string."""
+    return "" if cell.role is None else ROLE_LABELS.get(cell.role, cell.role)
+
+
 PREVIEW_CACHE_LIMIT = 100_000
 """How many targets' previews are kept before they are let go: a file read as
 pointers from every offset makes a fresh target of nearly every byte."""
@@ -94,12 +107,17 @@ def hex_tokens(
     """
     tokens, tips = [], {}
     for cell in cells:
-        text = preview(cell.target)
+        role = _role(cell)
+        # An outer pointer of a nested source reaches structure, not text: the
+        # cell says where it points however the box is set, and what it points
+        # at is said in the hover rather than decoded into the text column.
+        text = "" if role else preview(cell.target)
         shown = text if resolve_pointers and text else f"→{_target(cell)}"
         token = _token(cell, offset, shown)
         tokens.append(token)
         tip = f"pointer ${cell.value:0{cell.size * 2}X} → {_target(cell)}"
-        tips[token.bit_start] = f"{tip}\n{text}" if text else tip
+        below = role or text
+        tips[token.bit_start] = f"{tip}\n{below}" if below else tip
     return tokens, tips
 
 
@@ -114,7 +132,12 @@ def text_tokens(
     tokens = []
     for cell in cells:
         line = f"{cell.address:06X}  ${cell.value:0{cell.size * 2}X} → {_target(cell)}"
-        if resolve_pointers:
+        role = _role(cell)
+        if role:
+            # A nested source's outer pointer: the line says what it reaches,
+            # which is structure, rather than those bytes decoded as text.
+            line += f"  {role}"
+        elif resolve_pointers:
             text = preview(cell.target)
             if len(text) > PREVIEW_CHARS:
                 text = text[: PREVIEW_CHARS - 1] + "…"

@@ -249,6 +249,29 @@ def test_a_nested_block_in_slotted_mode_keeps_every_string_in_place(registry):
     }
 
 
+def test_a_nested_source_s_outer_pointers_say_which_of_the_pair_they_are(registry):
+    cells = pointer_cells(NESTED_ROM, NESTED, 0, 0x30, registry)
+    # The outer table's pointers come in pairs and reach structure, not text;
+    # every inner pointer reaches a string and carries no role.
+    assert [(c.address, c.role) for c in cells] == [
+        (0x0, "table"),
+        (0x2, "base"),
+        (0x4, "table"),
+        (0x6, "base"),
+        (0x8, "table"),
+        (0xA, "base"),
+        (0x10, None),
+        (0x12, None),
+        (0x20, None),
+        (0x22, None),
+    ]
+    # A pair half in view keeps its own role rather than the first one's.
+    assert [(c.address, c.role) for c in pointer_cells(NESTED_ROM, NESTED, 2, 5)] == [
+        (0x2, "base"),
+        (0x4, "table"),
+    ]
+
+
 def test_a_nested_source_s_pointers_in_view(registry):
     cells = pointer_cells(NESTED_ROM, NESTED, 0, 0x30, registry)
     assert [(c.address, c.target, c.null) for c in cells] == [

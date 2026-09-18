@@ -331,6 +331,24 @@ class BlocksMixin:
         self._set_bounds(span)
         self._go_to(span[0])
 
+    def _show_group(self, entry: Entry, base: int) -> None:
+        """A nested block's group row clicked in the Files panel: the block on
+        screen and the view at that group's inner pointer table.
+
+        A group is where to look inside the block, not a reading of its own,
+        so the block stays current with all of its strings and the view is only
+        moved — what a bookmark does, and what leaving one string for another
+        does not: nothing is confined and nothing is selected.
+        """
+        self._activate_entry(entry)
+        if entry is not self._entry or self._doc is None:
+            return
+        table = self._doc.inner_tables.get(base, base)
+        self._string_bounds = None
+        self._set_bounds(None)
+        self._go_to(table)
+        self.files_panel.select_group(entry, base)
+
     def _show_string(self, entry: Entry, index: int) -> None:
         """A string clicked under its block in the Files panel: the block on
         screen, the view confined to that string's bytes, and the string

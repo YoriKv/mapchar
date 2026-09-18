@@ -234,6 +234,34 @@ def tooltip(entry: Entry, why: str = "") -> str:
     return "\n".join(lines)
 
 
+def group_label(table: int | None, base: int | None, strings: int) -> str:
+    """What a nested block's group row says: the inner pointer table that
+    reached its strings, and how many they are.
+
+    A group whose record is no longer among the source's — the outer table
+    moved under a reading that has not caught up — has no table address to
+    show, so it says the base its pointers count from instead.
+    """
+    if table is not None:
+        where = f"{table:X}"
+    elif base is not None:
+        where = f"base {base:X}"
+    else:
+        where = "?"
+    return f"{where}  {strings} string{'' if strings == 1 else 's'}"
+
+
+def group_tooltip(table: int | None, base: int | None, strings: int) -> str:
+    """The group row's hover: both addresses the group is bounded by."""
+    lines = []
+    if table is not None:
+        lines.append(f"inner pointer table at {table:X}")
+    if base is not None:
+        lines.append(f"its pointers count from {base:X}")
+    lines.append(f"{strings} string{'' if strings == 1 else 's'}")
+    return "\n".join(lines)
+
+
 def source_text(entry: Entry) -> str:
     """A block's source as offset and length, in the parent's coordinates."""
     if entry.compression_id:
@@ -256,6 +284,8 @@ __all__ = [
     "block_extra",
     "entry_offset",
     "folder_extra",
+    "group_label",
+    "group_tooltip",
     "label",
     "notices",
     "sorted_entries",

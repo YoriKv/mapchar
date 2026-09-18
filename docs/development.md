@@ -118,7 +118,12 @@ mapchar/
   `packaging/mapchar.ico` and `packaging/mapchar.icns`.
 - **Tests** run headless: `tests/conftest.py` forces the offscreen platform,
   isolates `QSettings`, and marks any module that mentions Qt with `qt`, so
-  `uv run pytest -m "not qt"` runs the model layer alone. Qt-free helpers
-  shared by test modules live in `tests/helpers.py`.
+  `uv run pytest -m "not qt"` runs the model layer alone. It also deletes the
+  widgets each test closed: a test run has no event loop to carry out
+  `deleteLater`, so every window would otherwise live to the end of the run.
+  Anything installed on the `QApplication` — an event filter above all — is
+  paid for by every test after it, so it is one shared object or is taken off
+  when its window closes. Qt-free helpers shared by test modules live in
+  `tests/helpers.py`.
 - **Line endings** are LF everywhere (`.gitattributes`); paths in docs and
   code are repository-relative.

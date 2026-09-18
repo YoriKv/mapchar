@@ -27,6 +27,10 @@ class Document:
     table_set: TableSet | None = None
     strings: list[StringRecord] = field(default_factory=list)
     notices: list[Notice] = field(default_factory=list)
+    inner_tables: dict[int, int] = field(default_factory=dict)
+    """A nested block's inner pointer table address by the base its pointers
+    count from (:attr:`~mapchar.core.block.Extraction.inner_tables`), so a
+    group of strings can say which table reached it."""
     extraction_key: tuple | None = None
     """What the strings were extracted from, to skip a repeat."""
 

@@ -361,3 +361,43 @@ def test_a_view_inside_a_fixed_string_reads_the_rest_in_step(window, tmp_path):
     QApplication.processEvents()
     body = window.text.edit.toPlainText()
     assert body.startswith("pha[end]\nbravo[end]\ngamma[end]\nalpha[end]\n")
+
+
+UNENDED = b"alphaA" + b"bravoB" + b"gammaC" + b"deltaD"
+"""Four six-byte strings with no end token anywhere in them."""
+
+
+def _fixed_text_tab(window, tmp_path, data, length):
+    entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
+    add_block(
+        window,
+        entry,
+        "names",
+        RangeSource(0, len(data)),
+        string_type=FixedLength(length),
+    )
+    _shown(window, 900, 500)
+    window.text_tab_action.trigger()
+    QApplication.processEvents()
+    return window.text
+
+
+def test_a_step_up_over_fixed_strings_lands_on_the_string_above(window, tmp_path):
+    _fixed_text_tab(window, tmp_path, UNENDED * 40, 6)
+    window._go_to(60)
+    QApplication.processEvents()
+    window._on_text_scroll(-1)
+    QApplication.processEvents()
+    assert window._offset == 54
+
+
+def test_steps_up_over_fixed_strings_land_on_one_string_each(window, tmp_path):
+    _fixed_text_tab(window, tmp_path, UNENDED * 40, 6)
+    window._go_to(60)
+    QApplication.processEvents()
+    offsets = []
+    for _ in range(4):
+        window._on_text_scroll(-1)
+        QApplication.processEvents()
+        offsets.append(window._offset)
+    assert offsets == [54, 48, 42, 36]
