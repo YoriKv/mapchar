@@ -24,6 +24,31 @@
   jumps to any of them.
 - Edit ▸ Glossary: the project's terms and translations, the ones found in
   the selected string listed first, typed into the editor on a click.
+- Folders in the Files panel, to any depth.
+- Table includes, switch frames that fall through, and newline, page and
+  pause code effects.
+- Nested pointer tables, null pointer values, fill patterns and hidden
+  fixed-string end tokens.
+- A nested block opens to a row per inner pointer table in the Files panel.
+- Pointer views label a nested table's outer pointers instead of following
+  them.
+- A Mother 3 sample project, built from the ROM.
+- File ▸ Refresh Tables (Shift+F5) re-reads every table file.
+- The Format bar has a Table Editor button and a Show as label.
+- The Table Editor splits its grid from its form and shows where a sampled
+  key came from.
+- Ctrl+Z works inside the Table Editor, Find and Replace and the Glossary.
+- The Text tab ends a line at every string and cuts fixed strings in step
+  with the block.
+- The Files context menu greys rows that do not apply instead of dropping
+  them.
+- The mode buttons highlight the one that is down.
+- The Tables and Fonts docks are gone, and the preview draws in one system
+  font.
+- Dropped the EUC-JP, EUC-KR, Big5 and UTF-16 BE built-in charsets.
+- Faster Text tab scrolling, scrollbar dragging and encoding.
+- Fixed a Text tab step up skipping a fixed-length string, and the Files
+  panel losing its string row on a refresh.
 
 ## v0.1.2 - 2026-09-15
 
