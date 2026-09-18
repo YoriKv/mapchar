@@ -173,7 +173,7 @@ class RefreshMixin:
                 )
             )
             return
-        run = self._decode_window(data, tables)
+        run = self._decode_window(data, tables, self._offset)
         string_starts = {bit // 8 for bit in run.starts}
         pointer_bytes: set[int] = set()
         if block is not None and block.doc is not None:
@@ -212,12 +212,15 @@ class RefreshMixin:
             self._refresh_raw(self._doc, self._table_set())
             self._sync_steps()
 
-    def _decode_window(self, data: bytes, tables: TableSet | None) -> RunResult:
+    def _decode_window(
+        self, data: bytes, tables: TableSet | None, offset: int = 0
+    ) -> RunResult:
         """Decode one string after another over ``data`` until it runs out,
-        each cut the way the reading cuts them."""
+        each cut the way the reading cuts them, in step with the byte ``data``
+        begins at."""
         if tables is None or not data:
             return RunResult([], 0)
-        return decode_strings(data, self._reading(), tables)
+        return decode_strings(data, self._reading(), tables, offset)
 
     def _pointer_cells(self, doc: Document, start: int, end: int) -> list[PointerCell]:
         """The reading's pointers that start in bytes ``start`` to ``end``."""

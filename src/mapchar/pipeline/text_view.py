@@ -28,7 +28,9 @@ class Shown:
     ``[$XX]`` — or ``[%bits]`` for a tail shorter than a byte.
 
     An end token ends its line, whether or not its table text breaks it; so
-    does the block's line code, which renders with its break.
+    does the block's line code, which renders with its break. A string cut by
+    its length ends in no token of its own, so the break there is put in by
+    :func:`text_model` from where the strings start.
     """
 
     codes: bool = True
@@ -99,21 +101,50 @@ def _byte_span(bit_start: int, bit_end: int) -> tuple[int, int]:
     return byte_start, max(byte_start + 1, -(-bit_end // 8))
 
 
+def _break_before(texts: list[str]) -> int:
+    """End the text so far with a line break: a string ended where the next one
+    starts, and without the break the two would read as one string. The token
+    it went on, or ``-1`` for a text that ends in one already or is empty.
+
+    It goes on the last token that renders to anything, which is the one the
+    character belongs to; the tokens after it render to nothing at all.
+    """
+    i = len(texts) - 1
+    while i >= 0 and not texts[i]:
+        i -= 1
+    if i < 0 or texts[i].endswith("\n"):
+        return -1
+    texts[i] += "\n"
+    return i
+
+
 def text_model(
-    tokens: list[Token], offset: int, length: int, shown: Shown = ALL
+    tokens: list[Token],
+    offset: int,
+    length: int,
+    shown: Shown = ALL,
+    starts: list[int] | tuple[int, ...] = (),
 ) -> TextModel:
-    """Render tokens (bit positions relative to ``offset``) to a body and map."""
-    parts: list[str] = []
+    """Render tokens (bit positions relative to ``offset``) to a body and map.
+
+    ``starts`` is the bit each string begins at, in the same frame: the line
+    breaks between strings the tokens do not carry themselves. The first of
+    them starts the tokens, not a string, so nothing breaks there.
+    """
+    texts: list[str] = []
+    breaks = set(starts[1:])
+    for token in tokens:
+        if token.bit_start in breaks:
+            _break_before(texts)
+        texts.append(shown.text(token))
     spans: list[tuple[int, int, int, int]] = []
     at = 0
     base = offset * 8
-    for token in tokens:
-        text = shown.text(token)
+    for token, text in zip(tokens, texts, strict=True):
         byte_start, byte_end = _byte_span(base + token.bit_start, base + token.bit_end)
         spans.append((at, at + len(text), byte_start, byte_end))
-        parts.append(text)
         at += len(text)
-    return TextModel("".join(parts), spans, offset, length)
+    return TextModel("".join(texts), spans, offset, length)
 
 
 class TextDecode:
@@ -228,26 +259,45 @@ class TextDecode:
         resume = self.ends[kept - 1] // 8 if kept else self.origin
         del self.starts[kept:], self.ends[kept:], self.texts[kept:]
         del self.byte_starts[kept:], self.byte_ends[kept:], self.chars[kept + 1 :]
-        run: RunResult = decode(self.data[resume:stop], self.tables)
-        self._append(resume, run.tokens)
+        run: RunResult = decode(self.data[resume:stop], self.tables, resume)
+        self._append(resume, run.tokens, run.starts)
         self.end = stop
 
-    def _append(self, base: int, tokens: list[Token]) -> None:
-        """Tokens relative to byte ``base``, after those kept."""
+    def _append(
+        self, base: int, tokens: list[Token], starts: list[int] | tuple[int, ...] = ()
+    ) -> None:
+        """Tokens relative to byte ``base``, after those kept; ``starts`` is the
+        bit each string begins at, in the same frame.
+
+        The first of them starts the decode, not a string: it resumes whatever
+        string the tokens before it were part of, so nothing breaks there.
+        """
         base *= 8
-        at = self.chars[-1]
+        breaks = {base + start for start in starts[1:]}
         for token in tokens:
             start, end = base + token.bit_start, base + token.bit_end
+            if start in breaks:
+                self._break_at_end()
             text = self.shown.text(token)
             self.starts.append(start)
             self.ends.append(end)
             self.byte_starts.append(start // 8)
             self.byte_ends.append(max(start // 8 + 1, -(-end // 8)))
             self.texts.append(text)
-            at += len(text)
-            self.chars.append(at)
+            self.chars.append(self.chars[-1] + len(text))
 
-    def prepend(self, start: int, tokens: list[Token]) -> bool:
+    def _break_at_end(self) -> None:
+        """End the text so far with a line break, as :func:`_break_before` does,
+        and move the characters after it along."""
+        broke = _break_before(self.texts)
+        if broke < 0:
+            return
+        for i in range(broke + 1, len(self.chars)):
+            self.chars[i] += 1
+
+    def prepend(
+        self, start: int, tokens: list[Token], starts: list[int] | tuple[int, ...] = ()
+    ) -> bool:
         """Put tokens decoded from byte ``start`` up to the origin in front of
         those kept, when they join: the last ends where the first kept token
         starts, and decoding on from there reads the same. ``True`` when they
@@ -261,7 +311,7 @@ class TextDecode:
             [] for _ in kept
         )
         self.chars = [0]
-        self._append(start, tokens)
+        self._append(start, tokens, starts)
         for column, rest in zip(
             (self.starts, self.ends, self.byte_starts, self.byte_ends, self.texts),
             kept,

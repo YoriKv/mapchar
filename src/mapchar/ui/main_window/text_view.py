@@ -240,10 +240,12 @@ class TextViewMixin:
             # what they do not is decoded, and joins them for the next step.
             above = cache.above(max(first, offset - budget), offset) if cache else None
             if above is None:
-                start, tokens = self._decode_up_to(doc, tables, offset - budget, offset)
-                above = text_model(tokens, start, offset - start, shown)
+                start, tokens, starts = self._decode_up_to(
+                    doc, tables, offset - budget, offset
+                )
+                above = text_model(tokens, start, offset - start, shown, starts)
                 if cache is not None:
-                    cache.prepend(start, tokens)
+                    cache.prepend(start, tokens, starts)
             start = above.offset
             text.set_model(
                 TextModel(above.body + first_line, above.spans, start, offset - start)
@@ -259,16 +261,17 @@ class TextViewMixin:
 
     def _decode_up_to(
         self, doc: Document, tables: TableSet, start: int, offset: int
-    ) -> tuple[int, list[Token]]:
-        """The tokens from about ``start`` up to ``offset``, decoded from
-        whichever of the few bytes back from ``start`` reads best
+    ) -> tuple[int, list[Token], list[int]]:
+        """The tokens from about ``start`` up to ``offset``, and the bit each of
+        their strings begins at, decoded from whichever of the few bytes back
+        from ``start`` reads best
         (:func:`~mapchar.pipeline.view_read.align_before`)."""
         return align_before(
             doc.data,
             self._view_range()[0],
             start,
             offset,
-            lambda data: self._decode_window(data, tables).tokens,
+            lambda data, at: self._decode_window(data, tables, at),
             tries=_ALIGN_TRIES,
             lookahead=_ALIGN_LOOKAHEAD,
         )

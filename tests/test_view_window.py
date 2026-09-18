@@ -9,9 +9,15 @@ from PySide6.QtGui import QTextCursor, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from mapchar.core.block import FixedLength, RangeSource
 from mapchar.project.formats.table_native import HEADER
 from mapchar.ui import BYTES_PER_ROW
-from window_helpers import ASCII_TABLE, make_window, open_rom_and_table
+from window_helpers import (
+    ASCII_TABLE,
+    add_block,
+    make_window,
+    open_rom_and_table,
+)
 
 LINE = b"The quick brown fox jumps over the lazy dog. "
 PROSE = LINE * 400
@@ -313,3 +319,45 @@ def test_an_end_ends_its_line(window, tmp_path):
     assert text.edit.toPlainText() == "Hi[end]\nYo[end]\n"
     text.show_codes.setChecked(False)
     assert text.edit.toPlainText() == "Hi\nYo\n"
+
+
+FIXED = b"".join(name + b"\x00" for name in (b"alpha", b"bravo", b"gamma"))
+"""Three strings of six bytes, cut by their length rather than an end token."""
+
+
+def test_a_fixed_string_s_end_ends_its_line(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, FIXED * 40, table=ASCII_TABLE)
+    add_block(
+        window,
+        entry,
+        "names",
+        RangeSource(0, len(FIXED) * 40),
+        string_type=FixedLength(6),
+    )
+    _shown(window, 900, 500)
+    window.text_tab_action.trigger()
+    QApplication.processEvents()
+    text = window.text
+    # A string cut by its length ends in no token of its own; without the
+    # break the three would read as one string.
+    assert text.edit.toPlainText().startswith("alpha[end]\nbravo[end]\ngamma[end]\n")
+
+
+def test_a_view_inside_a_fixed_string_reads_the_rest_in_step(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, FIXED * 40, table=ASCII_TABLE)
+    add_block(
+        window,
+        entry,
+        "names",
+        RangeSource(0, len(FIXED) * 40),
+        string_type=FixedLength(6),
+    )
+    _shown(window, 900, 500)
+    window.text_tab_action.trigger()
+    QApplication.processEvents()
+    # Two bytes into "alpha": its tail is the first line, and every string
+    # after it is whole.
+    window._go_to(2)
+    QApplication.processEvents()
+    body = window.text.edit.toPlainText()
+    assert body.startswith("pha[end]\nbravo[end]\ngamma[end]\nalpha[end]\n")

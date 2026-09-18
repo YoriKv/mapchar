@@ -1,11 +1,13 @@
 """Reading a stretch of bytes the way the top bar says: what the Hex and Text
 tabs show.
 
-A view reads from wherever it starts, not from where a block would, so it cuts
-the bytes by the reading's string type from its own first byte and leaves out
-what only makes sense at a block's addresses — skip ranges, realignment, the
-artificial codes of fixed lines. Read as pointers, it is the pointers the view
-holds, each with the address it reaches.
+A view reads from wherever it starts, not from where a block would, so it
+leaves out what only makes sense at a block's addresses — skip ranges,
+realignment, the artificial codes of fixed lines. It does keep the reading's
+string type, and cuts by it in step with the strings the block reads: a range's
+fixed length runs from its start, so a view that starts part-way through a
+string shows the rest of that one and whole ones after it. Read as pointers, it
+is the pointers the view holds, each with the address it reaches.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from mapchar.core.block import (
     Pascal,
     PointerSource,
     PointerTableSource,
+    RangeSource,
 )
 from mapchar.core.mapping import read_pointer
 from mapchar.core.table import TableSet
@@ -37,10 +40,15 @@ from mapchar.plugins.registry import mapping_for
 
 
 def decode_strings(
-    data: bytes, config: BlockConfig | None, tables: TableSet
+    data: bytes, config: BlockConfig | None, tables: TableSet, offset: int = 0
 ) -> RunResult:
     """``data`` read as one string after another, cut by ``config``'s string
-    type; to end tokens when it cuts by none of its own."""
+    type; to end tokens when it cuts by none of its own.
+
+    ``offset`` is the byte ``data`` begins at, which a fixed length cuts in
+    step with (:func:`_head`): without it a view moved by a line lands inside a
+    string and reads every string after it out of step.
+    """
     bits = Bits(data)
     cut = _view_cut(config)
     if cut is None:
@@ -51,17 +59,38 @@ def decode_strings(
             runs=None,
             ends_only=False,
         )
+    head = _head(cut, offset)
     tokens: list[Token] = []
     starts: list[int] = []
     pos = 0
     while pos < bits.length:
-        found, end, _ = decode_one(bits, cut, tables, pos, bits.length)
+        one = cut if pos or head is None else replace(cut, string_type=head)
+        found, end, _ = decode_one(bits, one, tables, pos, bits.length)
         starts.append(pos)
         tokens.extend(found)
         if end <= pos:
             break
         pos = end
     return RunResult(tokens, pos, starts)
+
+
+def _head(cut: BlockConfig, offset: int) -> FixedLength | None:
+    """The first string's length where a view from ``offset`` starts inside
+    one, so the strings after it start where the block's do; ``None`` where it
+    starts on one already.
+
+    Only a range of fixed strings has a grid to be in step with: a Pascal count
+    is read from the data, and a view that starts inside one of those cannot
+    find the count that says how long it is; a pointer source's strings are
+    each at their own target, which no phase gives.
+    """
+    string_type = cut.string_type
+    if not isinstance(string_type, FixedLength) or string_type.length <= 0:
+        return None
+    if not isinstance(cut.source, RangeSource):
+        return None
+    phase = (offset - cut.source.start) % string_type.length
+    return replace(string_type, length=string_type.length - phase) if phase else None
 
 
 def cuts_at_end_tokens(config: BlockConfig | None) -> bool:
@@ -75,13 +104,14 @@ def align_before(
     first: int,
     start: int,
     offset: int,
-    decode: Callable[[bytes], list[Token]],
+    decode: Callable[[bytes, int], RunResult],
     *,
     tries: int,
     lookahead: int,
-) -> tuple[int, list[Token]]:
-    """The tokens from about ``start`` up to ``offset``, decoded from whichever
-    of the few bytes back from ``start`` reads best.
+) -> tuple[int, list[Token], list[int]]:
+    """The tokens from about ``start`` up to ``offset``, and the bit each of
+    their strings begins at, decoded from whichever of the few bytes back from
+    ``start`` reads best.
 
     Best is the fewest tokens left unmatched — a start inside a character leaves
     a trail of them — and then a token starting at ``offset`` itself, so the text
@@ -91,19 +121,19 @@ def align_before(
     and ``lookahead`` how far past ``offset`` is decoded to see whether a token
     starts there.
     """
-    best: tuple[tuple[int, bool], int, list[Token]] | None = None
+    best: tuple[tuple[int, bool], int, list[Token], list[int]] | None = None
     start = max(first, start)
     for at in range(start, max(first - 1, start - tries), -1):
         rel = (offset - at) * 8
-        tokens = decode(data[at : offset + lookahead])
-        before = [t for t in tokens if t.bit_start < rel]
+        run = decode(data[at : offset + lookahead], at)
+        before = [t for t in run.tokens if t.bit_start < rel]
         unmatched = sum(t.entry is None and not t.fallback for t in before)
-        score = (unmatched, not any(t.bit_start == rel for t in tokens))
+        score = (unmatched, not any(t.bit_start == rel for t in run.tokens))
         if best is None or score < best[0]:
-            best = (score, at, before)
+            best = (score, at, before, [s for s in run.starts if s < rel])
         if score == (0, False):
             break
-    return best[1], best[2]
+    return best[1], best[2], best[3]
 
 
 def _view_cut(config: BlockConfig | None) -> BlockConfig | None:

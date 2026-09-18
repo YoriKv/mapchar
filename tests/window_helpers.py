@@ -29,12 +29,12 @@ def open_rom_and_table(window, tmp_path, data, table=TABLE, rom_name="rom.bin"):
     return entry
 
 
-def add_block(window, file_entry, name, source, **config) -> Entry:
+def add_block(window, file_entry, name, source, string_type=None, **config) -> Entry:
     """A block over ``source`` under ``file_entry``, added and made current.
 
     Keywords go to the block's :class:`BlockConfig`, which reads end-token
-    strings through the ``main`` table, except the compression and slice
-    fields, which belong to the entry.
+    strings — or ``string_type``'s — through the ``main`` table, except the
+    compression and slice fields, which belong to the entry.
     """
     fields = {k: config.pop(k) for k in _ENTRY_FIELDS if k in config}
     block = Entry(
@@ -42,7 +42,7 @@ def add_block(window, file_entry, name, source, **config) -> Entry:
         name,
         file_entry.path,
         parent=file_entry,
-        config=BlockConfig(source, EndToken(), "main", **config),
+        config=BlockConfig(source, string_type or EndToken(), "main", **config),
         **fields,
     )
     window._push_add(block)

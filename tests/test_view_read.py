@@ -1,4 +1,4 @@
-"""Reading the bytes in view: string rules from the view's first byte, pointers,
+"""Reading the bytes in view: string rules in step with the block, pointers,
 the standard encodings as tables, and a new block's region."""
 
 from __future__ import annotations
@@ -58,6 +58,16 @@ def test_a_view_cuts_strings_by_the_reading_s_string_type():
     run = decode_strings(data, fixed, _ascii())
     assert run.starts == [0, 16, 32]
     assert render(run.tokens) == "ABCDEF"
+
+
+def test_a_view_cuts_fixed_strings_in_step_with_the_block():
+    data = b"ABCDEF"
+    fixed = BlockConfig(RangeSource(0, 0), FixedLength(2), "ascii")
+    # A view a byte in shows the rest of the string it starts inside, and
+    # whole ones after that.
+    run = decode_strings(data[1:], fixed, _ascii(), 1)
+    assert run.starts == [0, 8, 24]
+    assert render(run.tokens) == "BCDEF"
 
 
 def test_pointer_cells_are_every_stride_from_the_table_s_start():

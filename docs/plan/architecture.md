@@ -402,13 +402,22 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   after a visible end token. `legacy_fixed_text` and `respell_fixed_end` turn
   what a version 1 project saved into today's spelling.
 - **View reading** (`pipeline/view_read.py`) is what the Hex and Text tabs
-  show: the bytes in view cut by the reading's string type from the view's own
-  first byte, or read as pointers — each with its value, its target and
-  whether it is null, a nested source's outer and inner pointers alike — and
-  the string a target reaches, by the same `decode_one` extraction uses.
+  show: the bytes in view cut by the reading's string type, or read as
+  pointers — each with its value, its target and whether it is null, a nested
+  source's outer and inner pointers alike — and the string a target reaches, by
+  the same `decode_one` extraction uses. The cut is in step with the strings
+  the block reads: a range's fixed length runs from its start, so a view that
+  starts part-way through a string is handed the byte it begins at and shows
+  the rest of that one, then whole ones. Only a range of fixed strings has such
+  a grid — a Pascal count is read from the data, and a view that starts inside
+  one of those cannot find it; a pointer source's strings are each at their own
+  target.
 - **Text view** (`pipeline/text_view.py`) turns those tokens into what the Text
   tab shows: a body, a map from characters to bytes (`TextModel`), and
-  `TextDecode`, which keeps the tokens from one window to the next.
+  `TextDecode`, which keeps the tokens from one window to the next. A string's
+  end breaks the line: an end token carries its own break, and a string cut by
+  its length — which ends in no token of its own — is broken from where the
+  strings start, so two strings never share a line and read as one.
 - **Layout** (`pipeline/insert.py`) turns a block's strings into a byte
   splice: encode each string's `replacement` (or reuse its bytes when it has
   none), lay the results out in *packed* or *slotted* mode, compute the new

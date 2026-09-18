@@ -423,8 +423,10 @@ The exploration surface, the equivalent of celPix's tile canvas.
   column only. The current block's pointer bytes are chipped in the hex column,
   and the string boundaries it would produce are ruled in both.
 - **Two tabs** — **Hex** shows the columns above; **Text** shows the decode
-  from the same offset in an ordinary read-only text box, where every end
-  token ends its line, with **Show codes**, **Show unknown** and **Wrap**
+  from the same offset in an ordinary read-only text box, where every string
+  ends its line — an end token carries the break, and a string cut by its
+  length is broken where the next one starts, so two strings never share a
+  line and read as one — with **Show codes**, **Show unknown** and **Wrap**
   switches remembered per machine. Off, Show
   codes hides the bracketed codes — a CODE entry, or an END or SWITCH whose
   text is exactly `[label]`, keeping the line breaks after it — and Show
@@ -446,6 +448,12 @@ The exploration surface, the equivalent of celPix's tile canvas.
   down is exactly what was shown. Each tab has a scrollbar over the whole file:
   its handle is the window, its arrows a row or line step, its trough a page
   step, and a drag goes to the row or byte under it.
+- **In step** — the view reads from wherever it starts, and cuts its strings
+  in step with the ones the block reads: a fixed length runs from the source's
+  start, so a view that starts part-way through a string shows the rest of that
+  one and whole ones after it, whichever byte it was moved to. Only a range of
+  fixed strings has such a grid: a Pascal count is read from the data, and a
+  pointer source's strings are each at their own target.
 - **Bounds** — the view can be confined to a stretch of the file: a block
   opens on its source, and a string's row in the Files panel confines it to
   that string. Inside them the tabs show those bytes and no more, the
