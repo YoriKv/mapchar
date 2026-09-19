@@ -80,10 +80,10 @@ def test_super_mario_world(registry):
     assert texts(again)[1:3] == ["SUN [end]", originals[2]]
 
 
-def _mother3_sample():
-    """``tools/mother3_sample.py``, which lives beside the tools, not in a package."""
-    path = ROOT / "tools" / "mother3_sample.py"
-    spec = importlib.util.spec_from_file_location("mother3_sample", path)
+def _sample_module(name: str):
+    """``tools/<name>.py``, which lives beside the tools, not in a package."""
+    path = ROOT / "tools" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # its dataclass resolves annotations there
@@ -94,7 +94,7 @@ def _mother3_sample():
 def test_mother_3(registry):
     """The Mother 3 sample, derived from the ROM: every block reads cleanly and
     lays out again, and edits through all three tables read back."""
-    m3 = _mother3_sample()
+    m3 = _sample_module("mother3_sample")
     rom = ROOT / "sample-projects" / "Mother 3" / m3.ROM_NAME
     if not rom.exists():
         pytest.skip(f"{m3.ROM_NAME} not present")
@@ -202,3 +202,59 @@ def test_mother_3(registry):
     assert res.ok, res.problems
     again = extract(out, config, ts, registry)
     assert [texts(again)[i] for i in (whole, page)] == [shorter, "◇ゴミ。[end]"]
+
+
+def test_mortal_kombat_ii(registry):
+    """The Mortal Kombat II sample, derived from the ROM: every block reads
+    cleanly and lays out unchanged, records edit in place around their
+    headers, and a menu string moves with the code operand that loads it."""
+    mk2 = _sample_module("mk2_sample")
+    rom = ROOT / "sample-projects" / "MK2" / mk2.ROM_NAME
+    if not rom.exists():
+        pytest.skip(f"{mk2.ROM_NAME} not present")
+    data = rom.read_bytes()
+    assert registry.detect_container(data, str(rom)).info.id == "gb"
+    tables = {}
+    for name, text in mk2.table_files(data).items():
+        table = parse_native(text, name).table
+        tables[table.id] = table
+    blocks = {}
+    for block in mk2.blocks(data):
+        config = parse_config(block.spec)
+        ts = TableSet.build(tables[config.table_id], tables)
+        ex = extract(data, config, ts, registry)
+        assert not ex.notices, (block.name, ex.notices)
+        assert "[$" not in "".join(texts(ex)), block.name
+        res, out = relayout(data, config, ts, {}, registry)
+        assert res.ok and out == data, (block.name, res.problems)
+        blocks[block.name] = (config, ts, ex)
+    assert len(blocks) == 19
+    assert sum(len(ex.strings) for _, _, ex in blocks.values()) == 84
+
+    assert texts(blocks["Main menu"][2]) == ["START GAME[end]OPTIONS[end]"]
+    assert texts(blocks["Fighter names"][2])[:2] == ["KANG[end]", "ZERO[end]"]
+    assert texts(blocks["Press start"][2]) == ["PRESS START"]
+
+    # A record rewritten in its slot keeps the next record's header.
+    config, ts, ex = blocks["Round announcer"]
+    assert texts(ex) == [
+        *(f"ROUND {n}" for n in range(1, 6)),
+        "FIGHT!",
+        "TIME IS UP",
+    ]
+    res, out = relayout(data, config, ts, {1: "RND 2"}, registry)
+    assert res.ok, res.problems
+    assert out[0x853D:0x8545] == bytes.fromhex("07CB05") + b"RND 2"
+    assert texts(extract(out, config, ts, registry))[1:3] == ["RND 2", "ROUND 3"]
+
+    # The story screens are chains of records, one per line.
+    config, ts, ex = blocks["Goro's lair"]
+    assert texts(ex)[-2:] == ["TO RETURN TO GORO'S", "LAIR"]
+
+    # Shortening one link message moves the next, and the ld hl that loads it.
+    config, ts, ex = blocks["Link"]
+    res, out = relayout(data, config, ts, {0: "P1 IN[end]"}, registry)
+    assert res.ok, res.problems
+    again = extract(out, config, ts, registry)
+    assert texts(again)[:2] == ["P1 IN[end]", "PLAYER 2 HAS ENTERED[end]"]
+    assert out[0x097E:0x0980] == (0x43E6).to_bytes(2, "little")

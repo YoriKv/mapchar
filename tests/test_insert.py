@@ -164,6 +164,15 @@ def test_a_string_read_across_a_backwards_skip_keeps_both_pieces(registry):
     assert not res.ok and "skip range" in res.problems[0].message
 
 
+def test_pascal_records_keep_the_headers_they_skip():
+    """A record rewritten in its slot leaves the next record's header alone."""
+    data = bytes.fromhex("EE EE 02 41 42 EE EE 01 43")
+    cfg = BlockConfig(RangeSource(0, 9), Pascal(1), "main", skips=((0, 2), (5, 7)))
+    res, out = relayout(data, cfg, TS, {0: "C", 1: "A"})
+    assert res.ok and out == bytes.fromhex("EE EE 01 43 FF EE EE 01 41")
+    assert texts(extract(out, cfg, TS)) == ["C", "A"]
+
+
 def test_a_slot_is_the_string_and_the_padding_after_it(registry):
     """Bytes between two pointed-to strings that are not the block's padding
     belong to no slot: an edit leaves them standing, and no string grows into

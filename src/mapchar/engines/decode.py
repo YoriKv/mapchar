@@ -96,7 +96,7 @@ def decode(
     notices: list[Notice] = []
     root = _Frame(tables.start.id, tables.start, Stop(), False, None)
     stack: list[_Frame] = [root]
-    pos = _follow_skips(start_bit, skips)
+    pos = follow_skips(start_bit, skips)
     lines = 0
 
     def window(at: int, n: int) -> str:
@@ -118,7 +118,7 @@ def decode(
         if frame.pending is not None:
             spec, frame.pending = frame.pending, None
             chunk = window(pos, spec.bits)
-            end = _advance(pos, len(chunk), skips)
+            end = advance(pos, len(chunk), skips)
             if len(chunk) < spec.bits:
                 tokens.append(Token(chunk, pos, end, table_id=frame.table_id))
                 notices.append(
@@ -142,7 +142,7 @@ def decode(
         # 1. Fallback bits close the frame and print nothing.
         fb = frame.stop.fallback
         if fb is not None and window(pos, len(fb)) == fb:
-            end = _advance(pos, len(fb), skips)
+            end = advance(pos, len(fb), skips)
             tokens.append(Token(fb, pos, end, table_id=frame.table_id, fallback=True))
             pos = end
             stack.pop()
@@ -151,7 +151,7 @@ def decode(
         # 2. Raw frames take one byte or bit per match, each weighing 1.
         if frame.table is None:
             chunk = window(pos, 1 if frame.table_id == BITS else 8)
-            end = _advance(pos, len(chunk), skips)
+            end = advance(pos, len(chunk), skips)
             tokens.append(Token(chunk, pos, end, table_id=frame.table_id))
             pos = end
             _count(stack, 1)
@@ -164,13 +164,13 @@ def decode(
         entry, holder = _match(stack, partial(window, pos))
         if entry is None or holder is None:
             chunk = window(pos, 8)
-            end = _advance(pos, len(chunk), skips)
+            end = advance(pos, len(chunk), skips)
             tokens.append(Token(chunk, pos, end, table_id=frame.table_id))
             pos = end
             continue
 
         start = pos
-        pos = _advance(pos, len(entry.bits), skips)
+        pos = advance(pos, len(entry.bits), skips)
         operands: tuple[int, ...] = ()
         if entry.operands:
             operands, pos, short = _read_operands(bits, entry, pos, limit, skips)
@@ -379,11 +379,11 @@ def _window(
     return out
 
 
-def _advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
+def advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
     """``n`` bits past ``pos``, jumping over any skip range on the way."""
     if not skips:
         return pos + n
-    cur = _follow_skips(pos, skips)
+    cur = follow_skips(pos, skips)
     remaining = n
     while remaining > 0:
         nxt = next((s for s, e in skips if cur < s < cur + remaining and e != s), None)
@@ -391,10 +391,10 @@ def _advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
             break
         remaining -= nxt - cur
         cur = next(e for s, e in skips if s == nxt)
-    return _follow_skips(cur + remaining, skips)
+    return follow_skips(cur + remaining, skips)
 
 
-def _follow_skips(pos: int, skips: list[tuple[int, int]]) -> int:
+def follow_skips(pos: int, skips: list[tuple[int, int]]) -> int:
     moved = True
     while moved:
         moved = False
@@ -419,7 +419,7 @@ def _read_operands(
         if len(chunk) < spec.bits:
             return tuple(values), pos, True
         values.append(spec.value_of(chunk))
-        pos = _advance(pos, spec.bits, skips)
+        pos = advance(pos, spec.bits, skips)
     return tuple(values), pos, False
 
 

@@ -58,6 +58,7 @@ mapchar/
 ├── tests/               pytest, flat, one module per area
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
 ├── tools/               regen_fixtures.py, make_sample_projects.py,
+│                       mother3_sample.py, mk2_sample.py,
 │                       subset_icon_font.py, ui_screenshots.py, samples/
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
@@ -87,6 +88,17 @@ mapchar/
   string of its own. A string commit in **Script** takes about a third of a
   second. The project reads every block as it opens, in
   about four seconds.
+- **Mortal Kombat II**: `tools/mk2_sample.py` derives the Game Boy sample's
+  four tables (`mk2`, `mk2-records`, `mk2-names`, `mk2-title`, one per routine
+  that draws text) and its 19 blocks, 84 strings, from
+  `sample-projects/MK2/Mortal Kombat II (USA, Europe).gb`: each block from the
+  `ld hl,nn` before a call to a print routine, each table from that routine's
+  compares. Menu strings are list sources over those code operands; the
+  `[u16 screen offset][u8 length]` records are Pascal strings with a skip
+  range over every header. Its docstring cites each routine, and names the
+  two RNC-compressed screens (legal, credits) mapchar cannot read.
+  `tests/test_examples.py` reads every block and edits a record and a menu
+  string.
 - **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's
   extraction with abcde's Cartographer dump of the synthetic ROM in
   `tests/fixtures/abcde/`. The fixtures are checked in, so the suite never runs

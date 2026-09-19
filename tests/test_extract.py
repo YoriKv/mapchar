@@ -95,6 +95,20 @@ def test_skips():
     assert texts(extract(data, cfg, TS)) == ["AB[end]"]
 
 
+def test_pascal_strings_step_over_skips():
+    """Records of a two-byte header, a length and the characters: skipping
+    each header reads the records, each starting at its length."""
+    data = bytes.fromhex("EE EE 02 41 42 EE EE 01 43")
+    cfg = BlockConfig(RangeSource(0, 9), Pascal(1), "main", skips=((0, 2), (5, 7)))
+    ex = extract(data, cfg, TS)
+    assert texts(ex) == ["AB", "C"]
+    assert [(s.start, s.end) for s in ex.strings] == [(2, 5), (7, 9)]
+    # A skip inside the characters is stepped over too.
+    data = bytes.fromhex("03 41 EE 42 43")
+    cfg = BlockConfig(RangeSource(0, 5), Pascal(1), "main", skips=((2, 3),))
+    assert texts(extract(data, cfg, TS)) == ["ABC"]
+
+
 def test_backwards_skip_reads_every_string(registry):
     """A Cartographer ``AUTO JUMP`` whose stop is behind its start.
 

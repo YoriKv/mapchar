@@ -34,7 +34,14 @@ from mapchar.core.tokens import (
     parse_text,
     render,
 )
-from mapchar.engines.decode import DecodeResult, DecodeRules, EndedBy, decode
+from mapchar.engines.decode import (
+    DecodeResult,
+    DecodeRules,
+    EndedBy,
+    advance,
+    decode,
+    follow_skips,
+)
 from mapchar.plugins.registry import mapping_for
 
 
@@ -453,7 +460,11 @@ def string_at(
 
 
 def _decode_pascal(bits, config, tables, start, stop_bit, st: Pascal):
+    """The prefix and the characters it counts are the string's bytes, so
+    reading either steps over the block's skip ranges."""
     length_bits = st.width * 8
+    skips = sorted((a * 8, b * 8) for a, b in config.skips)
+    start = follow_skips(start, skips)
     chunk = bits.window(start, length_bits)
     if len(chunk) < length_bits:
         return (
@@ -463,10 +474,13 @@ def _decode_pascal(bits, config, tables, start, stop_bit, st: Pascal):
         )
     raw = bits_to_bytes(chunk)
     n = int.from_bytes(raw, "big" if st.endian == "big" else "little")
-    body = start + length_bits
+    body = advance(start, length_bits, skips)
     if st.counts_tokens:
         return _decode_counted(bits, config, tables, body, stop_bit, n)
-    limit = min(body + n * 8, stop_bit)
+    # Just past the last byte counted: a skip starting right after it is the
+    # next string's to follow, not this one's.
+    end = advance(body, n * 8 - 8, skips) + 8 if n else body
+    limit = min(end, stop_bit)
     r = decode(bits, tables, body, _rules(config, limit, False))
     return r.tokens, limit, r.notices
 
@@ -506,6 +520,7 @@ def _extract_range(
         )
     pad = padding_bits(config, tables) if config.fixed_length is None else None
     width = len(pad) if pad is not None else 0
+    skips = sorted((a * 8, b * 8) for a, b in config.skips)
     while pos < stop_bit:
         start = pos
         if pad is not None and strings and start % 8 == 0:
@@ -513,6 +528,8 @@ def _extract_range(
                 start += width
             if start >= stop_bit:
                 break
+        # A string that begins on a skip range begins where it lands.
+        start = follow_skips(start, skips)
         tokens, record_end, res_notices = decode_one(
             bits, config, tables, start, stop_bit
         )

@@ -640,7 +640,9 @@ as a **Range** of end-token strings — rather than every control at once.
   `M` plus `O`.
 - **Skip ranges** — `from → to` pairs: reading a string's bytes reaches `from`
   and continues at `to` (Cartographer's auto-jump), so data sitting inside the
-  text is stepped over. They shape the strings, not where a source's addresses
+  text is stepped over. A Pascal prefix is among a string's bytes, and a string
+  that begins on a skip begins where it lands, so a header before each record
+  is stepped over too. They shape the strings, not where a source's addresses
   are: a pointer table is still walked from `start` by `stride`, and a gap in
   one is a matter for the stride or for a second block. Being a string's own
   setting, the Skips picker stays in the Strings section, so it is there in
