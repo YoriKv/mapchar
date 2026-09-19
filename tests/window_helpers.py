@@ -3,6 +3,8 @@ live apart from the headless :mod:`helpers`."""
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+
 from helpers import ASCII_TABLE as _ASCII_BODY
 from mapchar.core.block import BlockConfig, EndToken
 from mapchar.project.formats.table_native import HEADER
@@ -48,6 +50,33 @@ def add_block(window, file_entry, name, source, string_type=None, **config) -> E
     window._push_add(block)
     window._activate_entry(block)
     return block
+
+
+def grid_keys(editor) -> list[str]:
+    """The Key cell of every row the Table Editor's grid shows, in its order.
+
+    The grid is a view over :class:`~mapchar.ui.table_editor._EntryModel`, so a
+    row is read from the model rather than from a widget per cell, and a row
+    the filter drops is not there at all.
+    """
+    model = editor.entry_model
+    return [model.index(row, 0).data() for row in range(model.rowCount())]
+
+
+def grid_row(editor, key: str) -> int:
+    """The row the Table Editor's grid shows ``key`` in."""
+    return grid_keys(editor).index(key)
+
+
+def grid_cell(editor, row: int, column: int, role=Qt.ItemDataRole.DisplayRole):
+    """What one cell of the grid says, or holds under ``role``."""
+    return editor.entry_model.index(row, column).data(role)
+
+
+def type_in_grid(editor, row: int, column: int, text: str) -> None:
+    """Type over a Text or Comment cell, as editing it in the grid does."""
+    model = editor.entry_model
+    model.setData(model.index(row, column), text)
 
 
 def make_window(qtbot, monkeypatch):

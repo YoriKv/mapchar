@@ -11,7 +11,15 @@ from mapchar.core.block import RangeSource, Status
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.main_window import MainWindow
 from mapchar.ui.token_text import POINTER_TOKENS
-from window_helpers import ASCII_TABLE, TABLE, add_block, open_rom_and_table
+from window_helpers import (
+    ASCII_TABLE,
+    TABLE,
+    add_block,
+    grid_keys,
+    grid_row,
+    open_rom_and_table,
+    type_in_grid,
+)
 
 
 @pytest.fixture
@@ -1695,13 +1703,8 @@ def test_the_table_editor_edits_in_the_grid_and_the_form(window, tmp_path):
     window._edit_table_entry(table_entry)
     editor = window.table_editor
     table = table_entry.table
-    row = next(
-        r
-        for r in range(editor.grid.rowCount())
-        if editor.grid.item(r, 0).text() == "41"
-    )
     # A row selected loads the form, and Apply puts it back changed.
-    editor.grid.selectRow(row)
+    editor.grid.selectRow(grid_row(editor, "41"))
     assert editor.add.text() == "Apply" and editor.form.key.text() == "41"
     editor.form.text.setText("a")
     editor._add()
@@ -1711,26 +1714,17 @@ def test_the_table_editor_edits_in_the_grid_and_the_form(window, tmp_path):
     editor._add()
     assert "01000001" not in table.entries and table.entries["01001010"].text == "a"
     # Text and Comment cells are typed over in place, one undo step each.
-    row = next(
-        r
-        for r in range(editor.grid.rowCount())
-        if editor.grid.item(r, 0).text() == "42"
-    )
-    editor.grid.item(row, TEXT).setText("bee")
+    row = grid_row(editor, "42")
+    type_in_grid(editor, row, TEXT, "bee")
     assert table.entries["01000010"].text == "bee"
-    editor.grid.item(row, COMMENT).setText("the letter B")
+    type_in_grid(editor, grid_row(editor, "42"), COMMENT, "the letter B")
     assert table.entries["01000010"].comment == "the letter B"
     assert table_entry.table_overlay["01000010"] == "# the letter B\n42=bee"
     window.undo_stack.undo()
     assert table.entries["01000010"].comment == ""
-    # The filter hides what does not match key, text or comment.
+    # The filter drops what does not match key, text or comment.
     editor.filter.setText("bee")
-    shown = [
-        editor.grid.item(r, 0).text()
-        for r in range(editor.grid.rowCount())
-        if not editor.grid.isRowHidden(r)
-    ]
-    assert shown == ["42"]
+    assert grid_keys(editor) == ["42"]
 
 
 def test_a_charset_picked_in_the_editor_is_one_undo_step_the_project_carries(
@@ -1764,6 +1758,37 @@ def test_a_charset_picked_in_the_editor_is_one_undo_step_the_project_carries(
     window._save_table_entry(back)
     text = Path(str(back.path)).read_text()
     assert "@charset ascii" in text and "43=C" not in text
+
+
+def test_the_grid_spells_a_row_when_it_is_looked_at_and_the_filter_drops_rows(
+    window, tmp_path
+):
+    """A table on a charset is tens of thousands of entries: the grid holds
+    them as rows of a model, spelled as they are drawn, and the filter leaves
+    out what does not match rather than the view hiding it."""
+    from mapchar.ui.table_editor import TEXT
+
+    open_rom_and_table(window, tmp_path, b"AB\x00")
+    table_entry = window.workspace.table_entries()[0]
+    window._edit_table_entry(table_entry)
+    editor = window.table_editor
+    table = table_entry.table
+    editor.charset_pick.setCurrentIndex(editor.charset_pick.findData("shift-jis"))
+    model = editor.entry_model
+    assert model.rowCount() == len(table.entries) > 7000
+    # Filling it spells only the sample the column widths are measured from;
+    # every other row waits for the view to draw it.
+    spelled = sum(row.cells is not None for row in model._rows)
+    assert spelled <= 200 < model.rowCount()
+    assert model.index(model.row_of("01000001"), TEXT).data() == "A"
+
+    # The filter leaves the rows that match, and Select All reaches those alone.
+    editor.charset_pick.setCurrentIndex(editor.charset_pick.findData("none"))
+    editor.filter.setText("A")
+    assert grid_keys(editor) == ["41"]
+    editor.grid.selectAll()
+    editor._remove()
+    assert "01000001" not in table.entries and "01000010" in table.entries
 
 
 def test_the_editor_moves_on_to_the_next_key_and_removes_on_del(
@@ -1902,14 +1927,11 @@ def test_the_editor_sorts_and_chooses_columns(window, tmp_path):
     editor.form.line.setText("0041=z")
     editor._add()
 
-    def keys():
-        return [editor.grid.item(r, KEY).text() for r in range(editor.grid.rowCount())]
-
     # By key: width first, then bits — not the spelling.
-    assert keys() == ["00", "41", "42", "0041"]
-    editor.grid.sortItems(TEXT, Qt.SortOrder.DescendingOrder)
-    assert keys()[0] == "0041"
-    editor.grid.sortItems(KEY, Qt.SortOrder.AscendingOrder)
+    assert grid_keys(editor) == ["00", "41", "42", "0041"]
+    editor.grid.sortByColumn(TEXT, Qt.SortOrder.DescendingOrder)
+    assert grid_keys(editor)[0] == "0041"
+    editor.grid.sortByColumn(KEY, Qt.SortOrder.AscendingOrder)
     # Weight hides itself until the table weights something.
     assert editor.grid.isColumnHidden(WEIGHT)
     editor.form.line.setText("44<2>=D")

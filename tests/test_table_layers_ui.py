@@ -10,7 +10,14 @@ from mapchar.core.block import RangeSource
 from mapchar.core.font import Effect, TextBox
 from mapchar.project.formats.table_native import HEADER
 from mapchar.ui.table_editor import DETAILS, KEY, ORIGIN_ROLE, TEXT
-from window_helpers import add_block, make_window, open_rom_and_table
+from window_helpers import (
+    add_block,
+    grid_cell,
+    grid_row,
+    make_window,
+    open_rom_and_table,
+    type_in_grid,
+)
 
 BASE = f"{HEADER}\n@table base\n41=A\n42=B\n/00=[end]\n01=[wait]\n"
 TOP = f"{HEADER}\n@table top\n@include base\n42=b\n"
@@ -30,11 +37,7 @@ def _tables(window, tmp_path):
 
 
 def _row(editor, key: str) -> int:
-    return next(
-        r
-        for r in range(editor.grid.rowCount())
-        if editor.grid.item(r, KEY).text() == key
-    )
+    return grid_row(editor, key)
 
 
 def test_inherited_rows_show_dimmed_and_editing_one_overrides_it(window, tmp_path):
@@ -43,23 +46,21 @@ def test_inherited_rows_show_dimmed_and_editing_one_overrides_it(window, tmp_pat
     editor = window.table_editor
     assert editor.includes.text() == "base"
     row = _row(editor, "41")
-    assert editor.grid.item(row, KEY).data(ORIGIN_ROLE) == "base"
-    assert editor.grid.item(row, DETAILS).text() == "from @base"
-    assert editor.grid.item(_row(editor, "42"), KEY).data(ORIGIN_ROLE) is None
+    assert grid_cell(editor, row, KEY, ORIGIN_ROLE) == "base"
+    assert grid_cell(editor, row, DETAILS) == "from @base"
+    assert grid_cell(editor, _row(editor, "42"), KEY, ORIGIN_ROLE) is None
 
     # Typing over an inherited row gives the table its own entry.
-    editor.grid.item(row, TEXT).setText("a")
+    type_in_grid(editor, row, TEXT, "a")
     assert top.table.entries["01000001"].text == "a"
     assert top.table_overlay == {"01000001": "41=a"}
-    assert editor.grid.item(_row(editor, "41"), KEY).data(ORIGIN_ROLE) is None
+    assert grid_cell(editor, _row(editor, "41"), KEY, ORIGIN_ROLE) is None
 
     # Removing an inherited row removes it with an empty entry of the table's own.
     editor.grid.selectRow(_row(editor, "00"))
     editor._remove()
     assert top.table.entries["00000000"].text == ""
-    assert editor.grid.item(_row(editor, "00"), DETAILS).text() == (
-        "removes @base's entry"
-    )
+    assert grid_cell(editor, _row(editor, "00"), DETAILS) == ("removes @base's entry")
     window.undo_stack.undo()
     assert "00000000" not in top.table.entries
 
@@ -68,7 +69,7 @@ def test_inherited_rows_show_dimmed_and_editing_one_overrides_it(window, tmp_pat
     editor.new_line.setText("43=C")
     editor._add()
     window._edit_table_entry(top)
-    assert editor.grid.item(_row(editor, "43"), KEY).data(ORIGIN_ROLE) == "base"
+    assert grid_cell(editor, _row(editor, "43"), KEY, ORIGIN_ROLE) == "base"
 
 
 def test_a_label_the_include_already_gives_is_refused(window, tmp_path):

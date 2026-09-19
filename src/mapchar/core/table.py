@@ -309,6 +309,24 @@ class Table:
         state["_cache"] = {}
         return state
 
+    def __deepcopy__(self, memo: dict) -> Table:
+        """A copy that shares its entries and copies the lookups over them.
+
+        An :class:`Entry` is frozen and is never edited in place — a change
+        makes another one — so a snapshot need not copy tens of thousands of
+        them to be independent of the table it was taken from. The dicts that
+        hold them are copied, which is what tells the two tables apart.
+        """
+        other = Table.__new__(Table)
+        memo[id(self)] = other
+        other.__dict__.update(self.__getstate__())
+        other.entries = dict(self.entries)
+        other.charset_entries = dict(self.charset_entries)
+        other.labels = dict(self.labels)
+        other.aliases = dict(self.aliases)
+        other._by_length = {n: dict(g) for n, g in self._by_length.items()}
+        return other
+
     @property
     def includes(self) -> tuple[str, ...]:
         """The ids of the tables whose entries this one starts from, in order

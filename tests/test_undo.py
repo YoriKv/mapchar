@@ -24,7 +24,7 @@ from mapchar.ui.undo_commands import (
     BoxCommand,
     ContainerCommand,
 )
-from window_helpers import add_block, make_window, open_rom_and_table
+from window_helpers import add_block, grid_row, make_window, open_rom_and_table
 
 DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
 
@@ -382,7 +382,6 @@ def test_the_table_editors_fields_leave_ctrl_z_to_the_windows_undo(
     """An entry applied in the form is one step, and Ctrl+Z reaches it from
     anywhere in the window: every field of the form declines the key it would
     otherwise spend on its own typing history (``widgets.carry_undo``)."""
-    from mapchar.ui.table_editor import KEY
 
     ctrl = Qt.KeyboardModifier.ControlModifier
     open_rom_and_table(window, tmp_path, DATA)
@@ -392,12 +391,7 @@ def test_the_table_editors_fields_leave_ctrl_z_to_the_windows_undo(
     editor = window.table_editor
     qtbot.waitExposed(editor)
 
-    row = next(
-        r
-        for r in range(editor.grid.rowCount())
-        if editor.grid.item(r, KEY).text() == "41"
-    )
-    editor.grid.selectRow(row)
+    editor.grid.selectRow(grid_row(editor, "41"))
     editor.form.text.setText("Z")
     editor._add()
     assert table_entry.table.entries["01000001"].text == "Z"

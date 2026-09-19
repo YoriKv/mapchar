@@ -278,8 +278,10 @@ the preview system in [preview.md](preview.md).
     parameter, include, block and reading that named the old one follows, as
     one undo step, and the project carries the new id until Save As File
     writes it)
-    and a **filter** (Ctrl+F) matching key, text or comment, under which the
-    file and, for a converted table, its dialect are named;
+    and a **filter** (Ctrl+F) matching key, text or comment, which leaves
+    only the rows that match — Select All under it reaches those and no
+    others — under which the file and, for a converted table, its dialect are
+    named;
   - a **grid** of one row per key — Key, Kind, Text (a code as `[label]`, as
     the dump shows it), Details (what the entry does, in words: `reads u8,
     u16`, `@items ×1, then return`), Weight, Comment — whose Text and Comment

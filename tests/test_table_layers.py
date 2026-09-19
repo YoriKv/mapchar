@@ -102,6 +102,19 @@ def test_a_resolution_is_kept_until_an_included_table_changes():
     assert "resolved" not in deepcopy(tables["battle"])._cache
 
 
+def test_a_copy_shares_the_entries_it_holds_and_changes_apart_from_the_table():
+    """An entry is frozen and is never edited in place, so a snapshot of a
+    table on a charset copies the lookups over its entries and not the tens of
+    thousands of entries themselves."""
+    table = tables_from(BASE)["base"]
+    copy = deepcopy(table)
+    assert copy.entries["01000001"] is table.entries["01000001"]
+    copy.add(parse_entry("44=D"))
+    table.remove("11111110")  # the [line] code
+    assert "01000100" not in table.entries and "line" not in table.labels
+    assert "01000100" in copy.entries and copy.labels["line"].bits == "11111110"
+
+
 @pytest.mark.parametrize(
     ("body", "message"),
     [

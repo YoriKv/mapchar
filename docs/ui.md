@@ -106,6 +106,23 @@ tooltip the control has of its own.
   typed over.
 - A path in a list is cut in its middle (`ElideMiddle`), keeping the file name.
 
+## Rows counted in thousands
+
+A grid filled from a file is a `QTableWidget`: an item per cell is the plainest
+thing that works, and a block, a glossary or a result list is a screenful.
+A grid filled from a **table** is not — a table on the Shift-JIS charset is
+seven thousand entries, on UTF-8 a hundred and fifty thousand — so the Table
+Editor's grid is a `QTableView` over a model of the entries themselves
+(`table_editor._EntryModel`).
+
+- **A row is spelled when it is looked at**, and kept: nothing is built for a
+  row that is never drawn, sorted on or filtered.
+- **The sort and the filter are the model's.** The key order is the entries'
+  own — width, then bits — and costs no cell; a filter leaves out the rows
+  that do not match rather than the view hiding them, so Select All under a
+  filter reaches only what shows.
+- **A row is read by its entry** (`bits_at`, `row_of`), never by walking cells.
+
 ## Byte and text views
 
 - **One face**: the Hex and Text tabs and the Hex panel draw in

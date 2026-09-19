@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Putting a table on a charset no longer pauses the window: the Table Editor's
+  grid draws its rows from a model, and a snapshot shares the entries it holds.
+
 ## v0.1.3 - 2026-09-18
 
 - Translations are edited straight into the ROM's bytes, and the project
