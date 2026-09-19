@@ -1,0 +1,111 @@
+{
+  "dialects": [
+    "native",
+    "abcde",
+    "cartographer",
+    "atlas",
+    "romjuice"
+  ],
+  "mapping_sizes": {
+    "banked": [
+      2,
+      3,
+      4
+    ],
+    "gb": [
+      2,
+      3
+    ],
+    "gba": [
+      4
+    ],
+    "hirom": [
+      2,
+      3
+    ],
+    "linear": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "lorom": [
+      2,
+      3
+    ],
+    "nes_8000_2000": [
+      2,
+      3,
+      4
+    ],
+    "nes_c000": [
+      2,
+      3,
+      4
+    ],
+    "relative": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "plugins": {
+    "charsets": [
+      "ascii",
+      "gbk",
+      "jis-x-0201",
+      "latin-1",
+      "none",
+      "shift-jis",
+      "utf-16le",
+      "utf-8",
+      "windows-1252"
+    ],
+    "compression": [
+      "bitpack5",
+      "bitpack6",
+      "bitpack7",
+      "gba_lz77",
+      "konami_fds_rle",
+      "konami_nes_rle",
+      "kosinski",
+      "lz1",
+      "lz1_improved",
+      "lz2",
+      "lz2_improved",
+      "lzss_classic",
+      "lzss_ring",
+      "packbits",
+      "prs",
+      "rle1",
+      "rle2",
+      "slz16",
+      "slz24"
+    ],
+    "containers": [
+      "gb",
+      "gba",
+      "ines",
+      "n64",
+      "raw",
+      "smd",
+      "snes",
+      "snes_headered",
+      "snes_interleaved"
+    ],
+    "mappings": [
+      "banked",
+      "gb",
+      "gba",
+      "hirom",
+      "linear",
+      "lorom",
+      "nes_8000_2000",
+      "nes_c000",
+      "relative"
+    ]
+  },
+  "project_version": 2,
+  "renamed": {}
+}

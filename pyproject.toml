@@ -61,7 +61,9 @@ output-format = "concise"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "tools/mapchar-lint/tests"]
+# The linter is its own package (tools/mapchar-lint), run from its source.
+pythonpath = ["tools/mapchar-lint/src"]
 # Applied by tests/conftest.py from each module's own source, not written on the
 # tests by hand — so `-m "not qt"` cannot fall behind a suite being added or split.
 markers = ["qt: needs a QApplication (run the model layer alone with -m 'not qt')"]

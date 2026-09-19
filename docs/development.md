@@ -20,7 +20,9 @@ the editor, and the checks a change has to pass.
   overwrites the Windows `.venv` with Linux binaries.
 - `uv sync` creates the environment; `uv run mapchar` runs the app;
   `uv run pytest`, `uv run ruff check .` and `uv run ruff format --check .`
-  are the checks.
+  are the checks. `tools/` is git-ignored, so ruff passes it over: a change
+  there runs `uv run ruff check tools/…` and `uv run ruff format tools/…`
+  on what it touched, and its new files go in with `git add -f`.
 
 ## Git
 
@@ -59,7 +61,8 @@ mapchar/
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
 ├── tools/               regen_fixtures.py, make_sample_projects.py,
 │                       mother3_sample.py, mk2_sample.py,
-│                       subset_icon_font.py, ui_screenshots.py, samples/
+│                       subset_icon_font.py, ui_screenshots.py, samples/,
+│                       mapchar-lint/ (the project-file linter, see lint.md)
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
 ├── release.sh           cuts a release (see release.md)

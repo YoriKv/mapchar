@@ -46,6 +46,9 @@ Every doc in this folder gets a line here: its link and what it covers.
   the screenshot tool for reviewing the UI.
 - [release.md](release.md): building the app with `packaging/build.py`,
   cutting a release with `release.sh`, and the GitHub release workflow.
+- [lint.md](lint.md): `tools/mapchar-lint`, the standalone checker for
+  hand-edited `.mapchar` files — running it, its codes, the registry snapshot
+  and the test that keeps it current.
 - [plan/README.md](plan/README.md): the target design of mapchar itself and
   its build order: features, architecture, the native table and script
   formats, the preview system, and phases.

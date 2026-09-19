@@ -676,6 +676,8 @@ and settings only, optional keys omitted at their defaults, a tolerant reader
 that drops a broken entry and ignores unknown keys, relative paths with `/`
 separators and case-insensitive recovery, a version with step migrations,
 and aliases for renamed plugin ids.
+`tools/mapchar-lint` restates this reader to report what it drops or ignores
+([lint.md](../lint.md)), so a change to the format changes the linter too.
 
 ```jsonc
 {
