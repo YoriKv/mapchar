@@ -68,7 +68,7 @@ def test_fixed_strings_and_lines():
     res, out = relayout(data, cfg, TS, {0: "B[line]\nC"})
     assert res.ok and out == bytes.fromhex("42 43 EE 41 42 43")
     res, out = relayout(data, cfg, TS, {0: "BBBB[line]C"})
-    assert not res.ok and "too long" in res.problems[0].message
+    assert not res.ok and "do not fit" in res.problems[0].message
     cfg = BlockConfig(
         RangeSource(0, 6), FixedLength(3, True), "main", show_end=True, fill=b"\xee"
     )
@@ -244,7 +244,7 @@ def test_a_fixed_string_writes_its_end_token_where_there_is_room_then_fill():
     res, out = relayout(data, cfg, TS, {0: "A[end]C[$EE][$DD][$EE]"})
     assert res.ok and out[:6] == bytes.fromhex("41 00 43 EE DD EE")
     res, _ = relayout(data, cfg, TS, {0: "ABCABCA"})
-    assert not res.ok and "too long" in res.problems[0].message
+    assert not res.ok and "do not fit" in res.problems[0].message
 
 
 def test_fill_words_pad_slots_and_packed_tails_from_where_the_room_starts():

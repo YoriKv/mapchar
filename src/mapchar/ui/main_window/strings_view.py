@@ -8,7 +8,7 @@ from collections import Counter
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMenu
 
-from mapchar.core.block import BlockConfig, Status, block_bound
+from mapchar.core.block import BlockConfig, Status, WriteMode, block_bound
 from mapchar.core.document import Document
 from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
@@ -27,6 +27,30 @@ _CODE_IN_TEXT = re.compile(r"(?<!\\)\[([^\]\s]+)")
 def _same_key(text: str) -> str:
     """What two originals are the same by: their text, line breaks aside."""
     return text.replace("\n", "")
+
+
+def _room_note(used: int, room: int, cfg: BlockConfig | None) -> str:
+    """What the Bytes cell's room is made of, for its tooltip.
+
+    Two numbers do not say where the second comes from, and where it comes
+    from is what tells a translator whether the room is theirs: a slotted
+    string's is its own and a packed block's spare is every string's, so the
+    first string to take it takes it from all the rest.
+    """
+    if cfg is None:
+        return ""
+    if cfg.fixed_length is not None:
+        return f"{used} byte(s) now, of the block's fixed length of {room}"
+    if cfg.effective_write_mode is WriteMode.PACKED:
+        return (
+            f"{used} byte(s) now, of {room}: its own bytes and the "
+            f"{room - used} byte(s) the block has spare, which every string "
+            f"of the block shares — whichever takes them leaves the rest none"
+        )
+    return (
+        f"{used} byte(s) now, of {room}: its own bytes and the fill after "
+        f"them, which it keeps whether it uses them or not"
+    )
 
 
 class StringsViewMixin:
@@ -391,13 +415,14 @@ class StringsViewMixin:
         return "[line]"
 
     def _string_slots(self, entry, doc: Document, bound: int) -> dict[int, int] | None:
-        """Where each string's slot ends (:func:`slot_ends`), worked out once
+        """Where each string's room ends (:func:`string_ends`), worked out once
         per reading.
 
-        The bytes and the fill byte go in, so the Room column and the byte
-        readout report the slot the layout will actually accept — the string's
-        own bytes plus the fill after them — rather than the whole gap to the
-        next string. Sorting a pointer block's thousands of strings for every
+        The bytes and the fill byte go in, so the Bytes column and the byte
+        readout report the room the layout will actually accept — a slotted
+        string's own bytes plus the fill after them, a packed one's own bytes
+        plus its group's spare — rather than the whole gap to the next string
+        or the whole block. Sorting a pointer block's thousands of strings for every
         row, and for every keystroke, is what the cache is for: the slots are
         where the records sit in the bytes, so the very records and the very
         bytes they were worked out from are what say the answer still stands.
@@ -462,6 +487,7 @@ class StringsViewMixin:
             rec.notes,
             " ".join(f"{p.address:X}" for p in rec.pointers),
             (same[_same_key(rec.original)] - 1) if same is not None else 0,
+            _room_note(used, room, cfg),
         )
 
     def _refresh_string_row(self, entry, index: int) -> None:

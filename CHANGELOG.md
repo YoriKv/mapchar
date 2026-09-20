@@ -4,6 +4,11 @@
 
 - Putting a table on a charset no longer pauses the window: the Table Editor's
   grid draws its rows from a model, and a snapshot shares the entries it holds.
+- A refused translation says why: the character no table has an entry for, the
+  table that does have it and the code that switches there, the code or the
+  operands no table knows, or what the text encodes to against its room.
+- The Bytes column counts a packed block's room as the string's own bytes plus
+  the block's spare, not the whole block; its tooltip says what the room is.
 
 ## v0.1.3 - 2026-09-18
 

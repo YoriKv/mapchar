@@ -144,7 +144,10 @@ def _encode_fixed(text: str, config: BlockConfig, tables: TableSet) -> bytes:
     else:
         data = encode(body, tables, end_terminated=False).data
     if len(data) > length:
-        raise EncodeError(f"{len(data) - length} byte(s) too long for {length}")
+        raise EncodeError(
+            f"the text encodes to {len(data)} byte(s); the block's fixed "
+            f"length is {length}, so {len(data) - length} do not fit"
+        )
     return data
 
 
@@ -182,7 +185,11 @@ def _pascal(payload: bytes, st: Pascal, result, text: str, tables: TableSet) -> 
     else:
         n = len(payload)
     if n >= 1 << (st.width * 8):
-        raise EncodeError(f"length {n} does not fit a {st.width}-byte prefix")
+        unit = "token" if st.counts_tokens else "byte"
+        raise EncodeError(
+            f"the text encodes to {n} {unit}(s); this block's {st.width}-byte "
+            f"length prefix counts up to {(1 << (st.width * 8)) - 1}"
+        )
     prefix = n.to_bytes(st.width, "big" if st.endian == "big" else "little")
     return prefix + payload
 
@@ -223,6 +230,27 @@ def slot_ends(
     return ends
 
 
+def packed_ends(strings: list[StringRecord], bound: int, skips=()) -> dict[int, int]:
+    """Where each string's room ends, by index, when the group is packed.
+
+    A packed group is laid out afresh from its first string, so no string has
+    a place of its own: its room is the bytes it holds now plus the group's
+    **spare** — everything between what its strings hold altogether and the
+    bound, whether it lies in the gaps a shortened string left or after the
+    last of them. The spare is in every string's room and in no two at once:
+    one string may take all of it, and taking it leaves the rest with none.
+
+    The measure, not an address: the layout moves the strings, so where a
+    string's room ends is how far it may grow, counted from where it starts.
+    """
+    if not strings:
+        return {}
+    first = min(rec.start for rec in strings)
+    held = sum(rec.byte_length(skips) for rec in strings)
+    spare = max(bound - first - held, 0)
+    return {rec.index: rec.start + rec.byte_length(skips) + spare for rec in strings}
+
+
 def group_bounds(
     data: bytes,
     config: BlockConfig,
@@ -260,20 +288,24 @@ def string_ends(
     data: bytes, config: BlockConfig, strings: list[StringRecord], registry=None
 ) -> dict[int, int]:
     """Where each string's room ends, by index: its slot's end
-    (:func:`slot_ends`), or for a packed nested block its group's bound
-    (:func:`group_bounds`). What :func:`room_for` reads a slot from."""
+    (:func:`slot_ends`) when the block is slotted, and its own bytes plus its
+    group's spare (:func:`packed_ends`) when it is packed. What
+    :func:`room_for` reads a string's room from."""
+    slotted = config.effective_write_mode is WriteMode.SLOTTED
     if not isinstance(config.source, NestedPointerSource):
-        return slot_ends(strings, block_bound(config, strings), data, config.fill)
+        bound = block_bound(config, strings)
+        if slotted:
+            return slot_ends(strings, bound, data, config.fill)
+        return packed_ends(strings, bound, config.skips)
     groups = string_groups(config, strings)
     ends: dict[int, int] = {}
-    slotted = config.effective_write_mode is WriteMode.SLOTTED
     for group, bound in zip(
         groups, group_bounds(data, config, groups, registry), strict=True
     ):
         if slotted:
             ends |= slot_ends(group, bound, data, config.fill)
         else:
-            ends |= {rec.index: bound for rec in group}
+            ends |= packed_ends(group, bound, config.skips)
     return ends
 
 
@@ -358,7 +390,8 @@ def _layout_slotted(
                 Problem(
                     rec.index,
                     f"its slot holds {extent} byte(s), "
-                    f"{fixed_len - extent} short of the fixed length",
+                    f"{fixed_len - extent} short of the fixed length "
+                    f"of {fixed_len}",
                 )
             )
             continue
@@ -366,7 +399,8 @@ def _layout_slotted(
             result.problems.append(
                 Problem(
                     rec.index,
-                    f"{len(enc.data) - room} byte(s) too long for its slot",
+                    f"the text encodes to {len(enc.data)} byte(s); its slot "
+                    f"holds {room}, so {len(enc.data) - room} do not fit",
                     len(enc.data) - room,
                 )
             )
@@ -432,8 +466,15 @@ def _layout_packed(
             chunk = enc.data
         if pos + len(chunk) > bound:
             over = pos + len(chunk) - bound
+            left = max(bound - pos, 0)
             result.problems.append(
-                Problem(rec.index, f"crosses the block bound by {over} byte(s)", over)
+                Problem(
+                    rec.index,
+                    f"the text encodes to {len(chunk)} byte(s) and only {left} "
+                    f"are left before the block's bound (${bound:X}), so it "
+                    f"crosses the bound by {over}",
+                    over,
+                )
             )
             pos += len(chunk)
             continue
@@ -517,25 +558,25 @@ def room_for(
     bound: int,
     ends: dict[int, int] | None = None,
 ) -> int:
-    """How many bytes ``rec`` may take: its slot (:func:`slot_ends`, which
-    ``ends`` carries when the caller has them), the slot a fixed length gives
-    it, or everything up to the block's ``bound``
-    (:func:`~mapchar.core.block.block_bound`) when it is packed — up to its
-    group's (:func:`string_ends`) in a nested block."""
+    """How many bytes ``rec`` may take: the length a fixed-length block gives
+    every string, its slot when the block is slotted (:func:`slot_ends`), or
+    its own bytes plus its group's spare when it is packed
+    (:func:`packed_ends`) — the room :func:`string_ends` works out, which
+    ``ends`` carries when the caller has it.
+
+    A caller with no ``ends`` to hand is told the bytes the string holds now,
+    which is the room nothing has to be worked out to know; the layout, which
+    has them, is the one that refuses.
+    """
     if config is None:
         return rec.length
     if isinstance(config.string_type, FixedLength):
         return config.string_type.length
-    if config.effective_write_mode is WriteMode.PACKED:
-        if isinstance(config.source, NestedPointerSource):
-            if ends is not None and rec.index in ends:
-                return max(ends[rec.index] - rec.start, 0)
-            return rec.length
-        return max(bound - rec.start, 0)
     if _crosses_skip(rec, config):
+        # No single extent, and the layout will not rewrite it either.
         return rec.byte_length(config.skips)
     if ends is not None and rec.index in ends:
-        return ends[rec.index] - rec.start
+        return max(ends[rec.index] - rec.start, 0)
     return rec.byte_length(config.skips)
 
 
@@ -547,6 +588,7 @@ __all__ = [
     "block_bound",
     "group_bounds",
     "layout_block",
+    "packed_ends",
     "room_for",
     "slot_ends",
     "string_ends",

@@ -241,9 +241,12 @@ def test_a_nested_block_in_slotted_mode_keeps_every_string_in_place(registry):
     res, out = relayout(NESTED_ROM, cfg, TS, {1: "CCCCC[end]"}, registry)
     assert res.ok and out[0x18:0x20] == bytes.fromhex("43 43 43 43 43 00 FF FF")
     assert out[:0x18] == NESTED_ROM[:0x18]
+    # Packed, a string's room is its own bytes and its group's spare: map 0's
+    # two strings hold five bytes of the eleven up to $20, so each may grow by
+    # six — and only one of them may, the spare being the same six bytes.
     packed = BlockConfig(NESTED, EndToken(), "main")
     assert string_ends(NESTED_ROM, packed, ex.strings, registry) == {
-        0: 0x20,
+        0: 0x1E,
         1: 0x20,
         2: 0x2C,
     }

@@ -89,6 +89,10 @@ class RowData:
     pointers: str = ""
     same: int = 0
     """How many other strings of the block have this original."""
+    room_note: str = ""
+    """What the room is made of, shown on the Bytes cell: a packed block's
+    spare is every string's and no two strings' at once, which the two numbers
+    alone do not say."""
 
 
 class TranslationDelegate(QStyledItemDelegate):
@@ -434,6 +438,8 @@ class StringsView(QWidget):
         tr.setData(Qt.ItemDataRole.EditRole, data.translation)
         self.table.setItem(r, COL_TRANSLATION, tr)
         bytes_item = item(f"{data.used} / {data.room}")
+        if data.room_note:
+            bytes_item.setToolTip(data.room_note)
         status = item(data.status)
         colour = self._status_colour(data.status)
         if colour is not None:

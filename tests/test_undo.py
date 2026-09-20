@@ -223,7 +223,7 @@ def test_a_refused_edit_leaves_no_step_and_no_bytes(window, tmp_path):
     window._on_translation_edited(0, "BBB[end]")  # too long for its room
     assert window.undo_stack.count() == steps
     assert not file_entry.dirty and file_entry.doc.data == DATA
-    assert "too long" in window.statusBar().currentMessage()
+    assert "do not fit" in window.statusBar().currentMessage()
     window._on_translation_edited(0, "Z[end]")  # nothing encodes a Z
     assert window.undo_stack.count() == steps and file_entry.doc.data == DATA
 

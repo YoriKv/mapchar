@@ -714,10 +714,15 @@ The editing surface, opened on a block.
 
 - **Columns** — `#`, address, pointers, **Original** (read-only: the string's
   text when the block was made, kept by the project), **Translation** (what
-  the bytes say now; editable), bytes used / room, status, **Same** (`×N`
-  when other strings of the block share the original), notes. The header's
-  context menu hides and shows columns, and dragging a header section reorders
-  them; Translation stays.
+  the bytes say now; editable), **Bytes** (used / room), status, **Same**
+  (`×N` when other strings of the block share the original), notes. The
+  header's context menu hides and shows columns, and dragging a header section
+  reorders them; Translation stays.
+- **Room** — what the string may grow to, and the cell's tooltip says what it
+  is made of: the block's fixed length, or a slotted string's own bytes plus
+  the fill after them, or a packed string's own bytes plus the block's spare
+  — the bytes its group has left over, which every string of the group shares
+  and no two of them may take.
 - **Status**, per string: **untouched** (the bytes still say the original),
   **edited** (they say something else), **review** and **done** (set by hand
   — **Edit ▸ Toggle Review / Toggle Done on Selected**, Ctrl+Alt+D for done —
@@ -745,7 +750,11 @@ The editing surface, opened on a block.
   - a commit is **refused** — the editor stays open on its row with the draft
     and the reason under it — when the text does not encode, does not fit its
     room, would not read back as typed, or would change how the bytes after
-    it are cut into strings;
+    it are cut into strings. The reason says why, in the text's own terms: the
+    character no table has an entry for and its code point, the table that
+    does have it and the code that switches there, the code no table knows or
+    the operands one takes, and for a text that does not fit, what it encodes
+    to against the room there is;
   - **Shift+Return** writes the block's newline code — the code carrying the
     *newline* effect, by the box, its table entry or as the block's line
     code, else `[line]` — never a line break, which the script

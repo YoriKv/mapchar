@@ -195,7 +195,7 @@ def test_a_key_the_frame_matches_is_never_taken_from_beneath():
     # "B" is only beneath, at 42 -- which the frame's own table reads as い, so
     # it cannot be written inside the frame at all.
     ts = table_set(SCRIPT + SATURN, "script")
-    with pytest.raises(EncodeError, match="unable to encode"):
+    with pytest.raises(EncodeError, match="cannot follow the text before it"):
         encode("[saturn]B[end]", ts)
     # A longer key of the frame's table forbids what would complete it.
     ts = table_set(SCRIPT + "@table saturn\n4100=あ\n", "script")

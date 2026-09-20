@@ -305,7 +305,13 @@ searches for the cheapest bit string that **decodes back to the same tokens**:
 - **Verification** — the result is decoded with [3.1](#31-decode) and must
   give back the same tokens; a mismatch is an `EncodeError`, which refuses
   the edit.
-- **Failure** reports the farthest position reached and the text around it.
+- **Failure** is diagnosed from the atom the search got furthest to and the
+  frames in use there (`_why`): a character no table has an entry for, named
+  with its code points and composed with the mark it carries; one whose table
+  is not in use there, with the switch code that reaches it; a code no table
+  knows, or the operands one takes and what would not fit them; or an entry
+  that exists and simply cannot follow what comes before it. The text around
+  the atom follows when the string is long enough for the place to matter.
 
 Encoding one string is fast enough to run on every keystroke for the byte
 readout; the Strings view debounces it anyway.
@@ -432,10 +438,13 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   `(offset, bytes)` splices over the decompressed buffer plus the pointer
   splices. A slotted string's slot (`slot_ends`) is its own bytes and the run
   of whole fill patterns after them, up to the next string in address order,
-  the bound or the end of the buffer, whichever is first. The Room column and
-  the byte readout pass the bytes too (`string_ends`), so what they report is
-  the room the layout will take; a caller with none to hand gets the whole gap
-  to the next string, and the layout, which has them, is the one that refuses.
+  the bound or the end of the buffer, whichever is first. A packed string has
+  no place of its own, so its room (`packed_ends`) is its own bytes plus its
+  group's **spare** — everything between what the group's strings hold and its
+  bound — which is in every string's room and in no two at once. The Bytes
+  column and the byte readout pass the bytes too (`string_ends`), so what they
+  report is the room the layout will take; a caller with none to hand gets the
+  bytes the string holds now, and the layout is the one that refuses.
   Nothing outside a slot is written, so a splice never touches bytes no string
   owns and never runs past the buffer. The layout runs per group
   (`string_groups`): a nested block lays out only the groups holding a

@@ -89,6 +89,47 @@ def test_the_draft_readout_counts_the_same_room(window, tmp_path):
     assert window.strings.pane.readout.text().startswith("4 / 3 byte(s)")
 
 
+PACKED_ROM = (
+    bytes.fromhex("10 00 13 00")  # two pointers, to 0x10 and 0x13
+    + b"\x00" * 12
+    + bytes.fromhex("41 42 00")  # 0x10: AB[end]
+    + bytes.fromhex("42 41 00")  # 0x13: BA[end]
+    + b"\xee" * 4  # 0x16: four bytes of spare up to the bound
+)
+
+
+def test_packed_room_is_the_string_s_own_bytes_and_the_block_s_spare(window, tmp_path):
+    """A packed block lays its strings out afresh, so no string has a place of
+    its own and the room to the bound is not any one string's.
+
+    What a string may grow to is its own bytes plus the spare the block has
+    left over — the same spare in every row, and in no two rows at once.
+    """
+    file_entry = open_rom_and_table(window, tmp_path, PACKED_ROM, table=TABLE)
+    block = add_block(
+        window,
+        file_entry,
+        "b",
+        PointerTableSource(0, 4, 2, 2, "little", "linear"),
+        bound=0x1A,
+        fill=b"\xee",
+    )
+    assert block.config.effective_write_mode is WriteMode.PACKED
+    rows = window._row_data(block, block.doc, window._table_set())
+    assert [(r.used, r.room) for r in rows] == [(3, 7), (3, 7)]
+
+    # And it is the number a commit accepts: one string may take all four
+    # spare bytes, and once it has, the other has none left to take.
+    window._on_translation_edited(0, "ABABAB[end]")
+    assert block.doc.strings[0].current_text() == "ABABAB[end]"
+    rows = window._row_data(block, block.doc, window._table_set())
+    assert [(r.used, r.room) for r in rows] == [(7, 7), (3, 3)]
+    steps = window.undo_stack.count()
+    window._on_translation_edited(1, "BAC[end]")
+    assert window.undo_stack.count() == steps
+    assert block.doc.strings[1].current_text() == "BA[end]"
+
+
 # --- which rows an edit refreshes ------------------------------------------
 
 

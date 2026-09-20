@@ -175,3 +175,57 @@ def test_the_table_keeps_the_index_until_it_changes():
     assert ts.start._cache["encode_index"] is not index
     with pytest.raises(EncodeError):
         encode("B[end]", ts)
+
+
+# --- why an encode failed ----------------------------------------------------
+
+WHY = (
+    "@table main\n41=A\n42=B\n45=e\n/00=[end]\n$50=[pause],u8\n"
+    "!FD=[kana] @kata:*\n@table kata\n41=X\n!FE=return\n"
+)
+"""Letters, a code with an operand and a named switch into a second table."""
+
+
+def why(text: str, body: str = WHY, start: str = "main", **kw) -> str:
+    ts = table_set(body, start)
+    with pytest.raises(EncodeError) as caught:
+        encode(text, ts, **kw)
+    return str(caught.value)
+
+
+def test_a_character_no_table_has_is_named_with_its_code_point():
+    """A refusal a translator can act on names the character, not a position."""
+    assert why("AZ[end]") == "no table has an entry for 'Z' (U+005A)"
+    # A combining mark is shown on the character it joins: the table has an
+    # entry for e and none for the acute, and naming the acute alone would
+    # send the translator looking for a character nobody typed.
+    assert why("Aé[end]") == "no table has an entry for 'é' (U+00E9)"
+
+
+def test_a_character_in_another_table_says_which_and_how_to_reach_it():
+    assert why("AX[end]") == (
+        "'X' (U+0058) is in table @kata; the text is read in table @main "
+        "there, so write [kana] first"
+    )
+    # Read in the table that has it, it encodes.
+    assert encode("A[kana]X[end]", table_set(WHY, "main")).data == bytes.fromhex(
+        "41 FD 41 FE 00"
+    )
+
+
+def test_a_code_says_whether_it_is_unknown_or_its_operands_are():
+    assert why("A[nope][end]") == "no table has a code [nope]"
+    assert why("A[pause][end]") == "[pause] needs more operands"
+    assert why("A[pause 1 2][end]") == "[pause] has too many operands"
+    # An operand too big for its spec is a refusal, not an OverflowError.
+    assert why("A[pause 999][end]") == (
+        "[pause] takes operands u8, which 999 does not fit"
+    )
+
+
+def test_a_long_text_says_where_it_failed_as_well():
+    """The character alone places a refusal in a short string; in a long one
+    the text around it is what finds the place."""
+    assert why("A" * 20 + "Z" + "A" * 12 + "[end]").endswith(
+        ' — near "AAAAAAAAAAZAAAAAAAAA"'
+    )
