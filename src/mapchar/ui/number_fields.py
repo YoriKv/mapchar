@@ -39,7 +39,8 @@ ADDRESS_CHARS = 10
 HEX_NUMBER = QRegularExpression(r"\s*(\$|0[xX])?[0-9A-Fa-f_]*\s*")
 """What every field a hex number is typed into accepts while it is typed:
 ``$`` or ``0x`` before the digits, ``_`` between them, spaces around them."""
-_ADDRESS = QRegularExpression(r"\s*(\$|0[xX])?[0-9A-Fa-f_]*(:[0-9A-Fa-f_]*)?\s*")
+ADDRESS_NUMBER = QRegularExpression(r"\s*(\$|0[xX])?[0-9A-Fa-f_]*(:[0-9A-Fa-f_]*)?\s*")
+"""The same for a field an address is typed into, which may carry a bank."""
 _OFFSET = QRegularExpression(r"\s*(-?\$?|\$-)?(0[xX])?[0-9A-Fa-f_]*\s*")
 
 
@@ -237,7 +238,7 @@ class AddressEdit(_FixedHexEdit):
     def __init__(
         self, spelling: AddressSpelling | None = None, parent: QWidget | None = None
     ):
-        super().__init__(_ADDRESS, ADDRESS_CHARS, parent)
+        super().__init__(ADDRESS_NUMBER, ADDRESS_CHARS, parent)
         self.spelling = spelling if spelling is not None else AddressSpelling(self)
         self.spelling.changed.connect(self._on_spelling)
 
@@ -290,6 +291,7 @@ class OffsetEdit(_FixedHexEdit):
 
 __all__ = [
     "ADDRESS_CHARS",
+    "ADDRESS_NUMBER",
     "HEX_NUMBER",
     "AddressEdit",
     "AddressSpelling",

@@ -14,6 +14,7 @@ from mapchar.core.block import (
     NestedPointerSource,
     NextPointer,
     Pascal,
+    PointerListSource,
     PointerTableSource,
     RangeSource,
 )
@@ -163,6 +164,56 @@ def test_skip_ranges_are_edited_in_a_popup_list(window, tmp_path):
     assert popup.table.rowCount() == 0
     window.undo_stack.redo()
     assert popup.table.rowCount() == 1 and picker.currentText() == "11>14"
+
+
+def test_a_pointer_list_is_edited_in_a_popup_list(window, tmp_path):
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", PointerListSource((0,), 2))
+    window.show()
+    window.undo_stack.clear()
+    picker = window.reading_bar.ptr_addresses
+    assert picker.currentText() == "000000"
+    picker.showPopup()
+    popup = picker.popup
+    assert popup.isVisible()
+    popup.add_button.click()
+    # A row still blank is left out; the addresses already read stay.
+    assert block.config.source.addresses == (0,)
+    popup.table.item(1, 0).setText("2")
+    assert block.config.source.addresses == (0, 2)
+    assert [s.original_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
+    assert picker.currentText() == "000000, 000002"
+    # The reload after the edit left the list alone, so the row is still
+    # there to keep editing; a run of edits is one undo step.
+    popup.table.item(1, 0).setText("4")
+    assert block.config.source.addresses == (0, 4)
+    assert window.undo_stack.count() == 1
+    popup.table.setCurrentCell(1, 0)
+    popup.remove_button.click()
+    assert block.config.source.addresses == (0,)
+    window.undo_stack.undo()
+    assert block.config.source.addresses == (0,)
+    assert popup.table.rowCount() == 1
+
+
+def test_a_row_given_several_addresses_spreads_over_a_row_each(window, tmp_path):
+    """A list written down elsewhere goes in at once, as it did when the bar
+    held one field of comma-separated addresses."""
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", PointerListSource((), 2))
+    window.show()
+    picker = window.reading_bar.ptr_addresses
+    popup = picker.popup
+    popup.add_button.click()
+    popup.table.item(0, 0).setText("0, 2")
+    assert popup.table.rowCount() == 2
+    assert [popup.table.item(r, 0).text() for r in range(2)] == ["0", "2"]
+    assert block.config.source.addresses == (0, 2)
+    assert picker.currentText() == "000000, 000002"
+    # A trailing comma is not a row of its own.
+    popup.table.item(1, 0).setText("2,")
+    assert popup.table.rowCount() == 2
+    assert block.config.source.addresses == (0, 2)
 
 
 def test_the_skips_picker_is_there_in_either_mode_of_a_block(window, tmp_path):
@@ -398,7 +449,7 @@ def test_a_preview_is_read_once_and_marked_where_it_was_cut():
 def test_a_nested_source_s_outer_pointers_are_labelled_not_followed():
     """Following one would read an inner pointer table's bytes as characters."""
     from mapchar.core.tokens import render
-    from mapchar.pipeline.view_read import PointerCell
+    from mapchar.pipeline.pointers import PointerCell
     from mapchar.ui.pointer_tokens import hex_tokens, text_tokens
 
     cells = [

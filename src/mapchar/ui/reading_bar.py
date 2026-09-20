@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QLabel,
-    QLineEdit,
     QWidget,
 )
 
@@ -42,6 +41,7 @@ from mapchar.core.block import (
     RangeSource,
     StringType,
 )
+from mapchar.ui.addresses_picker import AddressesPicker
 from mapchar.ui.bars import ROW_BREAK, WrapBar
 from mapchar.ui.kind_names import SOURCE_NAMES, STRING_TYPE_NAMES
 from mapchar.ui.number_fields import (
@@ -51,12 +51,10 @@ from mapchar.ui.number_fields import (
     HexSpinBox,
     OffsetEdit,
     number_spin,
-    respell_addresses,
 )
 from mapchar.ui.skips_picker import SkipsPicker
 from mapchar.ui.widgets import (
     CompactComboBox,
-    fit_chars,
     hint_field,
 )
 from mapchar.ui.writing_picker import WritingPicker
@@ -232,13 +230,7 @@ class ReadingBar(WrapBar):
         self.inner_null = _null_edit(
             "An inner pointer holding this value reaches no string"
         )
-        self.ptr_addresses = hint_field(
-            QLineEdit(),
-            "addresses, comma separated",
-            "Where each pointer sits, comma separated",
-        )
-        fit_chars(self.ptr_addresses, 24)
-        self.spelling.changed.connect(self._respell_addresses)
+        self.ptr_addresses = AddressesPicker(self.spelling)
 
         self.string_type = QComboBox()
         for data, cls in _STRING_TYPE_CLASSES.items():
@@ -293,12 +285,7 @@ class ReadingBar(WrapBar):
                 (self.ptr_bank,),
                 "The bank a banked mapping reads in, in hex",
             ),
-            (
-                "ptr_addresses",
-                "Addresses",
-                (self.ptr_addresses,),
-                "Where each pointer sits, comma separated",
-            ),
+            ("ptr_addresses", "Addresses", (self.ptr_addresses,), None),
             (
                 "ptr_null",
                 "Null",
@@ -401,6 +388,7 @@ class ReadingBar(WrapBar):
         ):
             spin.valueChanged.connect(lambda _=0, n=name: self._edited(n))
         self.skips.changed.connect(lambda: self._edited("skips"))
+        self.ptr_addresses.changed.connect(lambda: self._edited("ptr_addresses"))
         for name, box in (
             ("stop_at_end", self.stop_at_end),
             ("pascal_tokens", self.pascal_tokens),
@@ -411,7 +399,6 @@ class ReadingBar(WrapBar):
             ("start", self.start),
             ("stop", self.stop),
             ("ptr_offset", self.ptr_offset),
-            ("ptr_addresses", self.ptr_addresses),
             ("ptr_null", self.ptr_null),
             ("inner_null", self.inner_null),
         ):
@@ -497,9 +484,7 @@ class ReadingBar(WrapBar):
                     self.stop.set_value(s.stop)
                     self.ptr_stride.setValue(s.stride)
                 else:
-                    self.ptr_addresses.setText(
-                        ", ".join(self.spelling.format(a) for a in s.addresses)
-                    )
+                    self.ptr_addresses.set_value(s.addresses)
                 self.ptr_size.setValue(s.size)
                 self.ptr_endian.setCurrentIndex(1 if s.endian == "big" else 0)
                 self._show_mapping(s.mapping_id)
@@ -674,16 +659,13 @@ class ReadingBar(WrapBar):
 
     # -- reading back ---------------------------------------------------------
 
-    def _respell_addresses(self, old) -> None:
-        """Spell the pointer list under the address format it changed to."""
-        text = self.ptr_addresses.text()
-        self.ptr_addresses.setText(respell_addresses(text, self.spelling, old))
-
     def config(self, base: BlockConfig, table_id: str) -> BlockConfig:
         """The reading the controls show, over ``base`` for what they do not.
 
         A file's source has no addresses in the bar, so they stay ``base``'s.
-        A number nobody can read keeps ``base``'s value rather than a guess.
+        A number nobody can read keeps ``base``'s value rather than a guess —
+        a pointer list drops the one row instead, since its addresses are read
+        one to a row.
         """
         kind = source_kind_for(self.source_kind.currentData(), self._pointers)
         old = base.source
@@ -718,16 +700,7 @@ class ReadingBar(WrapBar):
                 **pointer,
             )
         elif kind == LIST:
-            read = [
-                self.spelling.parse(a)
-                for a in self.ptr_addresses.text().split(",")
-                if a.strip()
-            ]
-            if None in read:
-                addresses = getattr(old, "addresses", ())
-            else:
-                addresses = tuple(read)
-            source = PointerListSource(addresses, **pointer)
+            source = PointerListSource(self.ptr_addresses.value(), **pointer)
         else:
             source = RangeSource(start, stop)
         changes = {

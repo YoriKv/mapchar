@@ -49,11 +49,13 @@ every control where it was.
   them to be pushed along. A bar's width counts them whether they are showing
   or not (`bars.FlowLayout.natural_width`), so the sections beside it do not
   shift either.
-- **Settings made once are folded away**: a block's write settings and its skip
-  ranges are one line each, opening a popup under it (`WritingPicker`,
-  `SkipsPicker`) — both `PopupPicker`s over a `PopupFrame`
-  (`mapchar.ui.popup_picker`), which is where the panel opens, that the combo
-  has no list, and the one row the summary is written to.
+- **What a bar has no room for is folded away**: a block's write settings, its
+  skip ranges and a pointer list's addresses are one line each, opening a popup
+  under it (`WritingPicker`, `SkipsPicker`, `AddressesPicker`) — all
+  `PopupPicker`s over a `PopupFrame` (`mapchar.ui.popup_picker`), which is
+  where the panel opens, that the combo has no list, and the one row the
+  summary is written to. A setting made once and left alone earns no row of its
+  own; neither does a list, which has no length a row can be sized to.
 - A window made narrower wraps its bars onto more rows; that is the user's
   doing and the only thing that moves them.
 

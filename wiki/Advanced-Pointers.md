@@ -42,7 +42,10 @@ A **Pointer list** does: it names each pointer's address.
 Set **Show as** to **Pointers**, select the two bytes at `$977`–`$978`, and
 **New Block**. Rename it `Link`. It is a pointer table of one pointer.
 
-On the Reading bar set **Source** to **Pointer list**, and fill **Addresses**:
+On the Reading bar set **Source** to **Pointer list** and open **Addresses**.
+It is a list, a row an address: **Add** appends one, **Remove** drops the row
+picked. A row typed with several addresses in it, separated by commas, spreads
+over a row each, so the whole list goes in at once:
 
 ```
 $977, $97E, $989, $994, $99B

@@ -210,11 +210,13 @@ def test_a_pointer_list_is_spelled_in_the_address_format(window, tmp_path):
     block = add_block(window, file_entry, "b", PointerListSource((2, 4), 2))
     window._activate_entry(block)
     bar = window.reading_bar
-    assert bar.ptr_addresses.text() == "000002, 000004"
+    picker = bar.ptr_addresses
+    assert picker.currentText() == "000002, 000004"
     window.address_pick.setCurrentIndex(window.address_pick.findData("snes-lorom"))
-    assert bar.ptr_addresses.text() == "$00:8002, $00:8004"
-    bar.ptr_addresses.setText("$00:8002, 6")
-    bar.ptr_addresses.editingFinished.emit()
+    # Both the line and the rows the popup edits follow the format.
+    assert picker.currentText() == "$00:8002, $00:8004"
+    assert picker.popup.table.item(0, 0).text() == "$00:8002"
+    picker.popup.table.item(1, 0).setText("6")
     assert block.config.source.addresses == (2, 6)
 
 
