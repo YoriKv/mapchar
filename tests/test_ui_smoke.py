@@ -1205,31 +1205,22 @@ def test_every_documented_shortcut_is_really_bound(window):
     assert _documented_keys() - bound == set()
 
 
-def test_a_shift_jis_script_is_offered_a_re_read(window, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-
+def test_a_shift_jis_script_is_read_and_says_so(window, tmp_path):
     path = tmp_path / "commands.txt"
     path.write_bytes("#BLOCK ソ\n".encode("cp932"))
-    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
-    monkeypatch.setattr(
-        QMessageBox,
-        "clickedButton",
-        lambda self: next(
-            b
-            for b in self.buttons()
-            if self.buttonRole(b) == QMessageBox.ButtonRole.AcceptRole
-        ),
-    )
-    text = window._read_text(str(path))
+    text, notices = window._read_text(str(path))
     assert text is not None and "ソ" in text
+    assert notices == ["commands.txt is not UTF-8; read as cp932"]
 
 
-def test_declining_the_re_read_reports_nothing_read(window, tmp_path):
+def test_a_utf8_script_is_read_without_a_notice(window, tmp_path):
     path = tmp_path / "commands.txt"
-    path.write_bytes("#BLOCK ソ\n".encode("cp932"))
-    # The fixture's clickedButton takes the destructive button, and this box has
-    # none — so the dialog reads as cancelled.
-    assert window._read_text(str(path)) is None
+    path.write_text("#BLOCK ソ\n", encoding="utf-8")
+    assert window._read_text(str(path)) == ("#BLOCK ソ\n", [])
+
+
+def test_an_unreadable_script_reports_nothing_read(window, tmp_path):
+    assert window._read_text(str(tmp_path / "missing.txt")) == (None, [])
 
 
 def test_importing_is_live_on_a_file_because_it_creates_blocks(window, tmp_path):

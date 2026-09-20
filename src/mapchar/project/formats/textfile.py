@@ -6,6 +6,7 @@ The one place in mapchar that opens a text file. The model itself
 
 from __future__ import annotations
 
+import os
 import re
 
 from mapchar.core.text import nfc
@@ -39,6 +40,17 @@ def read_text_any(path: str) -> tuple[str, str]:
             encoding = "utf-8-sig" if data.startswith(b"\xef\xbb\xbf") else "utf-8"
         return nfc(text), encoding
     raise AssertionError("latin-1 decodes every byte")  # pragma: no cover
+
+
+def not_utf8(path: str, encoding: str) -> str | None:
+    """What a read that was not UTF-8 has to say, or ``None`` for one that was.
+
+    The one wording every reader's notice uses, so a table, a script and a
+    command file report the same thing the same way.
+    """
+    if encoding in ("utf-8", "utf-8-sig"):
+        return None
+    return f"{os.path.basename(path)} is not UTF-8; read as {encoding}"
 
 
 def split_lines(text: str) -> list[str]:

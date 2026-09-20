@@ -38,7 +38,7 @@ from mapchar.core.document import Document
 from mapchar.pipeline.text_view import TextDecode
 from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import Registry, default_registry
-from mapchar.project.formats.textfile import read_text_any
+from mapchar.project.formats.textfile import not_utf8, read_text_any
 from mapchar.project.workspace import (
     Entry,
     Workspace,
@@ -770,64 +770,23 @@ class MainWindow(
         path, _ = QFileDialog.getSaveFileName(self, title, suggested, filters)
         return path or None
 
-    def _read_text(self, path: str) -> str | None:
-        """The file as text, or ``None`` once the reason it is not is reported.
+    def _read_text(self, path: str) -> tuple[str | None, list[str]]:
+        """The file as text with what reading it had to say, or ``None`` once
+        the reason it is not is reported.
 
-        UTF-8 first, because that is what mapchar writes. A command file, an Atlas
-        script or a translator file that came from elsewhere is as likely to be
-        Shift-JIS or Latin-1, and a decode failure reaching a Qt slot as an
-        unhandled ``UnicodeDecodeError`` takes the app down over a file it could
-        have read — so the byte that stopped it is reported and the two encodings
-        worth trying are offered (:meth:`_ask_encoding`).
+        Read as a table file is (:func:`~mapchar.project.formats.textfile.
+        read_text_any`): UTF-8, else ``cp932``, else ``latin-1``. A command
+        file, an Atlas script or a translator file that came from elsewhere is
+        as likely to be Shift-JIS or Latin-1, and one that is says so in the
+        notices the import ends with, as a table does in its status line.
         """
         try:
-            with open(path, encoding="utf-8") as f:
-                return f.read()
+            text, encoding = read_text_any(path)
         except OSError as exc:
             self._error(f"Cannot read {path}: {exc}")
-            return None
-        except UnicodeDecodeError as exc:
-            encoding = self._ask_encoding(path, exc)
-            if encoding is None:
-                return None
-            try:
-                with open(path, encoding=encoding) as f:
-                    return f.read()
-            except (OSError, UnicodeDecodeError) as retry:
-                self._error(f"Cannot read {path} as {encoding}: {retry}")
-                return None
-
-    def _ask_encoding(self, path: str, failure: UnicodeDecodeError) -> str | None:
-        """Which encoding to re-read ``path`` as, or ``None`` to give up.
-
-        The offered default is whichever of the two actually decodes the whole
-        file (:func:`~mapchar.project.formats.textfile.read_text_any`), so the
-        likely answer is one Return away and the other is still one click away.
-        """
-        try:
-            _, likely = read_text_any(path)
-        except OSError:
-            likely = "cp932"
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle(f"{APP_NAME} — Not UTF-8")
-        box.setText(f"{os.path.basename(path)} is not UTF-8 text.")
-        box.setInformativeText(
-            f"Byte {failure.start} ({failure.object[failure.start]:#04x}) "
-            f"is not valid UTF-8: {failure.reason}.\n\n"
-            "Read it as one of these instead?"
-        )
-        shift = box.addButton("Shift-JIS (cp932)", QMessageBox.ButtonRole.AcceptRole)
-        latin = box.addButton("Latin-1", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(latin if likely == "latin-1" else shift)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is shift:
-            return "cp932"
-        if clicked is latin:
-            return "latin-1"
-        return None
+            return None, []
+        notice = not_utf8(path, encoding)
+        return text, [notice] if notice else []
 
     def _write_text(self, path: str, text: str) -> bool:
         """Write the file as UTF-8 with LF endings; report what stopped it."""

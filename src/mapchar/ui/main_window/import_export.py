@@ -54,7 +54,7 @@ class ImportExportMixin:
         if file_entry is None:
             self._error("Open the ROM the command file describes first.")
             return []
-        text = self._read_text(path)
+        text, notices = self._read_text(path)
         if text is None:
             return []
         try:
@@ -63,7 +63,7 @@ class ImportExportMixin:
             self._error(f"Cannot import {path}: {exc}")
             return []
         base = os.path.dirname(os.path.abspath(path))
-        notices = [n.message for n in cf.notices]
+        notices += [n.message for n in cf.notices]
         created: list[Entry] = []
         # Cartographer addresses are file offsets; blocks address the payload
         # the container yields, which drops the file's header.
@@ -115,11 +115,11 @@ class ImportExportMixin:
         )
         if entry is None:
             return 0
-        text = self._read_text(path)
+        text, notices = self._read_text(path)
         if text is None:
             return 0
         script = read_atlas(text)
-        notices = list(script.notices)
+        notices += script.notices
         # The script addresses the file; the block's records address the payload.
         header = self._container_header(entry.parent)
         by_pointer = {p.address: r for r in entry.doc.strings for p in r.pointers}
@@ -282,7 +282,7 @@ class ImportExportMixin:
         return landed
 
     def import_file(self, path: str, kind: str, force: bool = False) -> None:
-        text = self._read_text(path)
+        text, read_notices = self._read_text(path)
         if text is None:
             return
         file_entry = self._current_file()
@@ -313,6 +313,7 @@ class ImportExportMixin:
         except (MapcharError, ValueError) as exc:
             self._error(f"Cannot import {path}: {exc}")
             return
+        notices = read_notices + list(notices)
         label = f"Import {os.path.basename(path)}"
         current = self._entry
         with self._macro(label):

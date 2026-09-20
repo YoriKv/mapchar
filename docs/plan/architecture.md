@@ -639,7 +639,7 @@ Blocks are to files what celPix slices are, with these differences:
 | `legacy/`        | romjuice, Cartographer, Atlas and abcde dialects, a module each, following their own tool's rules into the native model with conversion notices | the abcde dialect, which an Atlas export needs |
 | `script.py`      | native scripts, and `apply_script` walks one into a project's blocks | native scripts            |
 | `translator.py`  | TSV, CSV, PO                                      | TSV, CSV, PO              |
-| `textfile.py`    | how a text file is spelled, under all of them: `read_text_any` (the one `open()` of a text file), `split_lines`, `BOM` | the backslash `escape`/`unescape` |
+| `textfile.py`    | how a text file is spelled, under all of them: `read_text_any` (the one `open()` of a text file, which the window's imports and drop sniffing use too), `not_utf8` (the one wording of its notice), `split_lines`, `BOM` | the backslash `escape`/`unescape` |
 
 `project/tables.py` wraps the readers for the one job every caller has:
 `read_table_file(path, dialect, registry)` reads the file, parses it in its

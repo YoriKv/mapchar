@@ -12,6 +12,7 @@ from mapchar.core.errors import MapcharError
 from mapchar.plugins.registry import SIGNATURE_HEAD
 from mapchar.project.formats.script import HEADER as SCRIPT_HEADER
 from mapchar.project.formats.table_native import HEADER as TABLE_HEADER
+from mapchar.project.formats.textfile import read_text_any, split_lines
 from mapchar.project.tables import adopt_table, read_table_file
 from mapchar.project.workspace import Entry, EntryKind
 
@@ -157,10 +158,10 @@ class OpeningMixin:
             return "po"
         if lower.endswith(".txt"):
             try:
-                with open(path, encoding="utf-8", errors="replace") as f:
-                    head = next((ln.strip() for ln in f if ln.strip()), "")
+                text, _ = read_text_any(path)
             except OSError:
                 return "rom"
+            head = next((ln.strip() for ln in split_lines(text) if ln.strip()), "")
             if head == SCRIPT_HEADER:
                 return "script"
             if head == TABLE_HEADER:

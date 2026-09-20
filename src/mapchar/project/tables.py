@@ -10,7 +10,6 @@ laid back over it on every read, and **Save As File** folds it in.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from copy import deepcopy
 from typing import TYPE_CHECKING
@@ -25,7 +24,7 @@ from mapchar.project.formats.table_native import (
     parse_entry_lines,
     sanitize_id,
 )
-from mapchar.project.formats.textfile import read_text_any
+from mapchar.project.formats.textfile import not_utf8, read_text_any
 from mapchar.project.workspace import free_name
 
 if TYPE_CHECKING:
@@ -65,11 +64,11 @@ def read_table_file(
     text, encoding = read_text_any(path)
     tf = load_table_text(text, path, dialect)
     tf.encoding = encoding
-    if encoding not in ("utf-8", "utf-8-sig"):
+    if (message := not_utf8(path, encoding)) is not None:
         tf.notices.insert(
             0,
             Notice(
-                f"{os.path.basename(path)} is not UTF-8; read as {encoding}",
+                message,
                 Level.INFO,
                 detail="Its bytes do not decode as UTF-8. Save As File writes "
                 "the table back as UTF-8.",
