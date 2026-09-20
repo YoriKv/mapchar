@@ -62,21 +62,23 @@ Add the rest by hand — **New**, Key, Text, **Add**:
 
 Pick **@mk2** in the **Table** list.
 
-**Find** (Ctrl+F) takes hex bytes or `"quoted text"`. Search `"FINISH"` in
-the **Text** tab:
-
-![Find, in the Text tab](images/03-find.png)
-
-Each string here follows three bytes; the third is its length.
-
 **Search ▸ Scan for Text…** (Ctrl+Shift+R) lists text-like regions. Selecting
-a row jumps to it.
+a row jumps to it. A region is a rough area, not a block.
 
 ![The Scan window](images/03-scan.png)
 
+**Find** (Ctrl+F) takes hex bytes or `"quoted text"`, and pins a string down.
+Search `"FINISH"` in the **Text** tab:
+
+![Find, in the Text tab](images/03-find.png)
+
+The match is at `$8649`. Each string here follows three bytes; the third is
+its length.
+
 ## 4. A Strings block: Finishes
 
-In the **Hex** tab, drag-select `$8646`–`$86A5`.
+In the **Hex** tab, drag-select `$8646`–`$86A5`: from the three bytes before
+`FINISH HIM!` to the last `!` of `BABALITY!!`.
 
 ![The region, selected](images/04-select-region.png)
 
@@ -96,14 +98,13 @@ Each record is two position bytes, a length byte, then text:
 pos     len  FINISH HIM!
 ```
 
-In the Hex tab select the two bytes at `$8646`, right-click ▸ **Add Skip from
-Selection**.
+> The two bytes before each length are where on screen the game draws the
+> string. They are not text, so the block has to skip them; left in, the first
+> one is read as a length and every string after it is cut wrong, as above.
 
-![The first header, selected](images/04-select-header.png)
-
-![After the first skip](images/04-first-skip.png)
-
-Repeat at `$8654`, `$8662`, `$8675`, `$8687`, `$868E`, `$8699`.
+Open **Skips** on the Reading bar and add a range over each pair:
+`8646>8648`, `8654>8656`, `8662>8664`, `8675>8677`, `8687>8689`, `868E>8690`,
+`8699>869B`.
 
 ![Finishes, read correctly](images/04-finishes-strings.png)
 
