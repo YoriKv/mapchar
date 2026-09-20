@@ -1,5 +1,6 @@
 """Qt-free helpers shared by test modules: the table bodies and test ROMs the
-tests read, the extract-edit-insert round trip, and the abcde dump comparison.
+tests read, the stand-in compression the slot and scan tests pack with, the
+extract-edit-insert round trip, and the abcde dump comparison.
 """
 
 from __future__ import annotations
@@ -7,9 +8,11 @@ from __future__ import annotations
 import os
 import re
 
+from mapchar.core.context import PipelineContext
 from mapchar.core.table import Table, TableSet
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import apply_splices, layout_block
+from mapchar.plugins.base import PluginInfo, Stage
 from mapchar.plugins.charsets import apply_charset
 from mapchar.plugins.registry import default_registry
 from mapchar.project.formats.legacy import load_table_text
@@ -57,6 +60,22 @@ def pointer_rom(targets, body: str, *, at: int = 0x10, tail: int = 8) -> bytes:
     bytes ``body`` at ``at``, padded with ``$FF`` to ``at`` and by ``tail``."""
     table = b"".join(t.to_bytes(2, "little") for t in targets)
     return table + b"\xff" * (at - len(table)) + bytes.fromhex(body) + b"\xff" * tail
+
+
+class Doubler:
+    """A "compression" that doubles its input, so a result's size is predictable.
+
+    It announces itself in no way, which is the other half of what it is for: a
+    scheme with no signature is walked a byte at a time.
+    """
+
+    info = PluginInfo("doubler", "Doubler", Stage.COMPRESSION)
+
+    def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        return data[::2]
+
+    def compress(self, data: bytes, ctx: PipelineContext) -> bytes:
+        return bytes(b for byte in data for b in (byte, byte))
 
 
 def relayout(data: bytes, cfg, ts, edits: dict[int, str], registry=None, room=None):

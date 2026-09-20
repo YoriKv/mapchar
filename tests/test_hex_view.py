@@ -158,6 +158,32 @@ def test_a_non_hex_run_writes_nothing(window, tmp_path):
     assert entry.doc.data == before
 
 
+def test_hex_panel_overtypes_in_place(window, tmp_path, qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QTextCursor
+
+    rom = tmp_path / "h.bin"
+    rom.write_bytes(bytes(range(32)))
+    file_entry = window.open_rom(str(rom))
+    window.show()
+    window.hex_dock.show()
+    window.hex_panel.follow.setChecked(False)
+    window._sync_hex_panel()
+    view = window.hex_panel.view
+    cursor = view.textCursor()
+    cursor.setPosition(8 + 3 * 2)  # first digit of byte 2
+    view.setTextCursor(cursor)
+    qtbot.keyClick(view, Qt.Key.Key_F)
+    assert file_entry.doc.data[2] == 0xF2
+    qtbot.keyClick(view, Qt.Key.Key_A)
+    assert file_entry.doc.data[2] == 0xFA and file_entry.dirty
+    assert view.textCursor().position() == 8 + 3 * 3
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert file_entry.doc.data[2] == 2
+    assert isinstance(cursor, QTextCursor)
+
+
 # --- finding ---------------------------------------------------------------
 
 

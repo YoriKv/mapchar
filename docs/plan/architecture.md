@@ -1164,8 +1164,8 @@ putting the factory arrangement back behind Panels ▸ Reset Panel Layout.
 - **Tests** — `tests/` is flat, one module per area, with the celPix
   headless setup (offscreen platform, automatic `qt` marking, isolated
   `QSettings`, recorded dialogs). Model-layer tests run without Qt. Shared
-  helpers are `tests/helpers.py`, which is Qt-free, and
-  `tests/window_helpers.py`, which drives a live `MainWindow`.
+  helpers are `tests/helpers.py` and `tests/compression_helpers.py`, which are
+  Qt-free, and `tests/window_helpers.py`, which drives a live `MainWindow`.
 - **Verification fixtures** — `tests/fixtures/abcde/` holds a synthetic ROM,
   its two tables and a Cartographer command file, plus `expected.txt`, abcde's
   dump of them, and `DIVERGENCES.md`; `tests/fixtures/shift-jis.tbl` sits

@@ -159,7 +159,10 @@ mapchar/
   Anything installed on the `QApplication` — an event filter above all — is
   paid for by every test after it, so it is one shared object or is taken off
   when its window closes. Qt-free helpers shared by test modules live in
-  `tests/helpers.py`, and those that drive a live `MainWindow` in
-  `tests/window_helpers.py`.
+  `tests/helpers.py`, those the compression modules share in
+  `tests/compression_helpers.py`, and those that drive a live `MainWindow` in
+  `tests/window_helpers.py`; the `window` fixture every window test takes is
+  in `tests/conftest.py`, which imports `window_helpers` lazily so the
+  headless run stays Qt-free.
 - **Line endings** are LF everywhere (`.gitattributes`); paths in docs and
   code are repository-relative.

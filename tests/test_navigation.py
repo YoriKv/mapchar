@@ -499,3 +499,19 @@ def test_the_back_mouse_button_steps_the_trail(window, tmp_path):
     )
     assert window._handle_history_mouse(event)
     assert window._entry is file_entry
+
+
+# --- going to an address, and the selection it leaves ----------------------
+
+
+def test_navigation_and_selection(window, tmp_path):
+    rom = tmp_path / "big.bin"
+    rom.write_bytes(bytes(range(256)) * 8)
+    window.open_rom(str(rom))
+    window._go_to(0x100)
+    assert window._offset == 0x100
+    window.undo_stack.undo()
+    assert window._offset == 0
+    window._select_bytes(0x210, 4)
+    assert window.raw.selection() == (0x210, 0x214)
+    assert "selected" in window.nav_status.text()

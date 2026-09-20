@@ -42,6 +42,17 @@ def registry():
 
 
 @pytest.fixture
+def slotted(registry):
+    """The default registry with :class:`helpers.Doubler` registered, for the
+    tests that need a compression whose packed size is predictable and whose
+    streams announce themselves in no way."""
+    from helpers import Doubler
+
+    registry.register(Doubler())
+    return registry
+
+
+@pytest.fixture
 def window(qtbot, monkeypatch):
     """A live ``MainWindow`` with its modals answered, for the window tests.
 

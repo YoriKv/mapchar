@@ -14,6 +14,7 @@ from mapchar.project.formats.table_native import HEADER
 from mapchar.ui import BYTES_PER_ROW
 from window_helpers import (
     ASCII_TABLE,
+    ab_ba_rom,
     add_block,
     open_rom_and_table,
 )
@@ -395,3 +396,63 @@ def test_steps_up_over_fixed_strings_land_on_one_string_each(window, tmp_path):
         QApplication.processEvents()
         offsets.append(window._offset)
     assert offsets == [54, 48, 42, 36]
+
+
+def test_text_tab(window, tmp_path):
+    data = ab_ba_rom(4)
+    open_rom_and_table(window, tmp_path, data)
+    assert window.tabs.currentWidget() is window.raw
+    assert [window.tabs.tabText(i) for i in range(3)] == ["Hex", "Text", "Strings"]
+    window.text_tab_action.trigger()
+    assert window.tabs.currentWidget() is window.text
+    assert window.text.edit.toPlainText() == "AB[end]\nBA[end]\n[$FF][$FF][$FF][$FF]"
+    window.raw.select_bytes(3, 5)
+    window._on_selection(3, 5)
+    cursor = window.text.edit.textCursor()
+    assert (cursor.selectionStart(), cursor.selectionEnd()) == (8, 10)
+    cursor.setPosition(0)
+    cursor.setPosition(8, cursor.MoveMode.KeepAnchor)
+    window.text.edit.setTextCursor(cursor)
+    assert window.raw.selection() == (0, 3)
+    window.raw_tab_action.trigger()
+    assert window.tabs.currentWidget() is window.raw
+
+
+def test_text_tab_drag_upward(window, tmp_path):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    open_rom_and_table(window, tmp_path, bytes.fromhex("41 42 42 42 42 00") * 20)
+    window.text_tab_action.trigger()
+    edit = window.text.edit
+    viewport = edit.viewport()
+    left = Qt.MouseButton.LeftButton
+
+    def send(kind, char, button):
+        cursor = edit.textCursor()
+        cursor.setPosition(char)
+        at = QPointF(edit.cursorRect(cursor).center())
+        global_at = QPointF(viewport.mapToGlobal(at.toPoint()))
+        event = QMouseEvent(
+            kind, at, global_at, button, left, Qt.KeyboardModifier.NoModifier
+        )
+        QApplication.sendEvent(viewport, event)
+
+    # Each "ABBBB[end]" and its line break is eleven characters over six bytes.
+    send(QEvent.Type.MouseButtonPress, 66, left)
+    for char in (63, 55, 44, 33):
+        send(QEvent.Type.MouseMove, char, Qt.MouseButton.NoButton)
+    assert edit.textCursor().anchor() == 66
+    assert window._selection == (18, 36)
+
+
+def test_the_text_tab_is_a_session_view(window, tmp_path):
+    file_entry = open_rom_and_table(window, tmp_path, bytes.fromhex("41 42 00"))
+    window.text_tab_action.trigger()
+    window._capture_session()
+    assert file_entry.session.view == "text"
+    window.raw_tab_action.trigger()
+    window._show_view(file_entry.session.view)
+    assert window.tabs.currentWidget() is window.text
+    assert window.text.edit.toPlainText().startswith("AB[end]")

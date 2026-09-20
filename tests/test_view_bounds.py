@@ -303,3 +303,54 @@ def test_the_filter_reaches_the_strings(window, tmp_path):
     assert item.isHidden()
     panel.filter.setText("")
     assert not any(r.isHidden() for r in rows)
+
+
+# --- a selection and the anchor behind it ----------------------------------
+
+
+def test_a_selection_does_not_survive_into_another_entry(window, tmp_path):
+    """The bytes selected are one entry's, and so is the anchor a Shift+click
+    would reach from: the entry arriving has neither, whatever it is sized."""
+    big = tmp_path / "big.bin"
+    big.write_bytes(bytes(256))
+    small = tmp_path / "small.bin"
+    small.write_bytes(bytes(16))
+    first = window.open_rom(str(big))
+    second = window.open_rom(str(small))
+    window._activate_entry(first)
+    window._select_bytes(0x80, 1)
+    assert window._selection == (0x80, 0x81)
+    window._activate_entry(second)
+    assert window._selection is None
+    assert window.raw.selection() is None
+    assert window.raw._anchor is None
+
+
+def test_a_selection_goes_with_a_block_over_the_file_s_own_bytes(window, tmp_path):
+    """The same buffer, so the same offsets: what is selected still means what
+    it meant, which is what New Block from Selection reads off the file's Files
+    row while a block is on screen."""
+    data = ab_ba_rom(4)
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._select_bytes(0, 3)
+    assert window._selection == (0, 3)
+    window._activate_entry(file_entry)
+    assert window._selection == (0, 3)
+    window._activate_entry(block)
+    assert window._selection == (0, 3)
+
+
+def test_an_anchor_does_not_outlive_the_view_s_bounds(window, tmp_path):
+    """A Shift+click reaches inside what is on screen: confining the view to
+    one string, and widening it again, leaves nothing to reach from."""
+    data = ab_ba_rom(4)
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._select_bytes(0, 1)
+    assert window.raw._anchor == 0
+    window._show_string(block, 1)
+    assert window._bounds == (3, 6) and window.raw._anchor is None
+    window._select_bytes(3, 1)
+    window._view_source(block)
+    assert window._bounds == (0, 6) and window.raw._anchor is None
