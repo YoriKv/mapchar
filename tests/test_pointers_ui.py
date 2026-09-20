@@ -147,7 +147,7 @@ def test_attach_puts_the_pointers_on_the_strings_and_undoes(window, block, monke
         0x13,
     )
     # The Pointers column is where it shows, and it is one undo step.
-    rows = window._row_data(block, block.doc, window._table_set())
+    rows = window._row_data(block, block.doc)
     assert rows[0].pointers == "0 4" and rows[1].pointers == "2"
     window.undo_stack.undo()
     assert not any(rec.pointers for rec in block.doc.strings)

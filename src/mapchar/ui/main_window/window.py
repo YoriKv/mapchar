@@ -261,6 +261,12 @@ class MainWindow(
         self._rows_patched = False
         """Set while a string edit has refreshed the grid's changed rows itself,
         so the refresh that follows leaves the grid alone."""
+        self._reading_consent: Entry | None = None
+        """The block whose edited strings the user has agreed to have cut
+        afresh, so a run of changes to how it is read asks once
+        (:meth:`~mapchar.ui.main_window.blocks.BlocksMixin._confirm_recut`).
+        Held for the session and dropped the moment one of its strings is
+        edited again."""
         self._step_icons: list[tuple[QPushButton, Glyph]] = []
         # Before anything can make an entry current: the first visit arms the
         # trail's two actions, and _build_menus puts them in the Navigate menu.

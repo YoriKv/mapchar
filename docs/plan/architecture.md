@@ -63,7 +63,8 @@ Rules:
   are (`path`, `extra_paths`, block `offset`/`length`); for a file's rows —
   blocks, bookmarks and folders — the file they belong to (`parent`) and the
   folder they are shown in (`folder`, `None` directly under the file); its chain
-  (`container_id`, `compression_id`); its `BlockConfig`; its
+  (`container_id`, `compression_id`); its `BlockConfig` and the `room` a
+  shortened string left it (§4.1); its
   `EntrySession` (a file's reading — a `BlockConfig` whose source has no
   addresses — its table, Follow pointers, view position, and the reading its
   last switch of mode set aside, which is not saved); kind-specific state (table
@@ -497,14 +498,16 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   none), lay the results out in *packed* or *slotted* mode, compute the new
   pointer values through the mappings, and refuse the whole block when any
   string crosses its bound, reporting each offender. A block with no bound of
-  its own ends where its text does, plus the fill behind it (`block_bound`) —
-  which is the block's only where its table reads the fill as padding
-  (`fill_reads_as_padding`, which the reading spells in bits as
-  `padding_bits`), since fill the table maps is some block's text. A nested
-  block's group (`group_bounds`) asks no such question: the next inner table
-  or base its outer table names says the stretch in front of it is that
-  group's. Its output is a list of `(offset, bytes)` splices over the
-  decompressed buffer plus the pointer splices. A slotted string's slot
+  its own ends where its text does, or at the room it remembers giving up
+  (`block_bound`): a write that leaves the text ending earlier than the bound
+  it went in under records that bound on the entry (`remembered_room`), so
+  room a shortened string freed is room to take back and nothing behind the
+  text is ever claimed. A nested block's group (`group_bounds`) is bounded
+  instead by the next inner table or base its outer table names, which says
+  the stretch in front of it is that group's, so it takes back the fill behind
+  its text whatever the table makes of that fill. Its output is a list of
+  `(offset, bytes)` splices over the decompressed buffer plus the pointer
+  splices. A slotted string's slot
   (`slot_ends`) is its own bytes and the run of fill after them (`fill_end`:
   whole patterns and a last one cut short, as `fill_run` lays them), up to the
   next string in address order — in front of that record's header, counted
@@ -789,6 +792,7 @@ and aliases for renamed plugin ids.
     { "kind": "block", "name": "Dialogue", "path": "rom.nes", "parent": 0,
       "compression_id": "lz", "slice_offset": 16, "slice_length": 32,     // opt
       "spare_room": "keep",                          // opt, "fill" by default
+      "room": 5760,                                  // opt, an address
       "config": "source=pointers start=$8000 stop=$8100 size=2 stride=2
                  endian=little mapping=banked:8000:4000 offset=1 bank=0
                  type=end table=main bound=$A000",   // one @block line, see 6.2
@@ -939,7 +943,7 @@ the view constants `BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
 | View offset, selection, current view tab | the window, live, and re-read from its widgets on every refresh |
 | View bounds (the stretch the Hex and Text tabs are confined to) | the window, live; re-derived from a block's source on every activation, so never saved |
 | View offset, view tab, a file's reading, Follow pointers and its Compression pick, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
-| Container, compression, block configuration, box | the `Entry` |
+| Container, compression, block configuration, remembered room, box | the `Entry` |
 | The glossary | the `Workspace`, swapped with the entries when a project opens |
 | Bytes, table set, strings, notices | the `Document` |
 | Address format, last folder used, Follow selection, theme, preview font, window layouts, recent projects, and each tool surface's own view toggles | `QSettings` |
@@ -1031,6 +1035,13 @@ of bytes that differed and the file's size, from `pipeline/filechange.py`. Apply
 reads the file then and moves it only while it still holds the other side; the
 disk is written by the write itself, so the command's first redo finds its
 files already there and lands the in-memory half alone.
+
+A block edit (`BlockEditCommand`) carries the block's name, configuration,
+compression, spare-room rule and remembered room on both sides, so an undo of a
+change that re-cut its strings puts the room back with the reading. A run of
+changes on one bar control merges into one step, and a change to how an edited
+block is read asks first (`_confirm_recut`), once per block until one of its
+strings is edited again.
 
 A string edit merges only within a **typing run** — the window bumps
 `_edit_run` when the selection or the entry moves — and a run that ends back

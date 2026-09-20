@@ -56,7 +56,9 @@ def _compressed_block(window, tmp_path, name="z", stop=6, rom_name="rom.bin"):
 # --- a re-reading keeps the payload ----------------------------------------
 
 
-def test_a_block_edit_keeps_a_compressed_block_s_unsaved_bytes(window, tmp_path):
+def test_a_block_edit_keeps_a_compressed_block_s_unsaved_bytes(
+    window, tmp_path, monkeypatch
+):
     """Re-pointing a compressed block re-reads its payload, never the slot.
 
     The payload holds the edits and nothing else does, so dropping it would
@@ -65,6 +67,8 @@ def test_a_block_edit_keeps_a_compressed_block_s_unsaved_bytes(window, tmp_path)
     """
     _file_entry, block = _compressed_block(window, tmp_path)
     window._on_translation_edited(0, "B[end]")
+    # Its strings are edited, so the re-cut asks first.
+    monkeypatch.setattr(type(window), "_ask", lambda *a: True)
     assert block.dirty and block.doc.data[:3] == bytes.fromhex("42 00 EE")
 
     window._push_block_edit(
@@ -80,9 +84,10 @@ def test_a_block_edit_keeps_a_compressed_block_s_unsaved_bytes(window, tmp_path)
     assert block.doc.strings[0].original == "AB[end]"
 
 
-def test_undoing_that_block_edit_keeps_them_too(window, tmp_path):
+def test_undoing_that_block_edit_keeps_them_too(window, tmp_path, monkeypatch):
     _file_entry, block = _compressed_block(window, tmp_path)
     window._on_translation_edited(0, "B[end]")
+    monkeypatch.setattr(type(window), "_ask", lambda *a: True)
     window._push_block_edit(
         block, config=replace(block.config, source=RangeSource(0, 9))
     )

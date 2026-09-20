@@ -478,6 +478,24 @@ def test_text_box(project, doc, files):
     assert project(doc(block={"box": good}), files) == []
 
 
+def test_room(project, doc, files):
+    assert project(doc(block={"room": 0x120}), files) == []
+    assert "W652" in project(doc(block={"room": "soon"}), files)
+    bounded = {
+        "room": 0x120,
+        "config": "source=pointers start=$100 stop=$120 size=2 stride=2 "
+        "endian=little mapping=linear offset=0 bank=0 type=end table=main "
+        "bound=$200",
+    }
+    # A bound set after a shortening leaves both, and that is no mistake.
+    assert project(doc(block=bounded), files) == []
+    ranged = {
+        "room": 0x120,
+        "config": "source=range start=$100 stop=$120 type=end table=main",
+    }
+    assert "W653" in project(doc(block=ranged), files)
+
+
 def test_slot_keys(project, doc, files):
     assert "W650" in project(doc(block={"slice_offset": 4}), files)
     compressed = {"compression_id": "lz2", "spare_room": "leave"}

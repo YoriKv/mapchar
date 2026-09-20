@@ -320,17 +320,16 @@ def string_ends(
     config: BlockConfig,
     strings: list[StringRecord],
     registry=None,
-    tables: TableSet | None = None,
+    room: int | None = None,
 ) -> dict[int, int]:
     """Where each string's room ends, by index: its slot's end
     (:func:`slot_ends`) when the block is slotted, and its own bytes plus its
     group's spare (:func:`packed_ends`) when it is packed. What
-    :func:`room_for` reads a string's room from, and ``tables`` is what says
-    whether the fill past the text is the block's
-    (:func:`~mapchar.core.block.block_bound`)."""
+    :func:`room_for` reads a string's room from, and ``room`` is what the block
+    remembers giving up (:func:`~mapchar.core.block.block_bound`)."""
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     if not isinstance(config.source, NestedPointerSource):
-        bound = block_bound(config, strings, data, tables)
+        bound = block_bound(config, strings, room)
         if slotted:
             return slot_ends(
                 strings, bound, data, config.fill, config.record_header, config.skips
@@ -356,13 +355,16 @@ def layout_block(
     tables: TableSet,
     strings: list[StringRecord],
     registry=None,
+    room: int | None = None,
 ) -> LayoutResult:
     """Lay the block out with every replacement in place.
 
     Group by group (:func:`~mapchar.core.block.string_groups`): a nested
     block's groups each lay out over their own text, and only those holding a
     replacement are laid out at all — the rest stay as they are — so an edit
-    costs its group, not the block.
+    costs its group, not the block. ``room`` is what the block remembers
+    giving up, which its bound takes back
+    (:func:`~mapchar.core.block.block_bound`).
     """
     result = LayoutResult()
     if not strings:
@@ -374,7 +376,7 @@ def layout_block(
         ] or groups
         bounds = group_bounds(data, config, groups, registry)
     else:
-        bounds = [block_bound(config, strings, data, tables)]
+        bounds = [block_bound(config, strings, room)]
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     for group, bound in zip(groups, bounds, strict=True):
         for rec in group:

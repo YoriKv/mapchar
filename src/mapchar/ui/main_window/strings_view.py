@@ -298,10 +298,13 @@ class StringsViewMixin:
         if not recs:
             return []
         edits = {i: edits[i] for i in recs}
+        bound = self._bound_of(entry)
         try:
             for i, rec in recs.items():
                 rec.replacement = edits[i]
-            result = layout_block(doc.data, cfg, tables, doc.strings, self.registry)
+            result = layout_block(
+                doc.data, cfg, tables, doc.strings, self.registry, entry.room
+            )
         finally:
             for rec in recs.values():
                 rec.replacement = None
@@ -326,6 +329,7 @@ class StringsViewMixin:
         # sit, and the records keep their state by index.
         self._remember_extraction(new_data, cfg, tables, back.extraction)
         self._extract_current(entry, doc, tables)
+        self._remember_room(entry, bound)
         return []
 
     def _fill_strings(self, doc: Document) -> None:
@@ -338,7 +342,7 @@ class StringsViewMixin:
         tables = self._table_set()
         self.strings.set_codes(self._code_infos(tables, doc))
         self.strings.set_newline_code(self._newline_code(entry))
-        self.strings.set_rows(self._row_data(entry, doc, tables))
+        self.strings.set_rows(self._row_data(entry, doc))
 
     def _patch_rows_over(self, entry, lo: int, hi: int) -> bool:
         """Refresh the grid's rows that the bytes ``lo``–``hi`` could change.
@@ -365,8 +369,8 @@ class StringsViewMixin:
         rows = self.strings.rows_by_index()
         if len(rows) != len(doc.strings):
             return False
-        bound = block_bound(cfg, doc.strings, doc.data, tables)
-        ends = self._string_slots(entry, doc, bound, tables)
+        bound = block_bound(cfg, doc.strings, entry.room)
+        ends = self._string_slots(entry, doc, bound)
         same = self._same_originals(doc)
         for rec in doc.strings:
             old = rows.get(rec.index)
@@ -416,9 +420,7 @@ class StringsViewMixin:
                 return f"[{label}]"
         return "[line]"
 
-    def _string_slots(
-        self, entry, doc: Document, bound: int, tables: TableSet | None = None
-    ) -> dict[int, int] | None:
+    def _string_slots(self, entry, doc: Document, bound: int) -> dict[int, int] | None:
         """Where each string's room ends (:func:`string_ends`), worked out once
         per reading.
 
@@ -444,7 +446,7 @@ class StringsViewMixin:
             and cached[2] == (bound, cfg)
         ):
             return cached[3]
-        ends = string_ends(doc.data, cfg, doc.strings, self.registry, tables)
+        ends = string_ends(doc.data, cfg, doc.strings, self.registry, entry.room)
         self._slots_cache = (doc.strings, doc.data, (bound, cfg), ends)
         return ends
 
@@ -463,15 +465,13 @@ class StringsViewMixin:
         self._same_counts = (doc.strings, same)
         return same
 
-    def _row_data(self, entry, doc: Document, tables) -> list[RowData]:
+    def _row_data(self, entry, doc: Document) -> list[RowData]:
         cfg = entry.config if entry is not None else None
         # Once for the block, not once per row: the bound is the same for every
         # string, and a pointer block has thousands.
-        bound = (
-            block_bound(cfg, doc.strings, doc.data, tables) if cfg is not None else 0
-        )
+        bound = block_bound(cfg, doc.strings, entry.room) if cfg is not None else 0
         same = self._same_originals(doc)
-        ends = self._string_slots(entry, doc, bound, tables)
+        ends = self._string_slots(entry, doc, bound)
         return [self._row_for(rec, cfg, bound, same, ends) for rec in doc.strings]
 
     def _row_for(
@@ -504,15 +504,10 @@ class StringsViewMixin:
         if rec is None:
             return
         same = self._same_originals(doc)
-        tables = self._table_set_of(entry)
-        bound = block_bound(entry.config, doc.strings, doc.data, tables)
+        bound = block_bound(entry.config, doc.strings, entry.room)
         self.strings.update_row(
             self._row_for(
-                rec,
-                entry.config,
-                bound,
-                same,
-                self._string_slots(entry, doc, bound, tables),
+                rec, entry.config, bound, same, self._string_slots(entry, doc, bound)
             )
         )
         self._sync_preview()

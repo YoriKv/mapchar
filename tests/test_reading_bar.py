@@ -505,9 +505,9 @@ def test_the_writing_section_says_what_a_blank_bound_and_automatic_mean(
     add_block(window, entry, "p", PointerTableSource(0, 4, 2, 2))
     bar = window.reading_bar
     assert bar.write_mode.itemText(0) == "Automatic (packed)"
-    # A pointer block's strings end at $15, and the fill behind them is room
-    # a shorter layout left: the end of that run bounds it.
-    assert bar.bound.placeholderText() == window.address_spelling.format(0x1D)
+    # A pointer block is bounded by the end of the text its pointers reach,
+    # and the fill behind that is nobody's until a shortening gives it up.
+    assert bar.bound.placeholderText() == window.address_spelling.format(0x15)
     add_block(window, entry, "r", RangeSource(0x10, 0x15))
     assert bar.write_mode.itemText(0) == "Automatic (slotted)"
     assert bar.bound.placeholderText() == window.address_spelling.format(0x15)

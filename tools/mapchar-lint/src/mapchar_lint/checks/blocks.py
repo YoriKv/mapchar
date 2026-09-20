@@ -16,6 +16,7 @@ from mapchar_lint.schema import (
     BOX_KEYS,
     DEFAULT_SPARE_ROOM,
     EFFECTS,
+    ROOM_SOURCES,
     SPARE_ROOM,
     STATUSES,
     STRING_KEYS,
@@ -34,6 +35,7 @@ def check(ctx: Context) -> None:
                 _strings(ctx, view)
                 _box(ctx, view)
                 _slice(ctx, view)
+                _room(ctx, view)
         else:
             _session_config(ctx, view)
 
@@ -215,6 +217,35 @@ def _box(ctx: Context, view: EntryView) -> None:
                 entry=view,
                 detail="Skipped: the code has no effect in the preview.",
             )
+
+
+def _room(ctx: Context, view: EntryView) -> None:
+    """``room`` is where the block's text ended before a write shortened it:
+    an address, and one only a pointer block ever records. Beside a ``bound``
+    it is merely unused — a bound set after a shortening leaves both."""
+    if "room" not in view.raw:
+        return
+    room = view.raw["room"]
+    if not int_reading(room)[0]:
+        ctx.warn(
+            "W652",
+            f"room is {room!r}, which is not an address",
+            pointer=view.at("room"),
+            entry=view,
+            detail="Read as none: the block's bound is then where its text ends.",
+        )
+        return
+    reading = view.config
+    if reading is None or reading.fatal:
+        return
+    if reading.source not in ROOM_SOURCES:
+        ctx.warn(
+            "W653",
+            "`room` is only read for a pointer table or a pointer list",
+            pointer=view.at("room"),
+            entry=view,
+            detail="Kept, but this source says where the block's room ends.",
+        )
 
 
 def _slice(ctx: Context, view: EntryView) -> None:

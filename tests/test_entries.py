@@ -93,7 +93,13 @@ def test_edit_block_carries_translations_and_is_one_undo_step(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     window._set_translation(block, 0, "BA[end]")
-    before = (block.name, block.config, block.compression_id, block.spare_room)
+    before = (
+        block.name,
+        block.config,
+        block.compression_id,
+        block.spare_room,
+        block.room,
+    )
     window.undo_stack.clear()
 
     wider = block.config.__class__(
@@ -109,7 +115,7 @@ def test_edit_block_carries_translations_and_is_one_undo_step(window, tmp_path):
     window.undo_stack.clear()
     from mapchar.ui.undo_commands import BlockEditCommand
 
-    after = ("second", wider, None, "fill")
+    after = ("second", wider, None, "fill", None)
     window.undo_stack.push(BlockEditCommand(window, block, before, after))
     assert block.name == "second" and block.spare_room == "fill"
     window.undo_stack.undo()

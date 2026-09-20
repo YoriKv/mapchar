@@ -705,11 +705,18 @@ of end-token strings.
   that splits each string into lines marked with a `[line]` code.
 - **Bound** — the exclusive end address strings may not cross on write;
   defaults to `stop`, or for pointer sources to the end of the text the
-  pointers reach and the run of fill after it that the block reads as padding
-  — so the room a shorter string gave up is still the block's, while fill the
-  table maps is text and belongs to whatever block reads it — and the field's
-  placeholder shows which. A nested source's groups each have
-  their own ([Writing](#writing-back-to-disk)), which the bound caps.
+  pointers reach, and never earlier than the **room** the block remembers:
+  the extent its text had before a write shortened it, so room a shorter
+  string gave up is still the block's while nothing behind its text is ever
+  claimed. The field's placeholder shows which. A nested source's groups each
+  have their own ([Writing](#writing-back-to-disk)), which the bound caps.
+- **Changing how an edited block is read asks first** — the source, string
+  type, ends per string, realign, skip ranges, header and line length cut the
+  strings out of the bytes, so changing one of them on a block with edited
+  strings reads the region afresh and forgets the room its shortened strings
+  gave up. It is asked once per block, and again after the next string edit.
+  Everything one adjusts while editing — the name, the table, the bound, the
+  fill, the write settings — never asks.
 - **Write mode** — **Packed**, **Slotted**, or **Automatic**, which says
   which of the two it picks; see [Writing](#writing-back-to-disk). Skip ranges
   or a record header leave nothing to pack into: Packed is greyed there and
@@ -902,14 +909,16 @@ The editing surface, opened on a block.
     block's first string address, every pointer a string carries — the
     source's own, and the ones **Attach** put on a range block's strings — is
     rewritten to its string's new position, and leftover space up to the
-    bound gets the fill. A pointer that cannot reach where its string landed,
+    bound gets the fill, carried on from where the text now ends so the tail
+    is one run of the pattern. A pointer that cannot reach where its string landed,
     a short one whose string was packed out of the bank it reads in, refuses
     the write. A string that starts inside the string before it and ends with
     it — the last page of a message, with pointers of its own — is written
     once while its bytes still end that string's, its pointers reaching into
-    it; edited apart, each has bytes of its own from then on. A nested source
-    packs each group apart, from its first string to its own bound: the end of
-    its last string and the run of fill after it — which is the group's
+    it; edited apart, each has bytes of its own from then on. The block's own
+    bound is where its text ends, or the room it remembers giving up. A nested
+    source packs each group apart, from its first string to its own bound: the
+    end of its last string and the run of fill after it — which is the group's
     whatever the table makes of the fill, the outer table having said so —
     never as far as the next inner table or text that table points at, nor
     past the block's bound.

@@ -64,6 +64,7 @@ KEYS_BY_KIND = {
         "slice_length",
         "spare_room",
         "config",
+        "room",
         "strings",
         "fixed_ends_shown",
         "box",
@@ -105,6 +106,10 @@ BOX_KEYS = tuple(BOX_DEFAULTS) + ("origin", "effects")
 
 # -- the configuration line (mapchar.project.formats.script.parse_config) ---
 SOURCES = ("range", "pointers", "list", "nested")
+#: The sources a block's remembered ``room`` is read for: those whose bound is
+#: the end of the text their pointers reach (``block.remembered_room``); a
+#: nested source's groups are each bounded by the outer table.
+ROOM_SOURCES = ("pointers", "list")
 STRING_TYPES = ("end", "fixed", "pascal", "next", "lines")
 WRITE_MODES = ("packed", "slotted")
 ENDIANS = ("little", "big")

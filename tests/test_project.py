@@ -876,3 +876,41 @@ def test_a_string_record_with_a_broken_checksum_still_loads(tmp_path):
     loaded = load_project(str(proj))
     saved = loaded.entries[1].pending_strings
     assert [saved[i].digest for i in range(4)] == [None, None, None, 0xFFFF]
+
+
+def test_a_block_s_remembered_room_is_saved_and_read_back(tmp_path):
+    """The room a shortened string gave up is state, not configuration: it
+    lives beside the block's record rather than in its ``@block`` line, and a
+    block that was never opened keeps it over a save like everything else it
+    carries."""
+    rom = tmp_path / "rom.bin"
+    rom.write_bytes(bytes.fromhex("41 00 42 00"))
+    ws = Workspace()
+    f = ws.open_file(str(rom))
+    cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
+    kept = ws.add(Entry(EntryKind.BLOCK, "kept", str(rom), parent=f, config=cfg))
+    ws.add(Entry(EntryKind.BLOCK, "plain", str(rom), parent=f, config=cfg))
+    kept.room = 0x16
+    records = project_dict(ws.entries, None, None)["entries"]
+    assert records[1]["room"] == 0x16
+    assert "room" not in records[2] and "room" not in records[1]["config"]
+
+    proj = tmp_path / "p.mapchar"
+    save_project(str(proj), ws.entries, None)
+    loaded = load_project(str(proj))
+    assert [e.room for e in loaded.entries[1:]] == [0x16, None]
+    # Never opened, and saved again with the room it came in with.
+    again = tmp_path / "q.mapchar"
+    save_project(str(again), loaded.entries, None)
+    assert load_project(str(again)).entries[1].room == 0x16
+
+
+def test_a_block_s_room_that_does_not_read_as_an_address_loads_as_none(tmp_path):
+    proj = tmp_path / "p.mapchar"
+    proj.write_text(
+        f'{{"version": {PROJECT_VERSION}, "entries": ['
+        '{"kind": "file", "name": "x", "path": "x.bin"}, '
+        '{"kind": "block", "name": "b", "path": "x.bin", "parent": 0, '
+        '"room": "nonsense"}]}'
+    )
+    assert load_project(str(proj)).entries[1].room is None

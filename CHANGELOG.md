@@ -10,6 +10,7 @@
 - Write status no longer reports 0 blocks
 - Status goes by the bytes: switching a block's table no longer marks every string edited
 - A pointer block with no Bound keeps the room its shortened strings gave up
+- Changing how an edited block is read asks first
 - Header: a range block steps over the bytes before each string, in place of a skip range per record
 - RNC methods 1 and 2
 - Find Pointers finds a banked table without the offset, ranks a real table above stray matches, and Attach leaves strays off

@@ -65,7 +65,7 @@ def test_room_is_the_slot_the_layout_will_take(window, tmp_path):
     padding a shorter translation would leave, and that is room.
     """
     block = _pointer_block(window, tmp_path)
-    rows = window._row_data(block, block.doc, window._table_set())
+    rows = window._row_data(block, block.doc)
     assert [(r.index, r.address, r.used, r.room) for r in rows] == [
         (0, 0x10, 3, 3),
         (1, 0x16, 3, 6),
@@ -115,14 +115,14 @@ def test_packed_room_is_the_string_s_own_bytes_and_the_block_s_spare(window, tmp
         fill=b"\xee",
     )
     assert block.config.effective_write_mode is WriteMode.PACKED
-    rows = window._row_data(block, block.doc, window._table_set())
+    rows = window._row_data(block, block.doc)
     assert [(r.used, r.room) for r in rows] == [(3, 7), (3, 7)]
 
     # And it is the number a commit accepts: one string may take all four
     # spare bytes, and once it has, the other has none left to take.
     window._on_translation_edited(0, "ABABAB[end]")
     assert block.doc.strings[0].current_text() == "ABABAB[end]"
-    rows = window._row_data(block, block.doc, window._table_set())
+    rows = window._row_data(block, block.doc)
     assert [(r.used, r.room) for r in rows] == [(7, 7), (3, 3)]
     steps = window.undo_stack.count()
     window._on_translation_edited(1, "BAC[end]")
@@ -183,7 +183,7 @@ def test_apply_to_identical_keeps_the_strings_that_do_fit(window, tmp_path):
     )
     file_entry = open_rom_and_table(window, tmp_path, data, table=TABLE)
     block = add_block(window, file_entry, "b", RangeSource(0, 15), fill=b"\xee")
-    rows = window._row_data(block, block.doc, window._table_set())
+    rows = window._row_data(block, block.doc)
     assert [r.room for r in rows] == [6, 6, 3]
 
     window._on_translation_edited(0, "ABBB[end]")

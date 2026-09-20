@@ -119,6 +119,14 @@ class Entry:
     """
     spare_room: str = "fill"
     """What fills a slot a shorter re-compression leaves: ``fill`` or ``keep``."""
+    room: int | None = None
+    """Blocks: the exclusive end this block's text reached before a write
+    shortened it; ``None`` until one does.
+
+    State, not configuration: it is the block's own extent, remembered so that
+    the room a shortened string gave up is still the block's to take back
+    (:func:`~mapchar.core.block.remembered_room`). A change to how the block is
+    read forgets it, the strings being cut afresh."""
     box: TextBox | None = None
     """Blocks: the text box strings are previewed in."""
     dialect: str | None = None

@@ -223,7 +223,7 @@ def test_edit_and_write(window, tmp_path):
     assert rec.status is Status.EDITED
     assert file_entry.dirty and not block.dirty
     assert file_entry.doc.data == bytes.fromhex("41 00 EE 42 41 00") + b"\xff" * 4
-    rows = window._row_data(block, block.doc, window._table_set())
+    rows = window._row_data(block, block.doc)
     assert (rows[0].used, rows[0].room, rows[0].status) == (2, 3, "edited")
     # An edit that does not fit never lands: the bytes cannot hold it.
     steps = window.undo_stack.count()
@@ -310,7 +310,7 @@ def test_pointer_block_in_window(window, tmp_path, monkeypatch):
     monkeypatch.setattr("mapchar.ui.dialogs.DiscoveryDialog.exec", lambda self: 1)
     window._find_pointers()
     assert block.config.source == PointerTableSource(0, 4, 2, 2, "little", "linear", 0)
-    rows = window._row_data(block, block.doc, window._table_set())
+    rows = window._row_data(block, block.doc)
     assert rows[0].pointers == "0" and rows[1].pointers == "2"
     window._go_to(0)
     # A pointer block reads as pointers: its table is Pointer, and each of its
@@ -955,7 +955,7 @@ def test_preview_and_wrap(window, tmp_path):
             effects={"line": CodeEffect(Effect.NEWLINE)},
         )
     )
-    rows = window._row_data(block, block.doc, window._table_set())
+    rows = window._row_data(block, block.doc)
     assert rows[0].status == "overflows box"
     window.strings.select_index(0)
     window._wrap_selected()
@@ -2775,3 +2775,105 @@ def test_the_block_bar_s_export_button_shows_the_file_menu_s_export_menu(
         "Cartographer Command File…",
         "Atlas Script…",
     ]
+
+
+# --- the room a shortened block remembers, and the question it arms ---------
+
+
+def _edited_pointer_block(window, tmp_path):
+    """A pointer block whose second string has been typed one byte shorter,
+    so the block remembers the room it gave up."""
+    from mapchar.core.block import PointerTableSource
+
+    data = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=8)
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "b", PointerTableSource(0, 4, 2, 2))
+    assert texts(block.doc.strings) == ["AB[end]", "BA[end]"]
+    window._on_translation_edited(1, "B[end]")
+    return file_entry, block
+
+
+def test_a_shortened_string_leaves_the_block_the_room_it_gave_up(window, tmp_path):
+    """A pointer block with no Bound ends where its text ends, so the room a
+    shorter translation frees would be gone at the next edit: the block
+    remembers the extent it had instead, and the original goes back in."""
+    file_entry, block = _edited_pointer_block(window, tmp_path)
+    assert block.room == 0x16
+    assert file_entry.doc.data[0x10:0x16] == bytes.fromhex("41 42 00 42 00 FF")
+    window._on_translation_edited(1, "BA[end]")
+    assert block.doc.strings[1].current_text() == "BA[end]"
+    assert file_entry.doc.data[0x10:0x16] == bytes.fromhex("41 42 00 42 41 00")
+    # A write that fills the room again leaves the room remembered.
+    assert block.room == 0x16
+
+
+def test_a_reading_change_on_an_edited_block_asks_once(window, tmp_path, monkeypatch):
+    """Changing how an edited block is read cuts its strings out of the bytes
+    afresh and forgets its room, so it asks first — once for the run of
+    changes that follows, not once per keystroke."""
+    _file_entry, block = _edited_pointer_block(window, tmp_path)
+    asked: list[str] = []
+    monkeypatch.setattr(
+        type(window), "_ask", lambda _s, _t, message: asked.append(message) or True
+    )
+    window.reading_bar.spp.setValue(2)
+    assert len(asked) == 1 and "edited strings" in asked[0]
+    assert block.config.strings_per_pointer == 2 and block.room is None
+    window.reading_bar.spp.setValue(3)
+    assert len(asked) == 1 and block.config.strings_per_pointer == 3
+
+
+def test_a_refused_reading_change_leaves_the_block_and_the_bar_as_they_were(
+    window, tmp_path, monkeypatch
+):
+    _file_entry, block = _edited_pointer_block(window, tmp_path)
+    steps = window.undo_stack.count()
+    monkeypatch.setattr(type(window), "_ask", lambda *a: False)
+    window.reading_bar.spp.setValue(2)
+    assert block.config.strings_per_pointer == 1 and block.room == 0x16
+    assert window.undo_stack.count() == steps
+    # The bar shows the block's own reading again, not what was typed into it.
+    assert window.reading_bar.spp.value() == 1
+
+
+def test_a_string_edit_arms_the_question_again(window, tmp_path, monkeypatch):
+    """The consent covers the strings the user agreed to have re-cut; one
+    edited after it is not among them, so the next change asks again."""
+    _file_entry, block = _edited_pointer_block(window, tmp_path)
+    asked: list[str] = []
+    monkeypatch.setattr(
+        type(window), "_ask", lambda _s, _t, message: asked.append(message) or True
+    )
+    window.reading_bar.realign_m.setValue(2)
+    assert len(asked) == 1 and block.room is None
+    window._on_translation_edited(0, "A[end]")
+    assert block.doc.strings[0].current_text() == "A[end]" and block.room == 0x16
+    window.reading_bar.realign_m.setValue(4)
+    assert len(asked) == 2
+
+
+def test_what_one_adjusts_while_editing_never_asks(window, tmp_path, monkeypatch):
+    """A bound, a fill, the table the translation is written in and the block's
+    name leave every string where it is, so none of them asks."""
+    from dataclasses import replace
+
+    _file_entry, block = _edited_pointer_block(window, tmp_path)
+    monkeypatch.setattr(type(window), "_ask", lambda *a: pytest.fail("asked"))
+    window.reading_bar.bound.setText("20")
+    window.reading_bar.bound.editingFinished.emit()
+    assert block.config.bound == 0x20
+    window._push_block_edit(block, config=replace(block.config, fill=b"\x00"))
+    window._push_block_edit(block, config=replace(block.config, table_id="other"))
+    window._push_block_edit(block, name="renamed")
+    assert block.name == "renamed" and block.room == 0x16
+
+
+def test_an_unedited_block_is_re_read_without_a_question(window, tmp_path, monkeypatch):
+    from mapchar.core.block import PointerTableSource
+
+    data = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=8)
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "b", PointerTableSource(0, 4, 2, 2))
+    monkeypatch.setattr(type(window), "_ask", lambda *a: pytest.fail("asked"))
+    window.reading_bar.spp.setValue(2)
+    assert block.config.strings_per_pointer == 2

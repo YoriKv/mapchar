@@ -105,8 +105,7 @@ class RefreshMixin:
                 block_bound(
                     replace(configured.config, bound=None),
                     doc.strings,
-                    doc.data,
-                    tables,
+                    configured.room,
                 )
                 if configured is not None
                 else None

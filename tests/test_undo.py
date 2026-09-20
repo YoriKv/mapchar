@@ -101,12 +101,19 @@ def test_an_undone_block_edit_leaves_the_project_clean(window, tmp_path):
     _, block = _block(window, tmp_path)
     assert window._write_project(str(tmp_path / "p.mapchar"))
     assert not window._project_dirty()
-    before = (block.name, block.config, block.compression_id, block.spare_room)
+    before = (
+        block.name,
+        block.config,
+        block.compression_id,
+        block.spare_room,
+        block.room,
+    )
     after = (
         "renamed",
         replace(block.config, source=RangeSource(0, 3)),
         block.compression_id,
         block.spare_room,
+        block.room,
     )
     window._push_command(BlockEditCommand(window, block, before, after))
     assert window._project_dirty() and window.isWindowModified()
@@ -496,3 +503,29 @@ def test_an_original_saved_without_a_digest_goes_by_the_text(window, tmp_path):
     # Bytes that still say the original give it their digest; the other waits.
     assert block.doc.strings[0].original_digest == block.doc.strings[0].digest
     assert block.doc.strings[1].original_digest is None
+
+
+def test_a_block_edit_carries_the_room_its_strings_gave_up(
+    window, tmp_path, monkeypatch
+):
+    """A change of reading forgets the block's room, so its undo has to bring
+    it back: the strings are cut as they were, and so is what they gave up."""
+    from dataclasses import replace
+
+    from helpers import pointer_rom
+    from mapchar.core.block import PointerTableSource
+
+    data = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=8)
+    file_entry = open_rom_and_table(window, tmp_path, data, rom_name="p.bin")
+    block = add_block(
+        window, file_entry, "p", PointerTableSource(0, 4, 2, 2), fill=b"\xff"
+    )
+    window._on_translation_edited(1, "B[end]")
+    assert block.room == 0x16
+    monkeypatch.setattr(type(window), "_ask", lambda *a: True)
+    window._push_block_edit(block, config=replace(block.config, realign=(2, 0)))
+    assert block.room is None
+    window.undo_stack.undo()
+    assert block.config.realign == (0, 0) and block.room == 0x16
+    window.undo_stack.redo()
+    assert block.room is None

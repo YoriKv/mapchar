@@ -8,12 +8,15 @@ from helpers import ABC_TABLE, pointer_rom, relayout, table_set, texts
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
+    NestedPointerSource,
     PointerRef,
     PointerTableSource,
     RangeSource,
     WriteMode,
     block_bound,
+    fill_end,
     fill_run,
+    remembered_room,
 )
 from mapchar.core.context import KEY_HEADER_SIZE, KEY_SOURCE_FILES, PipelineContext
 from mapchar.core.errors import PipelineError
@@ -390,10 +393,104 @@ def _pointer_block(start: int, stop: int, **kw) -> BlockConfig:
     return BlockConfig(source, EndToken(), "main", **kw)
 
 
-def test_a_default_bound_stops_where_the_fill_reads_as_text(registry):
-    """The run after a pointer block's text is its own only where the block
-    reads it as padding: a table that maps the fill byte reads it as text, and
-    what follows is the next block's strings rather than room to take back.
+def test_a_default_bound_is_the_end_of_the_text_the_pointers_reach(registry):
+    """A pointer table bounds its pointers, not the text they reach: what a
+    block with no bound of its own may write over is that text and no more.
+    Bytes past it are the next block's, whatever they hold."""
+    rom = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=8)
+    cfg = _pointer_block(0, 4)
+    ex = extract(rom, cfg, TS, registry)
+    assert block_bound(cfg, ex.strings) == 0x16
+    # The fill behind the text is not the block's to grow into.
+    assert not relayout(rom, cfg, TS, {1: "BAC[end]"}, registry)[0].ok
+
+
+def test_a_shortened_block_remembers_the_room_it_gave_up(registry):
+    """What a write leaves the block remembering is the bound it had going in,
+    and only where the text ends earlier than that."""
+    rom = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=8)
+    cfg = _pointer_block(0, 4)
+    ex = extract(rom, cfg, TS, registry)
+    assert remembered_room(cfg, 0x16, ex.strings) is None
+    res, out = relayout(rom, cfg, TS, {1: "B[end]"}, registry)
+    assert res.ok, res.problems
+    after = extract(out, cfg, TS, registry).strings
+    assert remembered_room(cfg, 0x16, after) == 0x16
+    # A write that ends where the bound is — the same length, or back up to it
+    # — leaves nothing to remember.
+    assert remembered_room(cfg, 0x16, ex.strings) is None
+
+
+def test_nothing_is_remembered_where_the_default_bound_does_not_apply(registry):
+    """A configured bound and a range source say where the room ends
+    themselves, and a nested source's groups are bounded one by one: none of
+    them has room of its own to remember."""
+    rom = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=8)
+    strings = extract(rom, _pointer_block(0, 4), TS, registry).strings
+    bounded = _pointer_block(0, 4, bound=0x20)
+    assert remembered_room(bounded, 0x20, strings) is None
+    ranged = BlockConfig(RangeSource(0x10, 0x20), EndToken(), "main")
+    assert remembered_room(ranged, 0x20, strings) is None
+    nested = BlockConfig(NestedPointerSource(0, 4, 2, 4), EndToken(), "main")
+    assert remembered_room(nested, 0x20, strings) is None
+
+
+def test_a_remembered_room_is_room_to_take_back(registry):
+    """The room a shortened string gave up is the block's bound again, so
+    typing the original back over it round-trips to the original bytes."""
+    rom = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=8)
+    cfg = _pointer_block(0, 4)
+    res, out = relayout(rom, cfg, TS, {1: "B[end]"}, registry)
+    assert res.ok, res.problems
+    after = extract(out, cfg, TS, registry).strings
+    room = remembered_room(cfg, 0x16, after)
+    assert block_bound(cfg, after, room) == 0x16
+    assert block_bound(cfg, after) == 0x15
+    # Without the room there is nowhere to put the byte back.
+    assert not relayout(out, cfg, TS, {1: "BA[end]"}, registry)[0].ok
+    res, back = relayout(out, cfg, TS, {1: "BA[end]"}, registry, room=room)
+    assert res.ok, res.problems
+    assert back == rom
+
+
+def test_a_second_shortening_keeps_the_first_room(registry):
+    """Every write goes in under the bound the last one left, so the room a
+    block gave up is remembered once and not given up twice."""
+    rom = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=8)
+    cfg = _pointer_block(0, 4)
+    res, out = relayout(rom, cfg, TS, {1: "B[end]"}, registry)
+    assert res.ok, res.problems
+    once = extract(out, cfg, TS, registry).strings
+    room = remembered_room(cfg, 0x16, once)
+    res, again = relayout(out, cfg, TS, {1: "[end]"}, registry, room=room)
+    assert res.ok, res.problems
+    twice = extract(again, cfg, TS, registry).strings
+    assert remembered_room(cfg, block_bound(cfg, once, room), twice) == 0x16
+    res, back = relayout(again, cfg, TS, {1: "BA[end]"}, registry, room=0x16)
+    assert res.ok and back == rom
+
+
+def test_a_remembered_room_keeps_a_multi_byte_fill_s_last_repeat(registry):
+    """A fill pattern is laid from the start of the room it fills, so its last
+    repeat may be cut short: the odd byte is room too, and the room a
+    shortening gave up is all there for the next edit."""
+    rom = pointer_rom((0x10, 0x14), "41 42 43 00 42 41 43 00", tail=0) + b"\x77"
+    cfg = _pointer_block(0, 4, fill=bytes.fromhex("FFFE"))
+    res, out = relayout(rom, cfg, TS, {1: "BA[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0x14:0x19] == bytes.fromhex("42 41 00 FF 77")
+    after = extract(out, cfg, TS, registry).strings
+    room = remembered_room(cfg, 0x18, after)
+    assert room == 0x18 and block_bound(cfg, after, room) == 0x18
+    res, back = relayout(out, cfg, TS, {1: "BAC[end]"}, registry, room=room)
+    assert res.ok, res.problems
+    assert back == rom
+
+
+def test_a_block_never_takes_the_bytes_of_the_block_after_it(registry):
+    """A block claims nothing on the strength of the bytes behind its text: a
+    table whose end token is the fill byte reads an empty string and a byte of
+    padding as the same byte, and the block after it holds three such strings.
     """
     data = bytearray(b"\x00" * 0x20)
     data[0:4] = bytes.fromhex("10 00 13 00")  # this block's strings
@@ -404,64 +501,65 @@ def test_a_default_bound_stops_where_the_fill_reads_as_text(registry):
     ex = extract(rom, cfg, TS_FF, registry)
     assert texts(ex) == ["AB[end]", "BA[end]"]
     assert texts(extract(rom, nxt, TS_FF, registry)) == ["[end]", "[end]", "CC[end]"]
-    assert block_bound(cfg, ex.strings, rom, TS_FF) == 0x16
+    assert block_bound(cfg, ex.strings) == 0x16
     # Two bytes longer, and it would land on the next block's first strings.
     res, _ = relayout(rom, cfg, TS_FF, {1: "BACA[end]"}, registry)
     assert not res.ok
-    # A fill byte the table maps nothing with is padding, as it always was.
-    plain = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=2)
-    ex = extract(plain, cfg, TS, registry)
-    assert block_bound(cfg, ex.strings, plain, TS) == len(plain)
-
-
-def test_a_default_bound_counts_a_fill_repeat_cut_short(registry):
-    """A fill pattern is laid from the start of the room it fills, so its last
-    repeat may be cut short: an odd byte of it is padding too, and the room a
-    shortening gave up is all there for the next edit."""
-    rom = pointer_rom((0x10, 0x14), "41 42 43 00 42 41 43 00", tail=0) + b"\x77"
-    cfg = _pointer_block(0, 4, fill=bytes.fromhex("FFFE"))
-    res, out = relayout(rom, cfg, TS, {1: "BA[end]"}, registry)
+    assert rom[0x16:0x1B] == bytes.fromhex("FF FF 43 43 FF")
+    # Shortened and lengthened again, its own room is still its own.
+    res, out = relayout(rom, cfg, TS_FF, {1: "B[end]"}, registry)
     assert res.ok, res.problems
-    assert out[0x14:0x19] == bytes.fromhex("42 41 00 FF 77")
-    assert block_bound(cfg, extract(out, cfg, TS, registry).strings, out, TS) == 0x18
-    res, back = relayout(out, cfg, TS, {1: "BAC[end]"}, registry)
+    after = extract(out, cfg, TS_FF, registry).strings
+    room = remembered_room(cfg, 0x16, after)
+    res, back = relayout(out, cfg, TS_FF, {1: "BA[end]"}, registry, room=room)
+    assert res.ok and back == rom
+
+
+FILL_MAPPED = table_set("@table main\nFF00=A\nFF01=B\n/FFFF=[end]\n", "main")
+"""The Mother 3 shape: 16-bit codes over a table whose fill byte begins every
+one of them, the end token included."""
+
+
+def test_a_table_that_maps_the_fill_gets_its_room_back(registry):
+    """Nothing is asked of the table: the room is the block's own extent, so a
+    script whose every code begins with the fill byte takes back what its
+    shortened strings gave up like any other."""
+    rom = pointer_rom((0x10, 0x16), "FF00 FF01 FFFF FF01 FF00 FFFF", tail=4)
+    cfg = _pointer_block(0, 4)
+    ex = extract(rom, cfg, FILL_MAPPED, registry)
+    assert texts(ex) == ["AB[end]", "BA[end]"]
+    assert block_bound(cfg, ex.strings) == 0x1C
+    res, out = relayout(rom, cfg, FILL_MAPPED, {1: "B[end]"}, registry)
+    assert res.ok, res.problems
+    after = extract(out, cfg, FILL_MAPPED, registry).strings
+    room = remembered_room(cfg, 0x1C, after)
+    assert room == 0x1C
+    res, back = relayout(out, cfg, FILL_MAPPED, {1: "BA[end]"}, registry, room=room)
     assert res.ok, res.problems
     assert back == rom
 
 
-def test_a_default_bound_stops_at_the_end_of_the_bytes(registry):
-    """Text that runs to the end of the file has the fill after it and no
-    more: the bound never reaches past the bytes there are."""
-    rom = pointer_rom((0x10,), "41 42 00", tail=3)
-    cfg = _pointer_block(0, 2)
-    ex = extract(rom, cfg, TS, registry)
-    assert block_bound(cfg, ex.strings, rom, TS) == len(rom) == 0x16
-    res, out = relayout(rom, cfg, TS, {0: "ABABA[end]"}, registry)
-    assert res.ok, res.problems
-    assert out[0x10:] == bytes.fromhex("41 42 41 42 41 00")
-    assert len(out) == len(rom)
-    # One byte more is one byte past the file.
-    assert not relayout(rom, cfg, TS, {0: "ABABAB[end]"}, registry)[0].ok
+def test_a_fill_run_counts_a_repeat_cut_short_and_stops_at_its_cap(registry):
+    """What :func:`fill_run` would have laid there, and no byte more: whole
+    patterns and a last one cut short, never past the cap a slot or a group
+    gives it."""
+    data = bytes.fromhex("41 FF FE FF 77")
+    fill = bytes.fromhex("FFFE")
+    assert fill_end(data, 1, fill) == 4
+    assert fill_end(data, 1, fill, 3) == 3
+    assert fill_end(data, 0, fill) == 0
+    assert fill_end(data, 1, fill, 99) == 4
 
 
-def test_a_default_bound_over_a_long_fill_run_is_measured_not_walked(registry):
-    """An expanded ROM's free space is where a relocated script lives, and the
-    bound is asked for on every keystroke: the run is measured at once, not a
-    pattern at a time."""
-    rom = pointer_rom((0x10,), "41 42 00", tail=0) + b"\xff" * (1 << 20)
-    cfg = _pointer_block(0, 2)
-    ex = extract(rom, cfg, TS, registry)
+def test_a_fill_run_is_measured_not_walked(registry):
+    """A slot's padding runs to the end of an expanded ROM's free space, and
+    the slot is worked out on every keystroke: the run is measured at once,
+    not a pattern at a time."""
+    data = bytes.fromhex("41 42 00") + b"\xff" * (1 << 20)
     started = time.perf_counter()
-    bounds = [block_bound(cfg, ex.strings, rom, TS) for _ in range(20)]
-    assert bounds == [len(rom)] * 20
+    ends = [fill_end(data, 3, b"\xff") for _ in range(20)]
+    assert ends == [len(data)] * 20
     assert time.perf_counter() - started < 1.0
-    # Nor is the spare laid down again: the fill is already there, so the
-    # splice stops where the block's text does.
-    res, out = relayout(rom, cfg, TS, {0: "A[end]"}, registry)
-    assert res.ok, res.problems
-    # The new text, and the byte of the old it no longer covers.
-    assert [(s.offset, len(s.data)) for s in res.splices] == [(0x10, 3), (0, 2)]
-    assert out == rom[:0x10] + bytes.fromhex("41 00 FF") + rom[0x13:]
 
 
 def test_a_packed_write_rewrites_the_pointers_attached_to_a_range_block(registry):
@@ -504,11 +602,14 @@ def test_a_packed_write_refuses_a_pointer_that_cannot_reach_its_string(registry)
     value that reads somewhere else entirely."""
     rom, cfg = _banked_rom(), _banked_block()
     assert texts(extract(rom, cfg, TS, registry)) == ["A[end]", "B[end]"]
-    res, _ = relayout(rom, cfg, TS, {0: "AAA[end]"}, registry)
+    # Room the block gave up to an earlier shortening, so what refuses the
+    # growth is the pointer rather than the bound.
+    room = 0x8010
+    res, _ = relayout(rom, cfg, TS, {0: "AAA[end]"}, registry, room=room)
     assert not res.ok
     assert any("$2" in p.message for p in res.problems), res.problems
     # One byte less, and the string it moves is still in the bank.
-    res, out = relayout(rom, cfg, TS, {0: "AA[end]"}, registry)
+    res, out = relayout(rom, cfg, TS, {0: "AA[end]"}, registry, room=room)
     assert res.ok, res.problems
     assert out[0:4] == bytes.fromhex("FC BF FF BF")
     assert texts(extract(out, cfg, TS, registry)) == ["AA[end]", "B[end]"]
@@ -568,15 +669,21 @@ def test_a_packed_write_leaves_the_spare_as_one_run_of_the_fill(
     )
     cfg = _pointer_block(0, 4, fill=fill)
     ex = extract(rom, cfg, TS, registry)
-    assert block_bound(cfg, ex.strings, rom, TS) == 0x20
+    assert block_bound(cfg, ex.strings) == 0x18
     res, out = relayout(rom, cfg, TS, {1: text}, registry)
     assert res.ok, res.problems
     new = bytes.fromhex(encoded)
-    assert out == rom[:0x14] + new + fill_run(fill, 0x20 - 0x14 - len(new)) + b"\x77"
+    assert out == rom[:0x14] + new + fill_run(fill, 0x18 - 0x14 - len(new)) + rom[0x18:]
     again = extract(out, cfg, TS, registry)
-    assert block_bound(cfg, again.strings, out, TS) == 0x20
+    room = remembered_room(cfg, 0x18, again.strings)
+    assert room == 0x18 and block_bound(cfg, again.strings, room) == 0x18
+    # A second shortening leaves one run as well, carried on from where its own
+    # text ends rather than started over at the old text's end.
+    res, twice = relayout(out, cfg, TS, {1: "[end]"}, registry, room=room)
+    assert res.ok, res.problems
+    assert twice == out[:0x14] + b"\x00" + fill_run(fill, 3) + out[0x18:]
     # And the room is there to take back, to the byte.
-    res, back = relayout(out, cfg, TS, {1: "BAC[end]"}, registry)
+    res, back = relayout(twice, cfg, TS, {1: "BAC[end]"}, registry, room=room)
     assert res.ok, res.problems
     assert back == rom
 

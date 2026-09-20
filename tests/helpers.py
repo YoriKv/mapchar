@@ -59,16 +59,17 @@ def pointer_rom(targets, body: str, *, at: int = 0x10, tail: int = 8) -> bytes:
     return table + b"\xff" * (at - len(table)) + bytes.fromhex(body) + b"\xff" * tail
 
 
-def relayout(data: bytes, cfg, ts, edits: dict[int, str], registry=None):
+def relayout(data: bytes, cfg, ts, edits: dict[int, str], registry=None, room=None):
     """Extract ``data``, translate ``{index: text}``, lay the block out again.
 
+    ``room`` is what the block remembers giving up to an earlier shortening.
     Returns the layout result and the spliced bytes, ``None`` when the layout
     refused the edits.
     """
     ex = extract(data, cfg, ts, registry)
     for i, text in edits.items():
         ex.strings[i].replacement = text
-    res = layout_block(data, cfg, ts, ex.strings, registry)
+    res = layout_block(data, cfg, ts, ex.strings, registry, room)
     return res, (apply_splices(data, res.splices) if res.ok else None)
 
 

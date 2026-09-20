@@ -16,6 +16,7 @@ from mapchar.core.block import (
     PointerListSource,
     PointerTableSource,
     RangeSource,
+    Status,
     source_span,
     source_start,
     with_region,
@@ -25,9 +26,24 @@ from mapchar.core.table import TokenKind
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import BlockEditCommand, TableCommand
 
-_BLOCK_EDIT_FIELDS = ("name", "config", "compression_id", "spare_room")
-"""The four things a block is read by, in the order
-:class:`~mapchar.ui.undo_commands.BlockEditCommand` carries them."""
+_BLOCK_EDIT_FIELDS = ("name", "config", "compression_id", "spare_room", "room")
+"""What a block edit carries, in the order
+:class:`~mapchar.ui.undo_commands.BlockEditCommand` holds them: the four things
+a block is read by, and the room it remembers, which a change of reading
+forgets and an undo brings back."""
+
+_READING_FIELDS = (
+    "source",
+    "string_type",
+    "strings_per_pointer",
+    "realign",
+    "skips",
+    "header",
+    "line_length",
+)
+"""What cuts a block's strings out of the bytes. The rest of a reading — the
+table the translation is written in, the bound, the fill, the labels — is what
+one adjusts while editing, and leaves every string where it is."""
 
 _KIND_NAMES = {
     RangeSource: "Range",
@@ -42,6 +58,33 @@ _KIND_NAMES = {
 }
 """What the block bar calls a source or string type: the Block dialog's words
 for it, never the class name."""
+
+
+def _recuts_strings(before: BlockConfig | None, after: BlockConfig | None) -> bool:
+    """Whether the change from ``before`` to ``after`` cuts the block's strings
+    out of the bytes differently (:data:`_READING_FIELDS`)."""
+    if before is None or after is None:
+        return before is not after
+    return any(getattr(before, f) != getattr(after, f) for f in _READING_FIELDS)
+
+
+def _has_edits(entry: Entry) -> bool:
+    """Whether the block holds work a fresh cut would take with it: a string
+    that is no longer its original, or room a shortened string gave up.
+
+    A block whose strings are not read yet — never opened, or waiting on the
+    read a block edit left it — is told by the state it carries instead, where
+    any status but *untouched* counts: the project keeps one status per string,
+    so a translated string marked *review* or *done* says only that.
+    """
+    if entry.room is not None:
+        return True
+    if entry.doc is not None and entry.doc.strings:
+        return any(rec.edited for rec in entry.doc.strings)
+    return any(
+        state.status is not Status.UNTOUCHED
+        for state in (entry.pending_strings or {}).values()
+    )
 
 
 class BlocksMixin:
@@ -147,10 +190,10 @@ class BlocksMixin:
         return BlockConfig(RangeSource(0, 0), EndToken(), self._default_table_id())
 
     def _push_block_edit(self, entry: Entry, *, field: str | None = None, **changes):
-        """One block edit: the four things a block is read by as they are, with
-        only what ``changes`` names different. Nothing is pushed when nothing
-        moved. ``field`` names the bar control it came from, so a run on one
-        merges into a single step."""
+        """One block edit: what a block is read by as it is, with only what
+        ``changes`` names different. Nothing is pushed when nothing moved.
+        ``field`` names the bar control it came from, so a run on one merges
+        into a single step."""
         unknown = set(changes) - set(_BLOCK_EDIT_FIELDS)
         if unknown:
             raise TypeError(f"not part of a block edit: {', '.join(sorted(unknown))}")
@@ -161,10 +204,47 @@ class BlocksMixin:
         )
         if after == before or self._applying_undo:
             return
-        scheme = after[_BLOCK_EDIT_FIELDS.index("compression_id")]
-        if not self._confirm_payload_loss(entry, scheme):
+        at = _BLOCK_EDIT_FIELDS.index
+        scheme = after[at("compression_id")]
+        recut = _recuts_strings(before[at("config")], after[at("config")])
+        if not self._confirm_payload_loss(entry, scheme) or (
+            recut and not self._confirm_recut(entry)
+        ):
+            # The bars are showing what was typed; the block is not it.
+            with self._bars_quiet():
+                self._load_reading_bar()
             return
+        if recut or scheme != before[at("compression_id")]:
+            # The strings are cut out of the bytes afresh, so what a shortened
+            # one of them gave up is not this reading's to take back.
+            after = tuple(
+                None if name == "room" else value
+                for name, value in zip(_BLOCK_EDIT_FIELDS, after, strict=True)
+            )
         self._push_command(BlockEditCommand(self, entry, before, after, field))
+
+    def _confirm_recut(self, entry: Entry) -> bool:
+        """Ask before a change to how a block is read cuts edited strings out
+        of the bytes again.
+
+        Every other block edit leaves the strings where they are; this one
+        reads the region afresh, and what a string says is then whatever the
+        new cut makes of the bytes. Asked once: the answer holds for the run of
+        changes that follows it and until one of the block's strings is edited
+        again (:meth:`~mapchar.ui.main_window.string_edit.StringEditMixin.
+        _remember_room`), so a spin box stepped up does not ask per tick.
+        """
+        if self._reading_consent is entry or not _has_edits(entry):
+            return True
+        if not self._ask(
+            "Edit Block",
+            f"{entry.name} has edited strings. Changing how it is read cuts "
+            "them out of the bytes again and forgets the room its shortened "
+            "strings gave up. Continue?",
+        ):
+            return False
+        self._reading_consent = entry
+        return True
 
     def _confirm_payload_loss(self, entry: Entry, compression_id: str | None) -> bool:
         """Ask before a block edit throws a compressed block's edits away.
@@ -187,7 +267,13 @@ class BlocksMixin:
         )
 
     def apply_block_config(
-        self, entry: Entry, name: str, config: BlockConfig, compression_id, spare_room
+        self,
+        entry: Entry,
+        name: str,
+        config: BlockConfig,
+        compression_id,
+        spare_room,
+        room: int | None = None,
     ) -> None:
         """Re-point a block and read the region again — the application path for
         a block edit and its undo."""
@@ -208,6 +294,7 @@ class BlocksMixin:
         entry.config = config
         entry.compression_id = compression_id
         entry.spare_room = spare_room
+        entry.room = room
         # The re-read matches originals, statuses and notes back by index —
         # except onto a string the new reading cuts at other bits, which takes
         # its original afresh, as a string the old reading never had.

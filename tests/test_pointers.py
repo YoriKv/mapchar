@@ -14,6 +14,7 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
     WriteMode,
+    remembered_room,
 )
 from mapchar.engines.pointers import discover
 from mapchar.pipeline.extract import extract, reextract
@@ -469,7 +470,7 @@ def test_a_nested_edit_lays_out_only_its_own_group(registry):
 def test_a_nested_block_in_slotted_mode_keeps_every_string_in_place(registry):
     cfg = BlockConfig(NESTED, EndToken(), "main", write_mode=WriteMode.SLOTTED)
     ex = extract(NESTED_ROM, cfg, TS, registry)
-    ends = string_ends(NESTED_ROM, cfg, ex.strings, registry, TS)
+    ends = string_ends(NESTED_ROM, cfg, ex.strings, registry)
     assert ends == {0: 0x18, 1: 0x20, 2: 0x2C}
     res, out = relayout(NESTED_ROM, cfg, TS, {1: "CCCCC[end]"}, registry)
     assert res.ok and out[0x18:0x20] == bytes.fromhex("43 43 43 43 43 00 FF FF")
@@ -478,7 +479,7 @@ def test_a_nested_block_in_slotted_mode_keeps_every_string_in_place(registry):
     # two strings hold five bytes of the eleven up to $20, so each may grow by
     # six — and only one of them may, the spare being the same six bytes.
     packed = BlockConfig(NESTED, EndToken(), "main")
-    assert string_ends(NESTED_ROM, packed, ex.strings, registry, TS) == {
+    assert string_ends(NESTED_ROM, packed, ex.strings, registry) == {
         0: 0x1E,
         1: 0x20,
         2: 0x2C,
@@ -578,10 +579,10 @@ def test_a_string_that_is_another_s_tail_is_laid_out_once(registry):
     assert res.ok and out[0x10:0x16] == bytes.fromhex("41 42 43 00 43 00")
 
 
-def test_a_pointer_block_with_no_bound_takes_back_the_fill_it_left(registry):
-    """Room a shorter string gave up is there for a longer one afterwards: with
-    no bound of its own the block's room ends after the fill behind its text,
-    not where the text happens to end now."""
+def test_a_pointer_block_with_no_bound_takes_back_the_room_it_gave_up(registry):
+    """Room a shorter string gave up is there for a longer one afterwards: the
+    block remembers the bound it wrote under, rather than ending where its text
+    happens to end now."""
     rom = pointer_rom((0x10, 0x14), "41 42 43 00 43 00", tail=0) + b"\x01"
     cfg = BlockConfig(
         PointerTableSource(0, 4, 2, 2, "little", "linear", 0), EndToken(), "main"
@@ -589,11 +590,13 @@ def test_a_pointer_block_with_no_bound_takes_back_the_fill_it_left(registry):
     res, out = relayout(rom, cfg, TS, {0: "A[end]"}, registry)
     assert res.ok, res.problems
     assert out[0x10:0x17] == bytes.fromhex("41 00 43 00 FF FF 01")
-    res, out = relayout(out, cfg, TS, {0: "ABC[end]"}, registry)
+    room = remembered_room(cfg, 0x16, extract(out, cfg, TS, registry).strings)
+    assert room == 0x16
+    res, out = relayout(out, cfg, TS, {0: "ABC[end]"}, registry, room=room)
     assert res.ok, res.problems
     assert out[0x10:0x17] == bytes.fromhex("41 42 43 00 43 00 01")
-    # The byte after the fill is not the block's: one more does not fit.
-    res, _ = relayout(out, cfg, TS, {0: "ABCA[end]"}, registry)
+    # The byte after it is not the block's: one more does not fit.
+    res, _ = relayout(out, cfg, TS, {0: "ABCA[end]"}, registry, room=room)
     assert not res.ok
 
 
@@ -624,21 +627,21 @@ FILL_IS_TEXT = table_set("@table main\n41=A\n42=B\n43=C\nFF=D\n/00=[end]\n", "ma
 def test_a_nested_group_takes_its_fill_back_whatever_the_table_maps(registry):
     """What bounds a group is its outer table, not its reading of the fill.
 
-    A block's own bound stops where the fill reads as text, since what lies
-    past its last string is anyone's; a group's stops at the next inner table
-    or base the outer table names, which says the stretch in front of it is
-    this group's — so the room a shortening gave up is the group's to take
-    back even in a script whose codes begin with the fill byte.
+    A group's bound is the next inner table or base the outer table names,
+    which says the stretch in front of it is this group's: the padding behind
+    its text is room to take back, whatever a script whose codes begin with
+    the fill byte makes of those bytes. A block bounds itself by where its own
+    text ended instead (``block_bound``), and remembers nothing for a nested
+    source.
     """
     cfg = BlockConfig(NESTED, EndToken(), "main")
     ex = extract(NESTED_ROM, cfg, FILL_IS_TEXT, registry)
     assert texts(ex) == ["AB[end]", "C[end]", "A[end]"]
-    for tables in (FILL_IS_TEXT, TS):
-        assert string_ends(NESTED_ROM, cfg, ex.strings, registry, tables) == {
-            0: 0x1E,
-            1: 0x20,
-            2: 0x2C,
-        }
+    assert string_ends(NESTED_ROM, cfg, ex.strings, registry) == {
+        0: 0x1E,
+        1: 0x20,
+        2: 0x2C,
+    }
     res, out = relayout(NESTED_ROM, cfg, FILL_IS_TEXT, {0: "[end]"}, registry)
     assert res.ok, res.problems
     assert out[0x14:0x20] == bytes.fromhex("FF 00 43 00 FF FF FF FF FF FF FF FF")

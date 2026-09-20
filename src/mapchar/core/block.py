@@ -524,27 +524,47 @@ def string_groups(
 def block_bound(
     config: BlockConfig,
     strings: list[StringRecord],
-    data: bytes | None = None,
-    tables: TableSet | None = None,
+    room: int | None = None,
 ) -> int:
     """The exclusive end packed strings may not cross.
 
-    The configured bound; else a range source's stop; else the end of the
-    text the pointers reach (a pointer table's stop bounds pointers, not
-    text), and past it, in ``data``, the run of fill a shorter layout left —
-    so room given up is room to take back, as it is for a nested source's
-    group. That run is the block's only where the block reads the fill as
-    padding (:func:`fill_reads_as_padding`), which is what ``tables`` says:
-    fill the block reads as text is a string, here or in the block after it.
+    The configured bound; else a range source's stop; else the end of the text
+    the pointers reach (a pointer table's stop bounds pointers, not text), and
+    never earlier than the ``room`` the block remembers
+    (:func:`remembered_room`) — so room a shortened string gave up is room to
+    take back. Nothing past the text is claimed on the strength of the
+    bytes standing there: what lies beyond is the next block's, whatever it
+    holds.
     """
     if config.bound is not None:
         return config.bound
     if isinstance(config.source, RangeSource):
         return config.source.stop
     end = max((rec.end for rec in strings), default=0)
-    if data is None or tables is None or not fill_reads_as_padding(config, tables):
-        return end
-    return fill_end(data, end, config.fill)
+    return max(end, room or 0)
+
+
+def remembered_room(
+    config: BlockConfig, bound: int, strings: list[StringRecord]
+) -> int | None:
+    """The room a write leaves the block remembering, or ``None`` for none.
+
+    ``bound`` is the bound the block had going into the write and ``strings``
+    are its strings after it: text that now ends earlier leaves the bound it
+    had as the block's own extent, which :func:`block_bound` hands back to the
+    next edit. Only a block whose bound is that default has room to remember —
+    a configured bound and a range source say where the room ends themselves,
+    and a nested source's groups are bounded one by one
+    (:func:`~mapchar.pipeline.insert.group_bounds`).
+    """
+    if (
+        config.bound is not None
+        or not config.has_pointers
+        or isinstance(config.source, NestedPointerSource)
+    ):
+        return None
+    end = max((rec.end for rec in strings), default=0)
+    return bound if end < bound else None
 
 
 @dataclass

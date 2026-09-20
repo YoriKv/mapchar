@@ -12,6 +12,7 @@ from mapchar.core.block import (
     Extraction,
     Status,
     block_bound,
+    remembered_room,
     source_span,
 )
 from mapchar.core.document import Document
@@ -149,7 +150,9 @@ class StringEditMixin:
         try:
             for i, t in edits.items():
                 by_index[i].replacement = t
-            result = layout_block(doc.data, cfg, tables, doc.strings, self.registry)
+            result = layout_block(
+                doc.data, cfg, tables, doc.strings, self.registry, entry.room
+            )
         finally:
             for i in edits:
                 by_index[i].replacement = None
@@ -268,6 +271,7 @@ class StringEditMixin:
         an undo hands back exactly the unsaved-state the owner had before the
         edit, so undoing back to what was written reads clean again.
         """
+        bound = self._bound_of(entry)
         shared = self.workspace.entries_sharing(entry)
         # The blocks over one file hold the very same buffer: spliced once, the
         # result is theirs too, rather than a copy of a whole ROM per block.
@@ -283,6 +287,7 @@ class StringEditMixin:
             holder.doc.extraction_key = None
         self._stamp_shared_bytes(entry, revision, shared)
         self._reread_blocks_over(entry, offset, offset + len(data))
+        self._remember_room(entry, bound)
         self.files_panel.refresh_labels()
         self._update_title()
         # Every row of the grid is a font layout and a render of its string, so
@@ -300,6 +305,32 @@ class StringEditMixin:
         # the buffer with it.
         self._checked_extraction = None
         self._refresh_project_strings()
+
+    def _bound_of(self, entry: Entry) -> int:
+        """The exclusive end the block's strings may not cross as it stands —
+        what an edit about to be laid out has to go by, and what it leaves
+        behind as the block's room when it shortens the text."""
+        doc = entry.doc
+        if doc is None or entry.config is None:
+            return 0
+        return block_bound(entry.config, doc.strings, entry.room)
+
+    def _remember_room(self, entry: Entry, bound: int) -> None:
+        """Keep the room a landed edit gave up: ``bound`` is what the block had
+        going into it, and its strings have since been read again, so text that
+        now ends earlier leaves that extent the block's to take back
+        (:func:`~mapchar.core.block.remembered_room`).
+
+        The edit also re-arms the question a change of reading asks: the
+        strings it would cut afresh are not the ones the user agreed to lose.
+        """
+        self._reading_consent = None
+        doc = entry.doc
+        if doc is None or entry.config is None:
+            return
+        room = remembered_room(entry.config, bound, doc.strings)
+        if room is not None:
+            entry.room = room
 
     def _reread_blocks_over(self, entry: Entry, lo: int, hi: int) -> None:
         """Read again every loaded block whose strings share ``entry``'s bytes
@@ -395,13 +426,10 @@ class StringEditMixin:
             self.strings.set_readout(str(exc), problem=True)
             return
         used = -(-len(result.bits) // 8)
-        bound = block_bound(entry.config, entry.doc.strings, entry.doc.data, tables)
+        bound = self._bound_of(entry)
         room = (
             room_for(
-                rec,
-                entry.config,
-                bound,
-                self._string_slots(entry, entry.doc, bound, tables),
+                rec, entry.config, bound, self._string_slots(entry, entry.doc, bound)
             )
             if rec
             else 0

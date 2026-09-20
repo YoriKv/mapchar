@@ -231,6 +231,10 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
                 d["spare_room"] = entry.spare_room
         if entry.config is not None:
             d["config"] = format_config(entry.config)
+        # The extent the block's text had before a write shortened it: state
+        # the block keeps, which the configuration line has no place for.
+        if entry.room is not None:
+            d["room"] = entry.room
         strings = _string_records(entry)
         if strings:
             d["strings"] = strings
@@ -554,6 +558,13 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
         stored = raw.get("slice_length")
         entry.slice_length = int(stored) if stored else None
         entry.spare_room = str(raw.get("spare_room", "fill"))
+        # Remembered room, and nothing a build cannot read as an address: a
+        # block with none simply has its text's end for a bound.
+        room = raw.get("room")
+        try:
+            entry.room = int(room) if room is not None else None
+        except (TypeError, ValueError):
+            entry.room = None
     if kind is EntryKind.BOOKMARK:
         entry.bookmark_offset = int(raw.get("offset", 0))
     if kind is EntryKind.TABLE:

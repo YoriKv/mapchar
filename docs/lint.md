@@ -50,7 +50,7 @@ something at or above `--fail-on` (default `error`) is found, **0** otherwise,
 | `E4xx` `W4xx` `I4xx` | plugin ids — container, compression, mapping — and table dialects, renamed ids, a pointer size the mapping does not offer |
 | `E5xx` `W5xx` | references between entries: parents, folders, names two blocks share, the table a block, a session or an include names, table ids two tables share |
 | `E60x`–`W627` | the block's configuration line, read as `parse_config` reads it: what raises (the block is dropped) and what it passes over (`tabel=main`, `stride` on a list source) or misreads (`endian=Big` reads as little) |
-| `E64x` `W65x` | a block's saved strings, text box and compression slot |
+| `E64x` `W65x` | a block's saved strings, text box, remembered `room` and compression slot |
 | `E7xx` `W7xx` | a table entry's overlay and includes |
 
 A file's `session.config` uses the configuration grammar but is only a view
