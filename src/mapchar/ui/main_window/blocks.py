@@ -8,13 +8,7 @@ from dataclasses import replace
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
-    FixedLength,
-    Lines,
-    NestedPointerSource,
-    NextPointer,
     Pascal,
-    PointerListSource,
-    PointerTableSource,
     RangeSource,
     recuts_strings,
     source_span,
@@ -24,6 +18,7 @@ from mapchar.core.block import (
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
 from mapchar.core.table import TokenKind
 from mapchar.project.workspace import Entry, EntryKind, has_edits
+from mapchar.ui.kind_names import SOURCE_NAMES, STRING_TYPE_NAMES
 from mapchar.ui.undo_commands import BlockEditCommand, TableCommand
 
 _BLOCK_EDIT_FIELDS = ("name", "config", "compression_id", "spare_room", "room")
@@ -31,20 +26,6 @@ _BLOCK_EDIT_FIELDS = ("name", "config", "compression_id", "spare_room", "room")
 :class:`~mapchar.ui.undo_commands.BlockEditCommand` holds them: the four things
 a block is read by, and the room it remembers, which a change of reading
 forgets and an undo brings back."""
-
-_KIND_NAMES = {
-    RangeSource: "Range",
-    PointerTableSource: "Pointer table",
-    PointerListSource: "Pointer list",
-    NestedPointerSource: "Nested pointer tables",
-    EndToken: "End token",
-    FixedLength: "Fixed length",
-    Pascal: "Pascal (length prefix)",
-    NextPointer: "Next pointer",
-    Lines: "Lines",
-}
-"""What the block bar calls a source or string type: the Block dialog's words
-for it, never the class name."""
 
 
 class BlocksMixin:
@@ -91,14 +72,18 @@ class BlocksMixin:
     def _block_label(entry: Entry, count: int) -> str:
         """What the block bar says the block on screen is: its name, how it is
         read, and how many strings that came to. A block with no configuration
-        has nothing to spell out but its name."""
+        has nothing to spell out but its name.
+
+        The reading is named as the Reading bar names it
+        (:mod:`mapchar.ui.kind_names`), never by the class.
+        """
         cfg = entry.config
         if cfg is None:
             return f"{entry.name}: no reading"
         return (
             f"{entry.name}: "
-            f"{_KIND_NAMES.get(type(cfg.source), 'Source')} · "
-            f"{_KIND_NAMES.get(type(cfg.string_type), 'Strings')} · "
+            f"{SOURCE_NAMES.get(type(cfg.source), 'Source')} · "
+            f"{STRING_TYPE_NAMES.get(type(cfg.string_type), 'Strings')} · "
             f"@{cfg.table_id or '-'} · "
             f"{count} {'string' if count == 1 else 'strings'}"
         )

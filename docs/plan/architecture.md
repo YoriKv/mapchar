@@ -882,16 +882,16 @@ through `_push_command`.
 
 | Concern | Modules in `ui/main_window/` |
 |---|---|
-| Shell | `window.py` (widgets, docks, the undo stack and its guards, the title and dirty marker, file dialogs, alerts), `menus.py` (the menu bar) |
+| Shell | `window.py` (the state every mixin shares, the undo stack and its guards, the title and dirty marker, file dialogs, alerts), `layout.py` (the widget tree, the two docks and the tool windows, with the signals that wire them), `menus.py` (the menu bar), `help.py` (the Help menu's dialogs and the View menu's theme rows) |
 | Active entry and refresh | `session.py`, `refresh.py`, `capability_sync.py` |
-| Text view | `text_view.py` (the Text tab's window, and moving it by lines) |
+| Text view | `text_tab.py` (the Text tab's window, and moving it by lines) |
 | Interpretation and position | `format_bar.py` (the Format and Reading bars, the reading of the entry on screen, the encodings as tables), `navigation.py`, `history.py` |
-| Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `compression.py`, `plugins.py` |
-| Tables | `table_files.py`, `table_editor.py` |
+| Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `compression.py` (the Decompressed view's preview and the Compression picker), `structure_scan.py` (the cancellable walk over a whole file, and making a block of what it finds), `plugins.py` |
+| Tables | `table_files.py`, `table_edits.py` |
 | Raw view | `raw_view.py` |
-| Blocks and strings | `blocks.py`, `block_reading.py` (reading one block, or every block a project-wide surface goes over), `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py`, `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary window and its undo steps) |
+| Blocks and strings | `blocks.py`, `block_reading.py` (reading one block, or every block a project-wide surface goes over), `extraction.py` (cutting a block's bytes into strings, and the caches that spare it), `string_rows.py` (the Strings grid's rows), `strings_menu.py` (the grid's context menu, marks and steps), `string_edit.py`, `wrap.py`, `replacing.py` (Find and Replace over the strings' text), `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary window and its undo steps) |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
-| Exchange | `import_export.py` |
+| Exchange | `import_export.py` (mapChar's own script, translator tables and PO files), `legacy_exchange.py` (Cartographer command files and Atlas scripts, which address the file) |
 | Projects | `projects.py`, `relocate.py`, `autosave.py` |
 | Preview | `preview.py`, `hex_view.py` |
 

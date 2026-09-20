@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 class HexViewMixin:
-    """The Hex dock's dump.
+    """The Hex dock's dump, and what the field beside it finds.
 
     A slice of :class:`~mapchar.ui.main_window.window.MainWindow`, reaching the
     rest of the window only through ``self``.

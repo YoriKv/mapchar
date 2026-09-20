@@ -170,7 +170,8 @@ class WindowLayout(QObject):
 def remember_layout(window: QWidget, key: str) -> WindowLayout:
     """Give one tool window a remembered geometry, under ``key``.
 
-    The one line a tool window needs at the end of its ``__init__``: a
+    The one line a tool window needs once its default size is set
+    (:class:`~mapchar.ui.tool_window.ToolWindow` makes it, in that order): a
     :class:`WindowLayout` of its own, restored at once so the window is already
     where the user left it the first time it is shown. Held by the caller so the
     object lives as long as the window (it is parented to it, so it also dies

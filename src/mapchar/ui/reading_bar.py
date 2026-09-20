@@ -43,6 +43,7 @@ from mapchar.core.block import (
     StringType,
 )
 from mapchar.ui.bars import ROW_BREAK, WrapBar
+from mapchar.ui.kind_names import SOURCE_NAMES, STRING_TYPE_NAMES
 from mapchar.ui.number_fields import (
     AddressEdit,
     AddressSpelling,
@@ -63,15 +64,26 @@ from mapchar.ui.writing_picker import WritingPicker
 RANGE, TABLE, LIST, NESTED = "range", "table", "list", "nested"
 """The source kinds, as the Source picker's data."""
 
-_SOURCE_NAMES = {
-    RANGE: "Range",
-    TABLE: "Pointer table",
-    LIST: "Pointer list",
-    NESTED: "Nested tables",
+_SOURCE_CLASSES = {
+    RANGE: RangeSource,
+    TABLE: PointerTableSource,
+    LIST: PointerListSource,
+    NESTED: NestedPointerSource,
 }
+"""Which source each picker row makes, so its label comes from the one table
+every surface names a source by (:mod:`mapchar.ui.kind_names`)."""
 
 END, FIXED_LENGTH, PASCAL, NEXT, LINES = "end", "fixed", "pascal", "next", "lines"
 """The string types, as the String type picker's data."""
+
+_STRING_TYPE_CLASSES = {
+    END: EndToken,
+    FIXED_LENGTH: FixedLength,
+    PASCAL: Pascal,
+    NEXT: NextPointer,
+    LINES: Lines,
+}
+"""The same for the Ends-at picker's rows."""
 
 SECTIONS = {
     "Source": ("source_kind", "start", "stop", "writing", "ptr_addresses"),
@@ -229,14 +241,8 @@ class ReadingBar(WrapBar):
         self.spelling.changed.connect(self._respell_addresses)
 
         self.string_type = QComboBox()
-        for label, data in (
-            ("End token", END),
-            ("Fixed length", FIXED_LENGTH),
-            ("Length prefix", PASCAL),
-            ("Next pointer", NEXT),
-            ("Lines", LINES),
-        ):
-            self.string_type.addItem(label, data)
+        for data, cls in _STRING_TYPE_CLASSES.items():
+            self.string_type.addItem(STRING_TYPE_NAMES[cls], data)
         self.lines = number_spin(1, 1000, 2)
         self.fixed_length = number_spin(1, 1_000_000, 3)
         self.stop_at_end = QCheckBox("Stop at end token")
@@ -590,7 +596,7 @@ class ReadingBar(WrapBar):
         self.source_kind.clear()
         kinds = (TABLE, LIST, NESTED) if self._pointers else (RANGE,)
         for kind in kinds:
-            self.source_kind.addItem(_SOURCE_NAMES[kind], kind)
+            self.source_kind.addItem(SOURCE_NAMES[_SOURCE_CLASSES[kind]], kind)
         self.source_kind.setCurrentIndex(max(self.source_kind.findData(current), 0))
         # A file has no addresses of its own to list pointers at, nor strings
         # of its own to group.

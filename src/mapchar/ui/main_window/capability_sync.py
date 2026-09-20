@@ -20,10 +20,9 @@ the session. Controls whose availability something else decides — Open Recent,
 Locate Missing Files, the undo actions, the step buttons
 (:meth:`~mapchar.ui.main_window.navigation.NavigationMixin._sync_steps`, which
 weighs the capability against whether a step has anywhere to go), the per-scan
-freeze in
-:meth:`~mapchar.ui.main_window.compression.CompressionMixin._set_scan_ui` — are
-deliberately absent, and the freeze reaches them anyway by disabling the menu
-bar and the central widget above them.
+freeze in :meth:`~mapchar.ui.main_window.structure_scan.StructureScanMixin.
+_set_scan_ui` — are deliberately absent, and the freeze reaches them anyway by
+disabling the menu bar and the central widget above them.
 
 :data:`_GATES` covers the *window's* controls, and ``COMPRESSION_SCAN`` gates
 the menu row that opens the Decompressed view rather than anything inside it:

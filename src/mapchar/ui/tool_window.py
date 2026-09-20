@@ -25,6 +25,11 @@ class ToolWindow(EscapeCloses, QWidget):
     ``size`` is what a machine with nothing stored opens at, which is why it is
     set before the restore rather than at the end of the subclass's
     ``__init__``: a resize after the restore is the stored size overwritten.
+
+    ``QWidget`` is among this class's bases, so a mixin that overrides one of
+    its virtuals (:class:`~mapchar.ui.icon_font.ThemedIcons` and its
+    ``changeEvent``) goes *before* ``ToolWindow`` in a subclass's bases, or
+    ``QWidget``'s own method is found first and the mixin's never runs.
     """
 
     def __init__(

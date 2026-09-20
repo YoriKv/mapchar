@@ -34,7 +34,7 @@ from mapchar.ui.tool_window import ToolWindow
 from mapchar.ui.widgets import ElidedLabel, show_elided_tooltips
 
 
-class PreviewWindow(ToolWindow, ThemedIcons):
+class PreviewWindow(ThemedIcons, ToolWindow):
     font_changed = Signal()
     """The app's preview font changed: redraw whatever was drawn through it."""
     box_changed = Signal(object)

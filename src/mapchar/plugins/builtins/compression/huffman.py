@@ -51,7 +51,9 @@ class HuffmanTable(PartialDecompression):
     def _link(self, node: int, side: int) -> int:
         at = node * self.node_size + side
         if at < 0 or at + self.link_size > len(self.tree):
-            raise stream_error(_SCHEME, f"node {node} is past the end of the tree")
+            # The tree is at fault, not the stream, and ``_build_paths`` walks it
+            # to compress as well: not a ``stream_error``.
+            raise ValueError(f"node {node} is past the end of the Huffman tree")
         return int.from_bytes(self.tree[at : at + self.link_size], "little")
 
     def _decode(self, data: bytes, *, partial: bool) -> tuple[bytes, int, bool]:

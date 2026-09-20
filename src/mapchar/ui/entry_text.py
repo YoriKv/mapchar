@@ -21,6 +21,7 @@ from mapchar.core.block import (
 from mapchar.core.notices import notice_lines
 from mapchar.core.text import fold
 from mapchar.project.workspace import Entry, EntryKind
+from mapchar.ui.kind_names import SOURCE_NAMES
 from mapchar.ui.token_text import ellipsize
 
 if TYPE_CHECKING:
@@ -262,20 +263,24 @@ def group_tooltip(table: int | None, base: int | None, strings: int) -> str:
 
 
 def source_text(entry: Entry) -> str:
-    """A block's source as offset and length, in the parent's coordinates."""
+    """A block's source as offset and length, in the parent's coordinates.
+
+    A row's own register is lower case, but the words are the Reading bar's
+    (:mod:`mapchar.ui.kind_names`) — never a class name, which ``docs/ui.md``
+    forbids outright.
+    """
     if entry.compression_id:
         length = f"{entry.slice_length:X}" if entry.slice_length else "found on read"
         return f"compressed at {entry.slice_offset:X}, length {length}"
     source = entry.config.source
+    named = SOURCE_NAMES.get(type(source), "source").lower()
     if isinstance(source, RangeSource):
         return f"{source.start:X}–{source.stop:X}"
-    if isinstance(source, PointerTableSource):
-        return f"pointer table {source.start:X}–{source.stop:X}"
+    if isinstance(source, (PointerTableSource, NestedPointerSource)):
+        return f"{named} {source.start:X}–{source.stop:X}"
     if isinstance(source, PointerListSource):
         return f"{len(source.addresses)} pointers"
-    if isinstance(source, NestedPointerSource):
-        return f"nested pointer tables {source.start:X}–{source.stop:X}"
-    return source.__class__.__name__
+    return named
 
 
 __all__ = [

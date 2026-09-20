@@ -120,6 +120,25 @@ def test_a_tool_window_reopens_at_its_remembered_size(qtbot, monkeypatch):
     assert again.size() == QSize(520, 380)
 
 
+def test_every_themed_widget_rebakes_its_icons_on_a_palette_change(window, qtbot):
+    """``ThemedIcons`` only hears a palette change from ahead of the widget
+    class: behind it, ``QWidget.changeEvent`` is found first and the icons keep
+    the old theme's colour until the window is destroyed."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+
+    from mapchar.ui.icon_font import ThemedIcons
+
+    themed = [w for w in QApplication.allWidgets() if isinstance(w, ThemedIcons)]
+    assert window.preview_window in themed
+    for widget in themed:
+        baked = []
+        widget._bake_icons = lambda baked=baked: baked.append(True)
+        QApplication.sendEvent(widget, QEvent(QEvent.Type.PaletteChange))
+        assert baked, type(widget).__name__
+        del widget._bake_icons
+
+
 def test_the_table_editors_form_never_resizes_the_grid(window, tmp_path, qtbot):
     """The grid and the form are split, never sized to fit: the handle is put
     at its default once and only a drag moves it again, so no kind picked —

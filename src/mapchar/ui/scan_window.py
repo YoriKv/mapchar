@@ -5,20 +5,23 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
+from mapchar.core.block import EndToken, Pascal
 from mapchar.core.table import TableSet
 from mapchar.engines.scan import Region, scan
+from mapchar.ui.kind_names import STRING_TYPE_NAMES
 from mapchar.ui.number_fields import decimal_spin, number_spin
 from mapchar.ui.tool_window import ResultsRunWindow
 
 
 def _strings_of(region: Region) -> str:
-    """How the region cuts its strings, in the Block dialog's words: the end
-    token it guessed, or the length prefix and the header in front of it."""
+    """How the region cuts its strings, in the Reading bar's words
+    (:mod:`mapchar.ui.kind_names`): the end token it guessed, or the length
+    prefix and the header in front of it."""
     if region.records is not None:
         header = region.records.header
-        return "Length prefix" + (f", header {header}" if header else "")
+        return STRING_TYPE_NAMES[Pascal] + (f", header {header}" if header else "")
     if region.terminator is not None:
-        return f"End token {region.terminator:02X}"
+        return f"{STRING_TYPE_NAMES[EndToken]} {region.terminator:02X}"
     return ""
 
 

@@ -175,9 +175,9 @@ class HistoryMixin:
         """
         if entry is None or self._history_walking:
             return
-        # Only a kind that can *be* the view. A table or a glyph sheet opens in
-        # a window of its own and a bookmark jumps somewhere else, so none of
-        # them is a place Back could return to — and one can still land in
+        # Only a kind that can *be* the view. A table opens in a window of its
+        # own and a bookmark jumps somewhere else, so neither is a place Back
+        # could return to — and one can still land in
         # ``workspace.current`` as the neighbour of a closed row.
         if entry.kind not in (EntryKind.FILE, EntryKind.BLOCK):
             return
