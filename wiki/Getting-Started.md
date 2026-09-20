@@ -262,3 +262,5 @@ pointers:
 ![The ROM after writing](images/09-rom-after.png)
 
 Test in an emulator.
+
+Next: [Advanced Pointers](Advanced-Pointers).

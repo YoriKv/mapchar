@@ -223,8 +223,10 @@ is overwritten. The wiki repository only exists once its first page has been
 created through the web UI; until then the workflow fails saying so.
 
 `uv run python local-tools/wiki_screenshots.py` walks the Getting Started tutorial
-on a scratch copy of the Mortal Kombat II sample ROM in `tmp/wiki-tutorial/`
-and saves every screenshot the page uses, in the dark theme. It runs from WSL,
+and then the Advanced Pointers page (its shots are named `adv-…`) on a scratch
+copy of the Mortal Kombat II sample ROM in `tmp/wiki-tutorial/` and saves every
+screenshot the pages use, in the dark theme. `WIKI_SHOTS_OUT` names another
+folder to save them to. It runs from WSL,
 loading Windows' fonts, since the offscreen platform has none. A change to a
 surface the tutorial shows runs it again, and changes the page's text where the
 steps changed.
