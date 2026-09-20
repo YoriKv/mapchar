@@ -23,8 +23,8 @@ def _pieces(text: str, case: bool) -> list[tuple[int, int, str]]:
     """
     spans = piece_spans(text)
     if case:
-        return [(a, b, text[a:b]) for a, b in spans]
-    return [(a, b, fold(text[a:b])) for a, b in spans]
+        return [(a, b, text[a:b]) for a, b, _code in spans]
+    return [(a, b, fold(text[a:b])) for a, b, _code in spans]
 
 
 def find(

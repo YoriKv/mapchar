@@ -21,12 +21,12 @@ from mapchar.core.block import (
 from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.tokens import render
 from mapchar.pipeline.extract import extract
+from mapchar.pipeline.pointers import pointer_cells
 from mapchar.pipeline.text_view import TextDecode, text_model
 from mapchar.pipeline.view_read import (
     align_before,
     cuts_at_end_tokens,
     decode_strings,
-    pointer_cells,
     target_string,
 )
 from mapchar.plugins.charsets import CharsetTables
@@ -202,7 +202,7 @@ def test_a_pointer_s_string_is_read_for_a_bounded_preview():
 
 
 def test_a_view_s_pointer_window_holds_as_many_pointers_as_asked():
-    from mapchar.pipeline.view_read import pointer_window
+    from mapchar.pipeline.pointers import pointer_window
 
     table = PointerTableSource(4, 20, 2, 3)
     assert pointer_window(table, 0, 1) == 6  # the first pointer, at 4

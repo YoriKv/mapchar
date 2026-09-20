@@ -207,33 +207,34 @@ def parse_text(text: str) -> list[TextRun | CodeRef]:
     return items
 
 
-def piece_spans(text: str) -> list[tuple[int, int]]:
-    """``text`` split into the pieces the grammar makes, as character offsets.
+def piece_spans(text: str) -> list[tuple[int, int, bool]]:
+    """``text`` split into the pieces the grammar makes, each as
+    ``(start, stop, is a code)`` in character offsets.
 
     The lenient walk, for text a person is typing or a surface that has to
     keep its offsets: a code is one piece however many characters it spells,
     an escape is one piece, and an unclosed ``[`` runs to the next ``[`` or to
-    the end — mid-typing that is exactly the one piece being spelled.
+    the end — mid-typing that is exactly the one piece being spelled. Only a
+    closed ``[...]`` pair is a code, so a surface that tints or hides codes
+    reads that flag instead of guessing from the characters around a bracket.
     :func:`parse_text` is the strict reading, which the encoder needs.
     """
-    spans: list[tuple[int, int]] = []
+    spans: list[tuple[int, int, bool]] = []
     at, total = 0, len(text)
     while at < total:
         if text[at] == "\\" and at + 1 < total:
-            spans.append((at, at + 2))
+            spans.append((at, at + 2, False))
             at += 2
             continue
         if text[at] == "[":
             close = text.find("]", at + 1)
             nested = text.find("[", at + 1)
-            if close >= 0 and (nested < 0 or close < nested):
-                stop = close + 1
-            else:
-                stop = total if nested < 0 else nested
-            spans.append((at, stop))
+            closed = close >= 0 and (nested < 0 or close < nested)
+            stop = close + 1 if closed else (total if nested < 0 else nested)
+            spans.append((at, stop, closed))
             at = stop
             continue
-        spans.append((at, at + 1))
+        spans.append((at, at + 1, False))
         at += 1
     return spans
 

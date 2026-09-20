@@ -19,7 +19,7 @@ from mapchar.core.block import (
 from mapchar.engines.pointers import discover
 from mapchar.pipeline.extract import extract, reextract
 from mapchar.pipeline.insert import apply_splices, layout_block, string_ends
-from mapchar.pipeline.view_read import pointer_cells, pointer_window
+from mapchar.pipeline.pointers import pointer_cells, pointer_window
 from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import resolve_mapping
 from mapchar.project.exchange.addresses import shift_config

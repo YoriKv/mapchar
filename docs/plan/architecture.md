@@ -444,7 +444,11 @@ newline-code question.
 `core/tokens.py`'s `piece_spans` splits script text into the pieces the
 grammar makes — a `[...]` code or an escape is one piece, everything else one
 character — the lenient reading beside `parse_text`'s strict one, for text a
-person is typing. `engines/scriptfind.py` matches a needle over those pieces,
+person is typing. Each piece says whether it is a code (a closed bracket
+pair), so `ui/token_text.py`'s `code_spans` — what the editing pane's
+highlighter dims and `hide_codes` leaves out — reads the same walk rather than
+guessing from the one character before a `[` whether it is escaped.
+`engines/scriptfind.py` matches a needle over those pieces,
 as whole pieces. The needle is composed to NFC, and a
 case-insensitive match folds each piece on its own, never the whole string,
 because folding changes lengths and the spans are the original text's. `[line]` in a needle matches the code
@@ -477,11 +481,21 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   (reading and mapping pointer values, sorting numerically, merging
   duplicate targets into one string with several pointers), applies the
   string rule, and calls the decode engine per string.
-- **Nested sources**: `pipeline/pointers.py` is the table walk in front of the
-  cutting — `nested_records` maps the outer table's records and
-  `pointer_addresses` lists every pointer a source reads, outer and inner, so
-  extraction and the Hex tab read one walk and each keeps its own policy on
-  top of it. `pipeline/extract.py`'s `reextract` reads again only the groups a changed
+- **Pointer sources**: `pipeline/pointers.py` is the table walk. What one
+  pointer holds and reaches is a `PointerSlot` — its value, whether that is
+  the source's null, and its target — from `pointer_slots` (a table's or a
+  list's), `record_slots` (a nested record's outer pair) and `inner_slots`
+  (a record's inner table), all of them or those starting in a window of
+  bytes. Two readers keep their own policy on top: `read_pointers`, for
+  extraction, takes every pointer in the source's order, drops a null one and
+  records a notice for one it cannot follow; `pointer_cells`, for the Hex and
+  Text tabs, takes the pointers in view as `PointerCell`s, keeps the null and
+  the unmapped and flags them, and gives a nested source's outer pointers a
+  `role` of `table` or `base` since they reach structure rather than text.
+  `nested_records` maps the outer table's records, `pointer_addresses` lists
+  every pointer a source reads, and `pointer_window` says how far a view reads
+  to hold a given number of them.
+- **Nested sources**: `pipeline/extract.py`'s `reextract` reads again only the groups a changed
   stretch reaches, keeping every other record as it was, which is what keeps
   an edit in a block of thousands of strings from reading them all.
 - **Fixed strings that stop at an end token** hide it: `_decode_fixed` marks
@@ -490,11 +504,9 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   after a visible end token. `legacy_fixed_text` and `respell_fixed_end` turn
   what a version 1 project saved into today's spelling.
 - **View reading** (`pipeline/view_read.py`) is what the Hex and Text tabs
-  show: the bytes in view cut by the reading's string type, or read as
-  pointers — each with its value, its target and whether it is null, a nested
-  source's outer and inner pointers alike, the outer ones carrying a `role` of
-  `table` or `base` since they reach structure rather than text — and the
-  string a target reaches, by the same `decode_one` extraction uses. The cut is in step with the strings
+  show: the bytes in view cut by the reading's string type, and the string a
+  pointer's target reaches (`target_string`), by the same `decode_one`
+  extraction uses. The cut is in step with the strings
   the block reads: a range's fixed length runs from its start, so a view that
   starts part-way through a string is handed the byte it begins at and shows
   the rest of that one, then whole ones, and a range's record header is stepped

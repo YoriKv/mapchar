@@ -7,12 +7,9 @@ from bisect import bisect_right
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.core.tokens import Token
+from mapchar.pipeline.pointers import pointer_window
 from mapchar.pipeline.text_view import TextDecode, TextModel, text_model
-from mapchar.pipeline.view_read import (
-    align_before,
-    cuts_at_end_tokens,
-    pointer_window,
-)
+from mapchar.pipeline.view_read import align_before, cuts_at_end_tokens
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.pointer_tokens import text_tokens, view_source
 

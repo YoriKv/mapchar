@@ -15,7 +15,7 @@ from mapchar.core.address import format_hex
 from mapchar.core.block import BlockConfig, PointerSource, PointerTableSource
 from mapchar.core.table import TableEntry, TokenKind
 from mapchar.core.tokens import Token, render
-from mapchar.pipeline.view_read import PointerCell
+from mapchar.pipeline.pointers import PointerCell
 from mapchar.ui.token_text import POINTER_TOKENS, compact_text, ellipsize
 
 LINE_PREVIEW_CHARS = 80

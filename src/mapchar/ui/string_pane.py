@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.ui import theme
 from mapchar.ui.code_editor import CodeEditor, CodeInfo
-from mapchar.ui.token_text import CODE_IN_TEXT, hide_codes
+from mapchar.ui.token_text import code_spans, hide_codes
 from mapchar.ui.widgets import ElidedLabel, apply_wrap, mono_font, setting_toggle
 
 if TYPE_CHECKING:
@@ -56,8 +56,8 @@ class CodeHighlighter(QSyntaxHighlighter):
                 QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text
             )
         )
-        for match in CODE_IN_TEXT.finditer(text):
-            self.setFormat(match.start(), match.end() - match.start(), fmt)
+        for start, stop in code_spans(text):
+            self.setFormat(start, stop - start, fmt)
 
 
 class StringPane(QWidget):

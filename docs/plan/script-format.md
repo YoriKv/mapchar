@@ -108,7 +108,11 @@ by `id`.
   `#, fuzzy` when the status is *review*, and a `# done` translator comment
   when it is *done*, PO having no flag for that. Multi-line strings use PO's
   standard continuation. Plural forms are not used.
-- **Import rules** — a record whose `original` differs from the project's
+- **Import rules** — a record whose `id` names no string of the project is
+  skipped and listed, and so is one with no `id` at all — a row with an empty
+  `id` cell, or a PO entry with no `msgctxt`; the only PO entry that is not a
+  record is the header, which has neither a `msgctxt` nor a `msgid`. A record
+  whose `original` differs from the project's
   original is skipped and listed, unless **Force** is on; the comparison is
   on NFC, so a round trip through an editor that decomposes text skips
   nothing. A translation goes into the bytes as an edit, and one that does not

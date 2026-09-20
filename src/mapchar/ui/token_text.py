@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from mapchar.core.tokens import piece_spans
 from mapchar.ui import BYTES_PER_ROW
 
 if TYPE_CHECKING:
@@ -25,8 +26,6 @@ BREAK_MARK = "↵"
 CODE_MARK = "▪"
 _EMBEDDED_BREAK = re.compile(r"\[[^\[\]]*\]\n|\n")
 _EMBEDDED_CODE = re.compile(r"\[[^\[\]]*\]")
-CODE_IN_TEXT = re.compile(r"(?<!\\)\[[^\[\]]*\]")
-"""A code in script text: a bracketed name, unless the bracket is escaped."""
 
 
 def ellipsize(text: str, limit: int) -> str:
@@ -59,10 +58,31 @@ def compact_text(text: str) -> str:
     return _EMBEDDED_CODE.sub(CODE_MARK, _EMBEDDED_BREAK.sub(BREAK_MARK, text))
 
 
+def code_spans(text: str) -> list[tuple[int, int]]:
+    """Where the codes in script text are, as ``(start, stop)`` offsets.
+
+    The grammar's own lenient walk (:func:`~mapchar.core.tokens.piece_spans`)
+    says which pieces are codes, so an escape is read from the start of the
+    text rather than guessed at from the one character before a ``[``: in
+    ``a\\\\[line]b`` the backslash is itself escaped and the code is real.
+    """
+    # The highlighter runs this on every keystroke, so text with no bracket at
+    # all — most of it — never pays for the walk.
+    if "[" not in text:
+        return []
+    return [(start, stop) for start, stop, is_code in piece_spans(text) if is_code]
+
+
 def hide_codes(text: str) -> str:
     """Script text with its codes left out and its line breaks kept: what the
     Text tab shows with Show codes off, for text that has no tokens."""
-    return CODE_IN_TEXT.sub("", text)
+    out: list[str] = []
+    at = 0
+    for start, stop in code_spans(text):
+        out.append(text[at:start])
+        at = stop
+    out.append(text[at:])
+    return "".join(out)
 
 
 def display_text(token: Token) -> tuple[str, bool]:

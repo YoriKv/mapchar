@@ -165,9 +165,10 @@ def read_po(text: str) -> list[Record]:
 
     def flush() -> None:
         nonlocal entry, notes, fuzzy, done, address, current
-        if ("msgctxt" in entry and entry.get("msgid", "") != "") or entry.get(
-            "msgctxt"
-        ):
+        # Every entry is a record but the header, which is the one with neither
+        # a context nor an original. One without a context has no id, and is
+        # read all the same so that the import lists it rather than losing it.
+        if entry.get("msgctxt") or entry.get("msgid"):
             if fuzzy:
                 status = "review"
             elif done:
@@ -245,7 +246,7 @@ def apply_records(
         name, _, idx = r.id.rpartition("/")
         strings = blocks.get(name)
         if strings is None or not idx.isdigit():
-            report.skipped.append(f"{r.id}: no such block")
+            report.skipped.append(f"{r.id or '(no id)'}: no such block")
             continue
         rec = next((s for s in strings if s.index == int(idx)), None)
         if rec is None:

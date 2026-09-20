@@ -7,20 +7,21 @@ from copy import deepcopy
 from dataclasses import replace
 
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeyEvent, QTextCursor
+from PySide6.QtGui import QKeyEvent, QTextCursor, QTextDocument
 
 from mapchar.core.block import RangeSource, Status
 from mapchar.core.font import TextBox
 from mapchar.core.tokens import piece_spans
 from mapchar.engines import scriptfind
 from mapchar.ui.code_editor import CodeEditor, CodeInfo
+from mapchar.ui.string_pane import CodeHighlighter
 from mapchar.ui.strings_view import (
     COL_NOTES,
     COL_TRANSLATION,
     RowData,
     StringsView,
 )
-from mapchar.ui.token_text import hide_codes
+from mapchar.ui.token_text import code_spans, hide_codes
 from window_helpers import CODES_TABLE, add_block, open_rom_and_table
 
 
@@ -35,10 +36,11 @@ def block_with(window, tmp_path, data, name="b", stop=None):
 
 
 def test_pieces_keep_codes_whole():
-    assert piece_spans("A[line]B") == [(0, 1), (1, 7), (7, 8)]
-    assert piece_spans("\\[x") == [(0, 2), (2, 3)]
-    # An unclosed '[' is the one piece being typed.
-    assert piece_spans("A[li") == [(0, 1), (1, 4)]
+    # The third element says which piece is a code.
+    assert piece_spans("A[line]B") == [(0, 1, False), (1, 7, True), (7, 8, False)]
+    assert piece_spans("\\[x") == [(0, 2, False), (2, 3, False)]
+    # An unclosed '[' is the one piece being typed, and is no code yet.
+    assert piece_spans("A[li") == [(0, 1, False), (1, 4, False)]
 
 
 def test_find_never_reaches_inside_a_code():
@@ -241,6 +243,28 @@ def test_the_pane_shows_the_selected_string_whole(qtbot):
     assert pane.notes.text() == "seen" and pane.editor.toPlainText() == "A[end]"
     view.set_rows([])
     assert pane.index is None and not pane.isEnabled()
+
+
+def dimmed(doc, block):
+    """The ``(start, length)`` runs :class:`CodeHighlighter` formatted."""
+    layout = doc.findBlockByNumber(block).layout()
+    return [(run.start, run.length) for run in layout.formats()]
+
+
+def test_a_code_is_found_past_an_escaped_backslash(qtbot):
+    # One character of lookbehind cannot tell a '[' escaped by a backslash
+    # from one after a backslash that is itself escaped, so the grammar's own
+    # walk decides: '\\' is a piece, and '[line]' after it is a code.
+    assert code_spans("a\\\\[line]b") == [(3, 9)]
+    assert hide_codes("a\\\\[line]b") == "a\\\\b"
+    # An unclosed '[' swallows the escape after it, so the pair that closes is
+    # the code — the lenient walk's answer, which every other surface takes.
+    assert code_spans("[\\[line]") == [(2, 8)]
+    assert hide_codes("[\\[line]") == "[\\"
+    doc = QTextDocument("a\\\\[line]b\n[\\[line]")
+    CodeHighlighter(doc).rehighlight()
+    assert dimmed(doc, 0) == [(3, 6)]
+    assert dimmed(doc, 1) == [(2, 6)]
 
 
 def test_the_pane_commits_on_return_and_moves_on(qtbot):

@@ -75,6 +75,40 @@ def test_po_roundtrip():
     }
 
 
+def test_po_reads_every_entry_but_the_header():
+    """The header has neither a context nor an original. Every other entry is
+    a record: one whose original is empty, and one with no context — which has
+    no id, so the import lists it instead of dropping it unseen."""
+    text = "\n".join(
+        [
+            'msgid ""',
+            'msgstr ""',
+            '"Content-Type: text/plain; charset=UTF-8\\n"',
+            "",
+            'msgctxt "Dialogue/0"',
+            'msgid ""',
+            'msgstr "A[end]"',
+            "",
+            'msgid "B[end]"',
+            'msgstr "C[end]"',
+            "",
+            'msgctxt ""',
+            'msgid "D[end]"',
+            'msgstr ""',
+            "",
+        ]
+    )
+    back = read_po(text)
+    assert [(r.id, r.original, r.translation) for r in back] == [
+        ("Dialogue/0", "", "A[end]"),
+        ("", "B[end]", "C[end]"),
+        ("", "D[end]", ""),
+    ]
+    report = apply_records(back, {"Dialogue": fresh()})
+    assert report.applied == 1
+    assert report.skipped == ["(no id): no such block"] * 2
+
+
 def test_apply_records():
     target = fresh()
     recs = records()

@@ -9,12 +9,8 @@ from mapchar.core.block import NestedPointerSource, block_bound
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.engines.decode import RunResult
-from mapchar.pipeline.view_read import (
-    PointerCell,
-    decode_strings,
-    pointer_cells,
-    target_string,
-)
+from mapchar.pipeline.pointers import PointerCell, pointer_cells
+from mapchar.pipeline.view_read import decode_strings, target_string
 from mapchar.project.progress import progress_text
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.pointer_tokens import (
