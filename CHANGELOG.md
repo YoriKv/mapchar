@@ -1,17 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.1.4 - unreleased
 
-- The Table Editor's Charset picker is gone: Includes does the same, since
-  every encoding is offered as a table of its own.
-- A table of tens of thousands of entries no longer pauses the window: the
-  Table Editor's grid draws its rows from a model, and a snapshot shares the
-  entries it holds.
-- A refused translation says why: the character no table has an entry for, the
-  table that does have it and the code that switches there, the code or the
-  operands no table knows, or what the text encodes to against its room.
-- The Bytes column counts a packed block's room as the string's own bytes plus
-  the block's spare, not the whole block; its tooltip says what the room is.
+- Remove charset picker in table editor
+- Performance improvement for table editor
+- Better errors when refusing a translation write
+- Fixed bytes column display in strings tab
+- Find Pointers leaves stray matches out of the pointer table it infers
 
 ## v0.1.3 - 2026-09-18
 

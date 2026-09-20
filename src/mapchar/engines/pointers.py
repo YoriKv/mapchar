@@ -22,6 +22,10 @@ def common_stride(addrs: list[int]) -> tuple[int, float]:
     return stride, seen / (len(addrs) - 1)
 
 
+RUN_GAP = 4
+"""How many strides two hits of one table may sit apart."""
+
+
 @dataclass
 class Candidate:
     mapping_id: str
@@ -47,6 +51,28 @@ class Candidate:
     @property
     def addresses(self) -> list[int]:
         return sorted(a for addrs in self.hits.values() for a in addrs)
+
+    def table_run(self) -> list[int]:
+        """The longest run of hit addresses that reads as one table: each a
+        whole number of strides after the last, and no more than
+        :data:`RUN_GAP` of them — the room a null or an unlisted string takes.
+
+        A short pointer value turns up elsewhere in a file by chance, and those
+        strays are hits like any other; the run is what leaves them out.
+        """
+        addrs = self.addresses
+        if not addrs or not self.stride:
+            return addrs
+        best = run = [addrs[0]]
+        for address in addrs[1:]:
+            gap = address - run[-1]
+            if gap % self.stride == 0 and gap <= self.stride * RUN_GAP:
+                run = [*run, address]
+            else:
+                run = [address]
+            if len(run) > len(best):
+                best = run
+        return best
 
     def regularity(self) -> float:
         return common_stride(self.addresses)[1]
@@ -74,7 +100,7 @@ class Candidate:
         }
 
     def source(self) -> PointerTableSource:
-        addrs = self.addresses
+        addrs = self.table_run()
         return PointerTableSource(
             addrs[0],
             addrs[-1] + self.size,

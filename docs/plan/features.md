@@ -703,8 +703,10 @@ as a **Range** of end-token strings — rather than every control at once.
     each of 16/24/32 bits, both endiannesses and each offset in the range;
   - search the file for those byte patterns;
   - results are grouped by the (mapping, size, endian, offset) combination
-    that explains the most strings, with the address range they occupy and
-    the stride between them;
+    that explains the most strings, with the stride between their addresses
+    and the range of the table they make: the longest run of them a whole
+    number of strides apart, which leaves out a pointer value that turns up
+    elsewhere in the file by chance;
   - the search runs with a Stop button and a progress bar, and a stopped
     search still offers what it had ranked;
   - **Use as Pointer Table** converts the block's source to a pointer table

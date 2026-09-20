@@ -177,3 +177,16 @@ Editor's grid is a `QTableView` over a model of the entries themselves
 sample (or `--project PATH`) from a scratch copy with scratch settings, and
 saves the main window, every dock, tool window and dialog — each also at its
 smallest size — and every menu and context menu to `tmp/ui-shots/<theme>/`.
+
+## The wiki
+
+`wiki/` is the GitHub wiki's pages, pushed to the repository's `.wiki.git`:
+`Home.md`, `_Sidebar.md`, a page per file, and their screenshots in
+`wiki/images/`, linked by relative path.
+
+`uv run python tools/wiki_screenshots.py` walks the Getting Started tutorial
+on a scratch copy of the Mortal Kombat II sample ROM in `tmp/wiki-tutorial/`
+and saves every screenshot the page uses, in the dark theme. It runs from WSL,
+loading Windows' fonts, since the offscreen platform has none. A change to a
+surface the tutorial shows runs it again, and changes the page's text where the
+steps changed.

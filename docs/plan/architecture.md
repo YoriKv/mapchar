@@ -350,7 +350,9 @@ produces, for each candidate, the addresses where the encoded values occur and
 the value found at each. Candidates are ranked by how many distinct strings
 they explain, then by how regular the stride between their addresses is. Each
 carries both answers a result can be taken as: `source()` is the inferred
-`PointerTableSource`, and `refs()` the `PointerRef`s per string that **Attach**
+`PointerTableSource` over `table_run()` — the longest run of hit addresses a
+whole number of strides apart, at most `RUN_GAP` of them, so stray matches
+elsewhere in the file stay out of the table — and `refs()` the `PointerRef`s per string that **Attach**
 puts on the strings instead. A `progress` hook is called per combination and
 stops the walk when it returns `False`, so a stopped search still ranks what it
 had.

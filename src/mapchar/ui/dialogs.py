@@ -319,9 +319,9 @@ class DiscoveryDialog(QDialog):
                 format_hex_offset(c.offset),
                 str(c.explained),
                 str(c.stride),
-                f"{c.addresses[0]:X}–{c.addresses[-1]:X}" if c.addresses else "",
+                f"{run[0]:X}–{run[-1]:X}" if run else "",
             ]
-            for c in candidates
+            for c, run in ((c, c.table_run()) for c in candidates)
         )
         if candidates:
             self.table.selectRow(0)

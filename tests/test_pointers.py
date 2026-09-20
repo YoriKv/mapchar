@@ -128,6 +128,17 @@ def test_discovery_finds_the_table(registry):
     assert len(ex.strings) == 2
 
 
+def test_discovery_leaves_stray_matches_out_of_the_table(registry):
+    """A pointer value that also turns up far from the table is a hit, and
+    **Attach** keeps it, but the table inferred is the run the strides join."""
+    rom = pointer_rom((0x10, 0x13), "41 42 00 43 00") + bytes(40) + b"\x13\x00"
+    mappings = {"linear": resolve_mapping(registry, "linear")}
+    best = discover(rom, [0x10, 0x13], mappings, sizes=(2,), offsets=(0,))[0]
+    assert len(best.addresses) == 3
+    assert best.table_run() == [0, 2]
+    assert best.source() == PointerTableSource(0, 4, 2, 2, "little", "linear", 0)
+
+
 def test_range_source_still_slotted():
     cfg = BlockConfig(RangeSource(0x10, 0x19), EndToken(), "main")
     assert cfg.effective_write_mode is WriteMode.SLOTTED
