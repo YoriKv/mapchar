@@ -15,6 +15,7 @@ from window_helpers import (
     ASCII_TABLE,
     TABLE,
     add_block,
+    arm_scheme,
     grid_keys,
     grid_row,
     open_rom_and_table,
@@ -345,7 +346,7 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     slot = len(packed) + 9  # the compressed slot has spare room at its end
     data = b"\xff" * 16 + packed + b"\xff" * 9 + b"\xff" * 24
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
-    window._preview_scheme = "gba_lz77"
+    arm_scheme(window, "gba_lz77")
     window._go_to(16)
     assert "compressed bytes at 10 → 90 bytes" in window.decompress_window.status.text()
     block = add_block(
@@ -369,6 +370,163 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     assert out.startswith(b"HI HI HI\x00" + b"\xff" * 9 + b"WORLD WORLD\x00")
     assert block.doc.strings[0].current_text() == "HI HI HI[end]"
     assert block.doc.strings[0].original == "HELLO HELLO HELLO[end]"
+
+
+# -- the Compression picker and the Decompressed View ------------------------
+
+RNC2_PAYLOAD = b"HELLO HELLO HELLO\x00WORLD WORLD WORLD\x00" * 4
+"""Text enough to read in the preview's Text tab, and repetitive enough to pack."""
+
+
+def _rnc2_rom(payload: bytes = RNC2_PAYLOAD, *, gap: int = 16) -> tuple[bytes, bytes]:
+    """A ROM holding one RNC 2 stream at ``gap``, and the stream itself."""
+    from mapchar.plugins.builtins.compression import rnc
+
+    stream = rnc.compress(payload, method=2)
+    return b"\xff" * gap + stream + b"\xff" * 32, stream
+
+
+def test_the_compression_picker_arms_the_preview_and_turns_it_off(window, tmp_path):
+    """A scheme picked on the Format bar is what the Decompressed View reads
+    through, in both of its readings of the payload; ``none`` reads nothing."""
+    data, stream = _rnc2_rom()
+    open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
+    view = window.decompress_window
+    window._go_to(16)
+    arm_scheme(window, "rnc2")
+    assert window._preview_scheme == "rnc2" and view.isVisible()
+    assert f"{len(stream):,} compressed bytes at 10 →" in view.status.text()
+    # One decode, shown twice: the bytes and the text they read as.
+    assert view.raw._model.data.startswith(b"HELLO")
+    assert "HELLO HELLO HELLO" in view.text.edit.toPlainText()
+    arm_scheme(window, "")
+    assert window._preview_scheme is None and not view.isVisible()
+
+
+def test_a_signature_arms_the_preview_by_itself_and_leaving_hides_it(window, tmp_path):
+    data, stream = _rnc2_rom()
+    open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
+    view = window.decompress_window
+    # The picker starts on automatic, and nothing announces itself at 0.
+    assert window.compression_pick.currentData() is None
+    assert not view.isVisible() and window._preview_scheme is None
+    window._go_to(16)
+    assert window._preview_scheme == "rnc2" and view.isVisible()
+    # The picker only says it was left to the bytes, so the view names what
+    # recognised them.
+    assert view.status.text().startswith("RNC 2")
+    # The file's own view washes the structure's compressed bytes.
+    assert window.raw.structure() == (16, 16 + len(stream))
+    window._go_to(17)
+    assert window._preview_scheme is None and not view.isVisible()
+    assert window.raw.structure() is None
+    # A click on the stream's first byte arms it again: a selection is the
+    # nearest thing the byte views have to a cursor.
+    window._select_bytes(16, 1)
+    assert window._preview_scheme == "rnc2" and view.isVisible()
+
+
+def test_a_block_states_its_own_scheme_and_cannot_be_repicked(window, tmp_path):
+    data, stream = _rnc2_rom()
+    file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
+    plain = add_block(window, file_entry, "plain", RangeSource(0, 6))
+    assert window.compression_pick.currentData() == ""
+    assert not window.compression_pick.isEnabled()
+    packed = add_block(
+        window,
+        file_entry,
+        "packed",
+        RangeSource(0, len(RNC2_PAYLOAD)),
+        compression_id="rnc2",
+        slice_offset=16,
+        slice_length=len(stream),
+    )
+    assert packed.doc.data == RNC2_PAYLOAD
+    assert window.compression_pick.currentData() == "rnc2"
+    assert not window.compression_pick.isEnabled()
+    # Back on the file, the pick is the file's own again.
+    window._activate_entry(file_entry)
+    assert window.compression_pick.isEnabled()
+    assert window.compression_pick.currentData() is None
+    assert plain.name and packed.name  # both rows are still there
+
+
+def test_the_compression_pick_survives_a_project_save_and_load(window, tmp_path):
+    data, _stream = _rnc2_rom()
+    file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
+    arm_scheme(window, "rnc2")
+    assert file_entry.session.preview_scheme == "rnc2"
+    project = tmp_path / "p.mapchar"
+    window.project_path = str(project)
+    assert window._save_project()
+    assert '"preview_scheme": "rnc2"' in project.read_text(encoding="utf-8")
+    assert window.open_project(str(project))
+    assert window.workspace.files()[0].session.preview_scheme == "rnc2"
+    assert window.compression_pick.currentData() == "rnc2"
+
+
+def test_find_all_lists_the_structures_and_selecting_one_moves_the_view(
+    window, tmp_path
+):
+    from mapchar.plugins.builtins.compression import rnc
+
+    first = rnc.compress(RNC2_PAYLOAD, method=2)
+    second = rnc.compress(b"SECOND SECOND SECOND\x00" * 3, method=2)
+    data = b"\xff" * 16 + first + b"\xff" * 8 + second + b"\xff" * 16
+    at_second = 16 + len(first) + 8
+    open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
+    view = window.decompress_window
+    # On automatic, Find All covers every scheme that announces itself.
+    view.find_button.click()
+    assert "2 structure(s)" in view.found.text()
+    assert view.results.rowCount() == 2
+    assert [view.results.item(r, 0).text() for r in range(2)] == [
+        "10",
+        f"{at_second:X}",
+    ]
+    assert view.results.item(0, 1).text() == f"{len(first):,}"
+    assert view.results.item(0, 2).text() == f"{len(RNC2_PAYLOAD):,}"
+    # The payload reads as text, which is what the Text column scores.
+    assert float(view.results.item(0, 3).text()) > 0.5
+    view.results.selectRow(1)
+    assert window._offset == at_second and window._preview_scheme == "rnc2"
+    # The list is one file's: another file on screen drops it.
+    open_rom_and_table(window, tmp_path, b"\xff" * 64, rom_name="other.bin")
+    assert view.results.rowCount() == 0
+
+
+def test_to_block_under_automatic_arming_records_the_scheme_that_decoded(
+    window, tmp_path
+):
+    data, stream = _rnc2_rom()
+    open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
+    window._go_to(16)
+    window.decompress_window.block.click()
+    block = window.workspace.of_kind(EntryKind.BLOCK)[0]
+    assert block.compression_id == "rnc2"
+    assert (block.slice_offset, block.slice_length) == (16, len(stream))
+    assert block.doc.data == RNC2_PAYLOAD
+
+
+def test_find_all_lists_every_structure_in_the_mk2_rom(window):
+    """The 29 RNC 2 streams Mortal Kombat II (GB) carries, when the ROM is here.
+
+    The ROM never enters the repository; without it this skips. What it pins is
+    Find All against a real packer's output: the walk over a whole ROM finds
+    every stream and nothing else.
+    """
+    rom = Path(__file__).resolve().parent.parent / (
+        "sample-projects/MK2/Mortal Kombat II (USA, Europe).gb"
+    )
+    if not rom.exists():
+        pytest.skip("the Mortal Kombat II ROM is not present")
+    window.open_rom(str(rom))
+    view = window.decompress_window
+    view.find_button.click()
+    assert "29 structure(s)" in view.found.text()
+    assert view.results.item(0, 0).text() == "AC54"
+    assert view.results.item(0, 1).text() == "1,951"
+    assert view.results.item(0, 2).text() == "3,056"
 
 
 def test_two_blocks_over_one_slot_write_together(window, tmp_path):
@@ -742,7 +900,8 @@ def test_nothing_open_leaves_the_controls_gated(window):
     assert not window.format_bar.isEnabled()
     assert not window.offset_box.isEnabled()
     assert not window.write_action.isEnabled()
-    assert not window.block_bar.isVisible()
+    # The Block bar keeps its row, greyed and with nothing to say.
+    assert not window.block_bar.isEnabled() and window.block_label.text() == ""
 
 
 def test_a_file_gates_the_string_surfaces_off(window, tmp_path):
@@ -754,7 +913,9 @@ def test_a_file_gates_the_string_surfaces_off(window, tmp_path):
     assert not window.strings_tab_action.isEnabled()
     assert not window.find_replace_action.isEnabled()
     assert not window.tabs.isTabEnabled(window.tabs.indexOf(window.strings))
-    assert not window.block_bar.isVisibleTo(window)
+    # Greyed, not gone — opening a block moves nothing — and it names the file.
+    assert window.block_bar.isVisibleTo(window) and not window.block_bar.isEnabled()
+    assert window.block_label.text() == "rom.bin · 3 bytes"
 
 
 def test_a_block_gates_the_string_surfaces_on(window, tmp_path):
@@ -766,7 +927,7 @@ def test_a_block_gates_the_string_surfaces_on(window, tmp_path):
     assert window.find_replace_action.isEnabled()
     assert window.preview_action.isEnabled()
     assert window.tabs.isTabEnabled(window.tabs.indexOf(window.strings))
-    assert window.block_bar.isVisibleTo(window)
+    assert window.block_bar.isEnabled()
     assert window.block_export.isEnabled()
     assert window.reading_bar.isEnabled()
     # A block reads its container through its parent, so the row is not its own.
@@ -1988,6 +2149,44 @@ def test_a_block_from_a_scanned_region_keeps_a_table_that_already_has_an_end(
     window._block_from_region(Region(0, 6, 1.0, terminator=0x0F))
     assert len(table_entry.table.entries) == before
     assert len(window.workspace.of_kind(EntryKind.BLOCK)) == blocks + 1
+
+
+def test_a_block_from_a_scanned_record_chain_reads_it_behind_its_header(
+    window, tmp_path
+):
+    """A region the scan found as a chain of length-prefixed records becomes a
+    block that reads it that way — the length prefix and the header in front of
+    it — and no end token is guessed for a string that carries its own length."""
+    from mapchar.core.block import Pascal
+    from mapchar.engines.scan import Records, Region
+    from mapchar.project.formats.table_native import HEADER
+
+    data = b"\x90\xa1\x02AB\x90\xa1\x03ABC"
+    open_rom_and_table(
+        window, tmp_path, data, table=f"{HEADER}\n@table main\n41=A\n42=B\n43=C\n"
+    )
+    table_entry = window.workspace.entry_for_table("main")
+    before = len(table_entry.table.entries)
+    window._block_from_region(Region(0, len(data), 1.0, records=Records(header=2)))
+    entry = window._entry
+    assert entry.config.string_type == Pascal(1) and entry.config.header == 2
+    assert texts(entry.doc.strings) == ["AB", "ABC"]
+    assert len(table_entry.table.entries) == before
+    window.undo_stack.undo()
+    assert window._entry is not entry
+
+
+def test_the_scan_window_says_how_each_region_cuts_its_strings():
+    """The Strings column is the Block dialog's words, never a class name."""
+    from mapchar.engines.scan import Records, Region
+    from mapchar.ui.scan_window import _strings_of
+
+    assert _strings_of(Region(0, 8, 1.0, records=Records(header=2))) == (
+        "Length prefix, header 2"
+    )
+    assert _strings_of(Region(0, 8, 1.0, records=Records())) == "Length prefix"
+    assert _strings_of(Region(0, 8, 1.0, terminator=0x00)) == "End token 00"
+    assert _strings_of(Region(0, 8, 1.0)) == ""
 
 
 def test_autosave_writes_a_copy_and_offers_it_back(window, tmp_path, monkeypatch):

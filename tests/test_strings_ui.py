@@ -595,6 +595,18 @@ def _click(widget, point):
     QTest.mouseClick(widget.viewport(), Qt.MouseButton.LeftButton, pos=point.toPoint())
 
 
+def _shift_click(widget, point):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    QTest.mouseClick(
+        widget.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.ShiftModifier,
+        point.toPoint(),
+    )
+
+
 def test_a_click_on_a_character_selects_its_bits_in_both_columns(qtbot):
     """The second 6-bit code straddles bytes 0 and 1: clicked, it is selected by
     its bits, the window is told the two bytes it touches, and the hex column
@@ -639,6 +651,23 @@ def test_dragging_over_characters_selects_every_code_it_crosses(qtbot):
     widget.mouseMoveEvent(_move_event(viewport, end))
     assert widget.selection_bits() == (6, 18)
     assert widget.selection() == (0, 3)
+
+
+def test_shift_clicking_extends_the_selection_the_way_a_drag_does(qtbot):
+    """The anchor the last click left, out to what is Shift+clicked, in each
+    column's own units — codes by their bits in the text, whole bytes in the
+    hex, and backwards as readily as forwards."""
+    from PySide6.QtCore import QRectF
+
+    tokens, widget = _six_bit_codes(qtbot)
+    _click(widget, widget._text_segments(tokens[1], 3)[0].center())
+    _shift_click(widget, widget._text_segments(tokens[3], 3)[0].center())
+    assert widget.selection_bits() == (6, 24)
+    assert widget.selection() == (0, 3)
+    _click(widget, QRectF(widget._hex_cell(2)).center())
+    _shift_click(widget, QRectF(widget._hex_cell(0)).center())
+    assert widget.selection() == (0, 3)
+    assert widget.selection_bits() is None
 
 
 def test_a_byte_aligned_bit_span_covers_its_cells_exactly(qtbot):

@@ -299,6 +299,11 @@ class NavigationMixin:
         self._selection = (start, end) if end > start else None
         self._update_nav_status()
         self._sync_hex_panel()
+        # A selection is the closest thing the byte views have to a cursor, and
+        # the decompression preview reads from where it starts
+        # (:mod:`mapchar.ui.main_window.compression`).
+        if self._doc is not None:
+            self._refresh_decompress_preview(self._doc, self._table_set())
         # Not back into the text view it came from: rewriting its cursor mid-drag
         # moves the drag's anchor, so a selection dragged upward never grows.
         if not from_text and self.tabs.currentWidget() is self.text:

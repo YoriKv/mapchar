@@ -32,6 +32,7 @@ from mapchar.plugins.builtins.compression.lzss import (
 )
 from mapchar.plugins.builtins.compression.packbits import PackBits
 from mapchar.plugins.builtins.compression.prs import Prs
+from mapchar.plugins.builtins.compression.rnc import Rnc1, Rnc2
 from mapchar.plugins.builtins.compression.snes_rle import Rle1, Rle2
 
 __all__ = [
@@ -52,6 +53,8 @@ __all__ = [
     "Prs",
     "Rle1",
     "Rle2",
+    "Rnc1",
+    "Rnc2",
     "register",
 ]
 
@@ -65,6 +68,8 @@ def register(registry) -> None:
         Lz2Improved(),
         Kosinski(),
         Prs(),
+        Rnc1(),
+        Rnc2(),
         Rle1(),
         Rle2(),
         KonamiNesRle(),

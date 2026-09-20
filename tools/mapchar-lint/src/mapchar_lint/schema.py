@@ -75,14 +75,21 @@ KEYS_BY_KIND = {
 #: Every key some kind reads: one outside this is a typo, not a misplaced key.
 ALL_ENTRY_KEYS = frozenset(key for keys in KEYS_BY_KIND.values() for key in keys)
 #: ``EntrySession`` as the file stores it.
-SESSION_KEYS = ("table_id", "offset", "view", "config", "resolve_pointers")
+SESSION_KEYS = (
+    "table_id",
+    "offset",
+    "view",
+    "config",
+    "resolve_pointers",
+    "preview_scheme",
+)
 #: A block's reading is its own ``config``; the writer drops ``session.config``.
 SESSION_KEYS_NOT_FOR = {"config": ("block",)}
 #: The document's own keys (``project_dict``).
 TOP_KEYS = ("version", "current", "entries", "glossary")
 #: A string record (``_string_records``): index, original, translation, status,
 #: notes.
-STRING_KEYS = ("i", "o", "t", "s", "n")
+STRING_KEYS = ("i", "o", "h", "t", "s", "n")
 #: A glossary term (``glossary_dicts``).
 GLOSSARY_KEYS = ("t", "r", "n")
 #: ``TextBox`` as the file stores it, with the reader's defaults.
@@ -145,6 +152,7 @@ STRING_KEYS_CONFIG = (
     "spp",
     "realign",
     "skips",
+    "header",
     "lines",
     "bound",
     "mode",

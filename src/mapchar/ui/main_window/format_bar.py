@@ -63,7 +63,7 @@ class FormatBarMixin:
         Each control is put back the way it was rather than simply un-blocked,
         so a load nested inside one that is already quiet leaves it quiet.
         """
-        bars = (self.format_pick, self.resolve_pointers)
+        bars = (self.format_pick, self.compression_pick, self.resolve_pointers)
         blocked = [widget.blockSignals(True) for widget in bars]
         try:
             yield
@@ -82,6 +82,7 @@ class FormatBarMixin:
 
     def _select_reading(self) -> None:
         """Show the reading's format and mode, without applying anything."""
+        self._sync_compression_pick()
         cfg = self._reading()
         if cfg is None:
             # Nothing on screen has a reading, so the bar shows the default one
@@ -120,7 +121,9 @@ class FormatBarMixin:
         self.mode_toggle.set_value(shown)
         self.mode_toggle.button(True).setEnabled(pointers or not block)
         self.reading_bar.show_string_view(string_view)
-        self.resolve_group.setVisible(shown)
+        # Greyed rather than gone: a control that came and went would wrap the
+        # bar in a narrow window, and move everything under it.
+        self.resolve_group.setEnabled(shown)
 
     def _sync_view_mode(self) -> None:
         """Show the mode again after the view's bounds changed."""

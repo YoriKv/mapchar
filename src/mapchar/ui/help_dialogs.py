@@ -65,6 +65,7 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Start / end of file", "Home / End"),
             ("Back / forward through visited entries", "Mouse 4 / Mouse 5"),
             ("Select bytes", "Drag over hex or text"),
+            ("Extend the selection", "Shift+click"),
             ("Zoom the Text view", "Ctrl+Wheel"),
             ("The Hex view's own menu", "Right-click"),
         ),
@@ -185,6 +186,10 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
                 "or the string with Follow Pointers on",
             ),
             (Swatch("A", tint=theme.TINT_SELECTION), "The selected bytes"),
+            (
+                Swatch("52", tint=theme.TINT_STRUCTURE),
+                "The compressed structure the Decompressed View is reading",
+            ),
             (Swatch("A", mark="rule"), "Where the block starts a string"),
             (Swatch("s↵"), "A line break inside a run of text"),
             (Swatch("s▪"), "A code inside a run of text"),

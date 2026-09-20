@@ -159,12 +159,12 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
     """
     if entry.doc is not None and entry.doc.strings:
         states = [
-            (rec.index, rec.original, rec.status, rec.notes, None)
+            (rec.index, rec.original, rec.status, rec.notes, None, rec.original_digest)
             for rec in entry.doc.strings
         ]
     elif entry.pending_strings:
         states = [
-            (i, st.original, st.status, st.notes, st.translation)
+            (i, st.original, st.status, st.notes, st.translation, st.digest)
             for i, st in sorted(entry.pending_strings.items())
         ]
     else:
@@ -177,10 +177,12 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
         # (:attr:`~mapchar.project.workspace.Entry.strings_cache`).
         return kept[1]
     records: list[dict[str, Any]] = []
-    for index, original, status, notes, translation in states:
+    for index, original, status, notes, translation, digest in states:
         s: dict[str, Any] = {"i": index}
         if original is not None:
             s["o"] = original
+            if digest is not None:
+                s["h"] = f"{digest:08X}"
         if translation is not None:
             s["t"] = translation
         if status is not Status.UNTOUCHED:
@@ -190,6 +192,14 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
         records.append(s)
     entry.strings_cache = (states, records)
     return records
+
+
+def _digest(text: object) -> int | None:
+    """A string record's ``h``: eight hex digits, or nothing a build can use."""
+    try:
+        return int(text, 16) if isinstance(text, str) else None
+    except ValueError:
+        return None
 
 
 def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str, Any]:
@@ -268,6 +278,10 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
         session["config"] = format_config(entry.session.config)
     if entry.session.resolve_pointers:
         session["resolve_pointers"] = True
+    # Written whenever it is not automatic, empty string included: "" is the
+    # preview switched off, which is a choice and not the default.
+    if entry.session.preview_scheme is not None:
+        session["preview_scheme"] = entry.session.preview_scheme
     if session:
         d["session"] = session
     return d
@@ -503,6 +517,10 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
         view=session_raw.get("view", "raw"),
         resolve_pointers=bool(session_raw.get("resolve_pointers", False)),
     )
+    scheme = session_raw.get("preview_scheme")
+    if scheme is not None:
+        # A retired id keeps arming the preview, as it keeps opening a block.
+        session.preview_scheme = current_id(str(scheme)) if scheme else ""
     if session_raw.get("config"):
         # A view setting, so one that no longer reads costs the setting and
         # never the entry.
@@ -587,6 +605,7 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
                 Status(s.get("s", "untouched")),
                 str(s.get("n", "")),
                 s.get("t"),
+                _digest(s.get("h")),
             )
         except (KeyError, ValueError):
             continue

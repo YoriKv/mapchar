@@ -62,6 +62,8 @@ class RefreshMixin:
             self.raw.set_model(None)
             self.strings.set_rows([])
             self.nav_status.setText("")
+            self.block_label.setText("")
+            self.raw.set_structure(None)
             self.offset_box.set_value(None)
             self._update_title()
             self._sync_capabilities()
@@ -100,7 +102,9 @@ class RefreshMixin:
             self.reading_bar.show_bound_default("each group's end")
         else:
             self.reading_bar.show_bound_default(
-                block_bound(replace(configured.config, bound=None), doc.strings)
+                block_bound(
+                    replace(configured.config, bound=None), doc.strings, doc.data
+                )
                 if configured is not None
                 else None
             )
@@ -113,6 +117,9 @@ class RefreshMixin:
                 f"{self._block_label(block, len(doc.strings))} · "
                 f"{self._progress_text(doc)}"
             )
+        elif block is None:
+            # The bar keeps its row on a file, and says which file it is.
+            self.block_label.setText(f"{entry.name} · {doc.size:,} bytes")
         self._update_nav_status()
         self.search_window.set_data(doc.data)
         self.scan_window.set_source(doc.data, tables)

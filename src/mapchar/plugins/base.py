@@ -159,6 +159,15 @@ class Compression(Protocol):
     #     Huffman tree at a fixed address) is handed the whole buffer before
     #     each decode. Probed like a container's hooks, so a scheme that cannot
     #     bind loses its decode, not the load.
+    # signature: bytes
+    #     What a stream of this scheme starts with — RNC 1's b"RNC\x01". A few
+    #     bytes compared before anything is decoded, which is what lets the
+    #     Decompressed view arm itself as the view moves and Find All walk a
+    #     whole ROM. Read by ``getattr`` like the hooks above: absent, or not
+    #     bytes, is a scheme that announces itself in no way a comparison can
+    #     find, and it is then searched for by decoding at each offset instead.
+    #     A signature is a claim, never proof: the scheme's own decoder still
+    #     has to read a complete structure there.
 
 
 class PartialDecompression:

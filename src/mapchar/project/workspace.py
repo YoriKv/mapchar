@@ -34,6 +34,10 @@ class StringState:
     """A translation a project written before originals were kept was still
     holding, not yet in the ROM. The next extraction puts it into the bytes
     and it is gone."""
+    digest: int | None = None
+    """The checksum of the original's bytes
+    (:attr:`~mapchar.core.block.StringRecord.original_digest`); ``None`` in a
+    project written before it was kept."""
     extent: tuple[int, int] | None = None
     """The bits the string covered when its block was last re-configured.
 
@@ -49,6 +53,7 @@ def string_state(rec, extent: bool = False) -> StringState:
         rec.original,
         rec.status,
         rec.notes,
+        digest=rec.original_digest,
         extent=(rec.start_bit, rec.end_bit) if extent else None,
     )
 
@@ -66,6 +71,12 @@ class EntrySession:
     A block's own is :attr:`Entry.config`."""
     resolve_pointers: bool = False
     """Read as pointers, show the string each reaches in its place."""
+    preview_scheme: str | None = None
+    """What the Decompressed view previews a file through, as its picker sets
+    it: a compression plugin's id, ``""`` for none, or ``None`` — the default —
+    for automatic, which arms whichever registered scheme's signature the view
+    has landed on. A file's, like :attr:`config`; a block reads through its own
+    :attr:`Entry.compression_id` and previews nothing."""
     string_view: bool = False
     """A block left in its Strings mode — all its strings as text rather than
     its source — which coming back to it takes up again. One string opened

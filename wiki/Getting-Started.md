@@ -62,8 +62,8 @@ Add the rest by hand — **New**, Key, Text, **Add**:
 
 Pick **@mk2** in the **Table** list.
 
-**Search ▸ Scan for Text…** (Ctrl+Shift+R) lists text-like regions. Selecting
-a row jumps to it. A region is a rough area, not a block.
+**Search ▸ Scan for Text…** (Ctrl+Shift+R) lists text-like regions and how
+their strings end. Selecting a row jumps to it.
 
 ![The Scan window](images/03-scan.png)
 
@@ -89,7 +89,7 @@ In the **Hex** tab, drag-select `$8646`–`$86A5`: from the three bytes before
 No `00` in here, so it is one string. On the Reading bar set **Ends at** to
 **Length prefix**, **Prefix** 1.
 
-![Length prefix, no skips yet](images/04-block-length-prefix.png)
+![Length prefix, no header yet](images/04-block-length-prefix.png)
 
 Each record is two position bytes, a length byte, then text:
 
@@ -99,12 +99,11 @@ pos     len  FINISH HIM!
 ```
 
 > The two bytes before each length are where on screen the game draws the
-> string. They are not text, so the block has to skip them; left in, the first
-> one is read as a length and every string after it is cut wrong, as above.
+> string. They are not text, so the block has to step over them; left in, the
+> first one is read as a length and every string after it is cut wrong, as
+> above.
 
-Open **Skips** on the Reading bar and add a range over each pair:
-`8646>8648`, `8654>8656`, `8662>8664`, `8675>8677`, `8687>8689`, `868E>8690`,
-`8699>869B`.
+Set **Header** to 2.
 
 ![Finishes, read correctly](images/04-finishes-strings.png)
 
@@ -122,21 +121,20 @@ Select the ROM in the Files panel, go to `$8DE0`, select `$8E02`–`$8E4D`.
 
 ![Fighter names as a range](images/05-names-range.png)
 
-**Search ▸ Find Pointers…** (Ctrl+Shift+P). Set **Offset from** and **Offset
-to** to `4000`: the text is in bank 2, so file offset = pointer + `$4000`.
+**Search ▸ Find Pointers…** (Ctrl+Shift+P), with the offsets left at 0.
 
 ![Find Pointers: what to try](images/05-find-pointers-setup.png)
 
-Take the first row with **Use as Pointer Table**.
+Take the first row with **Use as Pointer Table**: 2-byte Game Boy pointers at
+`$8DE9`. The names are in bank 2, which the game sees at `$4000`, so the
+pointer to `$8E02` holds `$4E02`.
 
 ![Find Pointers: the results](images/05-find-pointers-results.png)
 
-Set **Bound** to `8E4E`, the first byte after the names.
-
 ![Fighter names as a pointer table](images/05-names-pointers.png)
 
-Writing is now **packed**: strings share the room up to the bound, and
-pointers are rewritten.
+Writing is now **packed**: strings share the room up to **Bound** — by default
+the end of the names — and pointers are rewritten.
 
 ## 6. Hex, Text and Strings
 
@@ -211,11 +209,13 @@ Add digits, punctuation and `[end]` as in step 2. **Save**.
 mapchar does not edit graphics. Until the font is redrawn, the game draws
 `ДОБИЙ ЙОГО!` as `DOSNJ JOGO!`.
 
-1. Find the font in a tile editor (celPix, YY-CHR) as Game Boy 2bpp, or in an
-   emulator's VRAM viewer.
-2. This ROM's graphics are RNC-packed (29 `RNC` `02` streams), and no plain
-   font turns up: unpack the stream, edit, repack to the same size or smaller.
-3. Finishes and Fighter names are drawn by different routines; check both.
+1. The font is not plain tiles in the ROM: the graphics are RNC-packed (29
+   `RNC` `02` streams). It is the stream at `$AC54` — 1,951 bytes packed,
+   3,056 unpacked: 191 Game Boy 2bpp tiles, a blank, `0`–`9`, then `A`–`Z`.
+2. Unpack that stream, edit it in a tile editor (celPix, YY-CHR), and repack
+   it to 1,951 bytes or fewer.
+3. Finishes and Fighter names are drawn by different routines; check both on
+   screen.
 4. Redraw 14 tiles: `D F G J L N Q R S U V W X Z` →
    `Д Ф Г Й Л И Ч Я Б П Ж Ш Ї З`.
 5. Every untranslated string shares the font and turns to gibberish.

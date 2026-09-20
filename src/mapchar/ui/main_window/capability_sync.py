@@ -64,9 +64,11 @@ _GATES: dict[Capability, tuple[str, ...]] = {
     Capability.WRITE: ("write_action",),
 }
 
-# Hidden rather than disabled: a greyed Block bar would take a row of the window
-# to say nothing, and on a plain file there is no block for it to describe.
-_HIDDEN = frozenset({"block_bar"})
+# What is hidden rather than disabled. Nothing: a bar that came and went would
+# move everything under it each time another entry opened, so the Block bar
+# keeps its row on a file too, greyed, and names the file
+# (``docs/ui.md``, "Nothing moves").
+_HIDDEN: frozenset[str] = frozenset()
 
 
 class CapabilitySyncMixin:

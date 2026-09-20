@@ -152,6 +152,7 @@ def _view_cut(config: BlockConfig | None) -> BlockConfig | None:
         config,
         string_type=string_type,
         skips=(),
+        header=0,
         realign=(0, 0),
         line_length=0,
         show_end=False,

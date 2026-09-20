@@ -184,8 +184,12 @@ class SessionMixin:
                 self._offset = 0
                 self._bounds = None
                 return
-            # A preview is armed for the entry it was armed on, not the next.
+            # What the preview is reading through is worked out from the
+            # incoming entry's own pick, by the refresh that ends this.
             self._preview_scheme = None
+            self._auto_armed = False
+            # The structures found are one file's offsets.
+            self._forget_structures()
             self._string_bounds = None
             self._load_reading_bar()
             self._offset = entry.session.offset

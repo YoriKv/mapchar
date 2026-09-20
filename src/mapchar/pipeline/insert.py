@@ -199,6 +199,7 @@ def slot_ends(
     bound: int,
     data: bytes | None = None,
     fill: bytes | None = None,
+    header: int = 0,
 ) -> dict[int, int]:
     """Where each string's slot ends, by index.
 
@@ -207,7 +208,9 @@ def slot_ends(
     behind, which the next edit may use again — and stops at the next string
     in address order, at ``bound``, or at the end of ``data``, whichever comes
     first. Bytes between two strings that are not that padding belong to no
-    slot: nothing the block writes may touch them.
+    slot: nothing the block writes may touch them. The ``header`` bytes in
+    front of the next string are its record's, fill-valued or not, and no slot
+    reaches into them.
 
     Without ``data`` and ``fill`` there is no telling padding from anything
     else, and a slot is the whole gap to the next string — the room a block
@@ -218,7 +221,7 @@ def slot_ends(
     ends: dict[int, int] = {}
     limit = bound if data is None else min(bound, len(data))
     for i, rec in enumerate(ordered):
-        stop = ordered[i + 1].start if i + 1 < len(ordered) else limit
+        stop = ordered[i + 1].start - header if i + 1 < len(ordered) else limit
         if data is None or not fill:
             ends[rec.index] = max(rec.end, stop)
             continue
@@ -293,9 +296,9 @@ def string_ends(
     :func:`room_for` reads a string's room from."""
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     if not isinstance(config.source, NestedPointerSource):
-        bound = block_bound(config, strings)
+        bound = block_bound(config, strings, data)
         if slotted:
-            return slot_ends(strings, bound, data, config.fill)
+            return slot_ends(strings, bound, data, config.fill, config.record_header)
         return packed_ends(strings, bound, config.skips)
     groups = string_groups(config, strings)
     ends: dict[int, int] = {}
@@ -303,7 +306,7 @@ def string_ends(
         groups, group_bounds(data, config, groups, registry), strict=True
     ):
         if slotted:
-            ends |= slot_ends(group, bound, data, config.fill)
+            ends |= slot_ends(group, bound, data, config.fill, config.record_header)
         else:
             ends |= packed_ends(group, bound, config.skips)
     return ends
@@ -333,7 +336,7 @@ def layout_block(
         ] or groups
         bounds = group_bounds(data, config, groups, registry)
     else:
-        bounds = [block_bound(config, strings)]
+        bounds = [block_bound(config, strings, data)]
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     for group, bound in zip(groups, bounds, strict=True):
         for rec in group:
@@ -361,7 +364,7 @@ def _layout_slotted(
     fixed_len = config.fixed_length
     out = bytearray()
     first = min(s.start for s in strings)
-    ends = slot_ends(strings, bound, data, config.fill)
+    ends = slot_ends(strings, bound, data, config.fill, config.record_header)
     last = min(max(max(s.end for s in strings), max(ends.values())), len(data))
     out[:] = data[first:last]
     used = 0
@@ -526,7 +529,17 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
                     Problem(-1, f"unknown mapping {ref.mapping_id!r}")
                 )
                 return []
-            value = mapping.to_value(new_start - ref.offset, source.bank, ref.address)
+            target = new_start - ref.offset
+            value = mapping.to_value(target, source.bank, ref.address)
+            short = value & ((1 << (ref.size * 8)) - 1)
+            if (
+                short != value
+                and getattr(mapping, "needs_bank", False)
+                and mapping.to_offset(short, source.bank, ref.address) == target
+            ):
+                # A pointer too short for the bank leaves it to the block's:
+                # the address alone still reaches the string from there.
+                value = short
             if value < 0 or value >= 1 << (ref.size * 8):
                 result.problems.append(
                     Problem(

@@ -228,9 +228,16 @@ class MainWindow(
         confined to exactly them, it reads them as text
         (:mod:`mapchar.ui.main_window.blocks`)."""
         self._preview_scheme: str | None = None
-        """The compression scheme the Decompressed view previews a file through:
-        the one Jump to Source or a bookmark arms, until another entry opens
+        """The compression scheme the Decompressed view is reading the bytes
+        through at this moment: the Compression picker's, or, on automatic,
+        whichever scheme's signature the view has landed on
         (:mod:`mapchar.ui.main_window.compression`)."""
+        self._auto_armed = False
+        """Whether :attr:`_preview_scheme` was armed by a signature rather than
+        picked, which is the one thing the picker cannot show."""
+        self._structures_file: Entry | None = None
+        """The file the Decompressed view's structure list was found in; another
+        file on screen drops it."""
         self._load_notices: list[str] = []
         """What reading the blocks had to say, kept for the dialog a project
         load ends with (:meth:`~mapchar.ui.main_window.strings_view.
@@ -318,6 +325,9 @@ class MainWindow(
         # Only a loaded table can be edited, so a charset leaves it disabled.
         self.table_edit = QPushButton("Edit…")
         self.table_edit.setToolTip("Open the picked table in the Table Editor")
+        # Always on the bar, so nothing shifts when an entry that cannot arm a
+        # preview is on screen; what it may hold is then the question.
+        self.compression_pick = CompactComboBox()
         self.mode_toggle = ModeToggle((("Strings", False), ("Pointers", True)))
         self.mode_toggle.button(False).setToolTip(
             "Read the bytes as text; on a block, show its strings"
@@ -332,6 +342,11 @@ class MainWindow(
             self.table_edit,
             tip="The table or encoding the text is read through",
         )
+        format_bar.add_group(
+            "Compression",
+            self.compression_pick,
+            tip="The scheme the Decompressed View reads the bytes through",
+        )
         format_bar.add_group("Show as", self.mode_toggle)
         self.resolve_group = format_bar.add_group(
             "",
@@ -344,6 +359,7 @@ class MainWindow(
         self.reading_bar.set_mappings(self.registry.plugins(Stage.MAPPING))
         layout.addWidget(self.reading_bar)
         self._reset_builtin_tables()
+        self._fill_compression_pick()
 
         block_bar = QWidget()
         bl = QHBoxLayout(block_bar)
@@ -509,6 +525,7 @@ class MainWindow(
         self.files_panel.paste_requested.connect(self._paste_entries)
         self.files_panel.duplicate_requested.connect(self._duplicate_entries)
         self.format_pick.chosen.connect(self._on_format_pick)
+        self.compression_pick.currentIndexChanged.connect(self._on_compression_pick)
         self.table_edit.clicked.connect(self._edit_picked_table)
         self.format_pick.command.connect(lambda: self._new_table_dialog(start=True))
         self.mode_toggle.chosen.connect(self._on_mode)
@@ -548,6 +565,8 @@ class MainWindow(
         self.decompress_window.jump_next.connect(self._jump_next_structure)
         self.decompress_window.scan_next.connect(self._scan_next_structure)
         self.decompress_window.to_block.connect(self._structure_to_block)
+        self.decompress_window.find_all.connect(self._find_all_structures)
+        self.decompress_window.go_to.connect(self._go_to)
         self.preview_window.font_changed.connect(self._on_preview_font_changed)
         self.preview_window.box_changed.connect(self._on_box_changed)
         self.preview_window.wrap_requested.connect(self._wrap_selected)

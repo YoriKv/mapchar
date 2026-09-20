@@ -100,9 +100,15 @@ class BlocksMixin:
             f"{count} {'string' if count == 1 else 'strings'}"
         )
 
-    def _new_block(self, start: int | None = None, stop: int | None = None) -> None:
+    def _new_block(
+        self,
+        start: int | None = None,
+        stop: int | None = None,
+        reading: BlockConfig | None = None,
+    ) -> None:
         """A block over ``start`` to ``stop`` — the selection, else the view
-        onwards — read the way the bars read the view now."""
+        onwards — read the way the bars read the view now, or the way
+        ``reading`` says when the caller already knows how the bytes are cut."""
         file_entry = self._current_file()
         if file_entry is None or self._doc is None:
             self._error("Open a ROM first.")
@@ -111,7 +117,9 @@ class BlocksMixin:
             start, stop = (
                 self._selection if self._selection else (self._offset, self._doc.size)
             )
-        cfg = with_region(self._reading() or self._default_reading(), start, stop)
+        cfg = with_region(
+            reading or self._reading() or self._default_reading(), start, stop
+        )
         if not cfg.table_id:
             cfg = replace(cfg, table_id=self._default_table_id())
         entry = Entry(
@@ -249,7 +257,7 @@ class BlocksMixin:
         if entry.parent is None:
             return
         self._read_file_as(entry.parent, entry.session.config, entry.session)
-        self._preview_scheme = entry.compression_id
+        self._arm_scheme(entry.compression_id)
         self._go_to(entry.bookmark_offset)
         self._show_view(entry.session.view)
 
@@ -409,7 +417,7 @@ class BlocksMixin:
             return
         offset = self._block_file_offset(entry)
         self._read_file_as(entry.parent, entry.config, entry.session)
-        self._preview_scheme = entry.compression_id
+        self._arm_scheme(entry.compression_id)
         self._go_to(offset)
 
     def _jump_to_string_source(self, entry: Entry, index: int) -> None:
@@ -424,15 +432,32 @@ class BlocksMixin:
         self._show_view("strings")
 
     def _block_from_region(self, region) -> None:
-        """A block over a scanned region, with its guessed terminator as end
-        token — the two together, so undoing the block takes the token with it."""
+        """A block over a scanned region, read the way the scan found it: a
+        chain of records behind its length prefix and header, else terminated
+        text with the guessed terminator as end token — the block and the token
+        together, so undoing the block takes the token with it."""
+        records = region.records
+        reading = (
+            BlockConfig(
+                RangeSource(region.start, region.end),
+                Pascal(records.width),
+                header=records.header,
+            )
+            if records is not None
+            else None
+        )
         tables = self._table_set()
         # An encoding is nobody's to edit: its strings end where it says.
         table_entry = (
             self.workspace.entry_for_table(tables.start.id) if tables else None
         )
         with self._macro("Block from region"):
-            if table_entry is not None and region.terminator is not None:
+            # Records carry their own length, so no end token is guessed for them.
+            if (
+                records is None
+                and table_entry is not None
+                and region.terminator is not None
+            ):
                 bits = format(region.terminator, "08b")
                 start = table_entry.table
                 # A table that already spells [end] on other bits keeps it;
@@ -449,4 +474,4 @@ class BlocksMixin:
                     self._push_command(
                         TableCommand(self, table_entry, deepcopy(start), after)
                     )
-            self._new_block(region.start, region.end)
+            self._new_block(region.start, region.end, reading)

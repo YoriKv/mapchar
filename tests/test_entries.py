@@ -24,7 +24,13 @@ from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.entry_text import sorted_entries
 from mapchar.ui.files_panel import STATUS_COL, FilesPanel
 from mapchar.ui.main_window import MainWindow
-from window_helpers import TABLE, add_block, make_window, open_rom_and_table
+from window_helpers import (
+    TABLE,
+    add_block,
+    arm_scheme,
+    make_window,
+    open_rom_and_table,
+)
 
 DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
 
@@ -918,7 +924,7 @@ def test_a_partial_decode_is_never_a_structure_to_act_on(window, tmp_path):
     cut = packed[: len(packed) // 2]  # the stream stops before its end marker
     file_entry = open_rom_and_table(window, tmp_path, b"\xff" * 16 + cut)
     window._activate_entry(file_entry)
-    window._preview_scheme = "gba_lz77"
+    arm_scheme(window, "gba_lz77")
     window._go_to(16)
     # The preview reads it, and says so; the two actions refuse it.
     assert window._decompress_at(window._doc, 16) is not None

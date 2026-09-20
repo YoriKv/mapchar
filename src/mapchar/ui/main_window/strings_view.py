@@ -143,8 +143,9 @@ class StringsViewMixin:
         for rec in ex.strings:
             prev = old.get(rec.index)
             if prev is not None:
-                rec.original, rec.status, rec.notes = (
+                rec.original, rec.original_digest, rec.status, rec.notes = (
                     prev.original,
+                    prev.original_digest,
                     prev.status,
                     prev.notes,
                 )
@@ -169,6 +170,7 @@ class StringsViewMixin:
                     # about text that is no longer there and it starts afresh.
                     if st.original is not None:
                         rec.original = spelled(st.original, rec)
+                        rec.original_digest = st.digest
                     rec.status, rec.notes = st.status, st.notes
                 if st.translation is not None:
                     legacy[rec.index] = spelled(st.translation, rec)
@@ -363,7 +365,7 @@ class StringsViewMixin:
         rows = self.strings.rows_by_index()
         if len(rows) != len(doc.strings):
             return False
-        bound = block_bound(cfg, doc.strings)
+        bound = block_bound(cfg, doc.strings, doc.data)
         ends = self._string_slots(entry, doc, bound)
         same = self._same_originals(doc)
         for rec in doc.strings:
@@ -463,7 +465,7 @@ class StringsViewMixin:
         cfg = entry.config if entry is not None else None
         # Once for the block, not once per row: the bound is the same for every
         # string, and a pointer block has thousands.
-        bound = block_bound(cfg, doc.strings) if cfg is not None else 0
+        bound = block_bound(cfg, doc.strings, doc.data) if cfg is not None else 0
         same = self._same_originals(doc)
         ends = self._string_slots(entry, doc, bound)
         return [self._row_for(rec, cfg, bound, same, ends) for rec in doc.strings]
@@ -498,7 +500,7 @@ class StringsViewMixin:
         if rec is None:
             return
         same = self._same_originals(doc)
-        bound = block_bound(entry.config, doc.strings)
+        bound = block_bound(entry.config, doc.strings, doc.data)
         self.strings.update_row(
             self._row_for(
                 rec, entry.config, bound, same, self._string_slots(entry, doc, bound)

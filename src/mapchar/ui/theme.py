@@ -41,6 +41,7 @@ TINT_SWITCH = QColor(200, 140, 40, 90)
 TINT_RAW = QColor(128, 128, 128, 70)
 TINT_POINTER = QColor(90, 200, 120, 110)
 TINT_SELECTION = QColor(60, 140, 240, 110)
+TINT_STRUCTURE = QColor(170, 110, 230, 70)
 TINT_STRING_RULE = QColor(120, 120, 120, 160)
 # Warning and error inks sit at the lightness that reads equally on both
 # themes' surfaces.

@@ -53,8 +53,8 @@ done well.[end]
   configuration alone. The source is `source=range`, `pointers`, `list` or
   `nested`; a pointer source's `null=$0` is its null value, and a nested one
   adds `inner_size`, `inner_endian` and `inner_null`, its `stride` defaulting
-  to two pointers. `fill=$FFFF` is a fill pattern, a byte for every two hex
-  digits:
+  to two pointers. `header=2` is a range's record header, in bytes.
+  `fill=$FFFF` is a fill pattern, a byte for every two hex digits:
 
   ```
   @block "Script" source=nested start=$136A6F8 stop=$136C640 size=4 stride=8 endian=little mapping=linear offset=20358900 bank=0 null=$0 inner_size=2 inner_endian=little inner_null=$0 type=end table=m3

@@ -3,6 +3,10 @@
 Offsets are into the decompressed payload, which is already header-less.
 ``bank`` supplies what a short pointer leaves out; ``ptr_address`` is where
 the pointer itself sits, for relative mappings.
+
+A mapping with ``needs_bank`` also answers ``bank_of(offset)``: which bank an
+offset sits in, so that a search for the pointers reaching it need not be told
+the bank it would have to guess (:func:`mapchar.engines.pointers.discover`).
 """
 
 from __future__ import annotations
@@ -69,6 +73,9 @@ class Banked:
             category,
         )
 
+    def bank_of(self, offset: int) -> int:
+        return offset // self.bank_size
+
     def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
         addr = value & 0xFFFF
         if value > 0xFFFF:
@@ -103,6 +110,9 @@ class HiRom:
     info = PluginInfo("hirom", "SNES HiROM", Stage.MAPPING, "Nintendo")
     sizes = (2, 3)
     needs_bank = True
+
+    def bank_of(self, offset: int) -> int:
+        return offset // 0x10000
 
     def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
         if value > 0xFFFF:

@@ -112,7 +112,8 @@ class PluginsMixin:
 
     def _registry_changed(self) -> None:
         """What lists the registry's plugins by name follows it: the charsets
-        offered as tables, the pointer mappings."""
+        offered as tables, the compression schemes, the pointer mappings."""
         self._reset_builtin_tables()
         self.reading_bar.set_mappings(self.registry.plugins(Stage.MAPPING))
+        self._fill_compression_pick()
         self._refresh_table_picks()

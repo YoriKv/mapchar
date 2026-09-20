@@ -134,7 +134,8 @@ in bytes, which is the unit their results are reported and selected in.
   `PointerListSource`, `NestedPointerSource`), `string_type` (`EndToken`,
   `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens, endian)`,
   `NextPointer`, `Lines(count)`), `table_id`, `strings_per_pointer`,
-  `realign`, `skips`, `line_length`, `bound`, `write_mode` (`PACKED`,
+  `realign`, `skips`, `header` (bytes before each string of a range that are
+  not text), `line_length`, `bound`, `write_mode` (`PACKED`,
   `SLOTTED`), `fill` (a byte pattern: `fill_run` lays it down from the start
   of the room it fills, `is_fill` recognises it), and the artificial codes a
   fixed string is shown with: `show_end`, `end_label`, `line_label`.
@@ -338,24 +339,51 @@ builder turns into entries.
 through the table set, and scores it: the fraction of bits consumed by text
 entries, plus a capped bonus for dictionary hits (a small built-in word
 list), minus a penalty that grows with the square of the share of unmatched
-data. Regions above a threshold merge; each region reports its most frequent candidate terminator
-(the byte most often followed by a fresh text run) and its most frequent
-string-initial byte.
+data. Regions above a threshold merge, and each is then cut to what it
+actually holds rather than to the window grid.
+
+A region is first searched, a window either side, for chains of
+length-prefixed records: 0 to `MAX_HEADER` header bytes, a one-byte length and
+that many bytes of text, back to back, at least `MIN_RECORDS` of them and with
+at least one byte of every record's header and length one the table does not
+read as text — otherwise every run of characters would count. Chains are found
+a header size at a time, the longest wins the bytes it covers, and each walks
+back to the record it continues, so a chain that began before the first window
+to score comes out whole. A chain carries a `Records(header, width)` on its
+region, is scored on the characters alone, and becomes a `Pascal` block over a
+range with that header.
+
+What the chains leave of a region comes out as terminated text, cut to the
+longest run of strings the table reads whole: the run begins at the first
+character after the last byte the table does not read (a string whose front
+the run-up ate is still a string) and ends at the last end token a run of
+characters reached. Those regions report their most frequent candidate
+terminator (the byte most often followed by a fresh text run) and their most
+frequent string-initial byte.
 
 ### 3.5 Pointer discovery
 
 `engines/pointers.py` takes string start offsets, a bank number and the
 candidate space (mappings × sizes × endianness × an offset range) and
-produces, for each candidate, the addresses where the encoded values occur and
-the value found at each. Candidates are ranked by how many distinct strings
-they explain, then by how regular the stride between their addresses is. Each
-carries both answers a result can be taken as: `source()` is the inferred
-`PointerTableSource` over `table_run()` — the longest run of hit addresses a
-whole number of strides apart, at most `RUN_GAP` of them, so stray matches
-elsewhere in the file stay out of the table — and `refs()` the `PointerRef`s per string that **Attach**
-puts on the strings instead. A `progress` hook is called per combination and
-stops the walk when it returns `False`, so a stopped search still ranks what it
-had.
+produces, for each candidate, the addresses where the encoded values occur, the
+value found at each and the bank it is read in. A mapping that `needs_bank`
+answers `bank_of(offset)`, and that — not the bank number passed in, which is
+only the fallback for a mapping that does not say — is the bank each string's
+value is computed in, so a banked table is found without the bank being known
+first and the strings of one block may sit in different banks. Candidates are
+ranked by `run_explained()` — the strings the table itself reaches, a far
+better signal than the raw count because a short value turns up all over a file
+— then by how many strings they explain at all and how regular the stride
+between their addresses is. Each carries both answers a result can be taken as:
+`source()` is the inferred `PointerTableSource` over `table_run()` — the
+longest run of hit addresses a whole number of strides apart, at most `RUN_GAP`
+of them, so stray matches elsewhere in the file stay out of the table — under
+the bank its run mostly reads in, a source carrying one; and `refs()` the
+`PointerRef`s per string that **Attach** puts on the strings instead, a string
+the run reaches keeping only its in-run addresses, since a packed write
+rewrites every attached pointer and a coincidence kept is a byte pair
+corrupted. A `progress` hook is called per combination and stops the walk when
+it returns `False`, so a stopped search still ranks what it had.
 
 ### 3.6 Layout
 
@@ -481,7 +509,12 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
 - **Scanning** (`pipeline/scan.py`) walks forward for the next complete
   structure a scheme can read (`find_next_structure`), with a progress/cancel
   callback; `decompress_at` is one probe of it, and asks for a partial decode
-  when it is previewing.
+  when it is previewing. A scheme's `signature` says where a probe is worth
+  making at all (`signature_of`): `scheme_at` is what arms the Decompressed view
+  as the view moves, and `find_structures` lists every structure in a buffer,
+  searching for the signature where there is one and walking byte by byte where
+  there is not. Each takes the schemes to consider, so the caller decides
+  whether that is one or all of them.
 
 ## 5. The plugin system
 
@@ -490,7 +523,7 @@ celPix's system, with these stages:
 | Stage        | Required                        | Optional save half        | Other optional                        |
 |--------------|---------------------------------|---------------------------|---------------------------------------|
 | Container    | `read(ReadSource, ctx)`         | `write(data, WriteTarget, ctx)` | `describe`, `default_mapping`, `header_size` |
-| Compression  | `decompress(data, ctx)`         | `compress`                | `bind_tree(rom)`                      |
+| Compression  | `decompress(data, ctx)`         | `compress`                | `bind_tree(rom)`, `signature`         |
 | Charset      | `entries() -> Iterable[(bits, text)]` | —                   | `aliases()`, `codec`                  |
 | Mapping      | `to_offset(value, bank, ptr_address)`, `to_value(offset, bank, ptr_address)` | — | `sizes`, `needs_bank` |
 
@@ -502,7 +535,11 @@ celPix's system, with these stages:
   reads, loses its rows and says so by their absence.
   `plugins/base.py` declares them — `ContainerExtras` for the container's
   optional half, and comment blocks on `Compression`, `Charset` and `Mapping`
-  for those stages' — and `PartialDecompression` is the base class a scheme
+  for those stages'. Two of them are values rather than calls, read the same
+  way and with the same "absent means the default": a charset's `codec`, and a
+  compression's `signature`, the bytes its streams start with, which is a claim
+  about where a structure may be and never proof that one is there.
+  `PartialDecompression` is the base class a scheme
   whose decoder finds its own end inherits both of its methods from, publishing
   the consumed size and the complete flag the pipeline needs from one
   `_decode`.
@@ -699,7 +736,8 @@ and aliases for renamed plugin ids.
       "container_id": "ines", "compression_id": "…", // opt
       "session": {"table_id": "main", "offset": 32768, "view": "strings",
                   "config": "source=pointers start=$0 stop=$0 size=2 …",
-                  "resolve_pointers": true} },           // opt
+                  "resolve_pointers": true,
+                  "preview_scheme": "rnc2"} },           // opt
     { "kind": "block", "name": "Dialogue", "path": "rom.nes", "parent": 0,
       "compression_id": "lz", "slice_offset": 16, "slice_length": 32,     // opt
       "spare_room": "keep",                          // opt, "fill" by default
@@ -737,9 +775,16 @@ leaves the row directly under its file, and the loaded list is put in tree
 order. An older build drops a folder record with a notice and shows its rows
 directly under their file. A `session` holds only what is not at its default, and its
 `view` names the open tab: `raw` (Hex, the default), `text` or `strings`.
+`preview_scheme` is a file's Compression pick — a scheme's id, or `""` for none;
+absent is automatic, and `""` is written because a preview switched off is a
+choice and not the default.
 
-Every string is written with its original (`o`), plus a status and notes where
-they are not the defaults; translations are not stored, being the ROM's bytes.
+Every string is written with its original (`o`) and the checksum of the bytes
+it was read from (`h`, a CRC-32 of the string's bits in eight hex digits), plus
+a status and notes where they are not the defaults; translations are not
+stored, being the ROM's bytes. *Edited* is the string's bytes no longer giving
+that checksum; an original saved without one goes by its text until its bytes
+say it again.
 A block that was loaded but never opened keeps its own in
 `Entry.pending_strings` until an extraction adopts them — so a save writes back
 the state of every block, not only the ones that were looked at. A translation
@@ -829,7 +874,8 @@ app's one system font and the `Font` values it measures),
 `ui/preview_render.py` (a laid-out page drawn into an image), `ui/font_tab.py`
 (`FontTab`, which picks that font), `ui/entry_tree.py` (the Files tree's drags and keys),
 `ui/entry_text.py` (what a Files row says, with no Qt), `ui/skips_picker.py`
-(the Reading bar's skip ranges and their popup), `ui/table_dialogs.py` (Shift
+(the Reading bar's skip ranges and their popup), `ui/writing_picker.py` (its
+write settings and theirs), `ui/table_dialogs.py` (Shift
 Keys and Fill), `ui/entry_rows.py` (a code's operand rows and a switch's
 parameter rows), `ui/help_dialogs.py` (the live shortcut
 list and the legend) and `ui/__init__.py` (the `settings()` accessor, the
@@ -842,7 +888,7 @@ the view constants `BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
 |---|---|
 | View offset, selection, current view tab | the window, live, and re-read from its widgets on every refresh |
 | View bounds (the stretch the Hex and Text tabs are confined to) | the window, live; re-derived from a block's source on every activation, so never saved |
-| View offset, view tab, a file's reading and Follow pointers, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
+| View offset, view tab, a file's reading, Follow pointers and its Compression pick, per entry | `Entry.session`, captured when leaving an entry and saved with the project |
 | Container, compression, block configuration, box | the `Entry` |
 | The glossary | the `Workspace`, swapped with the entries when a project opens |
 | Bytes, table set, strings, notices | the `Document` |

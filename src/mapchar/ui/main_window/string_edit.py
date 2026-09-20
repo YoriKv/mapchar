@@ -395,7 +395,7 @@ class StringEditMixin:
             self.strings.set_readout(str(exc), problem=True)
             return
         used = -(-len(result.bits) // 8)
-        bound = block_bound(entry.config, entry.doc.strings)
+        bound = block_bound(entry.config, entry.doc.strings, entry.doc.data)
         room = (
             room_for(
                 rec,

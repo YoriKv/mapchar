@@ -57,7 +57,14 @@ from mapchar.ui.number_fields import (
     respell_addresses,
 )
 from mapchar.ui.skips_picker import SkipsPicker
-from mapchar.ui.widgets import CompactComboBox, WrapBar, fit_chars, hint_field
+from mapchar.ui.widgets import (
+    ROW_BREAK,
+    CompactComboBox,
+    WrapBar,
+    fit_chars,
+    hint_field,
+)
+from mapchar.ui.writing_picker import WritingPicker
 
 RANGE, TABLE, LIST, NESTED = "range", "table", "list", "nested"
 """The source kinds, as the Source picker's data."""
@@ -73,39 +80,79 @@ END, FIXED_LENGTH, PASCAL, NEXT, LINES = "end", "fixed", "pascal", "next", "line
 """The string types, as the String type picker's data."""
 
 SECTIONS = {
-    "Source": ("source_kind", "start", "stop", "ptr_addresses"),
+    "Source": ("source_kind", "start", "stop", "writing", "ptr_addresses"),
     "Pointers": (
         "ptr_size",
         "ptr_stride",
         "ptr_endian",
         "ptr_mapping",
         "ptr_offset",
-        "ptr_bank",
         "ptr_null",
+        "ptr_bank",
         "inner",
         "inner_null",
     ),
     "Strings": (
         "string_type",
+        "realign",
+        "header",
+        "skips",
         "fixed_length",
         "count",
         "stop_at_end",
+        "line_length",
+        "show_end",
         "pascal",
         "spp",
         "lines",
-        "realign",
-        "skips",
+    ),
+}
+"""The bar's sections, in order, and the controls each gathers.
+
+Every section is always there, and within one the controls every reading has
+come first, in one order: what does not apply is greyed where it stands, so
+opening another entry moves nothing. Only a section's tail — the fields one
+kind of source or string has and another has not — comes and goes, and nothing
+stands after it to be pushed along."""
+
+_TAILS = frozenset(
+    {
+        "ptr_addresses",
+        "inner",
+        "inner_null",
+        "fixed_length",
+        "count",
+        "stop_at_end",
         "line_length",
         "show_end",
-    ),
-    "Writing": ("bound", "write_mode", "fill", "spare_room"),
-}
-"""The bar's sections, in order, and the controls each gathers."""
+        "pascal",
+        "spp",
+        "lines",
+    }
+)
+"""The controls shown only where they apply; every other one is greyed."""
 
-_NOT_STRING_VIEW = ("Source", "Pointers")
-"""The sections about where a block's strings are, which a view of the strings'
-own bytes does not show. Not Strings, which shapes the bytes themselves —
-skip ranges among them, so they are editable wherever the strings are read."""
+_WHERE = frozenset(
+    {
+        "source_kind",
+        "start",
+        "stop",
+        "ptr_addresses",
+        "ptr_size",
+        "ptr_stride",
+        "ptr_endian",
+        "ptr_mapping",
+        "ptr_offset",
+        "ptr_null",
+        "ptr_bank",
+        "inner",
+        "inner_null",
+    }
+)
+"""The controls about where a block's strings are, which a view of the strings'
+own bytes greys. Not the Strings section's, which shape the bytes themselves —
+skip ranges among them, so they are editable wherever the strings are read —
+nor Writing."""
 
 
 def _endian_combo(tip: str = "") -> QComboBox:
@@ -231,6 +278,7 @@ class ReadingBar(WrapBar):
         self.line_length = number_spin(0, 1_000_000, 3, off=True)
         self.show_end = QCheckBox("Show [end]")
         self.show_end.setToolTip("Show an [end] code after every fixed string")
+        self.header = number_spin(0, 255, 2, off=True)
         self.skips = SkipsPicker()
 
         self.bound = AddressEdit(self.spelling)
@@ -262,6 +310,22 @@ class ReadingBar(WrapBar):
             (1, "Leave the freed tail as it was"),
         ):
             self.spare_room.setItemData(at, tip, Qt.ItemDataRole.ToolTipRole)
+
+        self.write_mode.setToolTip("How a write lays the strings out")
+        self.fill.setToolTip(
+            "The bytes that pad unused room, in hex: FFFF pads with a word"
+        )
+        self.spare_room.setToolTip(
+            "After a shorter re-compression: fill the slot's tail, or keep it"
+        )
+        self.writing = WritingPicker(
+            (
+                ("Bound", self.bound),
+                ("Write", self.write_mode),
+                ("Fill", self.fill),
+                ("Spare room", self.spare_room),
+            )
+        )
 
         groups = {}
         for name, label, widgets, tip in (
@@ -350,26 +414,15 @@ class ReadingBar(WrapBar):
                 "Split fixed strings into lines this many bytes long",
             ),
             ("show_end", "", (self.show_end,), None),
+            (
+                "header",
+                "Header",
+                (self.header,),
+                "Bytes in front of every string that are not text: a record's "
+                "position, id or flags",
+            ),
             ("skips", "Skips", (self.skips,), None),
-            ("bound", "Bound", (self.bound,), None),
-            (
-                "write_mode",
-                "Write",
-                (self.write_mode,),
-                "How a write lays the strings out",
-            ),
-            (
-                "fill",
-                "Fill",
-                (self.fill,),
-                "The bytes that pad unused room, in hex: FFFF pads with a word",
-            ),
-            (
-                "spare_room",
-                "Spare room",
-                (self.spare_room,),
-                "After a shorter re-compression: fill the slot's tail, or keep it",
-            ),
+            ("writing", "Writing", (self.writing,), None),
         ):
             groups[name] = (label, widgets, tip)
         for title, names in SECTIONS.items():
@@ -378,6 +431,11 @@ class ReadingBar(WrapBar):
             for name in names:
                 label, widgets, tip = groups[name]
                 self._groups[name] = section.add_group(label, *widgets, tip=tip)
+                # What one string type has and another has not sits on a row
+                # of its own, so the row above it never changes length and
+                # the section never changes height.
+                if title == "Strings" and name in _TAILS:
+                    self._groups[name].setProperty(ROW_BREAK, True)
 
         for name, combo in (
             ("source_kind", self.source_kind),
@@ -406,6 +464,7 @@ class ReadingBar(WrapBar):
             ("realign_m", self.realign_m),
             ("realign_o", self.realign_o),
             ("line_length", self.line_length),
+            ("header", self.header),
         ):
             spin.valueChanged.connect(lambda _=0, n=name: self._edited(n))
         self.skips.changed.connect(lambda: self._edited("skips"))
@@ -487,6 +546,7 @@ class ReadingBar(WrapBar):
         else:
             hint = self.spelling.format(default)
         hint_field(self.bound, hint, self.bound.toolTip())
+        self._show_writing()
 
     def load(
         self,
@@ -549,6 +609,7 @@ class ReadingBar(WrapBar):
             self.realign_o.setValue(config.realign[1])
             self.line_length.setValue(config.line_length)
             self.show_end.setChecked(config.show_end)
+            self.header.setValue(config.header)
             self.skips.set_value(config.skips)
             self.bound.set_value(config.bound)
             self.write_mode.setCurrentIndex(
@@ -632,49 +693,64 @@ class ReadingBar(WrapBar):
         was = self.string_type.blockSignals(True)
         self.string_type.model().item(3).setEnabled(pointers)
         self.string_type.blockSignals(was)
-        shown = {
+        applies = {
             # Text has one kind of source, so there is nothing to pick.
             "source_kind": pointers,
             "start": block and kind != LIST,
-            "stop": block and kind in (RANGE, TABLE, NESTED),
+            "stop": block and kind != LIST,
+            "writing": block,
+            "ptr_addresses": block and kind == LIST,
             "ptr_size": pointers,
             "ptr_stride": kind in (TABLE, NESTED),
             "ptr_endian": pointers,
             "ptr_mapping": pointers,
             "ptr_offset": pointers,
-            "ptr_bank": pointers and self._needs_bank(),
-            "ptr_addresses": block and kind == LIST,
             "ptr_null": pointers,
+            "ptr_bank": pointers and self._needs_bank(),
             "inner": kind == NESTED,
             "inner_null": kind == NESTED,
             "string_type": True,
+            "realign": True,
+            "header": block and kind == RANGE,
+            "skips": block,
             "fixed_length": st == FIXED_LENGTH,
             "count": block and kind == RANGE and st == FIXED_LENGTH,
             "stop_at_end": st == FIXED_LENGTH,
+            "line_length": st == FIXED_LENGTH,
+            "show_end": st == FIXED_LENGTH,
             "pascal": st == PASCAL,
             "spp": st == END,
             "lines": st == LINES,
-            "realign": True,
-            "line_length": st == FIXED_LENGTH,
-            "show_end": st == FIXED_LENGTH,
-            "skips": block,
-            "bound": block,
-            "write_mode": block,
-            "fill": block,
-            "spare_room": block,
         }
-        for name, visible in shown.items():
-            self._groups[name].setVisible(visible)
+        for name, applying in applies.items():
+            group = self._groups[name]
+            if name in _TAILS:
+                # A string that ends at the next pointer has no field of its
+                # own; the row keeps one, greyed, rather than closing up.
+                group.setVisible(applying or (name == "spp" and st == NEXT))
+            group.setEnabled(applying and not (self._string_view and name in _WHERE))
         self.pascal_endian.setVisible(self.pascal_width.value() > 1)
-        auto = default_write_mode(self._pointers, bool(self.skips.value()))
+        auto = default_write_mode(
+            self._pointers,
+            bool(self.skips.value()) or (kind == RANGE and bool(self.header.value())),
+        )
         self.write_mode.setItemText(0, f"Automatic ({auto.value})")
-        for title, names in SECTIONS.items():
-            hidden = self._string_view and title in _NOT_STRING_VIEW
-            self.sections[title].setVisible(not hidden and any(shown[n] for n in names))
+        self._show_writing()
+
+    def _show_writing(self) -> None:
+        """The write settings on one line: the mode, where the room ends, the
+        fill."""
+        if not self._block:
+            self.writing.set_summary("")
+            return
+        bound = self.bound.text() or self.bound.placeholderText()
+        self.writing.set_summary(
+            f"{self.write_mode.currentText()} · to {bound} · {self.fill.text()}"
+        )
 
     def show_string_view(self, string_view: bool) -> None:
-        """Show only the sections that shape a string — for a view of strings'
-        bytes — or, with ``False``, every section the reading uses."""
+        """Grey what says where the strings are — for a view of strings' own
+        bytes — or, with ``False``, leave every control the reading uses live."""
         if string_view != self._string_view:
             self._string_view = string_view
             self._sync()
@@ -749,6 +825,7 @@ class ReadingBar(WrapBar):
         if self._block:
             fill = self.fill.value()
             changes |= {
+                "header": self.header.value(),
                 "skips": self.skips.value(),
                 "bound": self.bound.value(),
                 "write_mode": self.write_mode.currentData(),

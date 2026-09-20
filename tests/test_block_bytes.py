@@ -227,6 +227,11 @@ def test_a_write_counts_the_compressed_blocks_it_packed(window, tmp_path):
     assert window._write_all()
     message = window.statusBar().currentMessage()
     assert message == f"Wrote {file_entry.name} (2 compressed block(s))"
+    # The file itself was clean — only the blocks over its slot were dirty — so
+    # its revisions are the same on both sides of the step, and only the side
+    # itself can say which of the two it is.
+    window.undo_stack.undo()
+    assert window.statusBar().currentMessage().startswith(f"Restored {file_entry.name}")
 
 
 def test_an_editing_run_that_ends_where_it_began_leaves_every_sibling_clean(

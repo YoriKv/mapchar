@@ -162,8 +162,17 @@ def _numbers(out: ConfigReading, fields: dict, source: str) -> None:
                 continue
             if key in ("start", "stop", "bound"):
                 out.addresses.append((key, value))
-    for key in ("size", "stride", "offset", "bank", "inner_size", "spp", "lines"):
-        if key in fields and (key in taken or key in ("spp", "lines")):
+    for key in (
+        "size",
+        "stride",
+        "offset",
+        "bank",
+        "inner_size",
+        "spp",
+        "lines",
+        "header",
+    ):
+        if key in fields and (key in taken or key in ("spp", "lines", "header")):
             try:
                 int(fields[key])
             except ValueError:

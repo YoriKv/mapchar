@@ -3,7 +3,13 @@ from __future__ import annotations
 import os
 
 from helpers import ABC_TABLE, table_set
-from mapchar.core.block import BlockConfig, EndToken, RangeSource, Status
+from mapchar.core.block import (
+    BlockConfig,
+    EndToken,
+    RangeSource,
+    Status,
+    bits_digest,
+)
 from mapchar.core.context import PipelineContext
 from mapchar.core.document import Document
 from mapchar.core.font import TextBox
@@ -57,6 +63,11 @@ def test_workspace_children_and_close():
     assert not g.dirty
 
 
+WAS = bits_digest("0")
+"""The digest of some other bytes: what an original's is once its string is
+edited."""
+
+
 def test_project_roundtrip(tmp_path):
     rom = tmp_path / "rom.bin"
     rom.write_bytes(bytes.fromhex("41 00 42 00"))
@@ -67,7 +78,9 @@ def test_project_roundtrip(tmp_path):
     ts = table_set(ABC_TABLE, "main")
     ex = extract(rom.read_bytes(), cfg, ts)
     b.doc = Document(rom.read_bytes(), PipelineContext(), True, strings=ex.strings)
+    # The second string's bytes were other bytes when its original was taken.
     b.doc.strings[1].original = "C[end]"
+    b.doc.strings[1].original_digest = WAS
     b.doc.strings[1].refresh_status()
     b.doc.strings[1].notes = "n"
     b.box = TextBox(chars_per_line=18, lines_per_page=3)
@@ -91,8 +104,9 @@ def test_project_roundtrip(tmp_path):
     assert lb.parent is loaded.entries[0] and lb.config == cfg
     assert loaded.current is lb
     # Every string's original travels, whether or not its bytes still say it.
-    assert lb.pending_strings[0] == StringState("A[end]")
-    assert lb.pending_strings[1] == StringState("C[end]", Status.EDITED, "n")
+    a_bytes = bits_digest(format(0x4100, "016b"))
+    assert lb.pending_strings[0] == StringState("A[end]", digest=a_bytes)
+    assert lb.pending_strings[1] == StringState("C[end]", Status.EDITED, "n", None, WAS)
     assert loaded.entries[2].bookmark_offset == 2
     assert loaded.entries[3].dialect == "abcde"
     assert os.path.isabs(lb.path)
@@ -186,15 +200,17 @@ def test_document_strings_win_over_pending_and_a_drop_stashes_them(tmp_path):
     ex = extract(rom.read_bytes(), cfg, table_set(ABC_TABLE, "main"))
     b.doc = Document(rom.read_bytes(), PipelineContext(), True, strings=ex.strings)
     b.doc.strings[0].original = "live"
+    b.doc.strings[0].original_digest = WAS
     b.doc.strings[0].refresh_status()
     b.pending_strings = {0: StringState("stale")}
     assert project_dict([f, b], None, str(tmp_path))["entries"][1]["strings"] == [
-        {"i": 0, "o": "live", "s": "edited"},
-        {"i": 1, "o": "B[end]"},
+        {"i": 0, "o": "live", "h": f"{WAS:08X}", "s": "edited"},
+        {"i": 1, "o": "B[end]", "h": f"{bits_digest(format(0x4200, '016b')):08X}"},
     ]
     # Dropping the document keeps what only it held.
     ws.drop_document(b)
-    assert b.doc is None and b.pending_strings[0] == StringState("live", Status.EDITED)
+    assert b.doc is None
+    assert b.pending_strings[0] == StringState("live", Status.EDITED, digest=WAS)
 
 
 def test_invalidate_path_spares_the_saver_and_the_dirty(tmp_path):

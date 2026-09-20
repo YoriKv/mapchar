@@ -105,6 +105,7 @@ class RawWidget(QAbstractScrollArea):
         than at every paint."""
         self._sel: tuple[int, int] | None = None
         self._bits: tuple[int, int] | None = None
+        self._structure: tuple[int, int] | None = None
         """The absolute bit range selected when the selection is tokens picked in
         the text column, ``_sel`` then being the bytes it touches; ``None`` when
         the selection is whole bytes."""
@@ -375,6 +376,17 @@ class RawWidget(QAbstractScrollArea):
     def selection(self) -> tuple[int, int] | None:
         return self._sel
 
+    def set_structure(self, span: tuple[int, int] | None) -> None:
+        """Wash the absolute bytes ``span`` covers, or none: the compressed
+        structure the Decompressed view is reading, so where it sits in the
+        file and how far it runs shows in the file itself."""
+        if span != self._structure:
+            self._structure = span
+            self.viewport().update()
+
+    def structure(self) -> tuple[int, int] | None:
+        return self._structure
+
     def selection_bits(self) -> tuple[int, int] | None:
         """The absolute bit range of a selection of tokens; ``None`` for bytes."""
         return self._bits
@@ -423,6 +435,16 @@ class RawWidget(QAbstractScrollArea):
             painter.fillRect(0, row * rh, width, rh, pal.alternateBase())
         painter.setPen(QPen(faint, 1))
         painter.drawLine(text_x - cw, 0, text_x - cw, rows * rh)
+
+        # The compressed structure on preview, under everything said of its
+        # bytes: they are still tokens, pointers and a selection.
+        if self._structure is not None:
+            s, e = self._structure
+            lo, hi = max(s - model.offset, 0), min(e - model.offset, limit)
+            for first, last in row_runs(range(lo, hi)):
+                span = last - first + 1
+                painter.fillRect(self._hex_cell(first, span), theme.TINT_STRUCTURE)
+                painter.fillRect(self._text_cell(first, span), theme.TINT_STRUCTURE)
 
         # Token tints: one chip per token per row, so where one ends reads.
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -716,6 +738,12 @@ class RawWidget(QAbstractScrollArea):
             self._anchor = self._anchor_bits = None
             self._select(-1, -1)
             return
+        # Shift takes the selection out to here from where the last click left
+        # its anchor; with nothing anchored yet, it is that click.
+        shift = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        if shift and self._anchor is not None:
+            self._extend(b, bits)
+            return
         self._pick(b, bits)
 
     def _pick(self, byte: int, bits: tuple[int, int] | None) -> None:
@@ -727,21 +755,31 @@ class RawWidget(QAbstractScrollArea):
         else:
             self._select_bits(*bits)
 
-    def mouseMoveEvent(self, event) -> None:
-        if self._anchor is None or not (event.buttons() & Qt.MouseButton.LeftButton):
+    def _extend(self, byte: int | None, bits: tuple[int, int] | None) -> None:
+        """Take the selection from the anchor out to here: what a drag and a
+        Shift+click both do, each column in its own units — whole tokens by
+        their bits in the text column, bytes in the hex column. A point that is
+        not in the column the anchor was set in reaches nothing, and the
+        selection stays as it was; without an anchor there is nothing to reach
+        from at all.
+        """
+        if self._anchor is None:
             return
-        pos = self._content_pos(event.position().toPoint())
         if self._anchor_bits is not None:
-            bits = self._token_bits_at(pos)
             if bits is not None:
                 lo = min(self._anchor_bits[0], bits[0])
                 self._select_bits(lo, max(self._anchor_bits[1], bits[1]))
             return
-        b = self._byte_at(pos)
-        if b is None:
+        if byte is None:
             return
-        lo, hi = min(self._anchor, b), max(self._anchor, b)
+        lo, hi = min(self._anchor, byte), max(self._anchor, byte)
         self._select(lo, hi + 1)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._anchor is None or not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+        pos = self._content_pos(event.position().toPoint())
+        self._extend(self._byte_at(pos), self._token_bits_at(pos))
 
     def _select(self, start: int, end: int) -> None:
         self._bits = None

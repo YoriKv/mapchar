@@ -47,18 +47,22 @@ def test_with_nothing_open_the_bar_shows_a_plain_range_reading(window, tmp_path)
     sections = bar.sections
 
     def default() -> None:
-        # A file's text has one source kind and no addresses: nothing to show.
+        # A file's text has one source kind and no addresses: every section is
+        # there, so nothing moves when a block opens, and those are greyed.
         assert bar.source_kind.currentData() == RANGE
-        assert not sections["Source"].isVisibleTo(window)
-        assert sections["Strings"].isVisibleTo(window)
-        assert not sections["Pointers"].isVisibleTo(window)
-        assert not sections["Writing"].isVisibleTo(window)
+        assert all(section.isVisibleTo(window) for section in sections.values())
+        # (Asked of the bar: with nothing open the window greys all of it.)
+        assert not bar.start.isEnabledTo(bar)
+        assert not bar.source_kind.isEnabledTo(bar)
+        assert bar.string_type.isEnabledTo(bar)
+        assert not bar.ptr_size.isEnabledTo(bar)
+        assert not bar.writing.isEnabledTo(bar)
 
     default()
     entry = open_rom_and_table(window, tmp_path, ROM)
     add_block(window, entry, "b", PointerTableSource(0, 4, 1, 1))
-    assert sections["Source"].isVisibleTo(window)
-    assert sections["Pointers"].isVisibleTo(window)
+    assert bar.start.isEnabled() and bar.source_kind.isEnabled()
+    assert bar.ptr_size.isEnabled() and bar.writing.isEnabled()
     # The last entry closed leaves the default reading, not the block's.
     for open_entry in list(window.workspace.entries):
         window.apply_entry_remove(open_entry)
@@ -75,13 +79,13 @@ def test_the_mode_shows_only_its_own_settings(window, tmp_path):
     window._activate_entry(entry)
     window.show()
     bar = window.reading_bar
-    assert not window.resolve_group.isVisibleTo(window)
-    assert not bar.sections["Pointers"].isVisibleTo(window)
+    assert not window.resolve_group.isEnabled()
+    assert not bar.ptr_size.isEnabled()
     # A file has no addresses to write back to.
-    assert not bar.sections["Writing"].isVisibleTo(window)
+    assert not bar.writing.isEnabled()
     _pointers(window)
-    assert window.resolve_group.isVisibleTo(window)
-    assert bar.sections["Pointers"].isVisibleTo(window)
+    assert window.resolve_group.isEnabled()
+    assert bar.ptr_size.isEnabled()
 
 
 def test_a_file_with_no_table_reads_as_ascii(window, tmp_path):
@@ -173,14 +177,14 @@ def test_the_skips_picker_is_there_in_either_mode_of_a_block(window, tmp_path):
     block = add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))
     window.show()
     picker = window.reading_bar.skips
-    assert picker.isVisibleTo(window)
+    assert picker.isEnabled()
     window.mode_toggle.button(False).click()
-    assert picker.isVisibleTo(window)
+    assert picker.isEnabled()
     window._show_string(block, 0)
-    assert picker.isVisibleTo(window)
+    assert picker.isEnabled()
     # A file has no addresses of its own, so no skips either.
     window._activate_entry(entry)
-    assert not picker.isVisibleTo(window)
+    assert picker.isVisibleTo(window) and not picker.isEnabled()
 
 
 def test_a_skip_is_added_from_the_selection(window, tmp_path, monkeypatch):
@@ -251,19 +255,19 @@ def test_a_pointer_block_s_mode_shows_its_table_or_all_its_strings(window, tmp_p
     entry = open_rom_and_table(window, tmp_path, rom)
     block = add_block(window, entry, "b", PointerTableSource(0, 6, 2, 2))
     config = block.config
-    toggle, sections = window.mode_toggle, window.reading_bar.sections
+    toggle, bar = window.mode_toggle, window.reading_bar
     assert window._bounds == (0, 6)
     toggle.button(False).click()
     assert block.config == config
     assert window._bounds == (0x10, 0x16) and window._offset == 0x10
-    assert toggle.value() is False and not window.resolve_group.isVisibleTo(window)
-    assert not sections["Pointers"].isVisibleTo(window)
+    assert toggle.value() is False and not window.resolve_group.isEnabled()
+    assert not bar.ptr_size.isEnabled()
     text = "".join(t.text() for t in window.raw._model.tokens)
     assert text.startswith("AB[end]") and text.endswith("B[end]")
     toggle.button(True).click()
     assert block.config == config and window._bounds == (0, 6)
     assert window.raw._model.tokens[0].table_id == POINTER_TOKENS
-    assert sections["Pointers"].isVisibleTo(window)
+    assert bar.ptr_size.isEnabled()
 
 
 def test_a_block_comes_back_on_the_strings_it_was_left_reading(window, tmp_path):
@@ -314,13 +318,13 @@ def test_a_pointer_block_s_string_opened_alone_reads_as_text(window, tmp_path):
     block = add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))
     window._show_string(block, 0)
     assert "".join(t.text() for t in window.raw._model.tokens) == "AB[end]"
-    # Shown as strings, with only the settings that shape a string.
-    sections = window.reading_bar.sections
+    # Shown as strings, with only the settings that shape a string live.
+    bar = window.reading_bar
     assert window.mode_toggle.value() is False
-    assert not window.resolve_group.isVisibleTo(window)
-    assert sections["Strings"].isVisibleTo(window)
-    assert not sections["Source"].isVisibleTo(window)
-    assert not sections["Pointers"].isVisibleTo(window)
+    assert not window.resolve_group.isEnabled()
+    assert bar.string_type.isEnabled() and bar.writing.isEnabled()
+    assert not bar.start.isEnabled()
+    assert not bar.ptr_size.isEnabled()
     window._show_view("text")
     assert window.text.edit.toPlainText().startswith("AB")
     # Back on its whole source, the block's view is its pointers again.
@@ -328,8 +332,8 @@ def test_a_pointer_block_s_string_opened_alone_reads_as_text(window, tmp_path):
     window._show_view("raw")
     assert window.raw._model.tokens[0].table_id == POINTER_TOKENS
     assert window.mode_toggle.value() is True
-    assert sections["Source"].isVisibleTo(window)
-    assert sections["Pointers"].isVisibleTo(window)
+    assert bar.start.isEnabled()
+    assert bar.ptr_size.isEnabled()
 
 
 def test_a_file_read_as_pointers_shows_where_each_points(window, tmp_path):
@@ -452,16 +456,18 @@ def test_the_mapping_is_listed_by_name_and_the_bank_only_where_it_reads(
     window.show()
     bar = window.reading_bar
     assert bar.ptr_mapping.currentText() == "Linear (file offset)"
-    assert not bar._groups["ptr_bank"].isVisibleTo(window)
+    # Greyed where the mapping reads no bank, rather than gone: it keeps its
+    # place, so picking a mapping moves nothing.
+    assert bar.ptr_bank.isVisibleTo(window) and not bar.ptr_bank.isEnabled()
     select_data(bar.ptr_mapping, "lorom")
     bar.ptr_mapping.activated.emit(bar.ptr_mapping.currentIndex())
     assert block.config.source.mapping_id == "lorom"
-    assert bar._groups["ptr_bank"].isVisibleTo(window)
+    assert bar.ptr_bank.isEnabled()
     # An id the list does not know is still an id, and keeps its bank.
     bar.ptr_mapping.setCurrentText("banked:8000:4000")
     bar.ptr_mapping.lineEdit().editingFinished.emit()
     assert block.config.source.mapping_id == "banked:8000:4000"
-    assert bar._groups["ptr_bank"].isVisibleTo(window)
+    assert bar.ptr_bank.isEnabled()
 
 
 def test_a_length_prefix_wider_than_a_byte_has_a_byte_order(window, tmp_path):
@@ -499,8 +505,9 @@ def test_the_writing_section_says_what_a_blank_bound_and_automatic_mean(
     add_block(window, entry, "p", PointerTableSource(0, 4, 2, 2))
     bar = window.reading_bar
     assert bar.write_mode.itemText(0) == "Automatic (packed)"
-    # A pointer block's strings end at $15: the last string's end bounds it.
-    assert bar.bound.placeholderText() == window.address_spelling.format(0x15)
+    # A pointer block's strings end at $15, and the fill behind them is room
+    # a shorter layout left: the end of that run bounds it.
+    assert bar.bound.placeholderText() == window.address_spelling.format(0x1D)
     add_block(window, entry, "r", RangeSource(0x10, 0x15))
     assert bar.write_mode.itemText(0) == "Automatic (slotted)"
     assert bar.bound.placeholderText() == window.address_spelling.format(0x15)
@@ -619,3 +626,23 @@ def test_a_version_1_project_s_fixed_strings_open_without_their_end_token(
         ("AA", "BA", "edited"),
     ]
     assert not block.fixed_ends_shown
+
+
+def test_a_header_is_a_range_block_s_setting(window, tmp_path):
+    """Records of ``[2 bytes][length][text]`` read once the bar is told the
+    header, with no skip range per record; a pointer block has no such field."""
+    data = bytes.fromhex("05 CB 02 41 42  06 CB 01 42") + b"\xff" * 4
+    entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, entry, "b", RangeSource(0, 9), Pascal(1))
+    bar = window.reading_bar
+    assert bar.header.isEnabled() and bar.header.text() == "off"
+    bar.header.setValue(2)
+    assert block.config.header == 2
+    assert [s.current_text() for s in block.doc.strings] == ["AB", "B"]
+    assert bar.write_mode.itemText(0) == "Automatic (slotted)"
+    window.undo_stack.undo()
+    assert block.config.header == 0 and bar.header.value() == 0
+    pointers = add_block(
+        window, entry, "p", PointerTableSource(0, 2, 2, 2, "little", "linear", 0)
+    )
+    assert pointers.config.header == 0 and not bar.header.isEnabled()

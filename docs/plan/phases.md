@@ -68,10 +68,13 @@ Edit strings beside the original and write them back in place.
 
 ## 5. Compression and plugins
 
-- The compression stage, the Decompressed View, Jump to Next, scan and To
+- The compression stage, the Format bar's Compression picker and the arming a
+  scheme's signature does by itself, the Decompressed View with its hex, text
+  and structure readings, Jump to Next, scan, Find All and To
   Block; decompressed blocks with spare-room fill on write.
-- Built-in schemes: LZSS variants, bit-packed alphabets, the command LZ, RLE
-  and the generic decompressors, plus Huffman over an in-ROM tree as a preset.
+- Built-in schemes: LZSS variants, bit-packed alphabets, the command LZ, RLE,
+  RNC and the generic decompressors, plus Huffman over an in-ROM tree as a
+  preset.
 - User and project plugin folders, discovery, trust, refresh, load-issue
   reporting, pass-through for missing plugins.
 - Complete when a compressed fixture round-trips through a block and a user

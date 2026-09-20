@@ -20,8 +20,8 @@ What the ROM holds, and where each fact comes from:
   ``hl`` on the next record, so the story screens are chains of them). The
   offset is read by ``$1995`` and the characters by ``$19C8`` into ``$1930``,
   which draws space, ``!``, ``'``, digits and letters. A block over records
-  skips each header, which keeps the records in their slots: a chained one
-  keeps its length, or the next header moves.
+  steps over each header (``header=2``), which keeps the records in their
+  slots: a chained one keeps its length, or the next header moves.
 - **Winner messages** are records behind the 12 pointers at ``$457B``, which
   ``$0F83`` indexes by fighter; the block's offset lands on the length byte.
 - **Fighter names** on the fight HUD (12 pointers at ``$4DE9``) are drawn by
@@ -253,21 +253,19 @@ def _menu(rom: bytes, name: str, sites: tuple[int, ...], per: int) -> Block:
 
 
 def _records(rom: bytes, name: str, folder: str, sites) -> Block:
-    """A range over a chain of records, skipping every header."""
-    headers = []
-    at = None
+    """A range over a chain of records, each behind its two-byte header."""
+    first = at = None
     for site, count in sites:
         start = BANK2 + _literal(rom, site)
         assert at is None or start == at, (name, hex(site))
         at = start
+        first = start if first is None else first
         for _ in range(count):
-            headers.append(at)
             at = _record_end(rom, at)
-    skips = ",".join(f"${h:X}>${h + 2:X}" for h in headers)
     return Block(
         name,
-        f"source=range start=${headers[0]:X} stop=${at:X} type=pascal:1 "
-        f"table=mk2-records skips={skips}",
+        f"source=range start=${first:X} stop=${at:X} type=pascal:1 "
+        "table=mk2-records header=2",
         folder,
     )
 

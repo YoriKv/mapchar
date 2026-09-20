@@ -18,6 +18,17 @@ from mapchar.ui.widgets import CancellableRun, ElidedLabel, EscapeCloses, Result
 from mapchar.ui.window_layout import remember_layout
 
 
+def _strings_of(region: Region) -> str:
+    """How the region cuts its strings, in the Block dialog's words: the end
+    token it guessed, or the length prefix and the header in front of it."""
+    if region.records is not None:
+        header = region.records.header
+        return "Length prefix" + (f", header {header}" if header else "")
+    if region.terminator is not None:
+        return f"End token {region.terminator:02X}"
+    return ""
+
+
 class ScanWindow(EscapeCloses, CancellableRun, QWidget):
     go_to = Signal(int, int)
     new_block = Signal(object)
@@ -58,7 +69,7 @@ class ScanWindow(EscapeCloses, CancellableRun, QWidget):
         layout.addLayout(row)
         self.status = ElidedLabel("")
         layout.addWidget(self.status)
-        self.results = ResultsTable(["Start", "End", "Score", "Terminator", "Initial"])
+        self.results = ResultsTable(["Start", "End", "Score", "Strings", "Initial"])
         layout.addWidget(self.results, 1)
         bottom = QHBoxLayout()
         self.block = QPushButton("New Block from Region")
@@ -97,7 +108,7 @@ class ScanWindow(EscapeCloses, CancellableRun, QWidget):
                 f"{r.start:X}",
                 f"{r.end:X}",
                 f"{r.score:.2f}",
-                f"{r.terminator:02X}" if r.terminator is not None else "",
+                _strings_of(r),
                 f"{r.initial:02X}" if r.initial is not None else "",
             ]
             for r in self._regions

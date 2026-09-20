@@ -41,6 +41,13 @@ class Candidate:
     pointer is: **Attach** puts the reading back on the string, and the value
     read is what a write-back re-derives and compares against.
     """
+    banks: dict[int, int] = field(default_factory=dict)
+    """String start offset to the bank its pointer is read in.
+
+    A pointer too short to carry the bank says only where in the window its
+    target sits, so which bank that is comes from the string's own offset —
+    and the strings of one block need not all sit in the same bank.
+    """
     stride: int = 0
     """The most common distance between consecutive hit addresses."""
 
@@ -74,18 +81,48 @@ class Candidate:
                 best = run
         return best
 
+    def run_explained(self) -> int:
+        """How many strings :meth:`table_run` alone reaches.
+
+        What the ranking asks first: a two-byte value turns up all over a file
+        by chance, so a count of strings explained counts coincidences as
+        readily as pointers, while a run of them is a table or nothing.
+        """
+        run = set(self.table_run())
+        return sum(1 for addrs in self.hits.values() if run.intersection(addrs))
+
     def regularity(self) -> float:
         return common_stride(self.addresses)[1]
+
+    def bank(self) -> int:
+        """The one bank the table is read in: the commonest among the strings
+        its run reaches, since a source carries a single bank and a table whose
+        strings straddle a bank boundary is the rare case.
+        """
+        run = set(self.table_run())
+        banks = [
+            b for start, b in self.banks.items() if run.intersection(self.hits[start])
+        ] or list(self.banks.values())
+        return Counter(banks).most_common(1)[0][0] if banks else 0
 
     def refs(self) -> dict[int, tuple[PointerRef, ...]]:
         """Per string start, the pointers this candidate found reaching it.
 
         What **Attach** puts on the strings: each ref names where the value sits
         and the whole reading that found it, so nothing else has to be carried
-        alongside for the pointer to be written back.
+        alongside for the pointer to be written back. A packed write rewrites
+        every one of them, so a coincidence left in here is a byte pair
+        corrupted wherever in the file it happened to sit.
+
+        A string the table run reaches therefore keeps only the hits inside the
+        run: the rest are the same short value turning up in code. A string the
+        run does not reach keeps all of its hits, since pointers scattered
+        rather than tabulated are what **Attach** is for.
         """
-        return {
-            start: tuple(
+        run = set(self.table_run())
+        out: dict[int, tuple[PointerRef, ...]] = {}
+        for start, addrs in self.hits.items():
+            out[start] = tuple(
                 PointerRef(
                     address,
                     self.size,
@@ -94,10 +131,9 @@ class Candidate:
                     self.offset,
                     self.values[start],
                 )
-                for address in addrs
+                for address in ([a for a in addrs if a in run] or addrs)
             )
-            for start, addrs in self.hits.items()
-        }
+        return out
 
     def source(self) -> PointerTableSource:
         addrs = self.table_run()
@@ -109,6 +145,7 @@ class Candidate:
             self.endian,
             self.mapping_id,
             self.offset,
+            self.bank(),
         )
 
 
@@ -132,7 +169,15 @@ def discover(
     bank: int = 0,
     progress: Callable[[int, int], bool] | None = None,
 ) -> list[Candidate]:
-    """Rank ``(mapping, size, endian, offset)`` combinations by strings explained."""
+    """Rank ``(mapping, size, endian, offset)`` combinations by the strings the
+    table they make explains, then by how many they explain at all and how
+    regular their addresses are.
+
+    A mapping that needs a bank takes each string's own from its offset
+    (``bank_of``) rather than from ``bank``, which is the fallback for one that
+    does not say: the strings of a block can sit in different banks, and a
+    banked table is not found at all when the bank is guessed wrong.
+    """
     combos = [
         (mid, m, size, endian, off)
         for mid, m in mappings.items()
@@ -146,21 +191,34 @@ def discover(
         if progress is not None and not progress(i, len(combos)):
             break
         cand = Candidate(mid, size, endian, off)
+        limit = 1 << (size * 8)
+        bank_of = getattr(mapping, "bank_of", None)
+        needs_bank = getattr(mapping, "needs_bank", False)
         for start in starts:
             target = start - off
             if target < 0:
                 continue
-            value = mapping.to_value(target, bank)
-            if value < 0 or value >= 1 << (size * 8):
+            at_bank = bank_of(target) if bank_of is not None else bank
+            value = mapping.to_value(target, at_bank)
+            if needs_bank and value >= limit:
+                # A pointer too narrow to carry the bank holds only the address
+                # inside the window; the bank is what it leaves out.
+                value &= limit - 1
+            if value < 0 or value >= limit:
+                continue
+            if mapping.to_offset(value, at_bank) != target:
                 continue
             needle = pointer_bytes(value, size, endian)
             found = _find_all(data, needle)
             if found:
                 cand.hits[start] = found
                 cand.values[start] = value
+                cand.banks[start] = at_bank
         if not cand.hits:
             continue
         cand.stride = common_stride(cand.addresses)[0]
         results.append(cand)
-    results.sort(key=lambda c: (c.explained, c.regularity()), reverse=True)
+    results.sort(
+        key=lambda c: (c.run_explained(), c.explained, c.regularity()), reverse=True
+    )
     return results

@@ -368,6 +368,12 @@ def hint_field(field: QLineEdit, placeholder: str, tip: str | None = None) -> QL
     return field
 
 
+ROW_BREAK = "flow_row_break"
+"""The property that puts an item of a :class:`FlowLayout`, and what follows
+it, on a row of its own: for controls that come and go, so the ones before them
+keep a row whose length never changes."""
+
+
 class FlowLayout(QLayout):
     """A layout that lines its items up left to right and wraps them onto as
     many rows as the width needs.
@@ -456,14 +462,20 @@ class FlowLayout(QLayout):
         down = self._gap(Qt.Orientation.Vertical)
         rows: list[list[tuple[QLayoutItem, int]]] = [[]]
         x = area.x()
+        broke = False
         for item in self._items:
             if item.isEmpty():
                 continue
             hint = item.sizeHint()
             width = max(min(hint.width(), area.width()), item.minimumSize().width())
-            if x + width > area.right() + 1 and rows[-1]:
+            widget = item.widget()
+            # The first item marked :data:`ROW_BREAK` starts a row of its own
+            # with everything after it, whatever room the row before has left.
+            breaks = not broke and widget is not None and widget.property(ROW_BREAK)
+            if (breaks or x + width > area.right() + 1) and rows[-1]:
                 rows.append([])
                 x = area.x()
+            broke = broke or bool(breaks)
             rows[-1].append((item, width))
             x += width + across
         y = area.y()
@@ -816,6 +828,18 @@ class CancellableRun:
         finally:
             self._run_button.setEnabled(True)
             self._stop_button.setEnabled(False)
+
+    @contextmanager
+    def running_as(self, run: QPushButton, verb: str) -> Iterator[None]:
+        """One run started from another button, on the same Stop and progress
+        line: a window with two long actions has one way out of either."""
+        was_run, was_verb = self._run_button, self._verb
+        self._run_button, self._verb = run, verb
+        try:
+            with self.running():
+                yield
+        finally:
+            self._run_button, self._verb = was_run, was_verb
 
     def progress(self, done: int, total: int) -> bool:
         """Report how far the work is; ``False`` asks the engine to stop."""

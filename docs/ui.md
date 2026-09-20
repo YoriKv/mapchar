@@ -31,6 +31,24 @@ checks the ones a test can see.
   theme's surface; a mode that cannot be picked is disabled and keeps the
   greyed look.
 
+## Nothing moves
+
+Opening another entry, or picking another kind of source or string, leaves
+every control where it was.
+
+- **A bar keeps its rows.** The Format, Reading and Block bars show the same
+  controls in the same order whatever is open; one that does not apply is
+  greyed where it stands, as a menu row is, never hidden.
+- **What only some readings have goes last**: the fields one kind of source or
+  string type has and another has not sit at the end of their section — under
+  Strings on a row of their own (`widgets.ROW_BREAK`) — so nothing stands after
+  them to be pushed along.
+- **Settings made once are folded away**: a block's write settings and its skip
+  ranges are one line each, opening a popup under it (`WritingPicker`,
+  `SkipsPicker`).
+- A window made narrower wraps its bars onto more rows; that is the user's
+  doing and the only thing that moves them.
+
 ## Room running out
 
 No layout's minimum size may be set by text or a count that varies.

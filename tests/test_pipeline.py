@@ -14,7 +14,12 @@ from mapchar.pipeline.pipeline import (
     load,
     save,
 )
-from mapchar.pipeline.scan import find_next_structure
+from mapchar.pipeline.scan import (
+    find_next_structure,
+    find_structures,
+    scheme_at,
+    signature_of,
+)
 from mapchar.plugins.base import PluginInfo, Stage, WriteTarget
 from mapchar.plugins.builtins.containers import NES_MAGIC
 
@@ -209,6 +214,99 @@ def test_find_next_structure_can_be_stopped(slotted):
     )
     assert result.stopped and result.found is None and result.end == 8
     assert seen == [8]
+
+
+def _rnc2_noise(count: int) -> bytes:
+    """Bytes no RNC magic can hide in: ascending, so ``52 4E 43`` never adjoin."""
+    return (bytes(range(256)) * (count // 256 + 1))[:count]
+
+
+def _stray_rnc2() -> bytes:
+    """``RNC\\x02`` with a header that is not one: the packed CRC decides."""
+    return (
+        b"RNC\x02"
+        + (100).to_bytes(4, "big")
+        + (20).to_bytes(4, "big")
+        + b"\x12\x34"  # unpacked CRC
+        + b"\x56\x78"  # packed CRC, which 20 bytes of 0xFF do not give
+        + b"\x00\x01"
+        + b"\xff" * 20
+    )
+
+
+def test_find_structures_takes_every_signed_stream_and_no_stray_magic(registry):
+    """The signature says where to look; the scheme's own decoder decides.
+
+    Two streams in noise, with a third ``RNC\\x02`` whose header fails its packed
+    CRC between them: the walk finds the two, at the offsets they were laid at
+    and with the compressed extent each declares.
+    """
+    from mapchar.plugins.builtins.compression import rnc
+
+    first = rnc.compress(b"HELLO HELLO HELLO\x00" * 8, method=2)
+    second = rnc.compress(b"WORLD WORLD WORLD\x00" * 6, method=2)
+    head = _rnc2_noise(64)
+    middle = _stray_rnc2() + _rnc2_noise(32)
+    data = head + first + middle + second + _rnc2_noise(48)
+    at_second = len(head) + len(first) + len(middle)
+
+    result = find_structures(data, [registry.plugin(Stage.COMPRESSION, "rnc2")])
+    assert not result.stopped
+    assert [(f.offset, f.consumed) for f in result.found] == [
+        (len(head), len(first)),
+        (at_second, len(second)),
+    ]
+    assert [f.scheme_id for f in result.found] == ["rnc2", "rnc2"]
+    assert [f.size for f in result.found] == [8 * 18, 6 * 18]
+    # Nothing scores the payloads unless the caller asks.
+    assert [f.score for f in result.found] == [0.0, 0.0]
+    scored = find_structures(
+        data,
+        [registry.plugin(Stage.COMPRESSION, "rnc2")],
+        score=lambda payload: len(payload) / 1000,
+    )
+    assert [f.score for f in scored.found] == [0.144, 0.108]
+
+
+def test_find_structures_reports_the_scheme_and_can_be_stopped(registry, slotted):
+    """Both walks answer the same tick, and each scheme it finds is named."""
+    from mapchar.plugins.builtins.compression import rnc
+
+    stream = rnc.compress(b"HELLO HELLO HELLO\x00" * 8, method=2)
+    data = _rnc2_noise(32) + stream
+
+    stopped = find_structures(
+        data, [registry.plugin(Stage.COMPRESSION, "rnc2")], on_tick=lambda _at: True
+    )
+    # Stopped at the first candidate, and what it had found by then is kept.
+    assert stopped.stopped and [f.offset for f in stopped.found] == [32]
+    # A scheme with no signature is walked a byte at a time, as the forward scan
+    # walks it, and answers the same tick.
+    doubler = slotted.plugin(Stage.COMPRESSION, "doubler")
+    assert find_structures(
+        b"\x00" * 512, [doubler], on_tick=lambda _at: True, progress_every=8
+    ).stopped
+
+
+def test_scheme_at_arms_only_where_a_signature_reads_a_whole_structure(registry):
+    from mapchar.plugins.builtins.compression import rnc
+
+    stream = rnc.compress(b"HELLO HELLO HELLO\x00" * 8, method=2)
+    data = _rnc2_noise(16) + stream + _stray_rnc2()
+    schemes = [
+        registry.plugin(Stage.COMPRESSION, id) for id in ("rnc1", "rnc2", "gba_lz77")
+    ]
+    found = scheme_at(data, schemes, 16)
+    assert found is not None
+    plugin, structure = found
+    assert plugin.info.id == "rnc2" and structure.complete
+    assert structure.consumed == len(stream)
+    # One byte off the signature, and on a header that fails its CRC: nothing.
+    assert scheme_at(data, schemes, 17) is None
+    assert scheme_at(data, schemes, 16 + len(stream)) is None
+    # A scheme that announces itself in no way is never armed by looking.
+    assert signature_of(registry.plugin(Stage.COMPRESSION, "gba_lz77")) == b""
+    assert signature_of(registry.plugin(Stage.COMPRESSION, "rnc1")) == b"RNC\x01"
 
 
 def test_write_target_room_matches_file_ref(tmp_path):

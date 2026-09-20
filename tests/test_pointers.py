@@ -129,14 +129,56 @@ def test_discovery_finds_the_table(registry):
 
 
 def test_discovery_leaves_stray_matches_out_of_the_table(registry):
-    """A pointer value that also turns up far from the table is a hit, and
-    **Attach** keeps it, but the table inferred is the run the strides join."""
+    """A pointer value that also turns up far from the table is a hit, but the
+    table inferred is the run the strides join — and **Attach** leaves the stray
+    off a string the run already reaches, since a packed write would rewrite it
+    wherever it sits."""
     rom = pointer_rom((0x10, 0x13), "41 42 00 43 00") + bytes(40) + b"\x13\x00"
     mappings = {"linear": resolve_mapping(registry, "linear")}
     best = discover(rom, [0x10, 0x13], mappings, sizes=(2,), offsets=(0,))[0]
     assert len(best.addresses) == 3
     assert best.table_run() == [0, 2]
     assert best.source() == PointerTableSource(0, 4, 2, 2, "little", "linear", 0)
+    assert [p.address for p in best.refs()[0x13]] == [2]
+
+
+def test_discovery_takes_each_banked_pointer_s_bank_from_its_own_string(registry):
+    """A Game Boy pointer holds only the address inside the switched window, so
+    which bank it is read in comes from where its string sits — the search is
+    never told a bank, and the strings of one block need not share one. The
+    table carries the bank its run mostly reads in.
+    """
+    rom = bytearray(b"\xff" * 0x8020)
+    rom[0x0100:0x0102] = bytes.fromhex("41 00")  # A[end], in the fixed bank
+    rom[0x8000:0x8006] = bytes.fromhex("10 40 13 40 00 01")  # $4010 $4013 $0100
+    rom[0x8010:0x8015] = bytes.fromhex("41 42 00 43 00")  # AB[end] C[end]
+    starts = [0x8010, 0x8013, 0x0100]
+    mappings = {"gb": resolve_mapping(registry, "gb")}
+    best = discover(bytes(rom), starts, mappings, sizes=(2,), offsets=(0,))[0]
+    assert best.banks == {0x8010: 2, 0x8013: 2, 0x0100: 0}
+    src = best.source()
+    assert src == PointerTableSource(0x8000, 0x8006, 2, 2, "little", "gb", 0, 2)
+    ex = extract(bytes(rom), BlockConfig(src, EndToken(), "main"), TS, registry)
+    assert texts(ex) == ["A[end]", "AB[end]", "C[end]"]
+
+
+def test_discovery_ranks_a_table_above_a_candidate_of_strays(registry):
+    """A short pointer value turns up all over a file, so the strings a
+    candidate explains counts coincidences as readily as pointers: what ranks
+    first is the strings its table run explains."""
+    rom = bytearray(b"\xff" * 0x40)
+    rom[0:6] = bytes.fromhex("10 00 13 00 18 00")  # the table, little-endian
+    rom[0x10:0x1E] = bytes.fromhex("41 42 00 43 43 43 43 00 41 00 FF FF 42 00")
+    # The same values read big-endian: two inside the table and two far from it.
+    rom[0x30:0x32] = bytes.fromhex("00 10")
+    rom[0x3D:0x3F] = bytes.fromhex("00 1C")
+    mappings = {"linear": resolve_mapping(registry, "linear")}
+    cands = discover(bytes(rom), [0x10, 0x13, 0x18, 0x1C], mappings, sizes=(2,))
+    best, other = cands[0], cands[1]
+    assert (best.endian, best.run_explained(), best.explained) == ("little", 3, 3)
+    # Explains one string more, and only by chance: its run reaches two.
+    assert (other.endian, other.run_explained(), other.explained) == ("big", 2, 4)
+    assert best.source() == PointerTableSource(0, 6, 2, 2, "little", "linear", 0)
 
 
 def test_range_source_still_slotted():
@@ -354,3 +396,42 @@ def test_a_string_that_is_another_s_tail_is_laid_out_once(registry):
     )
     res, out = relayout(rom, ranged, TS, {1: "C[end]"}, registry)
     assert res.ok and out[0x10:0x16] == bytes.fromhex("41 42 43 00 43 00")
+
+
+def test_a_pointer_block_with_no_bound_takes_back_the_fill_it_left(registry):
+    """Room a shorter string gave up is there for a longer one afterwards: with
+    no bound of its own the block's room ends after the fill behind its text,
+    not where the text happens to end now."""
+    rom = pointer_rom((0x10, 0x14), "41 42 43 00 43 00", tail=0) + b"\x01"
+    cfg = BlockConfig(
+        PointerTableSource(0, 4, 2, 2, "little", "linear", 0), EndToken(), "main"
+    )
+    res, out = relayout(rom, cfg, TS, {0: "A[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0x10:0x17] == bytes.fromhex("41 00 43 00 FF FF 01")
+    res, out = relayout(out, cfg, TS, {0: "ABC[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0x10:0x17] == bytes.fromhex("41 42 43 00 43 00 01")
+    # The byte after the fill is not the block's: one more does not fit.
+    res, _ = relayout(out, cfg, TS, {0: "ABCA[end]"}, registry)
+    assert not res.ok
+
+
+def test_a_packed_write_keeps_a_banked_short_pointer_short(registry):
+    """A 16-bit Game Boy pointer holds the address and the block the bank: a
+    write rewrites the address, and refuses a string moved out of that bank."""
+    body = bytes.fromhex("41 42 43 00 43 00")
+    rom = bytearray(b"\\xff" * 0x8020)
+    rom[0x8000:0x8004] = bytes.fromhex("10 40 14 40")
+    rom[0x8010 : 0x8010 + len(body)] = body
+    rom[0x8016] = 0x01
+    cfg = BlockConfig(
+        PointerTableSource(0x8000, 0x8004, 2, 2, "little", "gb", 0, 2),
+        EndToken(),
+        "main",
+    )
+    assert texts(extract(bytes(rom), cfg, TS, registry)) == ["ABC[end]", "C[end]"]
+    res, out = relayout(bytes(rom), cfg, TS, {0: "A[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0x8000:0x8004] == bytes.fromhex("10 40 12 40")
+    assert texts(extract(out, cfg, TS, registry)) == ["A[end]", "C[end]"]

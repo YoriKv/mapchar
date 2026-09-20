@@ -309,7 +309,16 @@ class DiscoveryDialog(QDialog):
         """Whether the result was taken by Attach rather than as the source."""
         layout = QVBoxLayout(self)
         self.table = ResultsTable(
-            ["Mapping", "Size", "Endian", "Offset", "Strings", "Stride", "Addresses"]
+            [
+                "Mapping",
+                "Size",
+                "Endian",
+                "Offset",
+                "Bank",
+                "Strings",
+                "Stride",
+                "Addresses",
+            ]
         )
         self.table.fill(
             [
@@ -317,6 +326,8 @@ class DiscoveryDialog(QDialog):
                 str(c.size),
                 c.endian,
                 format_hex_offset(c.offset),
+                # Bank 0 is what every unbanked mapping reads too: left blank.
+                f"{c.bank():02X}" if c.bank() else "",
                 str(c.explained),
                 str(c.stride),
                 f"{run[0]:X}–{run[-1]:X}" if run else "",

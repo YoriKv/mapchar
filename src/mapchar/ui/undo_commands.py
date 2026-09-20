@@ -651,6 +651,13 @@ class WriteSide:
     live: int
     saved: int
     blocks: tuple[BlockSide, ...]
+    wrote: bool = False
+    """Whether landing this side is the write rather than the undo of one.
+
+    Said rather than worked out from the revisions: a file that was clean and
+    had only a dirty compressed block written has the same pair on both sides,
+    and an undo that inferred its verb from them would say "Wrote".
+    """
 
 
 class WriteCommand(_InPlaceCommand):

@@ -21,6 +21,7 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
     StringRecord,
+    bits_digest,
     is_fill,
 )
 from mapchar.core.mapping import read_pointer
@@ -108,8 +109,15 @@ def extract(
     else:
         raise TypeError(f"unknown source {source!r}")
     for rec in ex.strings:
-        rec.original = rec.current_text()
+        _seed_original(rec, bits)
     return ex
+
+
+def _seed_original(rec: StringRecord, bits: Bits) -> None:
+    """A string's original as its bytes say it now, with their digest."""
+    rec.digest = bits_digest(bits.window(rec.start_bit, rec.end_bit - rec.start_bit))
+    rec.original = rec.current_text()
+    rec.original_digest = rec.digest
 
 
 def reextract(
@@ -149,7 +157,8 @@ def reextract(
         if not rec.pointers:
             return None
         old.setdefault(rec.pointers[0].offset, []).append(rec)
-    part = _extract_pointers(Bits(data), config, tables, source, registry, bases)
+    bits = Bits(data)
+    part = _extract_pointers(bits, config, tables, source, registry, bases)
     new: dict[int, list[StringRecord]] = {}
     for rec in part.strings:
         new.setdefault(rec.pointers[0].offset, []).append(rec)
@@ -160,7 +169,7 @@ def reextract(
             return None
         for was, now in zip(before, after, strict=True):
             now.index = was.index
-            now.original = now.current_text()
+            _seed_original(now, bits)
             placed[was.index] = now
     return Extraction(
         [placed.get(rec.index, rec) for rec in strings],
@@ -528,8 +537,11 @@ def _extract_range(
                 start += width
             if start >= stop_bit:
                 break
-        # A string that begins on a skip range begins where it lands.
-        start = follow_skips(start, skips)
+        # A string that begins on a skip range begins where it lands, and
+        # one behind a record header begins after it.
+        start = follow_skips(start, skips) + config.header * 8
+        if start >= stop_bit:
+            break
         tokens, record_end, res_notices = decode_one(
             bits, config, tables, start, stop_bit
         )

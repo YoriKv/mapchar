@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
@@ -172,6 +173,11 @@ class BlockConfig:
     """``(multiple, offset)`` in bytes; a multiple of 0 disables."""
     skips: tuple[tuple[int, int], ...] = ()
     """``(from, to)`` byte pairs: reading ``from`` continues at ``to``."""
+    header: int = 0
+    """Bytes in front of every string of a range that are not text — a
+    record's position, id or flags — stepped over on the way to the string and
+    left standing by a write. A pointer reaches its string past any header, so
+    a pointer source has no use for it."""
     line_length: int = 0
     """For fixed strings, split each into lines this long (0: off)."""
     bound: int | None = None
@@ -203,13 +209,21 @@ class BlockConfig:
     def effective_write_mode(self) -> WriteMode:
         if self.write_mode is not None:
             return self.write_mode
-        return default_write_mode(self.has_pointers, bool(self.skips))
+        return default_write_mode(
+            self.has_pointers, bool(self.skips) or bool(self.record_header)
+        )
+
+    @property
+    def record_header(self) -> int:
+        """:attr:`header` where it applies: over a range."""
+        return self.header if isinstance(self.source, RangeSource) else 0
 
 
 def default_write_mode(pointers: bool, skips: bool) -> WriteMode:
     """The write mode a block without one of its own gets: packed with
-    pointers, slotted without — and slotted with skip ranges, which make the
-    text non-contiguous, so packing cannot lay it out."""
+    pointers, slotted without — and slotted with skip ranges or record
+    headers, which make the text non-contiguous, so packing cannot lay it
+    out."""
     if skips:
         return WriteMode.SLOTTED
     return WriteMode.PACKED if pointers else WriteMode.SLOTTED
@@ -308,13 +322,18 @@ class StringRecord:
     """The string's text as it was when the block was made: a snapshot the
     project keeps, not a reading of the bytes. An extraction seeds it from the
     tokens and the project's saved state replaces it."""
+    digest: int | None = None
+    """A checksum of the bits the string holds now (:func:`bits_digest`)."""
+    original_digest: int | None = None
+    """:attr:`digest` as it was when :attr:`original` was taken, which the
+    project keeps beside it. ``None`` for an original saved before digests
+    were: :attr:`edited` then goes by the text."""
     replacement: str | None = None
     """Text to encode in place of the bytes on the next layout; ``None`` keeps
     the bytes as they are. Transient: set for one layout and cleared after."""
     status: Status = Status.UNTOUCHED
     """*review* when set by hand or by an import; else *edited* or *untouched*
-    as the current text differs from the original or not
-    (:meth:`refresh_status`)."""
+    as the bytes differ from the original's or not (:meth:`refresh_status`)."""
     notes: str = ""
     notices: list[Notice] = field(default_factory=list)
     lines: tuple[int, ...] = ()
@@ -382,18 +401,36 @@ class StringRecord:
 
     @property
     def edited(self) -> bool:
-        """Whether the bytes now say something other than the original."""
-        return not self.matches_original(self.current_text())
+        """Whether the bytes are no longer the original's.
+
+        Told by the bytes, not the text: a block switched to the table its
+        translation is written in reads every string as other text, and none of
+        them has been touched. An original kept without a digest goes by the
+        text.
+        """
+        if self.original_digest is None or self.digest is None:
+            return not self.matches_original(self.current_text())
+        return self.digest != self.original_digest
 
     def matches_original(self, text: str) -> bool:
         """Whether ``text`` is the original text, line breaks and form aside."""
         return same_text(text, self.original)
 
     def refresh_status(self) -> None:
-        """Settle *edited* or *untouched* from the texts; *review* and *done*
-        stay."""
+        """Settle *edited* or *untouched* from the bytes; *review* and *done*
+        stay. An original kept without a digest takes that of bytes that still
+        say it, so it goes by the bytes from then on."""
+        if self.original_digest is None and not self.edited:
+            self.original_digest = self.digest
         if self.status not in HELD:
             self.status = Status.EDITED if self.edited else Status.UNTOUCHED
+
+
+def bits_digest(bits: str) -> int:
+    """A checksum of a string's bits, spelled as ``Bits.window`` spells them:
+    what tells an untouched string from an edited one without keeping a byte
+    of the ROM."""
+    return zlib.crc32(bits.encode("ascii"))
 
 
 def grouped_strings(
@@ -425,17 +462,27 @@ def string_groups(
     return [group for _, group in grouped_strings(config, strings)]
 
 
-def block_bound(config: BlockConfig, strings: list[StringRecord]) -> int:
+def block_bound(
+    config: BlockConfig, strings: list[StringRecord], data: bytes | None = None
+) -> int:
     """The exclusive end packed strings may not cross.
 
-    The configured bound; else a range source's stop; else the last string's
-    original end (a pointer table's stop bounds pointers, not text).
+    The configured bound; else a range source's stop; else the end of the
+    text the pointers reach (a pointer table's stop bounds pointers, not
+    text), and past it, in ``data``, the run of whole fill patterns a shorter
+    layout left — so room given up is room to take back, as it is for a nested
+    source's group.
     """
     if config.bound is not None:
         return config.bound
     if isinstance(config.source, RangeSource):
         return config.source.stop
-    return strings[-1].end if strings else 0
+    end = max((rec.end for rec in strings), default=0)
+    fill = config.fill
+    if data is not None and fill:
+        while data[end : end + len(fill)] == fill:
+            end += len(fill)
+    return end
 
 
 @dataclass

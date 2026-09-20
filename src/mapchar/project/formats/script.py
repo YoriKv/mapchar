@@ -149,6 +149,8 @@ def format_config(config: BlockConfig) -> str:
             "skips="
             + ",".join(f"{format_num(a)}>{format_num(b)}" for a, b in config.skips)
         )
+    if config.header:
+        parts.append(f"header={config.header}")
     if config.line_length:
         parts.append(f"lines={config.line_length}")
     if config.show_end:
@@ -296,6 +298,7 @@ def parse_config(spec: str) -> BlockConfig:
         strings_per_pointer=int(fields.get("spp", "1")),
         realign=realign,
         skips=skips,
+        header=int(fields.get("header", "0")),
         line_length=int(fields.get("lines", "0")),
         bound=parse_num(fields["bound"]) if "bound" in fields else None,
         write_mode=WriteMode(fields["mode"]) if "mode" in fields else None,

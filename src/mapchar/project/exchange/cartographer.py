@@ -382,6 +382,8 @@ def write_command_file(
     if config.realign[0]:
         lines.append(f"#STRING END REALIGN MULTIPLE: {config.realign[0]}")
         lines.append(f"#STRING END REALIGN OFFSET: {config.realign[1]}")
+    if config.record_header:
+        notes.append("a record header has no Cartographer form")
     for i, (a, b) in enumerate(config.skips):
         if i:
             notes.append("only the first skip range has a Cartographer form")

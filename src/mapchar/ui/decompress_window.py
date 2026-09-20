@@ -3,18 +3,48 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
+from mapchar.core.tokens import Token
+from mapchar.pipeline.scan import FoundStructure
+from mapchar.pipeline.text_view import text_model
+from mapchar.ui import settings
 from mapchar.ui.raw_widget import RawWidget, RowModel
-from mapchar.ui.widgets import CancellableRun, ElidedLabel, EscapeCloses
+from mapchar.ui.text_widget import TextWidget
+from mapchar.ui.widgets import CancellableRun, ElidedLabel, EscapeCloses, ResultsTable
 from mapchar.ui.window_layout import remember_layout
+
+TAB_KEY = "decompress_window/tab"
+"""Which reading the window was left on, remembered per machine beside its
+geometry: the payload is looked at the same way from one structure to the next."""
+
+
+def _stored_tab() -> int:
+    """The tab last left in front, or the first. QSettings hands a number back
+    as it was stored — a string on one platform, an int on another."""
+    try:
+        return int(str(settings().value(TAB_KEY, 0)))
+    except (TypeError, ValueError):
+        return 0
 
 
 class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
     """The floating view of what the picked scheme yields at the current offset.
 
-    Scan walks forward over the whole file one offset at a time, which is long
-    enough to need a way out: Run/Stop and the progress line are
+    Three readings of the same slice, as tabs: the bytes, the text they decode
+    to through the reading's table — the Hex and Text tabs the main window has
+    for a file, fed from one decode — and the list of every structure **Find
+    All** found in the file.
+
+    Scan walks forward over the whole file one offset at a time and Find All
+    over the whole of it once, which is long enough to need a way out:
+    Run/Stop and the progress line are
     :class:`~mapchar.ui.widgets.CancellableRun`'s, as in the Search and Scan
     windows, and :meth:`set_scanning` disables everything else, so nothing can be
     asked of a window whose offset is about to move.
@@ -23,6 +53,9 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
     jump_next = Signal()
     scan_next = Signal()
     to_block = Signal()
+    find_all = Signal()
+    go_to = Signal(int)
+    """A structure the list names: show the file there."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Tool)
@@ -30,11 +63,21 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         # Size and position remembered between runs, like every tool
         # window (:mod:`mapchar.ui.window_layout`).
         self._layout = remember_layout(self, "decompress_window")
+        self._structures: list[FoundStructure] = []
+        self._tokens: list[Token] = []
+        self._window = b""
+        """The bytes the tabs show, kept so a switch of what the text shows
+        re-renders them without another decode."""
         layout = QVBoxLayout(self)
         self.status = ElidedLabel("")
         layout.addWidget(self.status)
+        self.tabs = QTabWidget()
         self.raw = RawWidget()
-        layout.addWidget(self.raw, 1)
+        self.text = TextWidget()
+        self.tabs.addTab(self.raw, "Hex")
+        self.tabs.addTab(self.text, "Text")
+        self.tabs.addTab(self._structures_tab(), "Structures")
+        layout.addWidget(self.tabs, 1)
         row = QHBoxLayout()
         self.next = QPushButton("Jump to Next")
         self.next.setToolTip("Move to the byte after the structure shown")
@@ -52,9 +95,34 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         self.next.clicked.connect(self.jump_next)
         self.scan.clicked.connect(self.scan_next)
         self.block.clicked.connect(self.to_block)
+        self.find_button.clicked.connect(self.find_all)
+        self.results.itemSelectionChanged.connect(self._on_structure)
+        # The same tokens read to another text; nothing is decoded again.
+        self.text.shown_changed.connect(self._show_text)
+        self.text.fit_changed.connect(self._show_text)
         self.bind_run(self.scan, self.stop, self.status, "Scanning")
         self._scanning = False
+        self.tabs.setCurrentIndex(_stored_tab())
+        self.tabs.currentChanged.connect(
+            lambda index: settings().setValue(TAB_KEY, index)
+        )
         self.resize(760, 360)
+
+    def _structures_tab(self) -> QWidget:
+        """The Structures tab: Find All over its list of what it found."""
+        pane = QWidget()
+        box = QVBoxLayout(pane)
+        box.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        self.find_button = QPushButton("Find All")
+        self.find_button.setToolTip("Look through the whole file for structures")
+        self.found = ElidedLabel("")
+        row.addWidget(self.find_button)
+        row.addWidget(self.found, 1)
+        box.addLayout(row)
+        self.results = ResultsTable(["Offset", "Packed", "Size", "Text"])
+        box.addWidget(self.results, 1)
+        return pane
 
     def set_scanning(self, active: bool) -> None:
         """Freeze everything a running scan does not drive, and thaw it.
@@ -68,13 +136,63 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         self._scanning = active
         self.next.setEnabled(False)
         self.block.setEnabled(False)
-        self.raw.setEnabled(not active)
+        self.find_button.setEnabled(not active)
+        self.tabs.setEnabled(not active)
 
-    def show_result(self, model: RowModel | None, status: str, complete: bool) -> None:
+    def show_result(
+        self,
+        model: RowModel | None,
+        tokens: list[Token],
+        status: str,
+        complete: bool,
+    ) -> None:
+        """Show one decode: its bytes, the text they read as, and how it went.
+
+        ``tokens`` are the window's own, in step with ``model``'s bytes — one
+        decode of the payload, rendered twice, as the main window's Hex and
+        Text tabs are.
+        """
         self.raw.set_model(model)
+        self._tokens = tokens
+        self._window = model.data if model is not None else b""
+        self._show_text()
         self.status.setText(status)
         # A scan's own progress refreshes run through here; while one is running
         # the only live control is Stop.
         live = model is not None and complete and not self._scanning
         self.block.setEnabled(live)
         self.next.setEnabled(live)
+
+    def _show_text(self) -> None:
+        """Render the kept tokens as text, as the box now shows them."""
+        if not self._window:
+            self.text.set_model(None)
+            return
+        length = len(self._window)
+        self.text.set_model(text_model(self._tokens, 0, length, self.text.shown()))
+        self.text.set_position(0, (0, length))
+
+    # -- the structures ---------------------------------------------------------
+
+    def set_structures(self, structures: list[FoundStructure], note: str) -> None:
+        """Show what Find All found: one row per structure, ``note`` above them."""
+        self._structures = list(structures)
+        self.found.setText(note)
+        self.results.fill(
+            [
+                f"{s.offset:X}",
+                f"{s.consumed:,}",
+                f"{s.size:,}",
+                f"{s.score:.2f}",
+            ]
+            for s in self._structures
+        )
+
+    def clear_structures(self) -> None:
+        """Drop the list: it is one file's, and another file is on screen."""
+        self.set_structures([], "")
+
+    def _on_structure(self) -> None:
+        found = self.results.pick(self._structures)
+        if found is not None:
+            self.go_to.emit(found.offset)

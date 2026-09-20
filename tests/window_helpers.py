@@ -31,6 +31,16 @@ def open_rom_and_table(window, tmp_path, data, table=TABLE, rom_name="rom.bin"):
     return entry
 
 
+def arm_scheme(window, scheme_id: str) -> None:
+    """Arm the Decompressed View's preview through ``scheme_id``, the way the
+    Format bar's Compression picker does."""
+    from mapchar.ui.widgets import select_data
+
+    assert select_data(window.compression_pick, scheme_id), scheme_id
+    # Directly as well: the picker fires nothing when it already showed it.
+    window._on_compression_pick()
+
+
 def add_block(window, file_entry, name, source, string_type=None, **config) -> Entry:
     """A block over ``source`` under ``file_entry``, added and made current.
 

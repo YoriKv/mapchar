@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from helpers import ABC_TABLE, table_set, texts
+from dataclasses import replace
+
+from helpers import ABC_TABLE, relayout, table_set, texts
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -8,13 +10,16 @@ from mapchar.core.block import (
     Lines,
     Pascal,
     PointerListSource,
+    PointerTableSource,
     RangeSource,
+    WriteMode,
 )
 from mapchar.pipeline.extract import (
     extract,
     legacy_fixed_text,
     respell_fixed_end,
 )
+from mapchar.project.formats.script import format_config, parse_config
 
 TS = table_set(ABC_TABLE, "main")
 
@@ -216,3 +221,39 @@ def test_a_text_saved_with_the_end_token_shown_is_respelled():
     assert legacy_fixed_text(short, shown) == "AB[end][end]\n"
     assert respell_fixed_end("AB[end][end]\n", short, shown, TS) == "AB[end]\n"
     assert respell_fixed_end("C[end][end]\n", short, shown, TS) == "C[end]\n"
+
+
+def test_a_record_header_is_stepped_over_before_every_string():
+    """``[2 bytes][length][text]`` records read with no skip range per record,
+    and a write keeps each string in its slot with the headers left standing."""
+    data = bytes.fromhex("05 CB 02 41 42  06 CB 01 42  07 CB 02 42 41")
+    cfg = BlockConfig(RangeSource(0, len(data)), Pascal(1), "main", header=2)
+    ts = TS
+    ex = extract(data, cfg, ts)
+    assert [(s.start, s.current_text()) for s in ex.strings] == [
+        (2, "AB"),
+        (7, "B"),
+        (11, "BA"),
+    ]
+    assert cfg.effective_write_mode is WriteMode.SLOTTED
+    res, out = relayout(data, cfg, ts, {0: "A"})
+    assert res.ok, res.problems
+    assert out == bytes.fromhex("05 CB 01 41 FF  06 CB 01 42  07 CB 02 42 41")
+    # The padding is passed over, then the next record's header.
+    again = extract(out, cfg, ts)
+    assert [s.current_text() for s in again.strings] == ["A", "B", "BA"]
+    # ...and is the string's to take back, up to that header and no further.
+    res, back = relayout(out, cfg, ts, {0: "AB"})
+    assert res.ok and back == data
+    res, _ = relayout(out, cfg, ts, {0: "ABA"})
+    assert not res.ok
+
+
+def test_a_header_is_a_range_s_and_goes_in_the_config_line():
+    cfg = BlockConfig(RangeSource(0, 8), Pascal(1), "main", header=2)
+    assert "header=2" in format_config(cfg)
+    assert parse_config(format_config(cfg)) == cfg
+    table = PointerTableSource(0, 4, 2, 2, "little", "linear", 0)
+    pointers = replace(cfg, source=table)
+    assert pointers.record_header == 0
+    assert pointers.effective_write_mode is WriteMode.PACKED

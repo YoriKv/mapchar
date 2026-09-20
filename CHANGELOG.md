@@ -8,6 +8,19 @@
 - Fixed bytes column display in strings tab
 - Find Pointers leaves stray matches out of the pointer table it infers
 - Write status no longer reports 0 blocks
+- Status goes by the bytes: switching a block's table no longer marks every string edited
+- A pointer block with no Bound keeps the room its shortened strings gave up
+- Header: a range block steps over the bytes before each string, in place of a skip range per record
+- RNC methods 1 and 2
+- Find Pointers finds a banked table without the offset, ranks a real table above stray matches, and Attach leaves strays off
+- A packed write keeps a banked 2-byte pointer short
+- Scan cuts regions to the text they hold and recognises length-prefixed records
+- Shift+click extends a Hex selection
+- Undoing a write always says Restored
+- Compression picker on the Format bar, armed automatically by a scheme's signature
+- The Decompressed View reads its payload as Hex and Text, and Find All lists every structure in the file
+- The Hex view washes the structure on preview
+- The bars keep their place: what does not apply is greyed, and Writing opens from one line
 
 ## v0.1.3 - 2026-09-18
 

@@ -250,6 +250,7 @@ class WritingMixin:
                 )
                 for block, payload in written
             ),
+            wrote=True,
         )
         return WriteCommand(self, file_entry, before, after)
 
@@ -305,7 +306,7 @@ class WritingMixin:
         # borrows this one as its second file — is now holding the old ones.
         for written_path in entry.paths:
             self.workspace.invalidate_path(written_path, keep=entry)
-        verb = "Wrote" if side.saved == side.live else "Restored"
+        verb = "Wrote" if side.wrote else "Restored"
         # Only a compressed block is written as a thing of its own — its slot
         # packed again; a plain block's edits are the file's bytes, and a count
         # of those would say 0 over a file full of translations.

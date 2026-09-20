@@ -461,3 +461,38 @@ def test_one_filter_carries_every_windows_undo(window):
         assert any(seen is tool for seen in carried), tool
     # The filter still runs, with nothing left of the window it forgot.
     assert _claims_key(QLineEdit(window), Qt.Key.Key_Z, ctrl)
+
+
+# --- status goes by the bytes ------------------------------------------------
+
+
+def test_a_block_switched_to_another_table_stays_untouched(window, tmp_path):
+    """The table a translation is written in reads the same bytes as other
+    text; nothing was edited, and only a real edit says so."""
+    file_entry, block = _block(window, tmp_path)
+    other = tmp_path / "other.tbl"
+    other.write_text("@mapchar table 1\n@table other\n/00=[end]\n41=Б\n42=В\n")
+    window.open_table(str(other), "native")
+    window._activate_entry(block)
+    window._choose_table("other")
+    strings = block.doc.strings
+    assert [s.current_text() for s in strings] == ["БВ[end]", "ВБ[end]"]
+    assert [s.original for s in strings] == ["AB[end]", "BA[end]"]
+    assert [s.status for s in strings] == [Status.UNTOUCHED] * 2
+    window._on_translation_edited(0, "В[end]")
+    assert [s.status for s in block.doc.strings] == [Status.EDITED, Status.UNTOUCHED]
+    window.undo_stack.undo()
+    assert [s.status for s in block.doc.strings] == [Status.UNTOUCHED] * 2
+
+
+def test_an_original_saved_without_a_digest_goes_by_the_text(window, tmp_path):
+    file_entry, block = _block(window, tmp_path)
+    for rec in block.doc.strings:
+        rec.original_digest = None
+    block.doc.strings[1].original = "AA[end]"  # the bytes say BA: it was edited
+    for rec in block.doc.strings:
+        rec.refresh_status()
+    assert [s.status for s in block.doc.strings] == [Status.UNTOUCHED, Status.EDITED]
+    # Bytes that still say the original give it their digest; the other waits.
+    assert block.doc.strings[0].original_digest == block.doc.strings[0].digest
+    assert block.doc.strings[1].original_digest is None
