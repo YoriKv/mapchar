@@ -26,7 +26,12 @@ has not found it, and one that does not was never going to.
 """
 
 MAX_BANK = 0x10000
-"""The tighter cap the schemes whose own fields reach one 64 KiB bank use."""
+"""The tighter cap the byte-oriented schemes use.
+
+One 64 KiB bank: what the command-stream LZ's absolute 16-bit offset can name,
+and as much output as the RLE framings — which have no offset field at all —
+have any business producing from one read.
+"""
 
 
 def stream_error(scheme: str, reason: str) -> ValueError:

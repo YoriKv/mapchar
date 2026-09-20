@@ -7,6 +7,11 @@ UI's offset fields are the exception: always hex, so ``$`` is optional there
 
 from __future__ import annotations
 
+NUM = r"\$[0-9A-Fa-f]+|\d+"
+"""An unsigned number as this spelling writes it, for an expression that has to
+find one in a line: ``$hex`` or decimal, which :func:`parse_num` then reads.
+Bracket it where it sits beside anything else — it is an alternation."""
+
 
 def parse_num(text: str) -> int:
     """``$hex``, ``-$hex``, ``$-hex`` or decimal. Raises ``ValueError``."""

@@ -30,7 +30,7 @@ from mapchar.core.context import (
 )
 from mapchar.core.errors import Stage
 from mapchar.core.notices import Notice
-from mapchar.pipeline.pipeline import PathwayConfig, _acquire
+from mapchar.pipeline.pipeline import PathwayConfig, acquire
 from mapchar.plugins.base import ContainerField, ReadSource
 from mapchar.plugins.registry import PassThrough, Registry
 
@@ -82,7 +82,7 @@ def inspect_container(config: PathwayConfig, registry: Registry) -> ContainerRep
         )
     name = getattr(plugin.info, "name", config.container_id)
     try:
-        source, spans, _joined = _acquire(config.source)
+        source, spans, _joined = acquire(config.source)
     except OSError as exc:
         return ContainerReport(
             config.container_id, name, paths, 0, 0, 0, error=str(exc)

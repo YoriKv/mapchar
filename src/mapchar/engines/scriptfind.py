@@ -1,6 +1,7 @@
 """Code-aware find and replace over script text.
 
-Matching runs over the pieces the script grammar makes, not over characters:
+Matching runs over the pieces the script grammar makes
+(:func:`~mapchar.core.tokens.piece_spans`), not over characters:
 a ``[...]`` code is **one piece** however many characters it spells, and an
 escape is one piece too. So ``[line]`` in a needle matches the code and never
 the letters inside it, and a needle of plain letters never matches part of a
@@ -10,34 +11,7 @@ code — a plain substring replace would turn ``[line]`` into ``[lene]``.
 from __future__ import annotations
 
 from mapchar.core.text import fold, nfc
-
-
-def piece_spans(text: str) -> list[tuple[int, int]]:
-    """``text`` split into the pieces one match step covers.
-
-    An unclosed ``[`` runs to the next ``[`` or to the end: mid-typing that is
-    exactly the one piece being spelled.
-    """
-    spans: list[tuple[int, int]] = []
-    at, total = 0, len(text)
-    while at < total:
-        if text[at] == "\\" and at + 1 < total:
-            spans.append((at, at + 2))
-            at += 2
-            continue
-        if text[at] == "[":
-            close = text.find("]", at + 1)
-            nested = text.find("[", at + 1)
-            if close >= 0 and (nested < 0 or close < nested):
-                stop = close + 1
-            else:
-                stop = total if nested < 0 else nested
-            spans.append((at, stop))
-            at = stop
-            continue
-        spans.append((at, at + 1))
-        at += 1
-    return spans
+from mapchar.core.tokens import piece_spans
 
 
 def _pieces(text: str, case: bool) -> list[tuple[int, int, str]]:
@@ -95,4 +69,4 @@ def replace(
     return "".join(out), count
 
 
-__all__ = ["contains", "find", "piece_spans", "replace"]
+__all__ = ["contains", "find", "replace"]

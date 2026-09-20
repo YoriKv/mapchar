@@ -50,9 +50,17 @@ occupies.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
 from mapchar.plugins.builtins.compression._limits import MAX_OUT, stream_error
-from mapchar.plugins.builtins.compression._lz import MatchFinder, copy_back
+from mapchar.plugins.builtins.compression._lz import (
+    InterleavedWriter,
+    MatchFinder,
+    Truncated,
+    copy_back_checked,
+    parse_shortest,
+)
 
 DESC_BYTES = 2
 DESC_BITS = DESC_BYTES * 8
@@ -69,6 +77,8 @@ DISTANCE_HIGH = 0xF8
 
 END_MARKER = (0x00, 0xF0, 0x00)
 
+_SCHEME = "Kosinski"
+
 # What each form costs to write, descriptor bits included. The parse is a
 # shortest path over these, so they have to be the *whole* cost: a descriptor
 # bit is as real as a payload byte, and an op that saves a byte while spending
@@ -80,10 +90,6 @@ LONG_COST = 2 + 24
 END_COST = 2 + 24
 
 OP_LITERAL, OP_INLINE, OP_SHORT, OP_LONG = range(4)
-
-
-class _Truncated(Exception):
-    """The stream ran out mid-op — recoverable only under ``partial``."""
 
 
 class _Reader:
@@ -120,7 +126,7 @@ class _Reader:
 
     def byte(self) -> int:
         if self.pos >= len(self._data):
-            raise _Truncated
+            raise Truncated
         value = self._data[self.pos]
         self.pos += 1
         return value
@@ -135,7 +141,7 @@ def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]
     """
     if len(data) < DESC_BYTES:
         raise stream_error(
-            "Kosinski", f"shorter than the {DESC_BYTES}-byte descriptor word"
+            _SCHEME, f"shorter than the {DESC_BYTES}-byte descriptor word"
         )
     reader = _Reader(data)
     out = bytearray()
@@ -145,7 +151,7 @@ def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]
             if len(out) >= MAX_OUT:
                 # Past any structure a cartridge unpacks in one go: the bytes were
                 # not a stream, whatever they decoded to.
-                raise _Truncated
+                raise Truncated
             if reader.bit():
                 out.append(reader.byte())
                 continue
@@ -169,65 +175,49 @@ def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]
             else:
                 length = ((reader.bit() << 1) | reader.bit()) + INLINE_MIN
                 distance = INLINE_WINDOW - reader.byte()
-            if distance > len(out):
-                raise stream_error(
-                    "Kosinski",
-                    f"match reaches {distance:,} bytes back "
-                    f"into {len(out):,} bytes of output",
-                )
-            copy_back(out, distance, length)
-    except _Truncated:
+            copy_back_checked(out, distance, length, _SCHEME)
+    except Truncated:
         if not partial:
             raise stream_error(
-                "Kosinski", f"source ended after {len(out):,} bytes"
+                _SCHEME, f"source ended after {len(out):,} bytes"
             ) from None
 
     if not complete and not partial:
-        raise stream_error("Kosinski", f"source ended after {len(out):,} bytes")
+        raise stream_error(_SCHEME, f"source ended after {len(out):,} bytes")
     return bytes(out), reader.pos, complete
 
 
 # -- compression ------------------------------------------------------------
 
 
-class _Writer:
-    """Descriptor words and the payload they describe, kept in step.
+class _Writer(InterleavedWriter):
+    """The shared writer under Kosinski's descriptor word and its dummy.
 
-    Payload bytes queue up while a descriptor word fills; the word is written the
-    instant its sixteenth bit arrives, and the queue follows it out. So the bytes
-    on either side of a word are the ones its bits describe, which is the layout
-    the decoder's eager refill expects.
+    ``eager`` because the decoder's refill is (see the module docstring): it
+    fetches the next word the moment the last bit of the current one is spent, so
+    a payload byte written with no word open still queues behind the word that is
+    about to open.
     """
 
     def __init__(self) -> None:
-        self._out = bytearray()
-        self._word = 0
-        self._bits = 0
-        self._pending = bytearray()
+        super().__init__(word_bits=DESC_BITS, low_first=True, eager=True)
 
     def bit(self, value: int) -> None:
-        self._word |= (value & 1) << self._bits
-        self._bits += 1
-        if self._bits == DESC_BITS:
-            self._out += self._word.to_bytes(DESC_BYTES, "little")
-            self._out += self._pending
-            self._pending.clear()
-            self._word = 0
-            self._bits = 0
+        self.put(value, 1)
 
     def byte(self, value: int) -> None:
         self._pending.append(value)
 
     def finish(self) -> bytes:
         if self._bits:
-            self._out += self._word.to_bytes(DESC_BYTES, "little")
+            self.out += self._word.to_bytes(DESC_BYTES, "little")
         else:
             # See the module docstring: the terminator's bits exactly filled a
             # word, so the decoder has already fetched whatever comes next. Give
             # it an empty word rather than the terminator's own bytes.
-            self._out += bytes(DESC_BYTES)
-        self._out += self._pending
-        return bytes(self._out)
+            self.out += bytes(DESC_BYTES)
+        self.out += self._pending
+        return bytes(self.out)
 
 
 def compress(data: bytes) -> bytes:
@@ -254,50 +244,41 @@ def compress(data: bytes) -> bytes:
             writer.byte(value)
         return writer.finish()
 
-    near_len, near_off = MatchFinder(
+    near_len, near_at = MatchFinder(
         data, min_match=INLINE_MIN, window=INLINE_WINDOW
     ).all_longest(INLINE_MAX)
-    far_len, far_off = MatchFinder(
+    far_len, far_at = MatchFinder(
         data, min_match=SHORT_MIN, window=FULL_WINDOW
     ).all_longest(LONG_MAX)
 
-    inf = float("inf")
-    cost: list[float] = [inf] * (n + 1)
-    choice: list[tuple[int, int, int]] = [(OP_LITERAL, 1, 0)] * (n + 1)
-    cost[n] = END_COST
-
-    for i in range(n - 1, -1, -1):
-        best = cost[i + 1] + LITERAL_COST
-        pick = (OP_LITERAL, 1, 0)
+    def options(
+        i: int, cost: list[float]
+    ) -> Iterator[tuple[int, float, tuple[int, int]]]:
+        """Every form Kosinski could write at ``i``, priced whole."""
+        yield 1, cost[i + 1] + LITERAL_COST, (OP_LITERAL, 0)
         # Every length each short form allows is priced, not just its longest: the
         # ranges are tiny, and `cost` is not quite monotonic, so the longest match
         # available is not always the one that leaves the cheapest tail.
         if near_len[i]:
-            distance = i - near_off[i]
+            distance = i - near_at[i]
             for length in range(INLINE_MIN, min(near_len[i], INLINE_MAX) + 1):
-                value = cost[i + length] + INLINE_COST
-                if value < best:
-                    best, pick = value, (OP_INLINE, length, distance)
+                yield length, cost[i + length] + INLINE_COST, (OP_INLINE, distance)
         if far_len[i]:
-            distance = i - far_off[i]
+            distance = i - far_at[i]
             for length in range(SHORT_MIN, min(far_len[i], SHORT_MAX) + 1):
-                value = cost[i + length] + SHORT_COST
-                if value < best:
-                    best, pick = value, (OP_SHORT, length, distance)
+                yield length, cost[i + length] + SHORT_COST, (OP_SHORT, distance)
             # The long form spans 10..256, too many lengths to price one by one
             # for what it recovers — a shorter long match always leaves a tail a
             # cheaper form could have covered instead, and those are priced above.
             if far_len[i] >= LONG_MIN:
                 length = min(far_len[i], LONG_MAX)
-                value = cost[i + length] + LONG_COST
-                if value < best:
-                    best, pick = value, (OP_LONG, length, distance)
-        cost[i], choice[i] = best, pick
+                yield length, cost[i + length] + LONG_COST, (OP_LONG, distance)
 
     writer = _Writer()
-    at = 0
-    while at < n:
-        op, length, distance = choice[at]
+    at = 0  # where in the input the op being written starts
+    for length, (op, distance) in parse_shortest(
+        n, tail_cost=END_COST, options=options
+    ):
         if op == OP_LITERAL:
             writer.bit(1)
             writer.byte(data[at])

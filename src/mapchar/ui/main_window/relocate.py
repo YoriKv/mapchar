@@ -21,26 +21,11 @@ class RelocateMixin:
         strings before it is opened.
 
         A block over a file that is not on disk is left for Locate, and one
-        whose file fails to read is tried once, not once per block.
+        whose file fails to read is tried once, not once per block
+        (:meth:`~mapchar.ui.main_window.block_reading.BlockReadingMixin._readable_blocks`).
         """
-        gone = set(missing_paths(self.workspace))
-        failed: set[int] = set()
-        with self.files_panel.labels_held():
-            for entry in self.workspace.of_kind(EntryKind.BLOCK):
-                parent = entry.parent
-                if (
-                    entry.doc is not None
-                    or entry.config is None
-                    or entry.missing
-                    or parent is None
-                    or id(parent) in failed
-                    or any(p in gone for p in parent.paths)
-                ):
-                    continue
-                if self._load_document(parent) is None:
-                    failed.add(id(parent))
-                    continue
-                self._block_strings(entry)
+        # Walked for the reading itself: the records land on the entries.
+        list(self._readable_blocks(skip_missing=True))
 
     def _sync_locate_action(self) -> None:
         """Arm File ▸ Locate Missing Files… only when there is one to locate.

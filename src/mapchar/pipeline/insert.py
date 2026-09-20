@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 from mapchar.core.bits import Bits, align_up
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
+    Extraction,
     FixedLength,
     Lines,
     NestedPointerSource,
@@ -23,16 +24,17 @@ from mapchar.core.block import (
     StringRecord,
     WriteMode,
     block_bound,
-    fill_end,
-    fill_run,
     string_groups,
 )
-from mapchar.core.errors import EncodeError
+from mapchar.core.errors import EncodeError, MapcharError
+from mapchar.core.fill import fill_end, fill_run
 from mapchar.core.mapping import pointer_bytes
 from mapchar.core.table import TableSet, TokenKind
+from mapchar.core.text import same_text
 from mapchar.engines.decode import DecodeRules, decode
 from mapchar.engines.encode import encode
-from mapchar.pipeline.extract import nested_records, strip_artificial
+from mapchar.pipeline.extract import extract, reextract, strip_artificial
+from mapchar.pipeline.pointers import nested_records
 from mapchar.plugins.registry import default_registry, resolve_mapping
 
 
@@ -206,7 +208,7 @@ def slot_ends(
     """Where each string's slot ends, by index.
 
     A slot is the bytes the string itself holds plus the run of fill directly
-    after them (:func:`~mapchar.core.block.fill_end`) — the padding a shorter
+    after them (:func:`~mapchar.core.fill.fill_end`) — the padding a shorter
     replacement left behind, which the next edit may use again — and stops at
     the next string in address order, at ``bound``, or at the end of ``data``,
     whichever comes first. Bytes between two strings that are not that padding
@@ -288,7 +290,7 @@ def group_bounds(
     """The exclusive end each group of a nested block may be written up to.
 
     A group's own last byte, and past it the run of fill a shorter layout left
-    (:func:`~mapchar.core.block.fill_end`) — so room given up is room to take
+    (:func:`~mapchar.core.fill.fill_end`) — so room given up is room to take
     back — but never as far as the next thing the outer table points at
     (another group's inner table or text), nor past the block's ``bound``.
 
@@ -685,16 +687,109 @@ def room_for(
     return rec.byte_length(config.skips)
 
 
+def room_note(used: int, room: int, config: BlockConfig | None) -> str:
+    """What a string's room is made of, in words.
+
+    Two numbers do not say where the second comes from, and where it comes
+    from is what tells a translator whether the room is theirs: a slotted
+    string's is its own and a packed block's spare is every string's, so the
+    first string to take it takes it from all the rest.
+    """
+    if config is None:
+        return ""
+    if config.fixed_length is not None:
+        return f"{used} byte(s) now, of the block's fixed length of {room}"
+    if config.effective_write_mode is WriteMode.PACKED:
+        return (
+            f"{used} byte(s) now, of {room}: its own bytes and the "
+            f"{room - used} byte(s) the block has spare, which every string "
+            f"of the block shares — whichever takes them leaves the rest none"
+        )
+    return (
+        f"{used} byte(s) now, of {room}: its own bytes and the fill after "
+        f"them, which it keeps whether it uses them or not"
+    )
+
+
+class ReadBack(NamedTuple):
+    """Why a laid-out buffer may not stand for an edit, and what it reads as."""
+
+    block: str | None
+    """Why the block as a whole refuses it: it will not read at all, or not as
+    the same strings."""
+    string: str | None
+    """The first string that would not read as it must, named by its index."""
+    extraction: Extraction | None
+    """The reading, when nothing is against it — the one the re-read after the
+    edit lands takes, rather than reading the same bytes a second time."""
+
+
+def reads_back(
+    config: BlockConfig,
+    tables: TableSet,
+    strings: list[StringRecord],
+    data: bytes,
+    edits: dict[int, str],
+    registry=None,
+    span: tuple[int, int] | None = None,
+) -> ReadBack:
+    """Whether ``data`` may stand for ``edits`` over ``strings``, on the one
+    set of terms.
+
+    The bytes are the translation, so they must say what the translator said:
+    the block must still read as the same strings, each edited string must read
+    back as its text, and every other one must read as it does now — an edit
+    that changes how the bytes after it are cut has changed strings nobody
+    asked to change. Both landings, the undo step and the undo-free one a
+    project load makes, refuse on these terms and no other.
+
+    ``span`` is the stretch the edit changed: where the block's reading comes
+    apart (:func:`~mapchar.pipeline.extract.reextract`), only what it reaches
+    is read again.
+    """
+    try:
+        check = None
+        if span is not None:
+            check = reextract(data, config, tables, strings, *span, registry)
+        if check is None:
+            check = extract(data, config, tables, registry)
+    except MapcharError as exc:
+        return ReadBack(str(exc), None, None)
+    if len(check.strings) != len(strings):
+        return ReadBack(
+            f"the block would read as {len(check.strings)} strings instead of "
+            f"{len(strings)}",
+            None,
+            None,
+        )
+    read = {r.index: r for r in check.strings}
+    for i, t in edits.items():
+        back = read[i].current_text()
+        if not same_text(back, t):
+            return ReadBack(None, f"#{i}: reads back as {back!r}", None)
+    for rec in strings:
+        if rec.index in edits or read[rec.index] is rec:
+            # A record a partial reading kept is the bytes it was.
+            continue
+        back = read[rec.index].current_text()
+        if not same_text(back, rec.current_text()):
+            return ReadBack(None, f"#{rec.index}: would change to {back!r}", None)
+    return ReadBack(None, None, check)
+
+
 __all__ = [
     "LayoutResult",
     "Problem",
+    "ReadBack",
     "Splice",
     "apply_splices",
     "block_bound",
     "group_bounds",
     "layout_block",
     "packed_ends",
+    "reads_back",
     "room_for",
+    "room_note",
     "slot_ends",
     "string_ends",
 ]

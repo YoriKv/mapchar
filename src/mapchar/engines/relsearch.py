@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from mapchar.core.bits import bytes_to_bits
 from mapchar.core.table import Entry, TokenKind
-from mapchar.core.text import graphemes, nfc
+from mapchar.core.text import units
 from mapchar.core.tokens import escape_text
 
 UPPER = "upper"
@@ -82,7 +82,7 @@ class _Term:
 
 def _terms(query: str) -> list[_Term]:
     terms: list[_Term] = []
-    for ch in graphemes(nfc(query)):
+    for ch in units(query):
         if ch == "?":
             terms.append(_Term(None, 0))
             continue
@@ -193,7 +193,7 @@ def entries_from_base(
     not two. The first code that does not fit ``bit_width`` bits ends the run.
     """
     entries: list[Entry] = []
-    for i, ch in enumerate(graphemes(nfc(chars))):
+    for i, ch in enumerate(units(chars)):
         code = base + i
         if code >= 1 << bit_width:
             break

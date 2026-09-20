@@ -4,7 +4,7 @@ The grid cuts Original and Translation short to one line each; the pane shows
 the selected string's original with its line breaks, beside a multi-line
 editor on what the bytes say, with the byte readout and the notes. Codes are
 dimmed in both, and hidden in the original on request, as the Text tab hides
-them. The editor is the grid's own :class:`~mapchar.ui.strings_view.CodeEditor`:
+them. The editor is the grid's own :class:`~mapchar.ui.code_editor.CodeEditor`:
 the same completion, the same keys.
 
 Presentation only: the pane holds the text it was given and the text typed,

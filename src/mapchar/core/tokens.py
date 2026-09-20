@@ -2,7 +2,8 @@
 
 ``render`` and ``parse_text`` are inverses: a token list renders to text in
 the script grammar, and that text parses back to a list of text runs and
-codes that the encoder resolves against a table set.
+codes that the encoder resolves against a table set. ``piece_spans`` reads
+the same grammar leniently, keeping the offsets a text being edited needs.
 """
 
 from __future__ import annotations
@@ -204,6 +205,37 @@ def parse_text(text: str) -> list[TextRun | CodeRef]:
             i += 1
     flush()
     return items
+
+
+def piece_spans(text: str) -> list[tuple[int, int]]:
+    """``text`` split into the pieces the grammar makes, as character offsets.
+
+    The lenient walk, for text a person is typing or a surface that has to
+    keep its offsets: a code is one piece however many characters it spells,
+    an escape is one piece, and an unclosed ``[`` runs to the next ``[`` or to
+    the end — mid-typing that is exactly the one piece being spelled.
+    :func:`parse_text` is the strict reading, which the encoder needs.
+    """
+    spans: list[tuple[int, int]] = []
+    at, total = 0, len(text)
+    while at < total:
+        if text[at] == "\\" and at + 1 < total:
+            spans.append((at, at + 2))
+            at += 2
+            continue
+        if text[at] == "[":
+            close = text.find("]", at + 1)
+            nested = text.find("[", at + 1)
+            if close >= 0 and (nested < 0 or close < nested):
+                stop = close + 1
+            else:
+                stop = total if nested < 0 else nested
+            spans.append((at, stop))
+            at = stop
+            continue
+        spans.append((at, at + 1))
+        at += 1
+    return spans
 
 
 def operand_values(entry: Entry, words: tuple[str, ...]) -> tuple[int, ...]:

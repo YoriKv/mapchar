@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QWidget
 
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
-from mapchar.ui.widgets import fit_chars, hint_field
+from mapchar.ui.widgets import fit_chars, focus_field, hint_field
 
 
 class FindRow(ThemedIcons, QWidget):
@@ -80,8 +80,7 @@ class FindRow(ThemedIcons, QWidget):
     def focus(self) -> None:
         """Put the keyboard in the field, with what it holds selected, so
         typing replaces the last search and Enter repeats it."""
-        self.field.setFocus(Qt.FocusReason.ShortcutFocusReason)
-        self.field.selectAll()
+        focus_field(self.field)
 
     def search(self, backwards: bool) -> None:
         if self.text():

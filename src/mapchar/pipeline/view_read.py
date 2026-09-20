@@ -31,11 +31,14 @@ from mapchar.core.tokens import Token
 from mapchar.engines.decode import DecodeRules, RunResult, decode_run
 from mapchar.pipeline.extract import (
     decode_one,
-    nested_records,
+    pad_run,
     padding_bits,
+    string_at,
+)
+from mapchar.pipeline.pointers import (
+    nested_records,
     pointer_addresses,
     pointer_target,
-    string_at,
 )
 from mapchar.plugins.registry import mapping_for
 
@@ -77,7 +80,7 @@ def decode_strings(
     pos = 0
     while pos < bits.length:
         if pad is not None and pos % 8 == 0 and (starts or offset > cut.source.start):
-            run = _pad_run(bits, pos, pad)
+            run = pad_run(bits, pos, pad, bits.length)
             tokens += _raw_tokens(bits, pos, run)
             pos += run
             if pos >= bits.length:
@@ -118,15 +121,6 @@ def _view_padding(cut: BlockConfig, tables: TableSet) -> str | None:
     if not isinstance(cut.source, RangeSource) or cut.fixed_length is not None:
         return None
     return padding_bits(cut, tables)
-
-
-def _pad_run(bits: Bits, pos: int, pad: str) -> int:
-    """The bits of whole fill patterns from ``pos``."""
-    width = len(pad)
-    end = pos
-    while end + width <= bits.length and bits.window(end, width) == pad:
-        end += width
-    return end - pos
 
 
 def _head(cut: BlockConfig, offset: int) -> tuple[int, FixedLength | None]:
@@ -248,6 +242,17 @@ class PointerCell:
     ``None`` for every pointer that reaches a string."""
 
 
+def _cell_target(
+    mapping, source: PointerSource, value: int, address: int, data: bytes, null: bool
+) -> int | None:
+    """Where a cell's pointer reaches, or ``None``: a view shows a pointer
+    whatever it holds, so one that is null or read through a mapping the build
+    has not got reaches nothing rather than being left out."""
+    if mapping is None or null:
+        return None
+    return pointer_target(mapping, source, value, address, len(data))
+
+
 def pointer_cells(
     data: bytes, source: PointerSource, lo: int, hi: int, registry=None
 ) -> list[PointerCell]:
@@ -272,11 +277,7 @@ def pointer_cells(
         if value is None:
             break
         null = value == source.null
-        target = (
-            pointer_target(mapping, source, value, address, len(data))
-            if mapping is not None and not null
-            else None
-        )
+        target = _cell_target(mapping, source, value, address, data, null)
         cells.append(PointerCell(address, source.size, value, target, null))
     return cells
 
@@ -302,11 +303,7 @@ def _nested_cells(
             if value is None:
                 continue
             null = value == source.null
-            target = (
-                pointer_target(mapping, source, value, address, len(data))
-                if mapping is not None and not null
-                else None
-            )
+            target = _cell_target(mapping, source, value, address, data, null)
             cells.append(PointerCell(address, source.size, value, target, null, role))
     width = source.inner_size
     records, _ = nested_records(data, source, registry)

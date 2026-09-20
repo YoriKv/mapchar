@@ -15,12 +15,11 @@ from mapchar.core.table import (
     ID_PATTERN,
     Table,
     TokenKind,
-    inherited,
-    resolve,
 )
 from mapchar.core.table import (
     Entry as TableEntry,
 )
+from mapchar.core.table_layers import inherited, resolve
 from mapchar.project.formats.table_native import write_native
 from mapchar.project.tables import (
     capture_overlay,

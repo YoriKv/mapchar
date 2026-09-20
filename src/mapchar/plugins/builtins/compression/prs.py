@@ -40,7 +40,12 @@ from __future__ import annotations
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
 from mapchar.plugins.builtins.compression._limits import MAX_OUT, stream_error
-from mapchar.plugins.builtins.compression._lz import MatchFinder, copy_back
+from mapchar.plugins.builtins.compression._lz import (
+    ControlBits,
+    MatchFinder,
+    Truncated,
+    copy_back_checked,
+)
 
 SHORT_MAX_DISTANCE = 256
 SHORT_MAX_LENGTH = 5
@@ -60,14 +65,6 @@ _BITS_LONG_EXTENDED = 2 + 16 + 8
 _SCHEME = "PRS"
 
 
-class _Truncated(ValueError):
-    """The buffer ended mid-op — recoverable under a partial decode, unlike a
-    stream whose own structure is wrong."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(str(stream_error(_SCHEME, reason)))
-
-
 class _BitReader:
     """The interleaved control-bit reader: one control byte per eight selectors."""
 
@@ -79,7 +76,7 @@ class _BitReader:
 
     def byte(self) -> int:
         if self.pos >= len(self.data):
-            raise _Truncated("source ended mid-op")
+            raise Truncated("source ended mid-op")
         value = self.data[self.pos]
         self.pos += 1
         return value
@@ -91,41 +88,6 @@ class _BitReader:
         value = 1 if self.control & self.mask else 0
         self.mask = (self.mask << 1) & 0xFF
         return value
-
-
-class _BitWriter:
-    """The writer half: control bytes allocated lazily, exactly as read back."""
-
-    def __init__(self) -> None:
-        self.out = bytearray()
-        self.control_at = -1
-        self.bit_index = 8  # forces the first bit to allocate a control byte
-
-    def bit(self, value: int) -> None:
-        if self.bit_index >= 8:
-            self.control_at = len(self.out)
-            self.out.append(0)
-            self.bit_index = 0
-        if value:
-            self.out[self.control_at] |= 1 << self.bit_index
-        self.bit_index += 1
-
-    def byte(self, value: int) -> None:
-        self.out.append(value & 0xFF)
-
-
-def _copy(out: bytearray, distance: int, length: int, what: str) -> None:
-    """:func:`copy_back` with the reach-before-the-output check PRS words itself.
-
-    ``what`` names the op that asked — short or long — which the message needs and
-    the copy does not: the two are the same copy once decoded, so the reader that
-    just read one is the only place that can still say which overreached.
-    """
-    if distance > len(out):
-        raise stream_error(
-            _SCHEME, f"{what} copy reaches before the start of the output"
-        )
-    copy_back(out, distance, length)
 
 
 def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]:
@@ -148,7 +110,7 @@ def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]
             if len(out) >= MAX_OUT:
                 # Past any structure a game unpacks in one go: the bytes were not
                 # a stream, whatever they decoded to.
-                raise _Truncated("output past the cap")
+                raise Truncated("output past the cap")
             if reader.bit():
                 out.append(reader.byte())
             elif reader.bit():  # long copy
@@ -158,14 +120,22 @@ def decompress(data: bytes, *, partial: bool = False) -> tuple[bytes, int, bool]
                 distance = 8192 - (word >> 3)
                 n = word & 7
                 length = reader.byte() + 1 if n == 0 else n + 2
-                _copy(out, distance, length, "long")
+                copy_back_checked(out, distance, length, _SCHEME, "long copy")
             else:  # short copy
                 length = ((reader.bit() << 1) | reader.bit()) + 2
-                _copy(out, SHORT_MAX_DISTANCE - reader.byte(), length, "short")
+                copy_back_checked(
+                    out,
+                    SHORT_MAX_DISTANCE - reader.byte(),
+                    length,
+                    _SCHEME,
+                    "short copy",
+                )
             safe_len, safe_pos = len(out), reader.pos
-    except _Truncated:
+    except Truncated as exc:
+        # Worded here rather than where it was raised: only this level knows
+        # whether a buffer cut short was expected.
         if not partial:
-            raise
+            raise stream_error(_SCHEME, str(exc)) from None
     return bytes(out[:safe_len]), safe_pos, False
 
 
@@ -182,7 +152,9 @@ def _op_bits(length: int, distance: int) -> int:
 def compress(data: bytes) -> bytes:
     """Encode raw bytes into a PRS stream."""
     n = len(data)
-    writer = _BitWriter()
+    out = bytearray()
+    # Control bytes low bit first, allocated where the decoder fetches them.
+    control = ControlBits(out, msb_first=False)
     # Scored rather than longest-wins, so this walks the chain itself: PRS has two
     # back-reference ops of different cost, and a nearer short match written as the
     # cheap one can beat a distant long one.
@@ -232,37 +204,37 @@ def compress(data: bytes) -> bytes:
                 benefit = 0
 
         if benefit <= 0:
-            writer.bit(1)
-            writer.byte(data[pos])
+            control.bit(1)
+            out.append(data[pos])
             pos += 1
             continue
 
         if distance <= SHORT_MAX_DISTANCE and length <= SHORT_MAX_LENGTH:
-            writer.bit(0)
-            writer.bit(0)
-            writer.bit((length - 2) >> 1)
-            writer.bit((length - 2) & 1)
-            writer.byte(SHORT_MAX_DISTANCE - distance)
+            control.bit(0)
+            control.bit(0)
+            control.bit((length - 2) >> 1)
+            control.bit((length - 2) & 1)
+            out.append(SHORT_MAX_DISTANCE - distance)
         else:
-            writer.bit(0)
-            writer.bit(1)
+            control.bit(0)
+            control.bit(1)
             word = ((8192 - distance) << 3) & 0xFFF8
             if length <= 9:
                 word |= length - 2
-                writer.byte(word & 0xFF)
-                writer.byte(word >> 8)
+                out.append(word & 0xFF)
+                out.append(word >> 8)
             else:
-                writer.byte(word & 0xFF)
-                writer.byte(word >> 8)
-                writer.byte(length - 1)
+                out.append(word & 0xFF)
+                out.append(word >> 8)
+                out.append(length - 1)
         finder.add_run(pos + 1, pos + length)
         pos += length
 
-    writer.bit(0)  # end of stream: a long copy whose word is zero
-    writer.bit(1)
-    writer.byte(0)
-    writer.byte(0)
-    return bytes(writer.out)
+    control.bit(0)  # end of stream: a long copy whose word is zero
+    control.bit(1)
+    out.append(0)
+    out.append(0)
+    return bytes(out)
 
 
 class Prs(PartialDecompression):

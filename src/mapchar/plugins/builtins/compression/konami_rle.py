@@ -36,12 +36,14 @@ and share a base class carrying the one encoder.
 from __future__ import annotations
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
-from mapchar.plugins.builtins.compression._limits import MAX_BANK
+from mapchar.plugins.builtins.compression._limits import MAX_BANK, stream_error
 from mapchar.plugins.builtins.compression._rle import (
     Packet,
     pack_runs,
     unpack_packets,
 )
+
+_SCHEME = "Konami RLE"
 
 # Largest byte count one fill or literal control byte can safely encode. 0x7F and
 # 0xFF are reserved in the Contra reading (address change, terminator) and
@@ -74,7 +76,7 @@ def decompress(
         data, header=lambda d, i: _packet(d, i, fds=fds), max_out=MAX_BANK
     )
     if not complete and not partial:
-        raise ValueError("no 0xFF terminator — not a Konami RLE stream")
+        raise stream_error(_SCHEME, "no 0xFF terminator")
     return out, consumed, complete
 
 

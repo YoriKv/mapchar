@@ -8,9 +8,12 @@ that chain newest-first, and an overlap-aware length count.
 
 The same overlap has to be *reproduced* on the way back out, so :func:`copy_from`
 and :func:`copy_back` live here too — the one piece of a decoder that is genuinely
-common to every scheme, since a back-reference is the only op they all share.
-Several also frame their ops in eight-selector groups over one greedy parse,
-which is :class:`FlagGroup` and :func:`parse_greedy`.
+common to every scheme, since a back-reference is the only op they all share —
+along with the reach check every one of them makes first
+(:func:`copy_back_checked`) and the :class:`Truncated` a bounded buffer raises.
+Several also frame their ops behind a control byte or a word of selectors over
+one greedy parse, which is :class:`ControlBits`, :class:`FlagGroup`,
+:class:`InterleavedWriter` and :func:`parse_greedy`.
 
 **Overlap is the part worth stating.** A match may legally reach past the position
 being encoded, into bytes the decoder has not produced yet, because every one of
@@ -30,7 +33,13 @@ price every position before it knows which it will use.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import TypeVar
+
+from mapchar.plugins.builtins.compression._limits import stream_error
+
+Op = TypeVar("Op")
+"""Whatever a scheme needs to remember about an op its parse picked."""
 
 # How many recent positions sharing a prefix a scheme tests by default. Highly
 # repetitive data piles up thousands, and past the newest few dozen the extra
@@ -51,9 +60,8 @@ def copy_from(out: bytearray, start: int, length: int) -> None:
     A copy that *cannot* overlap takes the slice, which is where an ordinary decode
     spends most of its time; only the overlapping ones pay for the byte loop.
 
-    ``start`` is the caller's to validate. Each format words a reach before the
-    start of its output differently, and several treat it as corruption to report
-    with the position it happened at.
+    ``start`` is the caller's to validate; :func:`copy_back_checked` is the
+    back-reference form with that validation already on it.
     """
     if start + length <= len(out):  # no self-overlap - copy in one go
         out += out[start : start + length]
@@ -65,6 +73,43 @@ def copy_from(out: bytearray, start: int, length: int) -> None:
 def copy_back(out: bytearray, distance: int, length: int) -> None:
     """:func:`copy_from` addressed as a back-reference names its source."""
     copy_from(out, len(out) - distance, length)
+
+
+def check_reach(
+    out: bytearray, distance: int, scheme: str, what: str = "match"
+) -> None:
+    """Refuse a back-reference naming a byte the output does not have yet.
+
+    Corruption rather than a short buffer: the stream named a source byte that
+    was never written, which no amount of further input would supply. Every
+    decoder here tests it before copying, and the ones that word it alike word it
+    here. ``what`` names the op that asked, for the formats with more than one
+    back-reference form.
+    """
+    if distance > len(out):
+        raise stream_error(
+            scheme,
+            f"{what} reaches {distance:,} bytes back into {len(out):,} bytes of output",
+        )
+
+
+def copy_back_checked(
+    out: bytearray, distance: int, length: int, scheme: str, what: str = "match"
+) -> None:
+    """:func:`copy_back` behind :func:`check_reach`, which is the whole of what a
+    decoder does with a back-reference it has just read."""
+    check_reach(out, distance, scheme, what)
+    copy_back(out, distance, length)
+
+
+class Truncated(ValueError):
+    """The buffer ended inside the stream — recoverable only under ``partial``.
+
+    Not corruption: the bytes read so far were a stream, there are simply no more
+    of them. A decoder raises it from wherever it ran out and words the stream
+    error once, at the top, where it knows whether a partial decode was asked
+    for. A :class:`ValueError` base so an escapee still reads as a stream error.
+    """
 
 
 class MatchFinder:
@@ -197,7 +242,7 @@ class MatchFinder:
         return self._data[candidate + offset] == self._data[at + length - 1]
 
     def all_longest(self, limit: int) -> tuple[list[int], list[int]]:
-        """The longest match at *every* position, as parallel length/offset lists.
+        """The longest match at *every* position, as parallel length/candidate lists.
 
         A greedy parse only asks about the positions it lands on, so it can index
         as it walks; a shortest-path parse has to price a match at every position
@@ -212,14 +257,18 @@ class MatchFinder:
         chain needs no walk at all — which is exactly the input that makes a chain
         long and every candidate on it a tie (a long fill, a repeating block).
 
-        Lengths below ``min_match`` come back as ``0``, offset ``0``: too short to
-        be worth writing, and no caller should be able to mistake one for usable.
+        Candidates are positions, as :meth:`longest` returns them — never
+        distances, which is what each scheme subtracts them into.
+
+        Lengths below ``min_match`` come back as ``0``, candidate ``0``: too short
+        to be worth writing, and no caller should be able to mistake one for
+        usable.
         """
         data = self._data
         n = self._n
         min_match = self._min_match
         lengths = [0] * n
-        offsets = [0] * n
+        candidates = [0] * n
         seed_len = 0
         seed_at = 0
         for pos in range(n):
@@ -256,10 +305,10 @@ class MatchFinder:
                                 break
             if best_len >= min_match:
                 lengths[pos] = best_len
-                offsets[pos] = best_at
+                candidates[pos] = best_at
             seed_len, seed_at = best_len, best_at
             self.add(pos)
-        return lengths, offsets
+        return lengths, candidates
 
     def longest(self, pos: int, limit: int, min_distance: int = 1) -> tuple[int, int]:
         """The longest reachable match at ``pos``, as ``(length, candidate)``.
@@ -348,55 +397,173 @@ def parse_greedy(
             pos += 1
 
 
-class FlagGroup:
-    """The eight-selector op group three of the schemes here frame their ops in.
+def parse_shortest(
+    n: int,
+    *,
+    tail_cost: float,
+    options: Callable[[int, list[float]], Iterator[tuple[int, float, Op]]],
+) -> list[tuple[int, Op]]:
+    """The right-to-left shortest-path parse, as the ops it chose in output order.
 
-    One flags byte per eight ops, written *in front of* the ops it describes — so
-    the byte is reserved when a group opens and filled in once the group closes.
-    Schemes disagree about two things and nothing else, and both disagreements are
-    silent: which end of the byte the first selector sits at (``msb_first``), and
-    whether a set bit selects the match or the literal (``set_means_match``). Read
-    a stream either way round and it still decodes to something of about the right
-    length, which is why both are stated rather than assumed.
+    ``cost[i]`` is the cheapest encoding of the input from ``i`` on, solved from
+    ``n`` down to ``0``, so every op is priced against what the rest of the input
+    then costs rather than against what it covers here. That is the difference
+    from :func:`parse_greedy`, and it is worth the pass for the schemes with
+    several forms of one op: the longest match is frequently the expensive form,
+    and two cheap ops beat one dear one often enough to matter.
 
-    Call :meth:`select` **before** writing an op's bytes — that is what reserves
-    the flags byte in front of them — and :meth:`finish` once the last op is out.
+    ``options(i, cost)`` yields one ``(length, cost_here, tag)`` per op the scheme
+    could write at ``i``, where ``cost_here`` is the whole cost of that op *plus*
+    the tail it leaves — the scheme reads ``cost[i + length]`` itself, being the
+    only one that knows what its ops cost. Ties go to whichever came out of
+    ``options`` first, so the order it yields in is part of what it decides, and
+    it has to offer at least one op at every position (the literal, for every
+    scheme here). ``tail_cost`` seeds ``cost[n]``: what is still to be written
+    once the input is covered, a terminator or nothing.
+
+    ``tag`` comes back untouched beside the length, for the emitter to read.
+    """
+    inf = float("inf")
+    cost: list[float] = [inf] * (n + 1)
+    cost[n] = tail_cost
+    # Sized up front for the forward walk to index; every entry is replaced
+    # below, `options` offering an op at every position, so the seed is dead.
+    choice: list[tuple[int, Op]] = [(1, None)] * n  # type: ignore[list-item]
+    for i in range(n - 1, -1, -1):
+        best = inf
+        for length, value, tag in options(i, cost):
+            if value < best:
+                best, choice[i] = value, (length, tag)
+        cost[i] = best
+    picked = []
+    at = 0
+    while at < n:
+        picked.append(choice[at])
+        at += choice[at][0]
+    return picked
+
+
+class ControlBits:
+    """The control byte a scheme reserves in front of the ops it describes.
+
+    One byte per eight ops, written *before* them, so the byte is reserved when
+    the group opens and each bit is set in place as its op is decided — which is
+    the layout the lazily-refilling decoders read back, and why nothing has to be
+    written again at the end. Call :meth:`bit` **before** writing an op's bytes:
+    that is what reserves the control byte in front of them.
+
+    Schemes disagree about which end of the byte the first bit sits at
+    (``msb_first``) and about nothing else, and the disagreement is silent — read
+    a stream either way round and it still decodes to something of about the
+    right length, which is why it is stated rather than assumed.
+
+    Unused bits in a short last group stay clear, which is what the known
+    encoders' shift to alignment leaves behind too, and no decoder reads them
+    either way: every scheme framed like this stops on a declared size or a
+    terminator first.
     """
 
-    __slots__ = ("_at", "_bit", "_flags", "_match_bit", "_msb_first", "_out")
+    __slots__ = ("_at", "_index", "_msb_first", "_out")
+
+    def __init__(self, out: bytearray, *, msb_first: bool) -> None:
+        self._out = out
+        self._msb_first = msb_first
+        self._at = -1  # where this group's control byte is reserved
+        self._index = 8  # a full group, so the first bit opens a new one
+
+    def bit(self, value: int) -> None:
+        """Set the next control bit if ``value`` is true, opening a group when one
+        is due — an ``int`` because a scheme selecting on one of an op's own bits
+        has one in hand and nothing is gained by spelling ``bool`` around it."""
+        if self._index >= 8:
+            self._at = len(self._out)
+            self._out.append(0)
+            self._index = 0
+        if value:
+            self._out[self._at] |= (
+                (0x80 >> self._index) if self._msb_first else 1 << self._index
+            )
+        self._index += 1
+
+
+class FlagGroup(ControlBits):
+    """:class:`ControlBits` as the LZSS family selects between its two ops.
+
+    Those framings disagree about one further thing, just as silently: whether a
+    set bit selects the back-reference or the literal (``set_means_match``).
+    """
+
+    __slots__ = ("_match_bit",)
 
     def __init__(
         self, out: bytearray, *, msb_first: bool, set_means_match: bool
     ) -> None:
-        self._out = out
-        self._msb_first = msb_first
+        super().__init__(out, msb_first=msb_first)
         self._match_bit = set_means_match
-        self._at = -1  # where this group's flags byte is reserved
-        self._bit = 8  # a full group, so the first op opens a new one
-        self._flags = 0
 
     def select(self, is_match: bool) -> None:
         """Record the next op's selector, opening a group when one is due."""
-        if self._bit == 8:
-            self._close()
-            self._at = len(self._out)
-            self._out.append(0)
-            self._flags = 0
-            self._bit = 0
-        if is_match == self._match_bit:
-            self._flags |= (0x80 >> self._bit) if self._msb_first else 1 << self._bit
-        self._bit += 1
+        self.bit(is_match == self._match_bit)
 
-    def _close(self) -> None:
-        if self._at >= 0:
-            self._out[self._at] = self._flags
 
-    def finish(self) -> None:
-        """Write the final group's flags byte back into the reserved slot.
+class InterleavedWriter:
+    """Bit words and the payload bytes that queue behind them, kept in step.
 
-        Unused selectors in a short last group stay clear, which is what the known
-        encoders' shift to alignment leaves behind too — and no decoder reads them
-        either way, every one of these schemes stopping on a declared size first.
-        """
-        self._close()
-        self._at = -1
+    The other way a scheme here frames its ops: not one control byte in front of
+    eight of them (:class:`ControlBits`) but a whole word of selectors, with the
+    payload bytes written *between* words. Payload queues while a word fills, the
+    word goes out the instant its last bit arrives, and the queue follows it — so
+    the bytes on either side of a word are the ones its bits describe, which is
+    the layout a decoder that fetched the word before reading them expects.
+
+    ``word_bits`` is the word's width and ``low_first`` which end of it the first
+    bit sits at. ``eager`` says what the decoder does with a word it has not
+    started: an eager one has already fetched it, so payload written with no word
+    open still has to queue; a lazy one has not, so that payload can go straight
+    out. Reading a stream under the wrong one lands on the wrong bytes while
+    consuming exactly the right bits, which is why both are stated.
+
+    How a part-filled last word is written out is the one thing no two of these
+    schemes agree on, so ``finish`` is left to the subclass.
+    """
+
+    def __init__(self, *, word_bits: int, low_first: bool, eager: bool) -> None:
+        self.out = bytearray()
+        self._size = word_bits
+        self._low_first = low_first
+        self._eager = eager
+        self._word = 0
+        self._bits = 0
+        self._pending = bytearray()
+
+    def put(self, value: int, count: int) -> None:
+        """Add ``count`` bits of ``value``, flushing each word as it fills."""
+        if self._low_first:
+            while count:
+                take = min(count, self._size - self._bits)
+                self._word |= (value & ((1 << take) - 1)) << self._bits
+                value >>= take
+                count -= take
+                self._bits += take
+                if self._bits == self._size:
+                    self._flush()
+        else:
+            for shift in range(count - 1, -1, -1):
+                self._word = (self._word << 1) | ((value >> shift) & 1)
+                self._bits += 1
+                if self._bits == self._size:
+                    self._flush()
+
+    def raw(self, chunk: bytes) -> None:
+        """Payload bytes, behind the word whose bits describe them."""
+        if self._bits or self._eager:
+            self._pending += chunk
+        else:
+            self.out += chunk
+
+    def _flush(self) -> None:
+        self.out += self._word.to_bytes(self._size // 8, "little")
+        self.out += self._pending
+        self._pending.clear()
+        self._word = 0
+        self._bits = 0

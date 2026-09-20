@@ -17,10 +17,9 @@ from mapchar.core.block import (
 from mapchar.core.errors import ScriptError
 from mapchar.core.numbers import format_num, parse_num
 from mapchar.pipeline.extract import extract
+from mapchar.project.formats.blockspec import format_config, parse_config
 from mapchar.project.formats.script import (
     DumpMode,
-    format_config,
-    parse_config,
     parse_script,
     write_script,
 )

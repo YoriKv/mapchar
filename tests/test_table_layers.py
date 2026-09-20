@@ -11,7 +11,8 @@ from helpers import native_files, table_set, tables_from
 from mapchar.core.bits import Bits
 from mapchar.core.errors import EncodeError, TableError
 from mapchar.core.font import CodeEffect, Effect, TextBox
-from mapchar.core.table import TableSet, inherited, resolve
+from mapchar.core.table import TableSet
+from mapchar.core.table_layers import inherited, resolve
 from mapchar.core.tokens import render
 from mapchar.engines.decode import DecodeRules, decode
 from mapchar.engines.encode import encode

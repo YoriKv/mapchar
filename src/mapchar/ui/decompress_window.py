@@ -17,27 +17,20 @@ from PySide6.QtWidgets import (
 from mapchar.core.tokens import Token
 from mapchar.pipeline.scan import FoundStructure
 from mapchar.pipeline.text_view import text_model
-from mapchar.ui import settings
-from mapchar.ui.raw_widget import RawWidget, RowModel
+from mapchar.ui import setting_int, settings
+from mapchar.ui.progress import CancellableRun
+from mapchar.ui.raw_cells import RowModel
+from mapchar.ui.raw_widget import RawWidget
 from mapchar.ui.text_widget import TextWidget
-from mapchar.ui.widgets import CancellableRun, ElidedLabel, EscapeCloses, ResultsTable
-from mapchar.ui.window_layout import remember_layout
+from mapchar.ui.tool_window import ToolWindow
+from mapchar.ui.widgets import ElidedLabel, ResultsTable
 
 TAB_KEY = "decompress_window/tab"
 """Which reading the window was left on, remembered per machine beside its
 geometry: the payload is looked at the same way from one structure to the next."""
 
 
-def _stored_tab() -> int:
-    """The tab last left in front, or the first. QSettings hands a number back
-    as it was stored — a string on one platform, an int on another."""
-    try:
-        return int(str(settings().value(TAB_KEY, 0)))
-    except (TypeError, ValueError):
-        return 0
-
-
-class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
+class DecompressWindow(ToolWindow, CancellableRun):
     """The floating view of what the picked scheme yields at the current offset.
 
     Three readings of the same slice, as tabs: the bytes, the text they decode
@@ -48,7 +41,7 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
     Scan walks forward over the whole file one offset at a time and Find All
     over the whole of it once, which is long enough to need a way out:
     Run/Stop and the progress line are
-    :class:`~mapchar.ui.widgets.CancellableRun`'s, as in the Search and Scan
+    :class:`~mapchar.ui.progress.CancellableRun`'s, as in the Search and Scan
     windows, and :meth:`set_scanning` disables everything else, so nothing can be
     asked of a window whose offset is about to move.
 
@@ -68,11 +61,13 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
     """A structure the list names: show the file there."""
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent, Qt.WindowType.Tool)
-        self.setWindowTitle("Decompressed View")
-        # Size and position remembered between runs, like every tool
-        # window (:mod:`mapchar.ui.window_layout`).
-        self._layout = remember_layout(self, "decompress_window")
+        super().__init__(
+            "Decompressed View",
+            "decompress_window",
+            (760, 360),
+            parent,
+            Qt.WindowType.Tool,
+        )
         self._structures: list[FoundStructure] = []
         self._tokens: list[Token] = []
         self._window = b""
@@ -123,11 +118,10 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         self._armed_open = False
         """Whether the window is on screen only because a scheme armed itself
         where the view is; one opened by hand stays open."""
-        self.tabs.setCurrentIndex(_stored_tab())
+        self.tabs.setCurrentIndex(setting_int(TAB_KEY, 0, low=0))
         self.tabs.currentChanged.connect(
             lambda index: settings().setValue(TAB_KEY, index)
         )
-        self.resize(760, 360)
 
     def _reading_tab(self, view: QWidget) -> tuple[QStackedWidget, QLabel]:
         """One reading of the payload, or a line in its place when there is none.
@@ -191,7 +185,7 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
     def set_scanning(self, active: bool) -> None:
         """Freeze everything a running scan does not drive, and thaw it.
 
-        Stop is :meth:`~mapchar.ui.widgets.CancellableRun.running`'s to swap
+        Stop is :meth:`~mapchar.ui.progress.CancellableRun.running`'s to swap
         with whichever button started the walk; every other control that starts
         one or reads the position it is about to move is switched off here. The
         structure buttons come back under :meth:`show_result`, which the refresh

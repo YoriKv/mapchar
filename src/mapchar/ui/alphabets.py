@@ -1,7 +1,8 @@
 """The canned runs of characters a fill offers, and what each is called.
 
-One list, so the Table Editor's Fill dialog and the Font tab's Fill With…
-offer the same alphabets under the same names.
+One list, so the Table Editor's Fill dialog and the relative search's results
+name the same alphabets the same way — a hit on ``A-Z`` and the fill that lays
+``A-Z`` down are the one idea, and a user who read the first picks the second.
 """
 
 from __future__ import annotations
@@ -40,4 +41,4 @@ ALPHABETS: dict[str, str] = {
 CUSTOM = "Custom…"
 """The row that asks for the characters instead of naming them."""
 
-__all__ = ["ALPHABETS", "ASCII_PRINTABLE", "CUSTOM", "RUN_NAMES"]
+__all__ = ["ALPHABETS", "CUSTOM", "RUN_NAMES"]

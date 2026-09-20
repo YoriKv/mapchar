@@ -279,7 +279,10 @@ def test_n64_normalises_on_read_and_restores_the_order_on_write(width) -> None:
     assert N64Rom().read(ReadSource(on_disk), ctx) == native
     assert ctx.get(KEY_N64_SWAP) == width
     # Nothing is stripped, so no header size is published and none is claimed.
-    assert ctx.get(KEY_HEADER_SIZE) is None and N64Rom().header_size() == 0
+    assert (
+        ctx.get(KEY_HEADER_SIZE) is None
+        and N64Rom().header_size(ReadSource(on_disk)) == 0
+    )
     assert not ctx.notices
 
     edited = bytearray(native)
@@ -431,17 +434,19 @@ def test_every_container_answers_the_optional_hooks(registry) -> None:
     hooks the block dialog and Container Info read, so every built-in has
     them — and none of them raises on a file too short to hold a header."""
     for plugin in registry.plugins(Stage.CONTAINER):
-        assert isinstance(plugin.header_size(), int)
-        assert plugin.default_mapping() in (
-            None,
-            "gb",
-            "gba",
-            "banked",
-            "hirom",
-            "linear",
-        )
         for data in (b"", b"\x00" * 3, bytes(0x400)):
-            fields = plugin.describe(ReadSource(data), PipelineContext())
+            source = ReadSource(data)
+            assert isinstance(plugin.header_size(source), int)
+            assert plugin.default_mapping(source) in (
+                None,
+                "gb",
+                "gba",
+                "banked",
+                "hirom",
+                "lorom",
+                "linear",
+            )
+            fields = plugin.describe(source, PipelineContext())
             assert fields and all(isinstance(f, ContainerField) for f in fields)
             assert all(f.name and f.value and f.detail for f in fields)
 

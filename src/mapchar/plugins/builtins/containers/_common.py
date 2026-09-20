@@ -2,8 +2,8 @@
 
 A container is a byte transform in both directions, so what it shares with the
 next one is small and exact: laying edited bytes back into a file, the three
-hints a header-stripping read publishes, and the flat case where there is no
-header at all.
+hints a header-stripping read publishes, the whole-unit bookkeeping the two
+deinterleaving formats do, and the flat case where there is no header at all.
 """
 
 from __future__ import annotations
@@ -75,6 +75,52 @@ def publish_hints(
         ctx.set(KEY_SUGGESTED_MAPPING, mapping)
 
 
+def whole_units(length: int, unit: int) -> tuple[int, int]:
+    """``(count, tail)``: how many whole ``unit``-byte units ``length`` holds, and
+    the bytes left over — the arithmetic a deinterleaving container does in its
+    read and again in its ``describe``."""
+    count = length // unit
+    return count, length - count * unit
+
+
+def note_partial_units(
+    ctx: PipelineContext,
+    count: int,
+    tail: int,
+    *,
+    unit: str,
+    detail_tail: str,
+    detail_none: str,
+    source: str,
+) -> None:
+    """The two notices a container that reassembles whole units owes its file.
+
+    Neither is a failure: a trailing part-unit is left exactly as it lies, and a
+    file holding no whole one is simply not the format. ``unit`` names one the
+    way the message does ("64 KiB bank"), and the ``detail`` — what *this* format
+    does with the bytes, which is the part worth keeping apart — is the caller's.
+    """
+    if tail:
+        ctx.note(
+            f"Dropped {tail} trailing byte(s): not a whole {unit}",
+            detail=detail_tail,
+            source=source,
+        )
+    if not count:
+        ctx.note(
+            f"No complete {unit}: nothing to show",
+            detail=detail_none,
+            source=source,
+        )
+
+
+def trailing_field(tail: int, detail: str) -> ContainerField:
+    """The Container Info row for the bytes a partial unit left over."""
+    return ContainerField(
+        "Trailing bytes", f"{tail} (dropped)" if tail else "none", detail
+    )
+
+
 class _Flat:
     """A container whose payload is the whole file: no header, no offset.
 
@@ -83,10 +129,10 @@ class _Flat:
 
     info: PluginInfo
 
-    def header_size(self, source: ReadSource | None = None) -> int:
+    def header_size(self, source: ReadSource) -> int:
         return 0
 
-    def default_mapping(self, source: ReadSource | None = None) -> str | None:
+    def default_mapping(self, source: ReadSource) -> str | None:
         return None
 
     def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:

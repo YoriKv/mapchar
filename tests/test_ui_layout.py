@@ -76,7 +76,7 @@ def test_a_count_is_as_wide_as_what_it_holds_not_its_maximum(window):
         for field in (
             bar.start,
             bar.stop,
-            bar.bound,
+            bar.writing.bound,
             bar.ptr_offset,
             window.offset_box,
             window.hex_panel.goto,
@@ -100,6 +100,24 @@ def test_tool_windows_stay_usable_at_their_smallest(window):
     ):
         hint = tool.minimumSizeHint()
         assert hint.width() < 700 and hint.height() < 400, tool
+
+
+def test_a_tool_window_reopens_at_its_remembered_size(qtbot, monkeypatch):
+    """The default size is what a machine with nothing stored opens at, and a
+    stored one survives: a window that resized itself after the restore threw
+    the size the user chose away every launch."""
+    from PySide6.QtCore import QSize
+
+    from mapchar.ui.tool_window import ToolWindow
+
+    first = ToolWindow("Remembered", "test_tool_window", (400, 300))
+    qtbot.addWidget(first)
+    assert first.size() == QSize(400, 300)
+    first.resize(520, 380)
+    first._layout.save()
+    again = ToolWindow("Remembered", "test_tool_window", (400, 300))
+    qtbot.addWidget(again)
+    assert again.size() == QSize(520, 380)
 
 
 def test_the_table_editors_form_never_resizes_the_grid(window, tmp_path, qtbot):

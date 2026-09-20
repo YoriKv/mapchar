@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from mapchar.core.bits import parse_hex_bytes
 from mapchar.core.errors import MapcharError
+from mapchar.core.textmatch import next_match
 
 
 class SearchMixin:
@@ -69,30 +70,22 @@ class SearchMixin:
         land where the third came from rather than on the second match. And not
         from the view offset alone, because selecting a match scrolls a row
         *above* it, which would hand the next search the same match again.
-        Wrapping is what makes a search from the middle reach the matches
-        behind it.
 
         The search stays inside the view's bounds — a block's source, one
         string — so a hit never widens the view to the file: inside a block,
-        the search is the block's. A file, never confined, is searched whole.
+        the search is the block's. A file, never confined, is searched whole
+        (:func:`~mapchar.core.textmatch.next_match`).
         """
-        data = self._doc.data
-        if not needle:
-            return None
         lo, hi = self._view_range()
-        at = self._selection[0] if self._selection else self._offset
-        at = min(max(at, lo), hi)
-        if backwards:
-            pos = data.rfind(needle, lo, at)
-            if pos < 0:
-                pos = data.rfind(needle, lo, hi)  # wrap to the last match
-        else:
-            # Past the last match, but not past a bare position: a match right
-            # at the start of a block is the first one, not the last.
-            pos = data.find(needle, at + 1 if self._selection else at, hi)
-            if pos < 0:
-                pos = data.find(needle, lo, hi)  # wrap to the first
-        return pos if pos >= 0 else None
+        return next_match(
+            self._doc.data,
+            needle,
+            lo,
+            hi,
+            self._selection[0] if self._selection else self._offset,
+            backwards=backwards,
+            on_match=bool(self._selection),
+        )
 
     def _needle_from(self, text: str) -> bytes | None:
         """Hex bytes, or ``"quoted text"`` run through the encode engine.

@@ -824,18 +824,18 @@ def test_selecting_a_folder_leaves_the_view_where_it_was(window, tmp_path):
 def test_the_reading_bar_carries_spare_room_for_a_compressed_block(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     plain = add_block(window, file_entry, "plain", RangeSource(0, 6))
-    assert not window.reading_bar.spare_room.isEnabled()
+    assert not window.reading_bar.writing.spare_room.isEnabled()
     block = add_block(window, file_entry, "b", RangeSource(0, 6), compression_id="rle1")
     window.undo_stack.clear()
-    assert window.reading_bar.spare_room.isEnabled()
-    window.reading_bar.spare_room.setCurrentIndex(1)
+    assert window.reading_bar.writing.spare_room.isEnabled()
+    window.reading_bar.writing.spare_room.setCurrentIndex(1)
     assert block.spare_room == "keep" and block.compression_id == "rle1"
     # Write mode and the fill byte round-trip through the same bar.
     assert window.reading_bar.config(block.config, "main").fill == block.config.fill
     window.undo_stack.undo()
     assert block.spare_room == "fill"
     window._activate_entry(plain)
-    assert not window.reading_bar.spare_room.isEnabled()
+    assert not window.reading_bar.writing.spare_room.isEnabled()
 
 
 def test_a_new_reading_turned_to_pointers_starts_on_the_suggested_mapping(

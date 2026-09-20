@@ -32,11 +32,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapchar.core.block import Status
 from mapchar.core.textmatch import matches_words, words_of
 from mapchar.ui import settings, theme
+from mapchar.ui.bars import FlowLayout
 from mapchar.ui.code_editor import CodeEditor, CodeInfo
 from mapchar.ui.string_pane import StringPane
-from mapchar.ui.widgets import FlowLayout, install_column_menu, show_elided_tooltips
+from mapchar.ui.widgets import install_column_menu, show_elided_tooltips
 from mapchar.ui.window_layout import stored_bytes
 
 (
@@ -61,18 +63,22 @@ HEADERS = [
     "Same",
     "Notes",
 ]
-STATUS_FILTERS = [
-    "all",
-    "untouched",
-    "edited",
-    "review",
-    "done",
-    "overflows box",
-]
-FLAGGED = ("review", "overflows box")
+OVERFLOWS = "overflows box"
+"""The one status a row has that :class:`~mapchar.core.block.Status` does not:
+the string is finished but does not fit, which is the bytes' answer rather than
+anything the record holds."""
+STATUS_FILTERS = ["all", *(s.value for s in Status), OVERFLOWS]
+"""What the Status picker offers, in the order it offers it."""
+FLAGGED = (Status.REVIEW.value, OVERFLOWS)
 """The statuses Next Flagged steps through: what needs a second look."""
 SPLITTER_KEY = "view/strings_splitter"
 """Where the grid and the pane under it are split, remembered per machine."""
+
+
+def status_matches(wanted: str, status: str) -> bool:
+    """Whether a row of this status passes the Status picker set to ``wanted``;
+    ``"all"`` passes everything."""
+    return wanted == "all" or status == wanted
 
 
 @dataclass
@@ -85,6 +91,7 @@ class RowData:
     used: int
     room: int
     status: str
+    """A :class:`~mapchar.core.block.Status` value, or :data:`OVERFLOWS`."""
     notes: str
     pointers: str = ""
     same: int = 0
@@ -457,11 +464,11 @@ class StringsView(QWidget):
 
     @staticmethod
     def _status_colour(status: str) -> QColor | None:
-        if status == "overflows box":
+        if status == OVERFLOWS:
             return theme.ERROR_INK
-        if status == "review":
+        if status == Status.REVIEW.value:
             return theme.WARNING_INK
-        if status == "done":
+        if status == Status.DONE.value:
             return theme.DONE_INK
         return None
 
@@ -563,9 +570,9 @@ class StringsView(QWidget):
             d = self._row_data(r)
             if d is None:
                 continue
-            hidden = not matches_words(words, d.original, d.translation, d.notes)
-            if status != "all" and d.status != status:
-                hidden = True
+            hidden = not matches_words(
+                words, d.original, d.translation, d.notes
+            ) or not status_matches(status, d.status)
             self.table.setRowHidden(r, hidden)
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
@@ -598,4 +605,4 @@ class StringsView(QWidget):
         )
 
 
-__all__ = ["FLAGGED", "CodeEditor", "CodeInfo", "RowData", "StringsView"]
+__all__ = ["FLAGGED", "OVERFLOWS", "RowData", "StringsView", "status_matches"]

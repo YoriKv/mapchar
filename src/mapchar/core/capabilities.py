@@ -1,13 +1,12 @@
 """What kind of thing an entry holds, and which controls that kind supports.
 
-The editor shows six kinds of entry in the same window — a file, a block cut
-out of one, a bookmark into one, a folder grouping them, a table, a glyph
-sheet — and most of the
-window applies to some of them and not others. Written per control, that answer
-is spread across every ``_sync_*`` method the window has, and the set a table
-entry supports is knowable only by reading all of them. So it is written down
-once here instead: a :class:`Capability` is one thing the editor can do, a kind
-declares the set it supports, and
+The editor shows five kinds of entry in the same window — a file, a block cut
+out of one, a bookmark into one, a folder grouping them, a table — and most of
+the window applies to some of them and not others. Written per control, that
+answer is spread across every ``_sync_*`` method the window has, and the set a
+table entry supports is knowable only by reading all of them. So it is written
+down once here instead: a :class:`Capability` is one thing the editor can do, a
+kind declares the set it supports, and
 :meth:`~mapchar.ui.main_window.capability_sync.CapabilitySyncMixin._sync_capabilities`
 applies the table at the tail of the refresh cycle.
 
@@ -24,7 +23,7 @@ from enum import Enum, auto
 
 class EntryKind(Enum):
     """What an entry is: a file, a block cut out of one, a bookmark into one, a
-    folder grouping a file's blocks and bookmarks, a table, or a glyph sheet.
+    folder grouping a file's blocks and bookmarks, or a table.
 
     ``value`` is the string the project file stores, so the on-disk schema is a
     name rather than an ordinal that reordering this enum would silently change.

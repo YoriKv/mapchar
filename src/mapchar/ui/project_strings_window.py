@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -20,9 +20,9 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.textmatch import matches_words, words_of
-from mapchar.ui.strings_view import STATUS_FILTERS
-from mapchar.ui.widgets import ElidedLabel, EscapeCloses, ResultsTable, hint_field
-from mapchar.ui.window_layout import remember_layout
+from mapchar.ui.strings_view import STATUS_FILTERS, status_matches
+from mapchar.ui.tool_window import ToolWindow
+from mapchar.ui.widgets import ElidedLabel, ResultsTable, hint_field
 
 
 @dataclass(frozen=True)
@@ -39,18 +39,16 @@ class ProjectString:
     notes: str
 
 
-class ProjectStringsWindow(EscapeCloses, QWidget):
+class ProjectStringsWindow(ToolWindow):
     go_to = Signal(object, int)
     """The block entry and the index of the string to open."""
     refresh_requested = Signal()
     """Read every block again: on show, and on the Refresh button."""
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent, Qt.WindowType.Window)
-        self.setWindowTitle("Project Strings")
-        # Size and position remembered between runs, like every tool
-        # window (:mod:`mapchar.ui.window_layout`).
-        self._layout = remember_layout(self, "project_strings_window")
+        super().__init__(
+            "Project Strings", "project_strings_window", (900, 480), parent
+        )
         self._all: list[ProjectString] = []
         self._shown: list[ProjectString] = []
         layout = QVBoxLayout(self)
@@ -79,7 +77,6 @@ class ProjectStringsWindow(EscapeCloses, QWidget):
         self.status_filter.currentIndexChanged.connect(self._fill)
         self.refresh.clicked.connect(self.refresh_requested)
         self.results.itemActivated.connect(lambda _item: self._jump())
-        self.resize(900, 480)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
@@ -94,7 +91,7 @@ class ProjectStringsWindow(EscapeCloses, QWidget):
         status = self.status_filter.currentText()
         shown = []
         for s in self._all:
-            if status != "all" and s.status != status:
+            if not status_matches(status, s.status):
                 continue
             if not matches_words(words, s.block, s.original, s.translation, s.notes):
                 continue

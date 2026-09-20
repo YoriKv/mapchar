@@ -1,6 +1,6 @@
 """A block's configuration line, read the way ``parse_config`` reads it.
 
-``mapchar.project.formats.script.parse_config`` splits the line into
+``mapchar.project.formats.blockspec.parse_config`` splits the line into
 ``key=value`` words and keeps the last of each key. It is strict about what it
 reads — a word with no ``=``, a number that does not parse, a source or string
 type it does not know all raise, and a block whose line raises is **dropped from

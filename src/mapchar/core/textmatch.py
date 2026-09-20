@@ -1,4 +1,5 @@
-"""Matching a typed filter against the fields of a row.
+"""Finding things: a typed filter over the fields of a row, and a needle in a
+buffer.
 
 Every list in the app filters the same way: the text typed is split into
 words, and a row is shown when each of them appears somewhere in it. The
@@ -33,3 +34,37 @@ def matches_words(words: Sequence[str], *fields: str) -> bool:
         return True
     folded = [fold(f) for f in fields]
     return all(any(word in f for f in folded) for word in words)
+
+
+def next_match(
+    data: bytes,
+    needle: bytes,
+    lo: int,
+    hi: int,
+    at: int,
+    *,
+    backwards: bool = False,
+    on_match: bool = False,
+) -> int | None:
+    """The nearest match to ``at`` within ``data[lo:hi]``, wrapping round.
+
+    Wrapping is what makes a search from the middle reach the matches behind
+    it, and ``lo`` and ``hi`` are what keep it to the stretch being looked at
+    rather than the whole buffer.
+
+    ``on_match`` says ``at`` is where a match already sits, and so is where a
+    forward search starts *past*: without it a match right at ``at`` is the
+    first one, not the last.
+    """
+    if not needle:
+        return None
+    at = min(max(at, lo), hi)
+    if backwards:
+        pos = data.rfind(needle, lo, at)
+        if pos < 0:
+            pos = data.rfind(needle, lo, hi)  # wrap to the last match
+    else:
+        pos = data.find(needle, at + 1 if on_match else at, hi)
+        if pos < 0:
+            pos = data.find(needle, lo, hi)  # wrap to the first
+    return pos if pos >= 0 else None

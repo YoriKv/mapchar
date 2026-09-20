@@ -101,7 +101,7 @@ class FileRef:
     """Where bytes live: one or more files joined end to end, or memory.
 
     The **host's** descriptor, not what a container sees: resolving it into a
-    :class:`ReadSource` happens once, in :func:`_acquire`, so every container is
+    :class:`ReadSource` happens once, in :func:`acquire`, so every container is
     handed the same buffer and none has to know how many files were behind it.
 
     ``offset``/``length`` bound the meaningful bytes inside that buffer — a
@@ -271,7 +271,7 @@ def _probe(
         return default
 
 
-def _acquire(ref: FileRef) -> tuple[ReadSource, tuple[SourceSpan, ...], bytes]:
+def acquire(ref: FileRef) -> tuple[ReadSource, tuple[SourceSpan, ...], bytes]:
     """Resolve a :class:`FileRef` into what a container is handed.
 
     The host's half of the container contract: the files are opened here, once,
@@ -332,7 +332,7 @@ def load(
 
     def read() -> bytes:
         nonlocal raw
-        source, spans, joined = _acquire(config.source)
+        source, spans, joined = acquire(config.source)
         # Provenance the host owns, because it is the host that knows where the
         # bytes came from; a container publishes only KEY_SOURCE_OFFSET, which is
         # a fact about the format. Set before the read, so a container that wants

@@ -36,7 +36,12 @@ class PluginInfo:
     id: str
     name: str
     stage: Stage
-    category: str = "Built-in"
+    category: str = "Generic"
+    """Where this plugin belongs — the console, or ``"Generic"`` for a scheme no
+    one platform owns. Carried for the plugin author's sake and for discovery,
+    which relabels a user or project plugin with the folder it came from; no
+    picker groups by it yet, so nothing is shown anywhere. ``"Generic"`` is the
+    default because it is what a built-in with nothing else to say uses."""
     extensions: tuple[str, ...] = ()
     """Lower-case file extensions with the dot, for container detection."""
     magic: tuple[tuple[int, bytes], ...] = ()
@@ -131,6 +136,11 @@ class ContainerExtras(Protocol):
     - ``header_size`` is what pointer mappings subtract: the bytes before the
       mapped ROM image. Again the read-time twin is ``KEY_HEADER_SIZE``, and a
       container that publishes neither is taken to add no header.
+
+    The last two are asked **with the file's bytes in hand**, always — there is
+    no form that asks what a container does in the abstract, so neither has to
+    invent an answer for a file it has not been shown. A container with nothing
+    to read them for takes ``source`` and ignores it.
     """
 
     def write(

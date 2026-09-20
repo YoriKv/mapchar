@@ -104,7 +104,7 @@ BOX_DEFAULTS = {
 }
 BOX_KEYS = tuple(BOX_DEFAULTS) + ("origin", "effects")
 
-# -- the configuration line (mapchar.project.formats.script.parse_config) ---
+# -- the configuration line (mapchar.project.formats.blockspec.parse_config) ---
 SOURCES = ("range", "pointers", "list", "nested")
 #: The sources a block's remembered ``room`` is read for: those whose bound is
 #: the end of the text their pointers reach (``block.remembered_room``); a

@@ -14,7 +14,7 @@ from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
 from mapchar.core.font import Font
 from mapchar.core.tokens import Token
 from mapchar.engines.layout import drawn_text
-from mapchar.ui import settings
+from mapchar.ui import setting_int, settings
 
 FAMILY_KEY = "preview/font_family"
 """QSettings key for the preview font's family — per machine, never the project."""
@@ -42,14 +42,8 @@ class PreviewFont:
     def __init__(self) -> None:
         store = settings()
         family = str(store.value(FAMILY_KEY, "") or "") or default_family()
-        try:
-            # QSettings hands a number back as it was stored: a string on one
-            # platform, an int on another.
-            size = int(str(store.value(SIZE_KEY, DEFAULT_SIZE)))
-        except (TypeError, ValueError):
-            size = DEFAULT_SIZE
         self._family = family
-        self._size = max(MIN_SIZE, min(MAX_SIZE, size))
+        self._size = setting_int(SIZE_KEY, DEFAULT_SIZE, MIN_SIZE, MAX_SIZE)
         self._remeasure()
 
     # --- what it is -------------------------------------------------------

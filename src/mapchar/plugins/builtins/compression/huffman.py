@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from mapchar.core.bits import bits_to_bytes, reverse_bits
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
-from mapchar.plugins.builtins.compression._limits import MAX_OUT
+from mapchar.plugins.builtins.compression._limits import MAX_OUT, stream_error
+
+_SCHEME = "Huffman"
 
 
 class HuffmanTable(PartialDecompression):
@@ -49,7 +51,7 @@ class HuffmanTable(PartialDecompression):
     def _link(self, node: int, side: int) -> int:
         at = node * self.node_size + side
         if at < 0 or at + self.link_size > len(self.tree):
-            raise ValueError(f"node {node} is past the end of the Huffman tree")
+            raise stream_error(_SCHEME, f"node {node} is past the end of the tree")
         return int.from_bytes(self.tree[at : at + self.link_size], "little")
 
     def _decode(self, data: bytes, *, partial: bool) -> tuple[bytes, int, bool]:
@@ -81,9 +83,7 @@ class HuffmanTable(PartialDecompression):
             # No end marker: where the bits ran out is not where a structure did.
             return bytes(out), -(-consumed_bits // 8), False
         if not complete and not partial:
-            raise ValueError(
-                f"no end symbol in {len(out):,} decoded bytes — not a Huffman stream"
-            )
+            raise stream_error(_SCHEME, f"no end symbol in {len(out):,} decoded bytes")
         return bytes(out), -(-consumed_bits // 8), complete
 
     def _build_paths(self) -> dict[int, str]:

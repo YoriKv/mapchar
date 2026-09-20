@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.workspace import Entry
 from mapchar.ui.project_strings_window import ProjectString
+from mapchar.ui.strings_view import OVERFLOWS
 
 
 class ProjectStringsMixin:
@@ -24,17 +25,11 @@ class ProjectStringsMixin:
     def _all_block_strings(self) -> list[tuple[Entry, object]]:
         """Every string of every block that can be read, with its block: the
         blocks not yet open are loaded and read for it."""
-        out: list[tuple[Entry, object]] = []
-        with self.files_panel.labels_held():
-            for block in self.workspace.of_kind(EntryKind.BLOCK):
-                if block.config is None:
-                    continue
-                doc = self._load_document(block)
-                if doc is None:
-                    continue
-                self._extract_current(block, doc, self._table_set_of(block))
-                out += [(block, rec) for rec in doc.strings]
-        return out
+        return [
+            (block, rec)
+            for block, doc in self._readable_blocks()
+            for rec in doc.strings
+        ]
 
     def _refresh_project_strings(self) -> None:
         """Fill the window from every block, when it is there to see."""
@@ -44,7 +39,7 @@ class ProjectStringsMixin:
         for block, rec in self._all_block_strings():
             status = rec.status.value
             if self._overflow_status(rec, block):
-                status = "overflows box"
+                status = OVERFLOWS
             rows.append(
                 ProjectString(
                     block,

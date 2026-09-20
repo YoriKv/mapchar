@@ -24,29 +24,20 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.textmatch import matches_words, words_of
 from mapchar.project.glossary import GlossaryTerm, matching_terms
-from mapchar.ui.widgets import (
-    EscapeCloses,
-    ResultsTable,
-    hint_field,
-    show_elided_tooltips,
-)
-from mapchar.ui.window_layout import remember_layout
+from mapchar.ui.tool_window import ToolWindow
+from mapchar.ui.widgets import ResultsTable, hint_field, show_elided_tooltips
 
 HEADERS = ["Term", "Translation", "Notes"]
 
 
-class GlossaryWindow(EscapeCloses, QWidget):
+class GlossaryWindow(ToolWindow):
     changed = Signal(list)
     """The terms as edited here: a list of :class:`GlossaryTerm`."""
     insert_requested = Signal(str)
     """Type this into the translation being edited."""
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent, Qt.WindowType.Window)
-        self.setWindowTitle("Glossary")
-        # Size and position remembered between runs, like every tool
-        # window (:mod:`mapchar.ui.window_layout`).
-        self._layout = remember_layout(self, "glossary_window")
+        super().__init__("Glossary", "glossary_window", (560, 480), parent)
         self._terms: list[GlossaryTerm] = []
         self._context = ""
         self._hits: list[GlossaryTerm] = []
@@ -117,7 +108,6 @@ class GlossaryWindow(EscapeCloses, QWidget):
         self.table.itemSelectionChanged.connect(
             lambda: self.remove.setEnabled(bool(self.table.selectedItems()))
         )
-        self.resize(560, 480)
 
     # --- what is shown ------------------------------------------------------
 
@@ -153,14 +143,17 @@ class GlossaryWindow(EscapeCloses, QWidget):
         )
         self.insert.setEnabled(False)
 
+    def _cells(self, r: int) -> list[str]:
+        """One row of the table as its text, a cell nobody has typed in as ""."""
+        return [
+            self.table.item(r, c).text() if self.table.item(r, c) else ""
+            for c in range(len(HEADERS))
+        ]
+
     def _apply_filter(self) -> None:
         words = words_of(self.filter.text())
         for r in range(self.table.rowCount()):
-            cells = [
-                self.table.item(r, c).text() if self.table.item(r, c) else ""
-                for c in range(len(HEADERS))
-            ]
-            self.table.setRowHidden(r, not matches_words(words, *cells))
+            self.table.setRowHidden(r, not matches_words(words, *self._cells(r)))
 
     # --- edits ----------------------------------------------------------------
 
@@ -168,10 +161,7 @@ class GlossaryWindow(EscapeCloses, QWidget):
         """The table as terms; a row with nothing in it is not one."""
         out = []
         for r in range(self.table.rowCount()):
-            cells = [
-                self.table.item(r, c).text() if self.table.item(r, c) else ""
-                for c in range(len(HEADERS))
-            ]
+            cells = self._cells(r)
             if any(cell.strip() for cell in cells):
                 out.append(GlossaryTerm(cells[0].strip(), cells[1], cells[2]))
         return out

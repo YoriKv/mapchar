@@ -6,13 +6,16 @@ tokens. The forbidden suffixes are what keep longest-prefix decoding honest:
 after an entry that is a proper prefix of a longer entry, the bits that would
 complete the longer entry may not follow. Every result is verified by
 decoding it.
+
+What the search looks a table up in is
+:mod:`mapchar.engines.encode_index`, and what it says when it finds nothing
+is :mod:`mapchar.engines.encode_why`.
 """
 
 from __future__ import annotations
 
 import heapq
-from bisect import bisect_right
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from itertools import count
 
 from mapchar.core.bits import Bits, bits_to_bytes
@@ -23,21 +26,29 @@ from mapchar.core.table import (
     RETURN,
     Entry,
     SwitchParam,
-    Table,
     TableSet,
     TokenKind,
 )
-from mapchar.core.text import is_mark, nfc, nfd
+from mapchar.core.text import nfc
 from mapchar.core.tokens import (
     CodeRef,
-    TextRun,
     bits_for,
     escape_text,
     operand_values,
-    parse_text,
     render,
 )
 from mapchar.engines.decode import DecodeRules, EndedBy, decode_run, innermost_index
+from mapchar.engines.encode_index import (
+    Index,
+    atom_key,
+    atoms_equal,
+    atoms_of,
+    extensions,
+    index_of,
+    layers_of,
+    ref_text,
+)
+from mapchar.engines.encode_why import why
 
 _Frame = tuple[str, int | None, bool, str | None, tuple | None, bool]
 """``(table_id, counter, shared, fallback_bits, count, through)``; counter None is
@@ -57,115 +68,6 @@ class EncodeResult:
     @property
     def data(self) -> bytes:
         return bits_to_bytes(self.bits)
-
-
-@dataclass
-class _Index:
-    """Per-table lookups for encoding, built once per search."""
-
-    by_first: dict[str, list[tuple[tuple, Entry]]] = field(default_factory=dict)
-    """First atom (a character or ``[label]``) to ``(atoms, entry)`` matches."""
-    codes: dict[str, Entry] = field(default_factory=dict)
-    """Label to CODE entry (operands come from the text)."""
-    silent: list[Entry] = field(default_factory=list)
-    returns: list[Entry] = field(default_factory=list)
-    longer: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    """Entry bits to the suffixes that would complete a longer entry."""
-    keys: list[str] = field(default_factory=list)
-    """Every key, sorted: what a frame falling through over this table looks
-    up the keys that would take bits from the table beneath in."""
-    min_bits_per_atom: float = 1.0
-
-
-def _atom_key(atom) -> str:
-    return atom if isinstance(atom, str) else f"[{atom.label}]"
-
-
-def _atoms_equal(a, b) -> bool:
-    if isinstance(a, str) or isinstance(b, str):
-        return a == b
-    return a.label == b.label and a.words == b.words
-
-
-def _index(table: Table) -> _Index:
-    """``table``'s lookups, built once and kept on the table until it changes.
-
-    Every string encoded through a table walks the same entries, and a charset
-    table is tens of thousands of them: rebuilding the index per string is most
-    of what encoding a block would cost.
-    """
-    return table.cached("encode_index", lambda: _build_index(table))
-
-
-def _build_index(table: Table) -> _Index:
-    idx = _Index()
-    best = None
-    bits_list = list(table.entries)
-    for entry in table.entries.values():
-        if entry.kind is TokenKind.RETURN:
-            idx.returns.append(entry)
-            continue
-        if entry.kind is TokenKind.CODE:
-            idx.codes[entry.text] = entry
-            atoms_n = 1
-        else:
-            try:
-                atoms = tuple(_atoms(entry.text))
-            except ValueError:
-                continue
-            if not atoms:
-                if entry.kind is TokenKind.SWITCH:
-                    idx.silent.append(entry)
-                continue
-            idx.by_first.setdefault(_atom_key(atoms[0]), []).append((atoms, entry))
-            atoms_n = len(atoms)
-        ratio = len(entry.bits) / atoms_n
-        best = ratio if best is None else min(best, ratio)
-    # Aliases: extra text that encodes as an entry's bits without the entry
-    # decoding as it (the yen sign on Shift-JIS 5C).
-    for text, bits in table.aliases.items():
-        entry = table.entries.get(bits)
-        if entry is None or entry.kind not in (TokenKind.TEXT, TokenKind.END):
-            continue
-        atoms = tuple(_atoms(text))
-        if atoms:
-            idx.by_first.setdefault(_atom_key(atoms[0]), []).append((atoms, entry))
-    for lst in idx.by_first.values():
-        lst.sort(key=lambda ae: (-len(ae[0]), len(ae[1].bits)))
-    # Sorted, every extension of a key follows it without a gap, so the
-    # suffixes are found in one pass instead of comparing every pair — a
-    # charset table is tens of thousands of entries.
-    ordered = sorted(bits_list)
-    idx.keys = ordered
-    for i, bits in enumerate(ordered):
-        suffixes = []
-        for other in ordered[i + 1 :]:
-            if not other.startswith(bits):
-                break
-            suffixes.append(other[len(bits) :])
-        if suffixes:
-            idx.longer[bits] = tuple(suffixes)
-    idx.min_bits_per_atom = best if best is not None else 1.0
-    return idx
-
-
-def _atoms(text: str) -> list[str | CodeRef]:
-    """Script ``text`` as the atoms one search step covers: a code, or one
-    character of decomposed text.
-
-    Text is decomposed so that a table entry and a translation meet whatever
-    form each was typed in: an entry spelling ``が`` matches both of the atoms
-    a composed ``が`` makes, and an entry pair of ``か`` and a lone dakuten —
-    which is how a ROM that draws the mark separately spells it — matches them
-    one at a time.
-    """
-    atoms: list[str | CodeRef] = []
-    for item in parse_text(text):
-        if isinstance(item, TextRun):
-            atoms.extend(nfd(item.text))
-        else:
-            atoms.append(item)
-    return atoms
 
 
 def _forbid(forbidden: tuple[str, ...], emitted: str) -> tuple[str, ...] | None:
@@ -247,10 +149,10 @@ def encode(
     and with ``ends`` above one the text must hold exactly that many.
     """
     try:
-        atoms = _atoms(text)
+        atoms = atoms_of(text)
     except ValueError as exc:
         raise EncodeError(str(exc), 0, text[:20]) from None
-    indexes = {tid: _index(t) for tid, t in tables.tables.items()}
+    indexes = {tid: index_of(t) for tid, t in tables.tables.items()}
     heuristic = min((i.min_bits_per_atom for i in indexes.values()), default=1.0)
     n = len(atoms)
     root: _Frame = (tables.start.id, None, False, None, None, False)
@@ -326,12 +228,12 @@ def encode(
             for a in atoms[max(0, farthest - 10) : farthest + 10]
         )
     )
-    why = _why(atoms, farthest, far_stack, tables, indexes)
+    reason = why(atoms, farthest, far_stack, tables, indexes)
     # Where it failed, but only when the context is not the whole text: on a
     # short string the message already names everything there is to name.
     if context.strip() and (farthest > 10 or farthest + 10 < n):
-        why = f'{why} — near "{context}"'
-    raise EncodeError(why, farthest, context)
+        reason = f'{reason} — near "{context}"'
+    raise EncodeError(reason, farthest, context)
 
 
 def _successors(
@@ -368,7 +270,7 @@ def _successors(
         for shadow in shadows:
             if tables.table(shadow).match(bits) is not None:
                 return None
-            nf = nf + _extensions(indexes[shadow], bits)
+            nf = nf + extensions(indexes[shadow], bits)
         if fallback is not None and bits:
             if bits.startswith(fallback):
                 return None
@@ -450,35 +352,6 @@ def _successors(
     return out
 
 
-def _layers(stack, tables: TableSet) -> list[tuple[str, tuple[str, ...]]]:
-    """The tables the top frame matches in, in the order the decoder tries
-    them, each with the tables tried before it: the frame's own, then while a
-    frame falls through, the one beneath. A pending return is passed over; a
-    ``raw`` or ``bits`` frame beneath matches nothing."""
-    layers: list[tuple[str, tuple[str, ...]]] = []
-    through = True
-    for frame in reversed(stack):
-        tid = frame[0]
-        if tid.startswith(f"{RETURN}@"):
-            continue
-        if not through or tid in (RAW, BITS) or tid not in tables.tables:
-            break
-        layers.append((tid, tuple(t for t, _ in layers)))
-        through = frame[5]
-    return layers
-
-
-def _extensions(idx: _Index, bits: str) -> tuple[str, ...]:
-    """The suffixes that would complete one of the table's keys after ``bits``."""
-    keys = idx.keys
-    out = []
-    for i in range(bisect_right(keys, bits), len(keys)):
-        if not keys[i].startswith(bits):
-            break
-        out.append(keys[i][len(bits) :])
-    return tuple(out)
-
-
 def _table_successors(
     atoms,
     pos,
@@ -494,7 +367,7 @@ def _table_successors(
 ):
     n = len(atoms)
     out = []
-    layers = _layers(stack, tables)
+    layers = layers_of(stack, tables)
     for tid, shadows in layers:
         idx = indexes[tid]
         # A return entry closes the innermost frame of the table that holds it.
@@ -537,13 +410,13 @@ def _table_successors(
             if s:
                 out.append(s)
         return out
-    key = _atom_key(atom)
+    key = atom_key(atom)
     for tid, shadows in layers:
         idx = indexes[tid]
         for entry_atoms, entry in idx.by_first.get(key, ()):
             k = len(entry_atoms)
             if pos + k > n or not all(
-                _atoms_equal(entry_atoms[i], atoms[pos + i]) for i in range(k)
+                atoms_equal(entry_atoms[i], atoms[pos + i]) for i in range(k)
             ):
                 continue
             interior_end = entry.kind is TokenKind.END and pos + k != n
@@ -579,166 +452,12 @@ def _table_successors(
     return out
 
 
-def _with_longer(succ, idx: _Index, entry: Entry):
+def _with_longer(succ, idx: Index, entry: Entry):
     npos, nstack, nf, bits, is_end = succ
     longer = idx.longer.get(entry.bits)
     if longer:
         nf = nf + longer
     return npos, nstack, nf, bits, is_end
-
-
-def _why(atoms, at: int, stack, tables: TableSet, indexes) -> str:
-    """Why the search found no encoding, in the terms the text is written in.
-
-    The search itself only knows that it ran out of states. The atom it got
-    furthest to, and the tables in use when it did, are what tell a character
-    no table has an entry for from one whose table nothing switches to there,
-    and both from one that simply cannot follow what comes before it.
-    """
-    if at >= len(atoms):
-        if len(stack) > 1:
-            return "the text encodes, but a table it switches into is never left"
-        return (
-            "the text encodes, but it cannot end there: its last entry begins "
-            "a longer one, whose bits would be read instead"
-        )
-    here = [tid for tid, _ in _layers(stack, tables)]
-    atom = atoms[at]
-    if isinstance(atom, CodeRef):
-        return _why_code(atom, here, tables, indexes)
-    return _why_char(atoms, at, here, tables, indexes)
-
-
-def _why_char(atoms, at: int, here: list[str], tables: TableSet, indexes) -> str:
-    key = _atom_key(atoms[at])
-    shown = _shown_char(atoms, at)
-    starting = [tid for tid, idx in indexes.items() if key in idx.by_first]
-    if not starting:
-        return f"no table has an entry for {shown}"
-    matching = [tid for tid in starting if _entry_matches(indexes[tid], key, atoms, at)]
-    if not matching:
-        return (
-            f"no table has an entry for {shown} on its own; it is only ever "
-            f"part of a longer entry"
-        )
-    return _why_reachable(shown, matching, here, tables)
-
-
-def _why_code(ref: CodeRef, here: list[str], tables: TableSet, indexes) -> str:
-    shown = _ref_text(ref)
-    if ref.is_raw_byte or ref.is_raw_bits:
-        return (
-            f"{shown} cannot stand there: a table in use would read those bits "
-            f"as an entry of its own"
-        )
-    coded = [tid for tid, idx in indexes.items() if ref.label in idx.codes]
-    plain = [tid for tid, idx in indexes.items() if f"[{ref.label}]" in idx.by_first]
-    if not coded and not plain:
-        return f"no table has a code [{ref.label}]"
-    if coded:
-        operands = _why_operands(ref, coded, indexes)
-        if operands is not None:
-            return operands
-    if plain and not coded and ref.words:
-        return f"[{ref.label}] takes no operands"
-    return _why_reachable(shown, coded + plain, here, tables)
-
-
-def _why_operands(ref: CodeRef, coded: list[str], indexes) -> str | None:
-    """Why no table can write ``ref``'s operands, or ``None`` when one can."""
-    reason = None
-    for tid in coded:
-        entry = indexes[tid].codes[ref.label]
-        specs = " ".join(spec.spec() for spec in entry.operands)
-        try:
-            values = operand_values(entry, ref.words)
-            bits_for(entry, values)
-        except ValueError as exc:
-            # operand_values names the code itself; a word that will not parse
-            # raises the word alone, which says nothing on its own.
-            said = str(exc)
-            reason = reason or (
-                said
-                if said.startswith("[")
-                else f"[{ref.label}] takes operands {specs}, not {said!r}"
-            )
-        except OverflowError:
-            reason = reason or (
-                f"[{ref.label}] takes operands {specs}, which "
-                f"{' '.join(ref.words)} does not fit"
-            )
-        else:
-            return None
-    return reason
-
-
-def _why_reachable(
-    shown: str, holders: list[str], here: list[str], tables: TableSet
-) -> str:
-    """Why an entry that exists cannot be used where the text wants it."""
-    if not here:
-        return f"{shown} cannot go there: those bits are read raw, not in a table"
-    in_use = [tid for tid in holders if tid in here]
-    if not in_use:
-        switch = _switch_into(holders, here, tables)
-        how = (
-            f", so write [{switch}] first"
-            if switch
-            else ", and nothing switches to it there"
-        )
-        return (
-            f"{shown} is in {_named(holders)}; the text is read in "
-            f"{_named(here)} there{how}"
-        )
-    return (
-        f"{shown} has an entry in {_named(in_use)}, but it cannot follow the "
-        f"text before it"
-    )
-
-
-def _switch_into(holders: list[str], here: list[str], tables: TableSet) -> str | None:
-    """The label of a switch out of a table in use that reaches one of
-    ``holders``: what the translator writes to get there."""
-    for tid in here:
-        for entry in tables.table(tid).entries.values():
-            if entry.kind is not TokenKind.SWITCH or entry.label is None:
-                continue
-            if any(p.table_id in holders for p in entry.params):
-                return entry.label
-    return None
-
-
-def _entry_matches(idx: _Index, key: str, atoms, at: int) -> bool:
-    """Whether an entry beginning with ``key`` matches the atoms from ``at``."""
-    n = len(atoms)
-    return any(
-        at + len(entry_atoms) <= n
-        and all(
-            _atoms_equal(entry_atoms[i], atoms[at + i]) for i in range(len(entry_atoms))
-        )
-        for entry_atoms, _ in idx.by_first.get(key, ())
-    )
-
-
-def _shown_char(atoms, at: int) -> str:
-    """The character at ``at`` as the text spells it, with its code points.
-
-    A combining mark is shown on the character it joins: a table with no entry
-    for ``é`` fails on the acute, and naming the acute alone would send the
-    translator looking for a character they never typed.
-    """
-    text = atoms[at]
-    if is_mark(text) and at and isinstance(atoms[at - 1], str):
-        text = nfc(atoms[at - 1] + text)
-    points = " ".join(f"U+{ord(c):04X}" for c in text)
-    return f"{text!r} ({points})"
-
-
-def _named(ids: list[str]) -> str:
-    shown = [f"@{tid}" for tid in ids[:3]]
-    if len(ids) > 3:
-        shown.append("…")
-    return ("table " if len(ids) == 1 else "tables ") + ", ".join(shown)
 
 
 def _verify(
@@ -753,9 +472,9 @@ def _verify(
     rules = DecodeRules(end_terminated=end_terminated, limit_bit=len(result.bits))
     run = decode_run(data, tables, 0, rules, runs=max(ends, 1) if end_terminated else 1)
     got = render(run.tokens).replace("\n", "")
-    want = "".join(a if isinstance(a, str) else _ref_text(a) for a in atoms)
+    want = "".join(a if isinstance(a, str) else ref_text(a) for a in atoms)
     want_cmp = "".join(
-        escape_text(a) if isinstance(a, str) else _ref_text(a) for a in atoms
+        escape_text(a) if isinstance(a, str) else ref_text(a) for a in atoms
     )
     if not _same_text(nfc(got), nfc(want_cmp), tables) or run.end_bit != len(
         result.bits
@@ -798,9 +517,3 @@ def _same_text(got: str, want: str, tables: TableSet) -> bool:
         else:
             return False
     return g == len(got) and w == len(want)
-
-
-def _ref_text(ref: CodeRef) -> str:
-    if ref.words:
-        return f"[{ref.label} {' '.join(ref.words)}]"
-    return f"[{ref.label}]"

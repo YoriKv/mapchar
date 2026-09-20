@@ -17,9 +17,9 @@ Three optional hooks answer without a full read: ``header_size`` and
 ``default_mapping`` for the two hints, and ``describe`` for the fields
 Container Info lists.
 
-The formats themselves are :mod:`~mapchar.plugins.builtins.containers.nintendo`
-and :mod:`~mapchar.plugins.builtins.containers.sega`, over the pieces they share
-in ``_common.py``; :func:`register` below is where detection order is decided.
+The formats themselves are one module per vendor and console — ``nes``,
+``snes``, ``gameboy``, ``n64`` and ``sega`` — over the pieces they share in
+``_common.py``; :func:`register` below is where detection order is decided.
 """
 
 from __future__ import annotations
@@ -32,35 +32,41 @@ from mapchar.plugins.builtins.containers._common import (
     slot_write,
     splice,
 )
-from mapchar.plugins.builtins.containers.nintendo import (
-    COPIER_HEADER,
-    COPIER_MIN_SIZE,
-    COPIER_SIZE_MULTIPLE,
+from mapchar.plugins.builtins.containers.gameboy import (
     GB_GLOBAL_SUM_AT,
     GB_HEADER_END,
     GB_HEADER_SUM_AT,
     GB_LOGO,
     GB_SUM_RANGE,
     GBA_LOGO,
+    GameBoy,
+    GameBoyAdvance,
+    repair_gb_checksums,
+)
+from mapchar.plugins.builtins.containers.n64 import (
+    KEY_N64_SWAP,
+    N64_NATIVE,
+    N64Rom,
+    n64_swap_width,
+    swap_groups,
+)
+from mapchar.plugins.builtins.containers.nes import (
     INES_HEADER,
     INES_TRAINER,
     KEY_INES_SOURCE,
-    KEY_N64_SWAP,
-    N64_NATIVE,
     NES_MAGIC,
-    GameBoy,
-    GameBoyAdvance,
     INes,
-    N64Rom,
+)
+from mapchar.plugins.builtins.containers.sega import Smd
+from mapchar.plugins.builtins.containers.snes import (
+    COPIER_HEADER,
+    COPIER_MIN_SIZE,
+    COPIER_SIZE_MULTIPLE,
     Snes,
     SnesHeadered,
     SnesInterleaved,
     copier_header_size,
-    n64_swap_width,
-    repair_gb_checksums,
-    swap_groups,
 )
-from mapchar.plugins.builtins.containers.sega import Smd
 
 __all__ = [
     "COPIER_HEADER",

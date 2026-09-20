@@ -101,6 +101,18 @@ def _byte_span(bit_start: int, bit_end: int) -> tuple[int, int]:
     return byte_start, max(byte_start + 1, -(-bit_end // 8))
 
 
+def _break_positions(base: int, starts: list[int] | tuple[int, ...]) -> set[int]:
+    """The bits a line break goes in front of, in the frame ``base`` bits past
+    the one ``starts`` counts in: where each string after the first begins.
+
+    The first start is where the tokens begin and not where a string does — it
+    resumes whatever string ran up to them — so nothing breaks there. One past
+    the last token is a start like any other, so a text whose tokens end where
+    the next string begins ends with a break and does not run into it.
+    """
+    return {base + start for start in starts[1:]}
+
+
 def _break_before(texts: list[str]) -> int:
     """End the text so far with a line break: a string ended where the next one
     starts, and without the break the two would read as one string. The token
@@ -128,13 +140,12 @@ def text_model(
     """Render tokens (bit positions relative to ``offset``) to a body and map.
 
     ``starts`` is the bit each string begins at, in the same frame: the line
-    breaks between strings the tokens do not carry themselves. The first of
-    them starts the tokens, not a string, so nothing breaks there; one past the
-    last token breaks after it, which is how the text above a window ends where
-    the window's own first string begins.
+    breaks between strings the tokens do not carry themselves
+    (:func:`_break_positions`), which is also how the text above a window ends
+    where the window's own first string begins.
     """
     texts: list[str] = []
-    breaks = set(starts[1:])
+    breaks = _break_positions(0, starts)
     for token in tokens:
         if token.bit_start in breaks:
             _break_before(texts)
@@ -271,15 +282,12 @@ class TextDecode:
         self, base: int, tokens: list[Token], starts: list[int] | tuple[int, ...] = ()
     ) -> None:
         """Tokens relative to byte ``base``, after those kept; ``starts`` is the
-        bit each string begins at, in the same frame.
-
-        The first of them starts the decode, not a string: it resumes whatever
-        string the tokens before it were part of, so nothing breaks there. One
-        past the last token breaks after it, so tokens put in front of the kept
-        ones (:meth:`prepend`) end where the string they run up to begins.
+        bit each string begins at, in the same frame
+        (:func:`_break_positions`), so tokens put in front of the kept ones
+        (:meth:`prepend`) end where the string they run up to begins.
         """
         base *= 8
-        breaks = {base + start for start in starts[1:]}
+        breaks = _break_positions(base, starts)
         for token in tokens:
             start, end = base + token.bit_start, base + token.bit_end
             if start in breaks:
@@ -287,8 +295,9 @@ class TextDecode:
             text = self.shown.text(token)
             self.starts.append(start)
             self.ends.append(end)
-            self.byte_starts.append(start // 8)
-            self.byte_ends.append(max(start // 8 + 1, -(-end // 8)))
+            byte_start, byte_end = _byte_span(start, end)
+            self.byte_starts.append(byte_start)
+            self.byte_ends.append(byte_end)
             self.texts.append(text)
             self.chars.append(self.chars[-1] + len(text))
         if tokens and base + tokens[-1].bit_end in breaks:

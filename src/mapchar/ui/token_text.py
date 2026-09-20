@@ -29,6 +29,12 @@ CODE_IN_TEXT = re.compile(r"(?<!\\)\[[^\[\]]*\]")
 """A code in script text: a bracketed name, unless the bracket is escaped."""
 
 
+def ellipsize(text: str, limit: int) -> str:
+    """``text`` no longer than ``limit``, the last character an ellipsis where
+    it had to be cut. Every preview cuts the same way, whatever it previews."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def token_bytes(token: Token) -> range:
     """The relative bytes a token covers, at least the one it starts in."""
     first = token.bit_start // 8

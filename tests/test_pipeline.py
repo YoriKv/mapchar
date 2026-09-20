@@ -14,12 +14,11 @@ from mapchar.core.block import (
     RangeSource,
     WriteMode,
     block_bound,
-    fill_end,
-    fill_run,
     remembered_room,
 )
 from mapchar.core.context import KEY_HEADER_SIZE, KEY_SOURCE_FILES, PipelineContext
 from mapchar.core.errors import PipelineError
+from mapchar.core.fill import fill_end, fill_run
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.filechange import FileChange
 from mapchar.pipeline.insert import apply_splices, layout_block, string_ends

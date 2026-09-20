@@ -3,7 +3,7 @@
 The search is every mapping crossed with every pointer width, endianness and
 offset, each combination scanned over the whole file — long enough on a large ROM
 with a hundred strings that it needs a way out, like every other long operation
-here. :class:`~mapchar.ui.widgets.ModalProgress` supplies the progress bar and
+here. :class:`~mapchar.ui.progress.ModalProgress` supplies the progress bar and
 the Stop button, and the engine takes them as its ``progress`` callback; a
 stopped search still offers the combinations it had already ranked.
 
@@ -22,8 +22,8 @@ from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import resolve_mapping
 from mapchar.project.workspace import Entry
 from mapchar.ui.dialogs import DiscoveryDialog, PointerSearchDialog
+from mapchar.ui.progress import ModalProgress
 from mapchar.ui.undo_commands import PointerCommand
-from mapchar.ui.widgets import ModalProgress
 
 
 class PointerDiscoveryMixin:

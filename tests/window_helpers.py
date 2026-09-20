@@ -65,7 +65,7 @@ def add_block(window, file_entry, name, source, string_type=None, **config) -> E
 def grid_keys(editor) -> list[str]:
     """The Key cell of every row the Table Editor's grid shows, in its order.
 
-    The grid is a view over :class:`~mapchar.ui.table_editor._EntryModel`, so a
+    The grid is a view over :class:`~mapchar.ui.table_grid._EntryModel`, so a
     row is read from the model rather than from a widget per cell, and a row
     the filter drops is not there at all.
     """

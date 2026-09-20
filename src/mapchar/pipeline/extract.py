@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from bisect import bisect_right
-from dataclasses import dataclass, replace
+from collections.abc import Container
+from dataclasses import replace
 
 from mapchar.core.bits import Bits, bits_to_bytes
 from mapchar.core.block import (
@@ -23,9 +24,8 @@ from mapchar.core.block import (
     StringRecord,
     bits_digest,
     fill_reads_as_padding,
-    is_fill,
 )
-from mapchar.core.mapping import read_pointer
+from mapchar.core.fill import fill_bits, is_fill
 from mapchar.core.notices import Notice
 from mapchar.core.table import Entry, TableSet, TokenKind
 from mapchar.core.tokens import (
@@ -44,7 +44,7 @@ from mapchar.engines.decode import (
     decode,
     follow_skips,
 )
-from mapchar.plugins.registry import mapping_for
+from mapchar.pipeline.pointers import nested_records, read_pointers
 
 
 def artificial(label: str, bit: int) -> Token:
@@ -66,12 +66,26 @@ def strip_artificial(text: str, config: BlockConfig) -> list[str]:
     the text is the table's own end token and stays.
     """
     if config.show_end:
-        body = text.rstrip("\n")
-        items = parse_text(body)
-        if items and _is_code(items[-1], config.end_label):
-            text = body[: body.rfind("[")]
+        text = _split_end_code(text, (config.end_label,))[0]
     drop = config.line_label if config.line_length else ""
     return [_without_code(line, drop) for line in text.split("\n")]
+
+
+def _split_end_code(text: str, labels: Container[str]) -> tuple[str, str]:
+    """``text`` cut in two at the bare end code that closes it: what stands in
+    front of the code, and the code with whatever follows it.
+
+    ``(text, "")`` for a text that ends in none of ``labels``. Trailing line
+    breaks are not part of the code — they are looked past to find it, and then
+    go with the half they stand in.
+    """
+    trimmed = text.rstrip("\n")
+    items = parse_text(trimmed)
+    last = items[-1] if items else None
+    if not (isinstance(last, CodeRef) and not last.words and last.label in labels):
+        return text, ""
+    at = trimmed.rfind("[")
+    return text[:at], text[at:]
 
 
 def _is_code(item: TextRun | CodeRef, label: str) -> bool:
@@ -179,174 +193,6 @@ def reextract(
     )
 
 
-@dataclass(frozen=True)
-class NestedRecord:
-    """One record of a nested source's outer table, both pointers mapped."""
-
-    address: int
-    """Where the record's first outer pointer sits."""
-    table: int
-    """Where its inner table starts."""
-    base: int
-    """What its inner pointers count from; where the inner table stops."""
-
-
-def nested_records(
-    data: bytes, source: NestedPointerSource, registry=None
-) -> tuple[list[NestedRecord], list[Notice]]:
-    """The records of a nested source's outer table that name an inner table,
-    and what reading the rest had to say. A record holding the null value in
-    either pointer names none and says nothing."""
-    notices: list[Notice] = []
-    mapping = mapping_for(source, registry)
-    if mapping is None:
-        return [], [Notice(f"unknown mapping {source.mapping_id!r}")]
-    records: list[NestedRecord] = []
-    size = source.size
-    for address in range(source.start, source.stop, max(source.stride, 1)):
-        values = [
-            read_pointer(data, address + at, size, source.endian) for at in (0, size)
-        ]
-        if None in values:
-            notices.append(Notice("pointer past the end of the data", offset=address))
-            continue
-        if source.null is not None and source.null in values:
-            continue
-        table, base = (
-            pointer_target(mapping, source, v, address + at, len(data))
-            for v, at in zip(values, (0, size), strict=True)
-        )
-        if table is None or base is None:
-            notices.append(
-                Notice("record's pointers map outside the data", offset=address)
-            )
-            continue
-        if base < table:
-            notices.append(
-                Notice(f"inner table ${table:X} lies past its base", offset=address)
-            )
-            continue
-        records.append(NestedRecord(address, table, base))
-    return records, notices
-
-
-def pointer_addresses(
-    data: bytes, source: PointerSource, registry=None
-) -> list[tuple[int, int]]:
-    """Every pointer a source reads, as ``(address, size)``: a nested source's
-    outer pointers and its inner tables' as well as a table's or list's own."""
-    if isinstance(source, PointerTableSource):
-        step = max(source.stride, 1)
-        return [(a, source.size) for a in range(source.start, source.stop, step)]
-    if isinstance(source, PointerListSource):
-        return [(a, source.size) for a in source.addresses]
-    records, _ = nested_records(data, source, registry)
-    out = [
-        (a + at, source.size)
-        for a in range(source.start, source.stop, max(source.stride, 1))
-        for at in (0, source.size)
-    ]
-    for rec in records:
-        out += [
-            (a, source.inner_size)
-            for a in range(
-                rec.table, rec.base - source.inner_size + 1, source.inner_size
-            )
-        ]
-    return out
-
-
-def _read_nested(
-    data: bytes, source: NestedPointerSource, registry, bases=None
-) -> tuple[list[PointerRef], list[int | None], list[Notice]]:
-    """Every inner pointer of a nested source with its target offset: its value
-    counted from its record's base. With ``bases``, only the records counting
-    from one of those."""
-    records, notices = nested_records(data, source, registry)
-    if bases is not None:
-        records = [r for r in records if r.base in bases]
-    refs: list[PointerRef] = []
-    targets: list[int | None] = []
-    width = source.inner_size
-    for rec in records:
-        for address in range(rec.table, rec.base - width + 1, width):
-            value = read_pointer(data, address, width, source.inner_endian)
-            if value is None:
-                continue
-            if value == source.inner_null:
-                continue
-            target = rec.base + value
-            if target >= len(data):
-                notices.append(
-                    Notice(f"pointer ${value:X} maps outside the data", offset=address)
-                )
-                target = None
-            refs.append(
-                PointerRef(
-                    address, width, source.inner_endian, "linear", rec.base, value
-                )
-            )
-            targets.append(target)
-    return refs, targets, notices
-
-
-def _read_pointers(
-    data: bytes, source: PointerSource, registry, bases=None
-) -> tuple[list[PointerRef], list[int | None], list[Notice]]:
-    """Every pointer of the source with its target offset (None when unmapped).
-
-    A pointer holding the source's null value reaches no string and is left
-    out."""
-    if isinstance(source, NestedPointerSource):
-        return _read_nested(data, source, registry, bases)
-    mapping = mapping_for(source, registry)
-    notices: list[Notice] = []
-    if mapping is None:
-        notices.append(Notice(f"unknown mapping {source.mapping_id!r}"))
-        return [], [], notices
-    if isinstance(source, PointerTableSource):
-        addresses = list(range(source.start, source.stop, max(source.stride, 1)))
-    else:
-        addresses = list(source.addresses)
-    refs: list[PointerRef] = []
-    targets: list[int | None] = []
-    for address in addresses:
-        value = read_pointer(data, address, source.size, source.endian)
-        if value is None:
-            notices.append(Notice("pointer past the end of the data", offset=address))
-            continue
-        if value == source.null:
-            continue
-        target = pointer_target(mapping, source, value, address, len(data))
-        if target is None:
-            notices.append(
-                Notice(f"pointer ${value:X} maps outside the data", offset=address)
-            )
-        refs.append(
-            PointerRef(
-                address,
-                source.size,
-                source.endian,
-                source.mapping_id,
-                source.offset,
-                value,
-            )
-        )
-        targets.append(target)
-    return refs, targets, notices
-
-
-def pointer_target(mapping, source: PointerSource, value, address, size) -> int | None:
-    """Where a pointer at ``address`` holding ``value`` points in data of
-    ``size`` bytes: mapped, moved by the source's offset, and ``None`` when it
-    lands outside."""
-    target = mapping.to_offset(value, source.bank, address)
-    if target is None:
-        return None
-    target += source.offset
-    return target if 0 <= target < size else None
-
-
 def padding_bits(config: BlockConfig, tables: TableSet) -> str | None:
     """The block's fill pattern as bits when a run of it is padding
     (:func:`~mapchar.core.block.fill_reads_as_padding`, where the rule is), and
@@ -354,12 +200,24 @@ def padding_bits(config: BlockConfig, tables: TableSet) -> str | None:
     over between strings, spelled the way :meth:`Bits.window` spells it."""
     if not fill_reads_as_padding(config, tables):
         return None
-    return "".join(format(b, "08b") for b in config.fill)
+    return fill_bits(config.fill)
+
+
+def pad_run(bits: Bits, pos: int, pad: str, limit: int) -> int:
+    """The bits of whole fill patterns from ``pos``, reading no further than
+    ``limit``: what a reading passes over between strings (:func:`padding_bits`).
+    """
+    width = len(pad)
+    end = pos
+    while end + width <= limit and bits.window(end, width) == pad:
+        end += width
+    return end - pos
 
 
 def _without_padding(bits: Bits, start: int, limit: int, pad: str | None) -> int:
     """``limit`` pulled back over the run of whole fill patterns that ends
-    there."""
+    there: :func:`pad_run` the other way about, for the tail of a string that
+    owns its slot to the next pointer's target."""
     if pad is None:
         return limit
     width = len(pad)
@@ -380,7 +238,7 @@ def _extract_pointers(
     registry,
     bases=None,
 ) -> Extraction:
-    refs, targets, notices = _read_pointers(bits.data, source, registry, bases)
+    refs, targets, notices = read_pointers(bits.data, source, registry, bases)
     inner_tables: dict[int, int] = {}
     if isinstance(source, NestedPointerSource):
         # Each group is keyed by the base its pointers count from
@@ -521,13 +379,11 @@ def _extract_range(
             Notice("'next pointer' needs a pointer source; reading to end tokens")
         )
     pad = padding_bits(config, tables) if config.fixed_length is None else None
-    width = len(pad) if pad is not None else 0
     skips = sorted((a * 8, b * 8) for a, b in config.skips)
     while pos < stop_bit:
         start = pos
         if pad is not None and strings and start % 8 == 0:
-            while start + width <= stop_bit and bits.window(start, width) == pad:
-                start += width
+            start += pad_run(bits, start, pad, stop_bit)
             if start >= stop_bit:
                 break
         # A string that begins on a skip range begins where it lands, and one
@@ -713,19 +569,10 @@ def respell_fixed_end(
         return rec.current_text()
     body, after = text, ""
     if config.show_end:
-        trimmed = text.rstrip("\n")
-        items = parse_text(trimmed)
-        if items and _is_code(items[-1], config.end_label):
-            at = trimmed.rfind("[")
-            body, after = trimmed[:at], text[at:]
+        body, after = _split_end_code(text, (config.end_label,))
     labels = {
         e.label
         for e in tables.start.entries.values()
         if e.kind is TokenKind.END and e.label
     }
-    trimmed = body.rstrip("\n")
-    items = parse_text(trimmed)
-    last = items[-1] if items else None
-    if isinstance(last, CodeRef) and not last.words and last.label in labels:
-        body = trimmed[: trimmed.rfind("[")]
-    return body + after
+    return _split_end_code(body, labels)[0] + after

@@ -44,6 +44,7 @@ from mapchar.project.workspace import (
     Workspace,
 )
 from mapchar.ui import settings
+from mapchar.ui.bars import WrapBar
 from mapchar.ui.decompress_window import DecompressWindow
 from mapchar.ui.dialogs import (
     TextDialog,
@@ -62,6 +63,7 @@ from mapchar.ui.help_dialogs import (
 from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.main_window.autosave import AutosaveMixin
+from mapchar.ui.main_window.block_reading import BlockReadingMixin
 from mapchar.ui.main_window.blocks import BlocksMixin
 from mapchar.ui.main_window.capability_sync import CapabilitySyncMixin
 from mapchar.ui.main_window.compression import CompressionMixin
@@ -111,7 +113,6 @@ from mapchar.ui.widgets import (
     CompactComboBox,
     ElidedLabel,
     ModeToggle,
-    WrapBar,
 )
 from mapchar.ui.window_layout import WindowLayout
 
@@ -137,6 +138,7 @@ class MainWindow(
     RawViewMixin,
     BlocksMixin,
     StringsViewMixin,
+    BlockReadingMixin,
     StringEditMixin,
     WrapMixin,
     FindReplaceMixin,
@@ -381,10 +383,8 @@ class MainWindow(
         layout.addWidget(block_bar)
 
         self.tabs = QTabWidget()
-        self.raw = RawWidget()
         # The raw view's address column is spelled as every other address is.
-        self._sync_raw_addresses()
-        self.address_spelling.changed.connect(self._sync_raw_addresses)
+        self.raw = RawWidget(self.address_spelling)
         self.text = TextWidget()
         self.strings = StringsView()
         self.tabs.addTab(self.raw, "Hex")
@@ -609,16 +609,6 @@ class MainWindow(
         self.table_watcher.fileChanged.connect(self._on_table_file_changed)
         self.workspace.on_added.append(self._watch_table)
         self.workspace.on_reset.append(self._rewatch_tables)
-
-    def _sync_raw_addresses(self, *_) -> None:
-        """Spell the raw view's address column the way every other address the
-        window shows is spelled; flat hex is left to the view, which sizes the
-        column to the file."""
-        spelling = self.address_spelling
-        if spelling.layout is None:
-            self.raw.set_address_format(None)
-        else:
-            self.raw.set_address_format(spelling.format, len(spelling.format(0)))
 
     def _reset_layout(self) -> None:
         """Panels ▸ Reset Panel Layout: the arrangement a fresh install has.

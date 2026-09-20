@@ -15,9 +15,9 @@ from mapchar.core.block import BlockConfig, PointerSource, PointerTableSource
 from mapchar.core.table import Entry, TokenKind
 from mapchar.core.tokens import Token, render
 from mapchar.pipeline.view_read import PointerCell
-from mapchar.ui.token_text import POINTER_TOKENS, compact_text
+from mapchar.ui.token_text import POINTER_TOKENS, compact_text, ellipsize
 
-PREVIEW_CHARS = 80
+LINE_PREVIEW_CHARS = 80
 """How much of a pointer's string a line of the Text tab shows."""
 
 
@@ -138,9 +138,6 @@ def text_tokens(
             # which is structure, rather than those bytes decoded as text.
             line += f"  {role}"
         elif resolve_pointers:
-            text = preview(cell.target)
-            if len(text) > PREVIEW_CHARS:
-                text = text[: PREVIEW_CHARS - 1] + "…"
-            line += f"  {text}"
+            line += f"  {ellipsize(preview(cell.target), LINE_PREVIEW_CHARS)}"
         tokens.append(_token(cell, offset, line + "\n"))
     return tokens

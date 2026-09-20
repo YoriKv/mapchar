@@ -16,6 +16,8 @@ way everywhere.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import QObject, QRegularExpression, QSignalBlocker, Signal
 from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
@@ -108,7 +110,44 @@ class HexSpinBox(QSpinBox):
         return f"{value:0{self._digits}X}"
 
 
-class HexEdit(QLineEdit):
+class _FixedHexEdit(QLineEdit):
+    """A field of a fixed width for one number typed in hex.
+
+    Every one of them is the same shape: ``chars`` characters wide and no
+    wider, so a bar of them lines up; ``pattern`` is what may be typed while a
+    number is being typed, which is looser than what reads; and what was typed
+    is spelled again the moment it is finished, so a field always reads back
+    the way it writes. A subclass adds :meth:`value` and :meth:`set_value`.
+    """
+
+    def __init__(
+        self,
+        pattern: QRegularExpression,
+        chars: int,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setValidator(QRegularExpressionValidator(pattern, self))
+        fit_chars(self, chars)
+        self.setMaximumWidth(self.minimumWidth())
+        self.editingFinished.connect(self._respell)
+
+    def value(self):
+        """What the field holds; ``None`` when it does not read."""
+        raise NotImplementedError
+
+    def set_value(self, value) -> None:
+        """Show a value spelled the way the field spells one."""
+        raise NotImplementedError
+
+    def _respell(self) -> None:
+        # Blank is not a number to spell, and an unreadable one is left as it
+        # was typed rather than replaced by a guess.
+        if self.text().strip() and (value := self.value()) is not None:
+            self.set_value(value)
+
+
+class HexEdit(_FixedHexEdit):
     """A field for one unsigned hex number, padded to ``digits``; blank is
     ``None``.
 
@@ -118,12 +157,8 @@ class HexEdit(QLineEdit):
     """
 
     def __init__(self, digits: int, parent: QWidget | None = None, *, pad: bool = True):
-        super().__init__(parent)
+        super().__init__(HEX_NUMBER, digits, parent)
         self._digits = digits if pad else 0
-        self.setValidator(QRegularExpressionValidator(HEX_NUMBER, self))
-        fit_chars(self, digits)
-        self.setMaximumWidth(self.minimumWidth())
-        self.editingFinished.connect(self._respell)
 
     def value(self) -> int | None:
         try:
@@ -133,11 +168,6 @@ class HexEdit(QLineEdit):
 
     def set_value(self, value: int | None) -> None:
         self.setText("" if value is None else f"{value:0{self._digits}X}")
-
-    def _respell(self) -> None:
-        value = self.value()
-        if value is not None:
-            self.set_value(value)
 
 
 class AddressSpelling(QObject):
@@ -171,7 +201,32 @@ class AddressSpelling(QObject):
         return parse_address(text, self._layout)
 
 
-class AddressEdit(QLineEdit):
+ADDRESS_COLUMN_CHARS = 6
+"""The narrowest a byte view's address column is: flat hex's six digits, so a
+small file's column still reads like every other address the window shows."""
+
+
+def address_column(
+    spelling: AddressSpelling | None, last: int
+) -> tuple[Callable[[int], str], int]:
+    """How a byte view's address column spells an offset, and how wide it is.
+
+    One answer for both byte views, which would otherwise size and spell the
+    same column differently: ``spelling``'s layout where the window has one and
+    flat hex where it does not, in a column wide enough for the longest address
+    the file reaches — ``last`` is its last offset — and never narrower than
+    :data:`ADDRESS_COLUMN_CHARS`. Both ends are measured, since a layout spells
+    a high bank wider than a low one.
+    """
+    last = max(last, 0)
+    if spelling is None or spelling.layout is None:
+        width = max(ADDRESS_COLUMN_CHARS, len(f"{last:X}"))
+        return (lambda at: f"{at:0{width}X}"), width
+    spell = spelling.format
+    return spell, max(ADDRESS_COLUMN_CHARS, len(spell(0)), len(spell(last)))
+
+
+class AddressEdit(_FixedHexEdit):
     """A field for one file offset, spelled as its :class:`AddressSpelling`
     spells one; blank or unreadable is ``None``.
 
@@ -182,12 +237,8 @@ class AddressEdit(QLineEdit):
     def __init__(
         self, spelling: AddressSpelling | None = None, parent: QWidget | None = None
     ):
-        super().__init__(parent)
+        super().__init__(_ADDRESS, ADDRESS_CHARS, parent)
         self.spelling = spelling if spelling is not None else AddressSpelling(self)
-        self.setValidator(QRegularExpressionValidator(_ADDRESS, self))
-        fit_chars(self, ADDRESS_CHARS)
-        self.setMaximumWidth(self.minimumWidth())
-        self.editingFinished.connect(self._respell)
         self.spelling.changed.connect(self._on_spelling)
 
     def value(self) -> int | None:
@@ -195,11 +246,6 @@ class AddressEdit(QLineEdit):
 
     def set_value(self, offset: int | None) -> None:
         self.setText("" if offset is None else self.spelling.format(offset))
-
-    def _respell(self) -> None:
-        offset = self.value()
-        if offset is not None:
-            self.set_value(offset)
 
     def _on_spelling(self, old: AddressLayout | None) -> None:
         offset = parse_address(self.text(), old)
@@ -221,16 +267,12 @@ def respell_addresses(
     return ", ".join(items)
 
 
-class OffsetEdit(QLineEdit):
+class OffsetEdit(_FixedHexEdit):
     """A field for a signed hex offset: ``1F0``, ``-10``, ``$`` optional."""
 
     def __init__(self, value: int = 0, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setValidator(QRegularExpressionValidator(_OFFSET, self))
-        fit_chars(self, ADDRESS_CHARS)
-        self.setMaximumWidth(self.minimumWidth())
+        super().__init__(_OFFSET, ADDRESS_CHARS, parent)
         self.set_value(value)
-        self.editingFinished.connect(self._respell)
 
     def value(self, blank: int | None = 0) -> int | None:
         """The offset; ``blank`` when there is no text, ``None`` when it does
@@ -244,10 +286,6 @@ class OffsetEdit(QLineEdit):
 
     def set_value(self, value: int) -> None:
         self.setText(format_hex_offset(value))
-
-    def _respell(self) -> None:
-        if self.text().strip() and (value := self.value()) is not None:
-            self.set_value(value)
 
 
 __all__ = [

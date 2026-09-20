@@ -116,6 +116,15 @@ class Lzss(PartialDecompression):
     def header_size(self) -> int:
         return _HEADER_SIZES[self.size_header]
 
+    def _error(self, reason: str) -> ValueError:
+        """:func:`stream_error` under this framing's **display name**.
+
+        The name and not the id, because the message is what the UI shows
+        against the entry: every other scheme here names itself the way the
+        picker does, and a preset's id is not what the picker called it.
+        """
+        return stream_error(self.info.name, reason)
+
     def _read_size(self, data: bytes) -> int | None:
         if self.size_header == "gba":
             return int.from_bytes(data[1:4], "little")
@@ -181,12 +190,11 @@ class Lzss(PartialDecompression):
     def _decode(self, data: bytes, *, partial: bool) -> tuple[bytes, int, bool]:
         head = self.header_size
         if len(data) < head:
-            raise stream_error(self.info.id, f"shorter than the {head}-byte header")
+            raise self._error(f"shorter than the {head}-byte header")
         if self.magic is not None and data[0] & self.magic_mask != self.magic:
-            raise stream_error(
-                self.info.id,
+            raise self._error(
                 f"byte {data[0]:#04x} is not a {self.magic:#04x} header"
-                f" (mask {self.magic_mask:#04x})",
+                f" (mask {self.magic_mask:#04x})"
             )
         target = self._read_size(data)
         if target == 0:
@@ -194,12 +202,11 @@ class Lzss(PartialDecompression):
                 # The format's own encoding of an empty payload.
                 return b"", head, True
             # Accepting it would make a run of header-shaped noise a structure.
-            raise stream_error(self.info.id, "declared decompressed size is zero")
+            raise self._error("declared decompressed size is zero")
         over_cap = target is not None and target > MAX_OUT
         if over_cap and not partial:
-            raise stream_error(
-                self.info.id,
-                f"declares {target:,} bytes, past the {MAX_OUT:,}-byte cap",
+            raise self._error(
+                f"declares {target:,} bytes, past the {MAX_OUT:,}-byte cap"
             )
         limit = MAX_OUT if target is None else min(target, MAX_OUT)
 
@@ -253,10 +260,9 @@ class Lzss(PartialDecompression):
                     distance = field + self.distance_bias
                     start = len(win) - distance
                     if start < 0:
-                        raise stream_error(
-                            self.info.id,
+                        raise self._error(
                             f"back reference at output byte {produced:,} reaches "
-                            f"{-start} bytes before the start of the data",
+                            f"{-start} bytes before the start of the data"
                         )
                 copy_from(win, start, length)
                 consumed = src
@@ -265,9 +271,8 @@ class Lzss(PartialDecompression):
         if target is not None and len(out) > target:
             # Not a match to clip: a framing that lands on its size exactly says
             # the flags were not the ones this stream was written with.
-            raise stream_error(
-                self.info.id,
-                f"produced {len(out):,} bytes against a declared {target:,}",
+            raise self._error(
+                f"produced {len(out):,} bytes against a declared {target:,}"
             )
         if target is None:
             # No end marker and no size: where the buffer stopped is not where a
@@ -275,9 +280,7 @@ class Lzss(PartialDecompression):
             return out, consumed, False
         complete = not over_cap and len(out) == target
         if not complete and not partial:
-            raise stream_error(
-                self.info.id, f"source ended after {len(out):,} of {target:,} bytes"
-            )
+            raise self._error(f"source ended after {len(out):,} of {target:,} bytes")
         return out, consumed, complete
 
     def _encode(self, data: bytes) -> bytes:
@@ -311,7 +314,6 @@ class Lzss(PartialDecompression):
             else:
                 field = pos - candidate - self.distance_bias
             out += self._pack_ref(field, length)
-        group.finish()
         return bytes(out)
 
 
@@ -403,8 +405,9 @@ PRESET_LZSS: dict[str, tuple[str, dict]] = {
 }
 """The framings that ship as presets of :class:`Lzss`, by plugin id.
 
-``category`` beside the engine's own parameters is the picker's grouping, not a
-parameter: :func:`presets` takes it off before handing the rest to the engine.
+``category`` beside the engine's own parameters is
+:attr:`~mapchar.plugins.base.PluginInfo.category` and not a parameter at all:
+:func:`presets` takes it off and passes it to the ``PluginInfo`` instead.
 """
 
 

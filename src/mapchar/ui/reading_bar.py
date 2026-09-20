@@ -19,8 +19,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QRegularExpressionValidator
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.block import (
+    MAX_RECORD_HEADER,
     BlockConfig,
     EndToken,
     FixedLength,
@@ -41,13 +41,9 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
     StringType,
-    WriteMode,
-    default_write_mode,
-    format_fill,
-    parse_fill,
 )
+from mapchar.ui.bars import ROW_BREAK, WrapBar
 from mapchar.ui.number_fields import (
-    HEX_NUMBER,
     AddressEdit,
     AddressSpelling,
     HexEdit,
@@ -58,9 +54,7 @@ from mapchar.ui.number_fields import (
 )
 from mapchar.ui.skips_picker import SkipsPicker
 from mapchar.ui.widgets import (
-    ROW_BREAK,
     CompactComboBox,
-    WrapBar,
     fit_chars,
     hint_field,
 )
@@ -132,16 +126,6 @@ _TAILS = frozenset(
 )
 """The controls shown only where they apply; every other one is greyed."""
 
-_MODE_TIP = "How a write lays the strings out"
-_MODE_FORCED = (
-    "How a write lays the strings out; skip ranges and a record header break "
-    "the text up, so the block is written slotted"
-)
-_PACKED_TIP = "Strings laid end to end, every pointer rewritten"
-_PACKED_FORCED = "Unavailable: a write cannot lay end to end what it has to step around"
-"""What the Write picker says of itself, with and without something forcing
-slotted."""
-
 _WHERE = frozenset(
     {
         "source_kind",
@@ -191,27 +175,6 @@ def source_kind(config: BlockConfig) -> str:
     if isinstance(source, NestedPointerSource):
         return NESTED
     return RANGE
-
-
-class FillEdit(QLineEdit):
-    """A fill pattern in hex: a byte for every two digits typed, so ``FFFF`` is
-    two bytes and ``FF`` one; blank is ``None``."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setValidator(QRegularExpressionValidator(HEX_NUMBER, self))
-        fit_chars(self, 4)
-
-    def value(self) -> bytes | None:
-        digits = self.text().strip().removeprefix("$").removeprefix("0x")
-        digits = digits.removeprefix("0X").replace("_", "")
-        try:
-            return parse_fill("$" + digits) if digits else None
-        except ValueError:
-            return None
-
-    def set_value(self, fill: bytes | None) -> None:
-        self.setText("" if fill is None else format_fill(fill)[1:])
 
 
 def _null_edit(tip: str) -> HexEdit:
@@ -288,50 +251,10 @@ class ReadingBar(WrapBar):
         self.line_length = number_spin(0, 1_000_000, 3, off=True)
         self.show_end = QCheckBox("Show [end]")
         self.show_end.setToolTip("Show an [end] code after every fixed string")
-        self.header = number_spin(0, 255, 2, off=True)
+        self.header = number_spin(0, MAX_RECORD_HEADER, 2, off=True)
         self.skips = SkipsPicker()
 
-        self.bound = AddressEdit(self.spelling)
-        hint_field(
-            self.bound,
-            "stop",
-            "Writes stop before this address; blank uses the default shown",
-        )
-        self.write_mode = QComboBox()
-        for label, mode, tip in (
-            ("Automatic", None, "Packed with pointers, slotted without"),
-            ("Packed", WriteMode.PACKED, _PACKED_TIP),
-            ("Slotted", WriteMode.SLOTTED, "Every string stays in its own place"),
-        ):
-            self.write_mode.addItem(label, mode)
-            self.write_mode.setItemData(
-                self.write_mode.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
-            )
-        self.fill = FillEdit()
-        self.spare_room = QComboBox()
-        self.spare_room.addItem("Fill", "fill")
-        self.spare_room.addItem("Keep", "keep")
-        for at, tip in (
-            (0, "Pad the freed tail with the fill byte"),
-            (1, "Leave the freed tail as it was"),
-        ):
-            self.spare_room.setItemData(at, tip, Qt.ItemDataRole.ToolTipRole)
-
-        self.write_mode.setToolTip(_MODE_TIP)
-        self.fill.setToolTip(
-            "The bytes that pad unused room, in hex: FFFF pads with a word"
-        )
-        self.spare_room.setToolTip(
-            "After a shorter re-compression: fill the slot's tail, or keep it"
-        )
-        self.writing = WritingPicker(
-            (
-                ("Bound", self.bound),
-                ("Write", self.write_mode),
-                ("Fill", self.fill),
-                ("Spare room", self.spare_room),
-            )
-        )
+        self.writing = WritingPicker(self.spelling)
 
         groups = {}
         for name, label, widgets, tip in (
@@ -449,8 +372,6 @@ class ReadingBar(WrapBar):
             ("inner_endian", self.inner_endian),
             ("string_type", self.string_type),
             ("pascal_endian", self.pascal_endian),
-            ("write_mode", self.write_mode),
-            ("spare_room", self.spare_room),
         ):
             combo.currentIndexChanged.connect(lambda _=0, n=name: self._edited(n))
         self.ptr_mapping.activated.connect(lambda _=0: self._edited("ptr_mapping"))
@@ -487,10 +408,9 @@ class ReadingBar(WrapBar):
             ("ptr_addresses", self.ptr_addresses),
             ("ptr_null", self.ptr_null),
             ("inner_null", self.inner_null),
-            ("bound", self.bound),
-            ("fill", self.fill),
         ):
             field.editingFinished.connect(lambda n=name: self._edited(n))
+        self.writing.changed.connect(self._edited)
 
         self.show_default()
 
@@ -545,14 +465,7 @@ class ReadingBar(WrapBar):
     def show_bound_default(self, default: int | str | None) -> None:
         """Say in the Bound field's placeholder where a blank bound stops: at an
         address, or where the words given say."""
-        if default is None:
-            hint = "stop"
-        elif isinstance(default, str):
-            hint = default
-        else:
-            hint = self.spelling.format(default)
-        hint_field(self.bound, hint, self.bound.toolTip())
-        self._show_writing()
+        self.writing.set_bound_default(default)
 
     def load(
         self,
@@ -617,15 +530,9 @@ class ReadingBar(WrapBar):
             self.show_end.setChecked(config.show_end)
             self.header.setValue(config.header)
             self.skips.set_value(config.skips)
-            self.bound.set_value(config.bound)
-            self.write_mode.setCurrentIndex(
-                max(self.write_mode.findData(config.write_mode), 0)
+            self.writing.load(
+                config, block=block, spare_room=spare_room, compressed=compressed
             )
-            self.fill.set_value(config.fill)
-            self.spare_room.setCurrentIndex(
-                max(self.spare_room.findData(spare_room), 0)
-            )
-            self.spare_room.setEnabled(compressed)
             self._show_count()
         finally:
             self._loading = False
@@ -750,38 +657,7 @@ class ReadingBar(WrapBar):
         forced = bool(self.skips.value()) or (
             kind == RANGE and bool(self.header.value())
         )
-        auto = default_write_mode(self._pointers, forced)
-        self.write_mode.setItemText(0, f"Automatic ({auto.value})")
-        self._show_packed(forced)
-        self._show_writing()
-
-    def _show_packed(self, forced: bool) -> None:
-        """Offer Packed, or, where skip ranges or a record header force slotted,
-        grey it and say what a block holding it is written as instead.
-
-        The block keeps the mode it holds, so taking the skips or the header
-        away writes it packed again.
-        """
-        at = self.write_mode.findData(WriteMode.PACKED)
-        self.write_mode.setItemText(at, "Packed (slotted)" if forced else "Packed")
-        self.write_mode.model().item(at).setEnabled(not forced)
-        self.write_mode.setItemData(
-            at,
-            _PACKED_FORCED if forced else _PACKED_TIP,
-            Qt.ItemDataRole.ToolTipRole,
-        )
-        self.write_mode.setToolTip(_MODE_FORCED if forced else _MODE_TIP)
-
-    def _show_writing(self) -> None:
-        """The write settings on one line: the mode, where the room ends, the
-        fill."""
-        if not self._block:
-            self.writing.set_summary("")
-            return
-        bound = self.bound.text() or self.bound.placeholderText()
-        self.writing.set_summary(
-            f"{self.write_mode.currentText()} · to {bound} · {self.fill.text()}"
-        )
+        self.writing.show_forced(self._pointers, forced)
 
     def show_string_view(self, string_view: bool) -> None:
         """Grey what says where the strings are — for a view of strings' own
@@ -858,12 +734,12 @@ class ReadingBar(WrapBar):
             "show_end": self.show_end.isChecked(),
         }
         if self._block:
-            fill = self.fill.value()
+            bound, write_mode, fill = self.writing.values()
             changes |= {
                 "header": self.header.value(),
                 "skips": self.skips.value(),
-                "bound": self.bound.value(),
-                "write_mode": self.write_mode.currentData(),
+                "bound": bound,
+                "write_mode": write_mode,
                 "fill": base.fill if fill is None else fill,
             }
         return replace(base, **changes)
@@ -885,7 +761,7 @@ class ReadingBar(WrapBar):
         return EndToken()
 
     def spare_room_rule(self) -> str:
-        return self.spare_room.currentData()
+        return self.writing.spare_room_rule()
 
 
 def source_kind_for(kind: str | None, pointers: bool) -> str:

@@ -45,11 +45,34 @@ def set_setting_bool(key: str, on: bool) -> None:
     settings().setValue(key, "true" if on else "false")
 
 
+def setting_int(
+    key: str, default: int, low: int | None = None, high: int | None = None
+) -> int:
+    """The number stored under ``key``, held between ``low`` and ``high``.
+
+    QSettings hands a number back as it was stored — a string on one platform,
+    an int on another — and a store written by another build may hold something
+    else again, so anything that will not read as a number lands on the default
+    rather than on an exception at startup. The bounds are the caller's, since
+    a stored number outside them is as unusable as none at all.
+    """
+    try:
+        value = int(str(settings().value(key, default)))
+    except (TypeError, ValueError):
+        value = default
+    if low is not None:
+        value = max(low, value)
+    if high is not None:
+        value = min(high, value)
+    return value
+
+
 __all__ = [
     "BYTES_PER_ROW",
     "DUMP_WINDOW_BYTES",
     "as_bool",
     "set_setting_bool",
     "setting_bool",
+    "setting_int",
     "settings",
 ]

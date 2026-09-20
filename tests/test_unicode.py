@@ -15,7 +15,7 @@ from mapchar.core.bits import bytes_to_bits
 from mapchar.core.block import Status, StringRecord
 from mapchar.core.font import Font, TextBox
 from mapchar.core.table import ID_PATTERN, Entry, Table, TokenKind
-from mapchar.core.text import char_units, fold, graphemes, nfc, nfd
+from mapchar.core.text import fold, graphemes, nfc, nfd, units
 from mapchar.core.tokens import Token
 from mapchar.engines import scriptfind
 from mapchar.engines.encode import encode
@@ -187,7 +187,7 @@ def test_graphemes_and_units():
     assert (len(GA), len(GA_NFD)) == (1, 2)
     assert graphemes(GA_NFD) == [GA_NFD]
     assert graphemes(f"a{GA}") == ["a", GA]
-    assert char_units(nfd("ぱぴ")) == ("ぱ", "ぴ")
+    assert units(nfd("ぱぴ")) == ["ぱ", "ぴ"]
     assert unicodedata.is_normalized("NFC", nfc(GA_NFD))
 
 

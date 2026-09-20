@@ -395,7 +395,7 @@ def test_prs_truncation_and_corruption_are_told_apart() -> None:
     assert payload.startswith(prefix) and not complete
     # A copy reaching before the output raises whatever the flag says: a long
     # copy of distance 8191 (word 0x0008) with nothing yet written.
-    with pytest.raises(ValueError, match="before the start"):
+    with pytest.raises(ValueError, match="long copy reaches"):
         decode(Prs(), bytes([0x02, 0x08, 0x00, 0x05]), partial=True)
 
 

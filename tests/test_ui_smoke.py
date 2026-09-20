@@ -1257,7 +1257,7 @@ def test_a_block_gates_the_string_surfaces_on(window, tmp_path):
 
 
 def test_modal_progress_asks_the_engine_to_stop_once_cancelled(window):
-    from mapchar.ui.widgets import ModalProgress
+    from mapchar.ui.progress import ModalProgress
 
     with ModalProgress(window, "Working", "Working…") as run:
         assert run.progress(1, 4) is True
@@ -2859,8 +2859,8 @@ def test_what_one_adjusts_while_editing_never_asks(window, tmp_path, monkeypatch
 
     _file_entry, block = _edited_pointer_block(window, tmp_path)
     monkeypatch.setattr(type(window), "_ask", lambda *a: pytest.fail("asked"))
-    window.reading_bar.bound.setText("20")
-    window.reading_bar.bound.editingFinished.emit()
+    window.reading_bar.writing.bound.setText("20")
+    window.reading_bar.writing.bound.editingFinished.emit()
     assert block.config.bound == 0x20
     window._push_block_edit(block, config=replace(block.config, fill=b"\x00"))
     window._push_block_edit(block, config=replace(block.config, table_id="other"))

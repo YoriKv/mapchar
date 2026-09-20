@@ -40,8 +40,10 @@ byte-identical and so certain to still fit its slot.
 from __future__ import annotations
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
-from mapchar.plugins.builtins.compression._limits import MAX_BANK
+from mapchar.plugins.builtins.compression._limits import MAX_BANK, stream_error
 from mapchar.plugins.builtins.compression._rle import Packet, pack_runs, unpack_packets
+
+_SCHEME = "RLE1"  # only the terminated framing can refuse a stream at all
 
 # Output bytes one packet can carry, literal or run: (L + 1) over a 7-bit L.
 _MAX_PACKET = 128
@@ -84,7 +86,7 @@ def decompress(
         data, header=lambda d, i: _packet(d, i, terminated=terminated), max_out=MAX_BANK
     )
     if terminated and not complete and not partial:
-        raise ValueError("no $FF $FF terminator — not an RLE1 stream")
+        raise stream_error(_SCHEME, "no $FF $FF terminator")
     return out, consumed, complete
 
 

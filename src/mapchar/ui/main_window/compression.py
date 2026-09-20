@@ -19,7 +19,7 @@ from mapchar.pipeline.scan import (
 from mapchar.plugins.base import Stage
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui import DUMP_WINDOW_BYTES
-from mapchar.ui.raw_widget import RowModel
+from mapchar.ui.raw_cells import RowModel
 from mapchar.ui.widgets import fill_pick, select_data
 
 AUTOMATIC = None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from mapchar.engines import scriptfind
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.workspace import Entry
 
 
 class FindReplaceMixin:
@@ -27,17 +27,7 @@ class FindReplaceMixin:
         current = self._current_block(need_doc=True)
         if not project:
             return [current] if current is not None else []
-        blocks: list[Entry] = []
-        with self.files_panel.labels_held():
-            for entry in self.workspace.of_kind(EntryKind.BLOCK):
-                if entry.config is None:
-                    continue
-                doc = self._load_document(entry)
-                if doc is None:
-                    continue
-                self._extract_current(entry, doc, self._table_set_of(entry))
-                if doc.strings:
-                    blocks.append(entry)
+        blocks = [e for e, doc in self._readable_blocks() if doc.strings]
         if current in blocks:
             blocks.remove(current)
             blocks.insert(0, current)
@@ -98,9 +88,8 @@ class FindReplaceMixin:
         blocks = self._fr_blocks(project)
         if not blocks or not needle:
             return
-        n, refused = 0, []
-        current = self._entry
-        with self._macro("Replace all"):
+
+        def planned():
             for entry in blocks:
                 edits = {}
                 for rec in list(entry.doc.strings):
@@ -109,17 +98,9 @@ class FindReplaceMixin:
                     )
                     if count:
                         edits[rec.index] = new
-                if not edits:
-                    continue
-                # Make the block current first: the edit is reverted where it
-                # was made, and that is where it lands too.
-                if entry is not self._entry:
-                    self._activate_entry(entry)
-                landed, problems = self._edit_each(entry, edits, "Replace all")
-                n += landed
-                refused += [f"{entry.name} {p}" for p in problems]
-            if current is not None and self._entry is not current:
-                self._activate_entry(current)
+                yield entry, edits
+
+        n, refused = self._edit_blocks(planned(), "Replace all")
         where = "the project" if project else "the block"
         self.statusBar().showMessage(f"Replaced in {n} string(s) of {where}", 4000)
         if refused:

@@ -36,6 +36,7 @@ from mapchar.core.table import (
     TokenKind,
 )
 from mapchar.project.formats.table_native import format_entry, parse_entry
+from mapchar.ui.bars import WrapBar
 from mapchar.ui.entry_rows import (
     OperandRow,
     ParamRow,
@@ -45,8 +46,8 @@ from mapchar.ui.number_fields import HEX_NUMBER, number_spin
 from mapchar.ui.widgets import (
     ElidedLabel,
     ModeToggle,
-    WrapBar,
     fit_chars,
+    focus_field,
     hint_field,
     mono_font,
     select_data,
@@ -544,8 +545,7 @@ class TableEntryForm(QWidget):
         self.changed.emit()
 
     def focus_key(self) -> None:
-        self.key.setFocus()
-        self.key.selectAll()
+        focus_field(self.key)
 
 
 def _captioned(title: str, inner: QWidget, tip: str) -> QWidget:

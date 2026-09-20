@@ -12,9 +12,12 @@ from mapchar.plugins.base import (
 )
 from mapchar.plugins.builtins.containers._common import (
     format_size,
+    note_partial_units,
     publish_hints,
     slot_write,
     splice,
+    trailing_field,
+    whole_units,
 )
 
 
@@ -41,10 +44,10 @@ class Smd:
     _BLOCK = 16384
     _HALF = 8192
 
-    def header_size(self, source: ReadSource | None = None) -> int:
+    def header_size(self, source: ReadSource) -> int:
         return self._HEADER
 
-    def default_mapping(self, source: ReadSource | None = None) -> str | None:
+    def default_mapping(self, source: ReadSource) -> str | None:
         # The 68000 sees the cartridge from address 0, so a pointer is an
         # offset into the deinterleaved image.
         return "linear"
@@ -52,23 +55,19 @@ class Smd:
     def read(self, source: ReadSource, ctx: PipelineContext) -> bytes:
         body = source.data[self._HEADER :]
         block, half = self._BLOCK, self._HALF
-        blocks = len(body) // block
-        tail = len(body) - blocks * block
-        if tail:
-            ctx.note(
-                f"Dropped {tail} trailing byte(s): not a whole 16 KiB block",
-                detail="The odd/even split is per block, so a partial one "
-                "cannot be reassembled. A save leaves those bytes as they are.",
-                source=self.info.id,
-            )
-        if not blocks:
-            ctx.note(
-                "No complete 16 KiB block: nothing to show",
-                detail="Past the 512-byte header this file has less than one "
-                "whole block, so there is nothing to reassemble. It may not "
-                "be a .smd at all.",
-                source=self.info.id,
-            )
+        blocks, tail = whole_units(len(body), block)
+        note_partial_units(
+            ctx,
+            blocks,
+            tail,
+            unit="16 KiB block",
+            detail_tail="The odd/even split is per block, so a partial one "
+            "cannot be reassembled. A save leaves those bytes as they are.",
+            detail_none="Past the 512-byte header this file has less than one "
+            "whole block, so there is nothing to reassemble. It may not "
+            "be a .smd at all.",
+            source=self.info.id,
+        )
         publish_hints(ctx, self._HEADER, self._HEADER, self.default_mapping(source))
         out = bytearray(blocks * block)
         for i in range(blocks):
@@ -93,8 +92,7 @@ class Smd:
         self, source: ReadSource, ctx: PipelineContext
     ) -> tuple[ContainerField, ...]:
         body = max(0, len(source.data) - self._HEADER)
-        blocks = body // self._BLOCK
-        tail = body - blocks * self._BLOCK
+        blocks, tail = whole_units(body, self._BLOCK)
         return (
             ContainerField(
                 "Copier header",
@@ -108,9 +106,8 @@ class Smd:
                 "Each block holds all its odd bytes and then all its even "
                 "ones, woven back together one block at a time.",
             ),
-            ContainerField(
-                "Trailing bytes",
-                f"{tail} (dropped)" if tail else "none",
+            trailing_field(
+                tail,
                 "A partial block cannot be reassembled, so it is not shown "
                 "here and a save leaves it as it is.",
             ),

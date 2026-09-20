@@ -19,7 +19,7 @@ from mapchar.pipeline.extract import (
     legacy_fixed_text,
     respell_fixed_end,
 )
-from mapchar.project.formats.script import format_config, parse_config
+from mapchar.project.formats.blockspec import format_config, parse_config
 
 TS = table_set(ABC_TABLE, "main")
 

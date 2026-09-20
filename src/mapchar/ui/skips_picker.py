@@ -6,11 +6,10 @@ rather than in a dropdown of its own.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QKeyEvent, QRegularExpressionValidator
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -25,7 +24,8 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.numbers import parse_hex
 from mapchar.ui.number_fields import HEX_NUMBER
-from mapchar.ui.widgets import CompactComboBox, fit_chars
+from mapchar.ui.popup_picker import PopupFrame, PopupPicker
+from mapchar.ui.widgets import fit_chars
 
 
 class _HexDelegate(QStyledItemDelegate):
@@ -37,7 +37,7 @@ class _HexDelegate(QStyledItemDelegate):
         return editor
 
 
-class SkipsPopup(QFrame):
+class SkipsPopup(PopupFrame):
     """The list of a block's skip ranges, edited in a popup under its picker.
 
     A row is a ``from`` and a ``to`` in hex; the list applies as it changes,
@@ -48,8 +48,7 @@ class SkipsPopup(QFrame):
     changed = Signal()
 
     def __init__(self, parent: QWidget):
-        super().__init__(parent, Qt.WindowType.Popup)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
+        super().__init__(parent)
         self._loading = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -142,29 +141,22 @@ class SkipsPopup(QFrame):
         if not self._loading:
             self.changed.emit()
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
-        if event.key() == Qt.Key.Key_Escape:
-            self.hide()
-        else:
-            super().keyPressEvent(event)
 
-
-class SkipsPicker(CompactComboBox):
+class SkipsPicker(PopupPicker):
     """A block's skip ranges: the list as one line, opening on the popup that
     edits it in place of a dropdown."""
 
     changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__(140, parent)
-        self.addItem("none")
+        super().__init__(140, "none", parent)
         self.setToolTip("Byte ranges inside the region that are not text")
         self.popup = SkipsPopup(self)
         self.popup.changed.connect(self._on_changed)
 
     def set_value(self, skips: tuple[tuple[int, int], ...]) -> None:
         self.popup.set_value(skips)
-        self._show_summary()
+        self._say()
 
     def value(self) -> tuple[tuple[int, int], ...]:
         return self.popup.value()
@@ -174,27 +166,15 @@ class SkipsPicker(CompactComboBox):
         self.popup.add(start, stop)
 
     def _on_changed(self) -> None:
-        self._show_summary()
+        self._say()
         self.changed.emit()
 
-    def _show_summary(self) -> None:
-        text = ", ".join(f"{a:X}>{b:X}" for a, b in self.value()) or "none"
-        self.setItemText(0, text)
+    def _say(self) -> None:
+        self.set_summary(", ".join(f"{a:X}>{b:X}" for a, b in self.value()) or "none")
 
-    def showPopup(self) -> None:  # noqa: N802 - Qt override
-        below = self.mapToGlobal(QPoint(0, self.height()))
-        screen = self.screen().availableGeometry()
-        size = self.popup.sizeHint()
-        x = min(below.x(), screen.right() - size.width())
-        y = below.y()
-        if y + size.height() > screen.bottom():
-            y = self.mapToGlobal(QPoint(0, 0)).y() - size.height()
-        self.popup.move(max(x, screen.left()), max(y, screen.top()))
-        self.popup.show()
+    def _focus_popup(self) -> None:
+        # The list is what the picker is opened to type in.
         self.popup.table.setFocus()
-
-    def hidePopup(self) -> None:  # noqa: N802 - Qt override
-        pass
 
 
 __all__ = ["SkipsPicker", "SkipsPopup"]

@@ -13,7 +13,7 @@ from mapchar.core.errors import MapcharError
 from mapchar.core.font import CodeEffect, Effect, TextBox
 from mapchar.core.table import Table
 from mapchar.plugins.aliases import current_config_ids, current_id
-from mapchar.project.formats.script import format_config, parse_config
+from mapchar.project.formats.blockspec import format_config, parse_config
 from mapchar.project.formats.table_native import sanitize_id
 from mapchar.project.glossary import GlossaryTerm, glossary_dicts, glossary_from
 from mapchar.project.tables import adopt_table
@@ -358,6 +358,40 @@ def _wire_folders(entries: list[Entry | None], raw: list[Any]) -> None:
             folder = folder.folder
 
 
+def _entries_from(
+    raw_entries: list[Any], base: str, warnings: list[str] | None = None
+) -> list[Entry | None]:
+    """The records read in order, each row's parent and folder wired up among
+    them; paths are taken as relative to ``base``.
+
+    A record nothing can read is dropped and ``None`` stands in its place, so
+    that the indices the records name one another by keep pointing where they
+    did — and so that a file's ``current`` index still finds its row. With
+    ``warnings``, every drop says so. Filtering the ``None``s out is the
+    caller's, once it has read whatever else it reads by index.
+    """
+    entries: list[Entry | None] = []
+    parents: list[int | None] = []
+    for i, raw in enumerate(raw_entries):
+        try:
+            entry, parent_index = _entry_from(raw, base)
+        except Exception as exc:  # noqa: BLE001 - a broken record is dropped, never fatal
+            if warnings is not None:
+                warnings.append(f"entry {i} dropped: {exc}")
+            entries.append(None)
+            parents.append(None)
+            continue
+        entries.append(entry)
+        parents.append(parent_index)
+    for entry, parent_index in zip(entries, parents, strict=True):
+        if entry is not None and parent_index is not None:
+            entry.parent = (
+                entries[parent_index] if 0 <= parent_index < len(entries) else None
+            )
+    _wire_folders(entries, raw_entries)
+    return entries
+
+
 def _unfold_orphans(kept: list[Entry]) -> None:
     """A row whose folder was dropped stands directly under its file."""
     present = {id(e) for e in kept}
@@ -397,23 +431,7 @@ def entries_from_payload(text: str) -> list[Entry]:
     raw = data.get(CLIPBOARD_KEY) if isinstance(data, dict) else None
     if not isinstance(raw, list):
         return []
-    entries: list[Entry | None] = []
-    parents: list[int | None] = []
-    for item in raw:
-        try:
-            entry, parent_index = _entry_from(item, "")
-        except Exception:  # noqa: BLE001 - a broken record is dropped, never fatal
-            entries.append(None)
-            parents.append(None)
-            continue
-        entries.append(entry)
-        parents.append(parent_index)
-    for entry, parent_index in zip(entries, parents, strict=True):
-        if entry is not None and parent_index is not None:
-            if 0 <= parent_index < len(entries):
-                entry.parent = entries[parent_index]
-    _wire_folders(entries, raw)
-    kept = [e for e in entries if e is not None]
+    kept = [e for e in _entries_from(raw, "") if e is not None]
     _unfold_orphans(kept)
     return kept
 
@@ -439,24 +457,7 @@ def load_project(path: str) -> LoadedProject:
             f"project version {version} is newer than this build understands"
         )
     base = os.path.dirname(os.path.abspath(path))
-    entries: list[Entry] = []
-    raw_entries = data.get("entries", [])
-    parents: list[int | None] = []
-    for i, raw in enumerate(raw_entries):
-        try:
-            entry, parent_index = _entry_from(raw, base)
-        except Exception as exc:  # noqa: BLE001 - a broken entry is dropped, never fatal
-            warnings.append(f"entry {i} dropped: {exc}")
-            entries.append(None)  # type: ignore[arg-type]
-            parents.append(None)
-            continue
-        entries.append(entry)
-        parents.append(parent_index)
-    for entry, parent_index in zip(entries, parents, strict=True):
-        if entry is not None and parent_index is not None:
-            parent = entries[parent_index] if 0 <= parent_index < len(entries) else None
-            entry.parent = parent
-    _wire_folders(entries, raw_entries)
+    entries = _entries_from(data.get("entries", []), base, warnings)
     kept = [e for e in entries if e is not None]
     current = None
     ci = data.get("current")

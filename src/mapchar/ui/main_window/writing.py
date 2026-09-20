@@ -70,15 +70,6 @@ class WritingMixin:
         else:
             self.statusBar().showMessage(f"{entry.name} has nothing to write", 3000)
 
-    def _block_strings(self, entry: Entry) -> list | None:
-        """The block's strings, extracted afresh under its own table set;
-        ``None`` when the block cannot be read at all."""
-        doc = self._load_document(entry)
-        if doc is None or entry.config is None:
-            return None
-        self._extract_current(entry, doc, self._table_set_of(entry))
-        return doc.strings
-
     def _dirty_blocks(self) -> list[Entry]:
         """The blocks with a buffer of their own that is unsaved: the ones
         decompressing a slot. A plain block's edits are its file's."""
@@ -352,12 +343,7 @@ class WritingMixin:
         # Every plain block reads this buffer; a compressed one reads its own
         # slot's payload, which the file's bytes do not reach until it is
         # decoded again.
-        for shared in self._docs_sharing(entry):
-            buf = bytearray(shared.data)
-            buf[offset : offset + len(data)] = data
-            shared.data = bytes(buf)
-            shared.extraction_key = None
-        self.workspace.stamp(entry, revision)
+        self._put_bytes(entry, offset, data, revision)
         self._reread_blocks_over(entry, offset, offset + len(data))
         self._refresh_view()
 

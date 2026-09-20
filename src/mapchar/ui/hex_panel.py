@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
@@ -25,7 +27,7 @@ from mapchar.ui import (
     theme,
 )
 from mapchar.ui.find_row import FindRow
-from mapchar.ui.number_fields import AddressEdit, AddressSpelling
+from mapchar.ui.number_fields import AddressEdit, AddressSpelling, address_column
 from mapchar.ui.widgets import fit_chars, hint_field, mono_font
 
 FOLLOW_SELECTION_KEY = "hex/follow_selection"
@@ -179,15 +181,20 @@ class HexPanel(QWidget):
             self._render()
 
     # -- geometry of one rendered line ---------------------------------------
+    @property
+    def _column(self) -> tuple[Callable[[int], str], int]:
+        """How the dump spells an address and how wide the column is — the one
+        answer both byte views get (:func:`address_column`)."""
+        return address_column(self._spelling, len(self._data) - 1)
+
     def _addr_of(self, at: int) -> str:
         """One address as the dump's column spells it."""
-        return self._spelling.format(at) if self._spelling is not None else f"{at:06X}"
+        return self._column[0](at)
 
     @property
     def _addr_width(self) -> int:
-        """How wide the address column is: as wide as the file's last address,
-        and never narrower than a flat six-digit offset."""
-        return max(len(self._addr_of(max(len(self._data) - 1, 0))), 6)
+        """How wide the address column is."""
+        return self._column[1]
 
     @property
     def _hex_start(self) -> int:

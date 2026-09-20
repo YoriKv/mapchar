@@ -13,7 +13,6 @@ escapes — is :mod:`mapchar.project.formats.textfile`'s.
 from __future__ import annotations
 
 import unicodedata
-from functools import lru_cache
 
 
 def nfc(text: str) -> str:
@@ -49,19 +48,19 @@ def graphemes(text: str) -> list[str]:
     jamo joining — but enough for the decomposed kana legacy tables carry: a
     dakuten never becomes a unit of its own.
     """
-    units: list[str] = []
+    out: list[str] = []
     for ch in text:
-        if units and is_mark(ch):
-            units[-1] += ch
+        if out and is_mark(ch):
+            out[-1] += ch
         else:
-            units.append(ch)
-    return units
+            out.append(ch)
+    return out
 
 
-@lru_cache(maxsize=32)
-def char_units(chars: str) -> tuple[str, ...]:
-    """:func:`graphemes` of NFC ``chars``, cached for a font's alphabet."""
-    return tuple(graphemes(nfc(chars)))
+def units(text: str) -> list[str]:
+    """``text`` composed and split into glyph slots: :func:`graphemes` of
+    :func:`nfc`, which is how every layer counts and compares characters."""
+    return graphemes(nfc(text))
 
 
 def fold(text: str) -> str:

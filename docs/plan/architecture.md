@@ -889,7 +889,7 @@ through `_push_command`.
 | Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `compression.py`, `plugins.py` |
 | Tables | `table_files.py`, `table_editor.py` |
 | Raw view | `raw_view.py` |
-| Blocks and strings | `blocks.py`, `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py`, `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary window and its undo steps) |
+| Blocks and strings | `blocks.py`, `block_reading.py` (reading one block, or every block a project-wide surface goes over), `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py`, `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary window and its undo steps) |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
 | Exchange | `import_export.py` |
 | Projects | `projects.py`, `relocate.py`, `autosave.py` |

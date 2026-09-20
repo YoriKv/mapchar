@@ -13,14 +13,14 @@ from PySide6.QtWidgets import QMessageBox
 
 from mapchar.core.block import RangeSource, Status
 from mapchar.core.font import TextBox
+from mapchar.core.tokens import piece_spans
 from mapchar.engines import scriptfind
 from mapchar.project.formats.table_native import HEADER
+from mapchar.ui.code_editor import CodeEditor, CodeInfo
 from mapchar.ui.main_window import MainWindow
 from mapchar.ui.strings_view import (
     COL_NOTES,
     COL_TRANSLATION,
-    CodeEditor,
-    CodeInfo,
     RowData,
     StringsView,
 )
@@ -81,10 +81,10 @@ def block_with(window, tmp_path, data, name="b", stop=None):
 
 
 def test_pieces_keep_codes_whole():
-    assert scriptfind.piece_spans("A[line]B") == [(0, 1), (1, 7), (7, 8)]
-    assert scriptfind.piece_spans("\\[x") == [(0, 2), (2, 3)]
+    assert piece_spans("A[line]B") == [(0, 1), (1, 7), (7, 8)]
+    assert piece_spans("\\[x") == [(0, 2), (2, 3)]
     # An unclosed '[' is the one piece being typed.
-    assert scriptfind.piece_spans("A[li") == [(0, 1), (1, 4)]
+    assert piece_spans("A[li") == [(0, 1), (1, 4)]
 
 
 def test_find_never_reaches_inside_a_code():
@@ -255,7 +255,7 @@ def test_fill_leaves_taken_keys_alone(window, tmp_path):
     dialog.template.setCurrentIndex(dialog.template.findData("A-Z"))
     dialog.first.setText("41")
     assert "already have entries" in dialog.preview.text()
-    editor.fill_run(dialog.chars(), dialog.start(), dialog.width(), overwrite=False)
+    editor.fill_cells(dialog.chars(), dialog.start(), dialog.width(), overwrite=False)
     assert "left alone" in editor.status.text()
     # 41=A, 42=B and 43=C were there already and keep their own text.
     assert table_entry.table.entries["01000010"].text == "B"
@@ -480,7 +480,8 @@ def test_a_table_keeps_its_identity_through_undo(window, tmp_path):
 
 
 def _raw_widget(qtbot, tokens, data):
-    from mapchar.ui.raw_widget import RawWidget, RowModel
+    from mapchar.ui.raw_cells import RowModel
+    from mapchar.ui.raw_widget import RawWidget
 
     widget = RawWidget()
     qtbot.addWidget(widget)
@@ -508,7 +509,7 @@ def test_a_byte_is_the_same_byte_under_either_column(qtbot):
     assert "Noto Sans CJK JP" in MONO_FAMILIES
     assert widget._font.families() == list(MONO_FAMILIES)
     for rel in range(BYTES_PER_ROW * 2):
-        for cell in (widget._hex_cell(rel), widget._text_cell(rel)):
+        for cell in (widget._geom.hex_cell(rel), widget._geom.text_cell(rel)):
             assert widget._byte_at(cell.center()) == rel
             assert widget._byte_at(cell.topLeft()) == rel
 
@@ -535,7 +536,7 @@ def test_every_hex_pair_is_drawn_in_its_own_cell(qtbot):
         QPainter.drawStaticText = original
     pairs = {laid.text(): (point, laid.size()) for point, laid in placed}
     for rel in range(BYTES_PER_ROW):
-        cell = widget._hex_cell(rel)
+        cell = widget._geom.hex_cell(rel)
         point, size = pairs[f"{rel:02X}"]
         assert point.x() == cell.left() + (cell.width() - size.width()) / 2
         assert cell.top() <= point.y()
@@ -558,11 +559,11 @@ def test_bit_packed_tokens_each_get_a_place_of_their_own(qtbot):
     assert all(len(p) == 1 for p in places)
     rects = [p[0] for p in places]
     for rect in rects:
-        assert rect.width() == widget._text_width * 6 / 8
+        assert rect.width() == widget._geom.text_width * 6 / 8
     for left, right in zip(rects, rects[1:], strict=False):
         assert left.right() == right.left()
-    assert rects[0].left() == QRectF(widget._text_cell(0)).left()
-    assert rects[-1].right() == QRectF(widget._text_cell(2)).right()
+    assert rects[0].left() == QRectF(widget._geom.text_cell(0)).left()
+    assert rects[-1].right() == QRectF(widget._geom.text_cell(2)).right()
 
 
 def test_a_token_over_a_row_end_is_placed_on_both_rows(qtbot):
@@ -573,8 +574,8 @@ def test_a_token_over_a_row_end_is_placed_on_both_rows(qtbot):
     token = Token("0" * 16, last * 8, (last + 2) * 8, _text_entry("0" * 16, "漢"))
     widget = _raw_widget(qtbot, [token], bytes(BYTES_PER_ROW * 2))
     first, second = widget._text_segments(token, BYTES_PER_ROW * 2)
-    assert first == widget._text_cell(last)
-    assert second == widget._text_cell(BYTES_PER_ROW)
+    assert first == widget._geom.text_cell(last)
+    assert second == widget._geom.text_cell(BYTES_PER_ROW)
 
 
 def _six_bit_codes(qtbot, count=4):
@@ -631,10 +632,10 @@ def test_a_click_on_a_character_selects_its_bits_in_both_columns(qtbot):
     _click(widget, widget._text_segments(tokens[1], 3)[0].center())
     assert widget.selection_bits() == (6, 12)
     assert told == [(0, 2)]
-    (text,) = widget._text_span(6, 12)
+    (text,) = widget._geom.text_span(6, 12)
     assert text == widget._text_segments(tokens[1], 3)[0]
-    (hex_span,) = widget._hex_span(6, 12)
-    first, second = QRectF(widget._hex_cell(0)), QRectF(widget._hex_cell(1))
+    (hex_span,) = widget._geom.hex_span(6, 12)
+    first, second = QRectF(widget._geom.hex_cell(0)), QRectF(widget._geom.hex_cell(1))
     assert first.center().x() < hex_span.left() < first.right()
     assert hex_span.right() == second.center().x()
 
@@ -644,7 +645,7 @@ def test_a_click_on_a_hex_pair_selects_the_whole_byte(qtbot):
 
     tokens, widget = _six_bit_codes(qtbot)
     _click(widget, widget._text_segments(tokens[1], 3)[0].center())
-    _click(widget, QRectF(widget._hex_cell(1)).center())
+    _click(widget, QRectF(widget._geom.hex_cell(1)).center())
     assert widget.selection() == (1, 2)
     assert widget.selection_bits() is None
 
@@ -675,8 +676,8 @@ def test_shift_clicking_extends_the_selection_the_way_a_drag_does(qtbot):
     _shift_click(widget, widget._text_segments(tokens[3], 3)[0].center())
     assert widget.selection_bits() == (6, 24)
     assert widget.selection() == (0, 3)
-    _click(widget, QRectF(widget._hex_cell(2)).center())
-    _shift_click(widget, QRectF(widget._hex_cell(0)).center())
+    _click(widget, QRectF(widget._geom.hex_cell(2)).center())
+    _shift_click(widget, QRectF(widget._geom.hex_cell(0)).center())
     assert widget.selection() == (0, 3)
     assert widget.selection_bits() is None
 
@@ -685,8 +686,8 @@ def test_a_byte_aligned_bit_span_covers_its_cells_exactly(qtbot):
     from PySide6.QtCore import QRectF
 
     _, widget = _six_bit_codes(qtbot)
-    assert widget._hex_span(8, 24) == [QRectF(widget._hex_cell(1, 2))]
-    assert widget._text_span(8, 24) == [QRectF(widget._text_cell(1, 2))]
+    assert widget._geom.hex_span(8, 24) == [QRectF(widget._geom.hex_cell(1, 2))]
+    assert widget._geom.text_span(8, 24) == [QRectF(widget._geom.text_cell(1, 2))]
 
 
 def test_a_selection_set_from_outside_is_whole_bytes(qtbot):
@@ -699,7 +700,7 @@ def test_a_selection_set_from_outside_is_whole_bytes(qtbot):
 def _hex_click(widget, rel, shift=False):
     from PySide6.QtCore import QRectF
 
-    point = QRectF(widget._hex_cell(rel)).center()
+    point = QRectF(widget._geom.hex_cell(rel)).center()
     (_shift_click if shift else _click)(widget, point)
 
 
@@ -733,7 +734,7 @@ def test_the_anchor_is_dropped_when_the_bytes_under_it_change(qtbot):
 
 
 def test_a_shift_click_reaches_no_further_than_the_view(qtbot):
-    from mapchar.ui.raw_widget import RowModel
+    from mapchar.ui.raw_cells import RowModel
 
     widget = _raw_widget(qtbot, [], bytes(32))
     widget.set_model(RowModel(0, bytes(32), [], set(), 32, bounds=(0, 8)))
@@ -780,13 +781,13 @@ def test_text_wider_than_its_cells_never_leaves_them(qtbot):
     from PySide6.QtGui import QImage, QPainter
 
     widget = _raw_widget(qtbot, [], bytes(1))
-    cell = QRectF(widget._text_cell(0))
+    cell = QRectF(widget._geom.text_cell(0))
     image = QImage(400, 100, QImage.Format.Format_ARGB32)
     painter = QPainter(image)
     painter.setFont(widget._font)
     try:
-        assert not widget._fit(painter, cell, "A")
-        assert widget._fit(painter, cell, "ちからのたね")
+        assert not widget._text.fit(painter, cell, "A")
+        assert widget._text.fit(painter, cell, "ちからのたね")
         assert painter.clipBoundingRect() == QRectF()  # the clip was restored
     finally:
         painter.end()
@@ -799,7 +800,7 @@ def test_one_character_too_wide_is_condensed_rather_than_sliced(qtbot):
     from PySide6.QtCore import QRectF
     from PySide6.QtGui import QImage, QPainter
 
-    from mapchar.ui.raw_widget import MIN_SQUEEZE
+    from mapchar.ui.cell_text import MIN_SQUEEZE
 
     widget = _raw_widget(qtbot, [], bytes(1))
     image = QImage(400, 100, QImage.Format.Format_ARGB32)
@@ -810,7 +811,7 @@ def test_one_character_too_wide_is_condensed_rather_than_sliced(qtbot):
         # A cell far too narrow for one character, wherever the faces come from.
         wide = painter.fontMetrics().horizontalAdvance("W")
         cell = QRectF(40, 0, wide * MIN_SQUEEZE / 2, widget.row_height)
-        assert widget._fit(painter, cell, "W")
+        assert widget._text.fit(painter, cell, "W")
     finally:
         painter.end()
     painted = [

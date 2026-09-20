@@ -234,6 +234,25 @@ CHILD_KINDS = frozenset({EntryKind.BLOCK, EntryKind.BOOKMARK, EntryKind.FOLDER})
 """The kinds that sit under a file in the Files panel."""
 
 
+def has_edits(entry: Entry) -> bool:
+    """Whether the block holds work a fresh cut would take with it: a string
+    that is no longer its original, or room a shortened string gave up.
+
+    A block whose strings are not read yet — never opened, or waiting on the
+    read a block edit left it — is told by the state it carries instead, where
+    any status but *untouched* counts: the project keeps one status per string,
+    so a translated string marked *review* or *done* says only that.
+    """
+    if entry.room is not None:
+        return True
+    if entry.doc is not None and entry.doc.strings:
+        return any(rec.edited for rec in entry.doc.strings)
+    return any(
+        state.status is not Status.UNTOUCHED
+        for state in (entry.pending_strings or {}).values()
+    )
+
+
 def within(entry: Entry, container: Entry) -> bool:
     """Whether ``entry`` sits inside ``container``: any row of a file, or any
     row of a folder at any depth."""
@@ -388,6 +407,18 @@ class Workspace:
     def entry_by_id(self, key: object) -> Entry | None:
         """The entry whose ``id()`` is ``key``: how a tree item names one."""
         return next((e for e in self.entries if id(e) == key), None)
+
+    def block_named(self, name: str) -> Entry | None:
+        """The block called ``name``, if there is one.
+
+        The name is how everything outside the project addresses a block: an
+        exchange file names the block its strings belong to, and nothing else
+        of the entry is in the file.
+        """
+        return next(
+            (e for e in self.entries if e.kind is EntryKind.BLOCK and e.name == name),
+            None,
+        )
 
     def entry_for_table(self, table_id: str) -> Entry | None:
         """The table entry whose table is ``table_id``."""

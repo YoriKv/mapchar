@@ -21,6 +21,7 @@ from mapchar.core.block import (
 from mapchar.core.notices import notice_lines
 from mapchar.core.text import fold
 from mapchar.project.workspace import Entry, EntryKind
+from mapchar.ui.token_text import ellipsize
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Container, Iterable
@@ -28,8 +29,8 @@ if TYPE_CHECKING:
     Counts = tuple[int, int, int, int]
     """A block's strings, and how many of them are edited, in review and done."""
 
-PREVIEW_CHARS = 48
-"""How much of a string a row shows before cutting it short."""
+ROW_PREVIEW_CHARS = 48
+"""How much of a string a Files row shows before cutting it short."""
 
 
 def string_preview(text: str) -> str:
@@ -41,9 +42,7 @@ def string_preview(text: str) -> str:
     flat = " ".join(text.split())
     if not flat:
         return "(empty)"
-    if len(flat) <= PREVIEW_CHARS:
-        return flat
-    return flat[: PREVIEW_CHARS - 1] + "…"
+    return ellipsize(flat, ROW_PREVIEW_CHARS)
 
 
 def entry_offset(
@@ -280,7 +279,6 @@ def source_text(entry: Entry) -> str:
 
 
 __all__ = [
-    "PREVIEW_CHARS",
     "block_extra",
     "entry_offset",
     "folder_extra",

@@ -22,7 +22,7 @@ from mapchar.core.block import (
 from mapchar.core.capabilities import Capability
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui import BYTES_PER_ROW
-from mapchar.ui.entry_text import PREVIEW_CHARS, string_preview
+from mapchar.ui.entry_text import ROW_PREVIEW_CHARS, string_preview
 from window_helpers import ASCII_TABLE, add_block, make_window, open_rom_and_table
 
 DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 0x40
@@ -55,9 +55,9 @@ def test_source_span_is_the_bytes_the_source_itself_occupies():
 
 def test_a_preview_is_one_line_cut_short_with_an_ellipsis():
     assert string_preview("Hello[line]\nworld[end]") == "Hello[line] world[end]"
-    long = "x" * (PREVIEW_CHARS + 10)
+    long = "x" * (ROW_PREVIEW_CHARS + 10)
     cut = string_preview(long)
-    assert len(cut) == PREVIEW_CHARS and cut.endswith("…")
+    assert len(cut) == ROW_PREVIEW_CHARS and cut.endswith("…")
     assert string_preview("") == "(empty)"
 
 

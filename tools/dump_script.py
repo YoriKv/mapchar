@@ -78,11 +78,11 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = os.path.dirname(os.path.abspath(args.out)) if args.out else os.getcwd()
     payload = []
     for block in blocks:
-        strings = window._block_strings(block)
-        if strings is None:
+        doc = window._read_block(block)
+        if doc is None:
             print(f"{block.name}: could not be read", file=sys.stderr)
             continue
-        payload.append((block.name, block.config, strings))
+        payload.append((block.name, block.config, doc.strings))
     file_entry = blocks[0].parent
     text = write_script(
         payload,

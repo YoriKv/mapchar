@@ -39,13 +39,7 @@ aliases, and command 7 in long form collides with the ``0xFF`` terminator
 
 from __future__ import annotations
 
-from mapchar.core.context import (
-    KEY_COMPLETE,
-    KEY_CONSUMED,
-    KEY_DECOMPRESS_PARTIAL,
-    PipelineContext,
-)
-from mapchar.plugins.base import PluginInfo, Stage
+from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
 from mapchar.plugins.builtins.compression._limits import MAX_BANK, stream_error
 from mapchar.plugins.builtins.compression._lz import MatchFinder, copy_from
 
@@ -90,7 +84,7 @@ _NO_CHOICE = (_OP_LITERAL, 0, 0)
 
 
 def decompress(
-    data: bytes, *, big_endian_offsets: bool, allow_partial: bool = False
+    data: bytes, *, big_endian_offsets: bool, partial: bool = False
 ) -> tuple[bytes, int]:
     """Decode one compressed structure from the start of ``data``.
 
@@ -98,7 +92,7 @@ def decompress(
     through the terminator, so a caller handing in an over-read buffer learns the
     structure's true extent. Trailing bytes after the terminator are never touched.
 
-    With ``allow_partial``, for a *bounded* buffer that may cut the structure
+    With ``partial``, for a *bounded* buffer that may cut the structure
     short, running out of source is not an error: the prefix decoded so far comes
     back, finishing as much of the current command as the buffer allows. Reaching
     the one-bank output cap is a short read of the same kind
@@ -112,7 +106,7 @@ def decompress(
     i = 0
 
     def truncated(reason: str) -> tuple[bytes, int]:
-        if allow_partial:
+        if partial:
             return bytes(out), n
         raise stream_error(_SCHEME, reason)
 
@@ -197,10 +191,10 @@ def _emit_header(out: bytearray, op: int, length: int) -> None:
         out.append(encoded & 0xFF)
 
 
-def _emit_offset(out: bytearray, offset: int, big_endian_offsets: bool) -> None:
+def _emit_offset(out: bytearray, field: int, big_endian_offsets: bool) -> None:
     """The backreference's absolute 16-bit offset — the one thing LZ1 and LZ2
     disagree about."""
-    hi, lo = (offset >> 8) & 0xFF, offset & 0xFF
+    hi, lo = (field >> 8) & 0xFF, field & 0xFF
     out += bytes((hi, lo) if big_endian_offsets else (lo, hi))
 
 
@@ -210,7 +204,7 @@ def _emit_op(
     i: int,
     op: int,
     length: int,
-    offset: int = 0,
+    field: int = 0,
     *,
     big_endian_offsets: bool,
 ) -> None:
@@ -227,7 +221,7 @@ def _emit_op(
     elif op == _OP_WORD_FILL:
         out += data[i : i + 2]
     else:
-        _emit_offset(out, offset, big_endian_offsets)
+        _emit_offset(out, field, big_endian_offsets)
 
 
 def _run_tables(
@@ -365,7 +359,7 @@ def compress(data: bytes, *, big_endian_offsets: bool) -> bytes:
 
     i = 0
     while i < n:
-        offset = 0
+        field = 0
         if fill[i] >= _ORIG_MIN_FILL:
             op, length = _OP_FILL, fill[i]
         elif word[i] >= _ORIG_MIN_WORD:
@@ -380,7 +374,9 @@ def compress(data: bytes, *, big_endian_offsets: bool) -> bytes:
                 # inside an earlier command as it does in the shipped streams.
                 finder.add_run(indexed, i)
                 indexed = i
-                length, offset = finder.longest(i, limit)
+                # The candidate position *is* the field: this back-reference is
+                # absolute within the structure, not a distance.
+                length, field = finder.longest(i, limit)
             if length < _ORIG_MIN_BACKREF:
                 if literal_start < 0:
                     literal_start = i
@@ -388,9 +384,7 @@ def compress(data: bytes, *, big_endian_offsets: bool) -> bytes:
                 continue
 
         flush_literals(i)
-        _emit_op(
-            out, data, i, op, length, offset, big_endian_offsets=big_endian_offsets
-        )
+        _emit_op(out, data, i, op, length, field, big_endian_offsets=big_endian_offsets)
         i += length
 
     flush_literals(n)
@@ -419,7 +413,7 @@ def compress_improved(data: bytes, *, big_endian_offsets: bool) -> bytes:
     # No distance window: the offset is *absolute* within the structure, so every
     # earlier position is addressable. Bounding the scan to the newest
     # _MAX_CHAIN candidates keeps a worst-case input from going quadratic.
-    match_len, match_off = MatchFinder(
+    match_len, match_at = MatchFinder(
         data, min_match=_MIN_MATCH, window=None, max_candidates=_MAX_CHAIN
     ).all_longest(_MAX_LONG)
 
@@ -434,7 +428,7 @@ def compress_improved(data: bytes, *, big_endian_offsets: bool) -> bytes:
     reach[n] = n
 
     def priced(
-        i: int, op: int, reach_len: int, payload: int, off: int
+        i: int, op: int, reach_len: int, payload: int, field: int
     ) -> tuple[float, tuple[int, int, int]]:
         """Cheapest way to write ``op`` at ``i``, in either header form.
 
@@ -447,13 +441,13 @@ def compress_improved(data: bytes, *, big_endian_offsets: bool) -> bytes:
             return inf, _NO_CHOICE
         length = reach_len if reach_len < _MAX_SHORT else _MAX_SHORT
         best = cost[i + length] + 1 + payload
-        pick = (op, length, off)
+        pick = (op, length, field)
         if reach_len > _MAX_SHORT:
             length = reach_len if reach_len < _MAX_LONG else _MAX_LONG
             value = cost[i + length] + 2 + payload
             if value < best:
                 best = value
-                pick = (op, length, off)
+                pick = (op, length, field)
         return best, pick
 
     for i in range(n - 1, -1, -1):
@@ -480,7 +474,7 @@ def compress_improved(data: bytes, *, big_endian_offsets: bool) -> bytes:
                 2,
                 0,
             ),
-            priced(i, _OP_BACKREF, match_len[i], 2, match_off[i]),
+            priced(i, _OP_BACKREF, match_len[i], 2, match_at[i]),
         ):
             if value < best:
                 best = value
@@ -493,14 +487,14 @@ def compress_improved(data: bytes, *, big_endian_offsets: bool) -> bytes:
     out = bytearray()
     i = 0
     while i < n:
-        op, length, off = choice[i]
-        _emit_op(out, data, i, op, length, off, big_endian_offsets=big_endian_offsets)
+        op, length, field = choice[i]
+        _emit_op(out, data, i, op, length, field, big_endian_offsets=big_endian_offsets)
         i += length
     out.append(_TERMINATOR)
     return bytes(out)
 
 
-class _LzBase:
+class _LzBase(PartialDecompression):
     """Both directions of one LZ variant; ``_big_endian`` is all that differs.
 
     ``_improved`` picks the parse, which only a save-back can tell apart: both
@@ -510,25 +504,23 @@ class _LzBase:
     _big_endian: bool
     _improved = False
 
-    def decompress(self, data: bytes, ctx: PipelineContext) -> bytes:
+    def _decode(self, data: bytes, *, partial: bool) -> tuple[bytes, int, bool]:
         # Strict first: reaching the terminator means the structure's true end is
         # known. Fall back to a best-effort partial decode only when the caller
         # said the buffer may cut the structure short.
         try:
             out, consumed = decompress(data, big_endian_offsets=self._big_endian)
-            complete = True
         except ValueError:
-            if not ctx.get(KEY_DECOMPRESS_PARTIAL):
+            if not partial:
                 raise
-            out, consumed = decompress(
-                data, big_endian_offsets=self._big_endian, allow_partial=True
-            )
-            complete = False
-        ctx.set(KEY_CONSUMED, consumed)
-        ctx.set(KEY_COMPLETE, complete)
-        return out
+        else:
+            return out, consumed, True
+        out, consumed = decompress(
+            data, big_endian_offsets=self._big_endian, partial=True
+        )
+        return out, consumed, False
 
-    def compress(self, data: bytes, ctx: PipelineContext) -> bytes:
+    def _encode(self, data: bytes) -> bytes:
         pack = compress_improved if self._improved else compress
         return pack(data, big_endian_offsets=self._big_endian)
 

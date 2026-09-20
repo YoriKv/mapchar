@@ -3,13 +3,11 @@ notes and status, which live in the project."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import NamedTuple
+from collections.abc import Callable, Iterable
 
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
-    Extraction,
     Status,
     block_bound,
     remembered_room,
@@ -18,25 +16,17 @@ from mapchar.core.block import (
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.core.table import TableSet
-from mapchar.core.text import same_text
 from mapchar.engines.layout import char_layout
-from mapchar.pipeline.extract import extract, reextract
-from mapchar.pipeline.insert import apply_splices, layout_block, room_for
+from mapchar.pipeline.extract import reextract
+from mapchar.pipeline.insert import (
+    ReadBack,
+    apply_splices,
+    layout_block,
+    reads_back,
+    room_for,
+)
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import StringFieldCommand, StringsEditCommand
-
-
-class ReadBack(NamedTuple):
-    """Why a laid-out buffer may not stand for an edit, and what it reads as."""
-
-    block: str | None
-    """Why the block as a whole refuses it: it will not read at all, or not as
-    the same strings."""
-    string: str | None
-    """The first string that would not read as it must, named by its index."""
-    extraction: Extraction | None
-    """The reading, when nothing is against it — the one the re-read after the
-    edit lands takes, rather than reading the same bytes a second time."""
 
 
 class StringEditMixin:
@@ -143,6 +133,56 @@ class StringEditMixin:
         tables = self._table_set_of(entry)
         if tables is None:
             return [f"table @{cfg.table_id} is not loaded"]
+        laid = self._lay_out_edit(entry, doc, cfg, tables, edits)
+        if isinstance(laid, list):
+            return laid
+        edits, new_data, lo, hi, back = laid
+        if back.block is not None:
+            return [back.block]
+        if back.string is not None:
+            return [back.string]
+        first = min(edits)
+        label = text or ("Edit translation" if len(edits) == 1 else "Edit translations")
+        self._remember_extraction(new_data, cfg, tables, back.extraction)
+        self._push_command(
+            StringsEditCommand(
+                self,
+                entry,
+                lo,
+                doc.data[lo:hi],
+                new_data[lo:hi],
+                first,
+                label,
+                run=run,
+            )
+        )
+        return []
+
+    def _lay_out_edit(
+        self,
+        entry: Entry,
+        doc: Document,
+        cfg: BlockConfig,
+        tables: TableSet,
+        edits: dict[int, str],
+        *,
+        skip_unchanged: bool = True,
+    ) -> tuple[dict[int, str], bytes, int, int, ReadBack] | list[str]:
+        """Lay the block out with ``edits`` in place of those strings' bytes.
+
+        What comes back is the edits that had a string of the block to land on,
+        the buffer the splices leave, the stretch of it they changed, and what
+        those bytes read as (:func:`~mapchar.pipeline.insert.reads_back`) — or,
+        as a list, why the layout refused them. An empty list is nothing to do.
+
+        Whether the reading may stand is the caller's to say: both landings
+        refuse on the same terms but name a block-level refusal differently.
+
+        ``skip_unchanged`` is the no-op check: a text whose bytes are already
+        the bytes there is nothing to land, so the checked path stops on it
+        rather than pushing a step that changes nothing; the undo-free landing
+        a project load makes splices it with the rest.
+        """
         by_index = {r.index: r for r in doc.strings}
         edits = {i: t for i, t in edits.items() if i in by_index}
         if not edits:
@@ -161,72 +201,66 @@ class StringEditMixin:
         new_data = apply_splices(doc.data, result.splices)
         lo = min(s.offset for s in result.splices)
         hi = max(s.end for s in result.splices)
-        before, after = doc.data[lo:hi], new_data[lo:hi]
-        if before == after:
+        if skip_unchanged and doc.data[lo:hi] == new_data[lo:hi]:
             return []
-        back = self._reads_back(cfg, tables, doc, new_data, edits, (lo, hi))
-        if back.block is not None:
-            return [back.block]
-        if back.string is not None:
-            return [back.string]
-        first = min(edits)
-        label = text or ("Edit translation" if len(edits) == 1 else "Edit translations")
-        self._remember_extraction(new_data, cfg, tables, back.extraction)
-        self._push_command(
-            StringsEditCommand(self, entry, lo, before, after, first, label, run=run)
+        back = reads_back(
+            cfg, tables, doc.strings, new_data, edits, self.registry, (lo, hi)
         )
-        return []
+        return edits, new_data, lo, hi, back
 
-    def _reads_back(
+    def _edit_strings_now(
+        self, entry: Entry, doc: Document, texts: dict[int, str]
+    ) -> list[str]:
+        """The edits of :meth:`_edit_strings` landed with no undo step, whole
+        where they all go in and one at a time where they do not, so that one
+        refused leaves the rest in.
+
+        Refused on the same terms as the checked path
+        (:func:`~mapchar.pipeline.insert.reads_back`): a text that does not
+        fit, that re-cuts the block, or that would not read back as itself does
+        not land — the bytes are the translation, so they must say what the
+        translator said, and a project's word for it is not enough.
+        """
+        cfg = entry.config
+        tables = self._table_set_of(entry)
+        if cfg is None or tables is None:
+            return ["table not loaded"]
+        _, problems = self._edit_each(
+            entry,
+            texts,
+            "",
+            land=lambda _e, edits, _text: self._land_strings_now(
+                entry, doc, edits, cfg, tables
+            ),
+        )
+        return problems
+
+    def _land_strings_now(
         self,
+        entry: Entry,
+        doc: Document,
+        edits: dict[int, str],
         cfg: BlockConfig,
         tables: TableSet,
-        doc: Document,
-        data: bytes,
-        edits: dict[int, str],
-        span: tuple[int, int] | None = None,
-    ) -> ReadBack:
-        """Whether ``data`` may stand for ``edits``, on the one set of terms.
-
-        The bytes are the translation, so they must say what the translator
-        said: the block must still read as the same strings, each edited string
-        must read back as its text, and every other one must read as it does
-        now — an edit that changes how the bytes after it are cut has changed
-        strings nobody asked to change. Both landings, the undo step and the
-        undo-free one a project load makes, refuse on these terms and no other.
-
-        ``span`` is the stretch the edit changed: where the block's reading
-        comes apart (:func:`~mapchar.pipeline.extract.reextract`), only what it
-        reaches is read again.
-        """
-        try:
-            check = None
-            if span is not None:
-                check = reextract(data, cfg, tables, doc.strings, *span, self.registry)
-            if check is None:
-                check = extract(data, cfg, tables, self.registry)
-        except MapcharError as exc:
-            return ReadBack(str(exc), None, None)
-        if len(check.strings) != len(doc.strings):
-            return ReadBack(
-                f"the block would read as {len(check.strings)} strings instead of "
-                f"{len(doc.strings)}",
-                None,
-                None,
-            )
-        read = {r.index: r for r in check.strings}
-        for i, t in edits.items():
-            back = read[i].current_text()
-            if not same_text(back, t):
-                return ReadBack(None, f"#{i}: reads back as {back!r}", None)
-        for rec in doc.strings:
-            if rec.index in edits or read[rec.index] is rec:
-                # A record a partial reading kept is the bytes it was.
-                continue
-            back = read[rec.index].current_text()
-            if not same_text(back, rec.current_text()):
-                return ReadBack(None, f"#{rec.index}: would change to {back!r}", None)
-        return ReadBack(None, None, check)
+    ) -> list[str]:
+        """One batch of :meth:`_edit_strings_now`: the layout, the read-back
+        check, and the splice onto every document that holds the same bytes."""
+        bound = self._bound_of(entry)
+        laid = self._lay_out_edit(entry, doc, cfg, tables, edits, skip_unchanged=False)
+        if isinstance(laid, list):
+            return laid
+        edits, new_data, lo, hi, back = laid
+        if back.block is not None:
+            return [f"#{min(edits)}: {back.block}"]
+        if back.string is not None:
+            return [back.string]
+        self._put_bytes(entry, lo, new_data[lo:hi], self.workspace.next_revision())
+        # Read again so the next edit lays out over the strings as they now
+        # sit, and the records keep their state by index.
+        self._remember_extraction(new_data, cfg, tables, back.extraction)
+        self._extract_current(entry, doc, tables)
+        self._remember_room(entry, bound)
+        return []
 
     def _edit_each(
         self,
@@ -261,20 +295,55 @@ class StringEditMixin:
                 landed += 1
         return landed, problems
 
-    def apply_strings_edit(
-        self, entry: Entry, offset: int, data: bytes, revision: int
-    ) -> None:
-        """Land one side of a strings edit: the bytes, on every document that
-        shares them, at the revision that half of the step leaves the owner at.
+    def _edit_blocks(
+        self,
+        edits_by_block: Iterable[tuple[Entry, dict[int, str]]],
+        label: str,
+        *,
+        restore: bool = True,
+        separator: str = " ",
+    ) -> tuple[int, list[str]]:
+        """``(block, {index: text})`` into the blocks' bytes, one undo step in all.
 
-        ``revision`` is the token the command captured rather than a fresh one:
-        an undo hands back exactly the unsaved-state the owner had before the
-        edit, so undoing back to what was written reads clean again.
+        A block is made current before its own edit, because an edit is
+        reverted where it was made and so lands there too, and the block that
+        was current comes back at the end. Each block's texts go in as one
+        edit, else string by string (:meth:`_edit_each`). How many landed comes
+        back with the refusals, each named after its block.
+
+        ``edits_by_block`` is walked as the edits land rather than in advance:
+        two blocks can share one file's bytes, so what the second has to change
+        is only settled once the first has changed it.
+
+        ``restore`` is for a caller that puts the current block back itself,
+        around more than this; ``separator`` is what stands between the block's
+        name and the refusal.
         """
-        bound = self._bound_of(entry)
+        landed, problems = 0, []
+        current = self._entry
+        with self._macro(label):
+            for entry, edits in edits_by_block:
+                if not edits:
+                    continue
+                if entry is not self._entry:
+                    self._activate_entry(entry)
+                went_in, refused = self._edit_each(entry, edits, label)
+                landed += went_in
+                problems += [f"{entry.name}{separator}{p}" for p in refused]
+            if restore and current is not None and self._entry is not current:
+                self._activate_entry(current)
+        return landed, problems
+
+    def _put_bytes(self, entry: Entry, offset: int, data: bytes, revision: int) -> None:
+        """Splice ``data`` in at ``offset`` on every document that holds the
+        entry's bytes, and stamp ``revision`` on every entry that owns them.
+
+        The blocks over one file hold the very same buffer: spliced once, the
+        result is theirs too, rather than a copy of a whole ROM per block. The
+        reading each document carries is dropped with the splice, since it is
+        of the bytes that were there.
+        """
         shared = self.workspace.entries_sharing(entry)
-        # The blocks over one file hold the very same buffer: spliced once, the
-        # result is theirs too, rather than a copy of a whole ROM per block.
         spliced: dict[int, tuple[bytes, bytes]] = {}
         for holder in shared:
             before = holder.doc.data
@@ -286,6 +355,19 @@ class StringEditMixin:
             holder.doc.data = done[1]
             holder.doc.extraction_key = None
         self._stamp_shared_bytes(entry, revision, shared)
+
+    def apply_strings_edit(
+        self, entry: Entry, offset: int, data: bytes, revision: int
+    ) -> None:
+        """Land one side of a strings edit: the bytes, on every document that
+        shares them, at the revision that half of the step leaves the owner at.
+
+        ``revision`` is the token the command captured rather than a fresh one:
+        an undo hands back exactly the unsaved-state the owner had before the
+        edit, so undoing back to what was written reads clean again.
+        """
+        bound = self._bound_of(entry)
+        self._put_bytes(entry, offset, data, revision)
         self._reread_blocks_over(entry, offset, offset + len(data))
         self._remember_room(entry, bound)
         self.files_panel.refresh_labels()

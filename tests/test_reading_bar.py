@@ -504,13 +504,13 @@ def test_the_writing_section_says_what_a_blank_bound_and_automatic_mean(
     entry = open_rom_and_table(window, tmp_path, ROM)
     add_block(window, entry, "p", PointerTableSource(0, 4, 2, 2))
     bar = window.reading_bar
-    assert bar.write_mode.itemText(0) == "Automatic (packed)"
+    assert bar.writing.write_mode.itemText(0) == "Automatic (packed)"
     # A pointer block is bounded by the end of the text its pointers reach,
     # and the fill behind that is nobody's until a shortening gives it up.
-    assert bar.bound.placeholderText() == window.address_spelling.format(0x15)
+    assert bar.writing.bound.placeholderText() == window.address_spelling.format(0x15)
     add_block(window, entry, "r", RangeSource(0x10, 0x15))
-    assert bar.write_mode.itemText(0) == "Automatic (slotted)"
-    assert bar.bound.placeholderText() == window.address_spelling.format(0x15)
+    assert bar.writing.write_mode.itemText(0) == "Automatic (slotted)"
+    assert bar.writing.bound.placeholderText() == window.address_spelling.format(0x15)
 
 
 def test_packed_is_unavailable_where_skips_or_a_header_force_slotted(window, tmp_path):
@@ -522,20 +522,20 @@ def test_packed_is_unavailable_where_skips_or_a_header_force_slotted(window, tmp
     entry = open_rom_and_table(window, tmp_path, ROM)
     block = add_block(window, entry, "b", RangeSource(0x10, 0x15))
     bar = window.reading_bar
-    at = bar.write_mode.findData(WriteMode.PACKED)
-    select_data(bar.write_mode, WriteMode.PACKED)
-    assert bar.write_mode.model().item(at).isEnabled()
+    at = bar.writing.write_mode.findData(WriteMode.PACKED)
+    select_data(bar.writing.write_mode, WriteMode.PACKED)
+    assert bar.writing.write_mode.model().item(at).isEnabled()
     assert bar.writing.currentText().startswith("Packed ·")
     bar.header.setValue(2)
-    assert not bar.write_mode.model().item(at).isEnabled()
-    assert bar.write_mode.itemText(at) == "Packed (slotted)"
+    assert not bar.writing.write_mode.model().item(at).isEnabled()
+    assert bar.writing.write_mode.itemText(at) == "Packed (slotted)"
     assert bar.writing.currentText().startswith("Packed (slotted) ·")
     # The block keeps the mode it holds, so taking the header away is enough
     # to write it packed again.
     assert block.config.write_mode is WriteMode.PACKED
     assert block.config.effective_write_mode is WriteMode.SLOTTED
     bar.header.setValue(0)
-    assert bar.write_mode.model().item(at).isEnabled()
+    assert bar.writing.write_mode.model().item(at).isEnabled()
     assert bar.writing.currentText().startswith("Packed ·")
     # Skip ranges force it just the same.
     add_block(
@@ -546,7 +546,7 @@ def test_packed_is_unavailable_where_skips_or_a_header_force_slotted(window, tmp
         skips=((0x11, 0x12),),
         write_mode=WriteMode.PACKED,
     )
-    assert not bar.write_mode.model().item(at).isEnabled()
+    assert not bar.writing.write_mode.model().item(at).isEnabled()
     assert bar.writing.currentText().startswith("Packed (slotted) ·")
 
 
@@ -616,14 +616,14 @@ def test_a_nested_source_is_picked_and_edited_in_the_bar(window, tmp_path):
         0, 8, 2, 4, null=0, inner_size=2, inner_null=0
     )
     assert [s.current_text() for s in block.doc.strings] == ["AB[end]", "B[end]"]
-    assert bar.bound.placeholderText() == "each group's end"
-    bar.fill.setText("EEDD")
-    bar.fill.editingFinished.emit()
+    assert bar.writing.bound.placeholderText() == "each group's end"
+    bar.writing.fill.setText("EEDD")
+    bar.writing.fill.editingFinished.emit()
     assert block.config.fill == b"\xee\xdd"
     # What the bar shows is what it reads back.
     bar.load(block.config, block=True)
     assert bar.config(block.config, "main") == block.config
-    assert bar.fill.text() == "EEDD"
+    assert bar.writing.fill.text() == "EEDD"
     # A file has no strings of its own to group.
     window._activate_entry(entry)
     window._on_mode(True)
@@ -701,7 +701,7 @@ def test_a_header_is_a_range_block_s_setting(window, tmp_path):
     bar.header.setValue(2)
     assert block.config.header == 2
     assert [s.current_text() for s in block.doc.strings] == ["AB", "B"]
-    assert bar.write_mode.itemText(0) == "Automatic (slotted)"
+    assert bar.writing.write_mode.itemText(0) == "Automatic (slotted)"
     window.undo_stack.undo()
     assert block.config.header == 0 and bar.header.value() == 0
     pointers = add_block(

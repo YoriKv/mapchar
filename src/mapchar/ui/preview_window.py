@@ -30,11 +30,11 @@ from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.number_fields import number_spin
 from mapchar.ui.preview_font import preview_font
 from mapchar.ui.preview_render import render
-from mapchar.ui.widgets import ElidedLabel, EscapeCloses, show_elided_tooltips
-from mapchar.ui.window_layout import remember_layout
+from mapchar.ui.tool_window import ToolWindow
+from mapchar.ui.widgets import ElidedLabel, show_elided_tooltips
 
 
-class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
+class PreviewWindow(ToolWindow, ThemedIcons):
     font_changed = Signal()
     """The app's preview font changed: redraw whatever was drawn through it."""
     box_changed = Signal(object)
@@ -42,11 +42,7 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
     wrap_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent, Qt.WindowType.Window)
-        self.setWindowTitle("Preview")
-        # Size and position remembered between runs, like every tool
-        # window (:mod:`mapchar.ui.window_layout`).
-        self._layout = remember_layout(self, "preview_window")
+        super().__init__("Preview", "preview_window", (640, 480), parent)
         self._box = TextBox()
         self._result: Layout | None = None
         self._source: list[Token] | str | None = None
@@ -169,7 +165,6 @@ class PreviewWindow(EscapeCloses, ThemedIcons, QWidget):
         ):
             w.valueChanged.connect(lambda _: self._emit_box())
         self.codes.itemChanged.connect(lambda _: self._emit_box())
-        self.resize(640, 480)
 
     # --- state -----------------------------------------------------------
 

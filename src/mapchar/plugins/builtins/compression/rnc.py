@@ -85,13 +85,18 @@ Huffman tables; method 2 is a shortest-path parse over its fixed bit costs.
 from __future__ import annotations
 
 import heapq
+from collections.abc import Iterator
 
 from mapchar.plugins.base import PartialDecompression, PluginInfo, Stage
 from mapchar.plugins.builtins.compression._limits import MAX_OUT, stream_error
 from mapchar.plugins.builtins.compression._lz import (
+    InterleavedWriter,
     MatchFinder,
+    Truncated,
+    check_reach,
     copy_back,
     parse_greedy,
+    parse_shortest,
 )
 
 MAGIC = b"RNC"
@@ -159,10 +164,6 @@ def _fail(reason: str) -> ValueError:
     return stream_error(_SCHEME, reason)
 
 
-class _Truncated(Exception):
-    """The buffer ended inside the stream — recoverable only under ``partial``."""
-
-
 def _crc_table() -> list[int]:
     table = []
     for value in range(256):
@@ -210,7 +211,7 @@ class _Source:
         if at < self._avail:
             return self._data[at]
         if at < self._end:
-            raise _Truncated
+            raise Truncated
         if at >= self._end + READ_SLACK:
             raise _fail("bit stream runs past the header's packed size")
         return 0
@@ -229,7 +230,7 @@ class _Source:
             if out is not None:
                 out += self._data[at : self._avail]
             self.pos = self._avail
-            raise _Truncated
+            raise Truncated
         self.pos += count
         return self._data[at : at + count]
 
@@ -370,10 +371,9 @@ def _room(out: bytearray, count: int, target: int) -> None:
 
 
 def _copy(out: bytearray, distance: int, length: int, target: int) -> None:
-    if distance > len(out):
-        raise _fail(
-            f"match reaches {distance:,} bytes back into {len(out):,} bytes of output"
-        )
+    """A back-reference under both of RNC's limits: the shared reach check, then
+    the declared unpacked size."""
+    check_reach(out, distance, _SCHEME)
     _room(out, length, target)
     copy_back(out, distance, length)
 
@@ -483,7 +483,7 @@ def decompress(
     out = bytearray()
     try:
         (_unpack_1 if method == METHOD_1 else _unpack_2)(src, target, out)
-    except _Truncated:
+    except Truncated:
         return bytes(out), min(src.pos, len(data)), False
     if not whole:
         # The decoder reached the declared size inside what the buffer holds —
@@ -499,56 +499,24 @@ def decompress(
 # -- compression ------------------------------------------------------------
 
 
-class _Writer:
-    """Bit words and the raw bytes they precede, kept in the order a decoder reads.
+class _Writer(InterleavedWriter):
+    """The shared writer plus the leeway figure the header carries.
 
-    A raw byte written while a word is part-filled waits for that word: the
-    decoder fetched the word before reading the byte. ``low_first`` picks the
-    method: 16-bit words filled from the low bit (1) or bytes from the high (2).
+    ``low_first`` picks the method: 16-bit words filled from the low bit (1) or
+    bytes from the high (2). Both refill lazily — a raw byte written with no word
+    open goes straight out — so ``eager`` is false for either.
     """
 
     def __init__(self, *, word_bits: int, low_first: bool) -> None:
-        self.out = bytearray()
-        self._size = word_bits
-        self._low_first = low_first
-        self._word = 0
-        self._bits = 0
-        self._pending = bytearray()
+        super().__init__(word_bits=word_bits, low_first=low_first, eager=False)
         self.consumed = 0  # input bytes covered so far, for the leeway figure
         self.leeway = 0
 
-    def put(self, value: int, count: int) -> None:
-        if self._low_first:
-            while count:
-                take = min(count, self._size - self._bits)
-                self._word |= (value & ((1 << take) - 1)) << self._bits
-                value >>= take
-                count -= take
-                self._bits += take
-                if self._bits == self._size:
-                    self._flush()
-        else:
-            for shift in range(count - 1, -1, -1):
-                self._word = (self._word << 1) | ((value >> shift) & 1)
-                self._bits += 1
-                if self._bits == self._size:
-                    self._flush()
-
     def _flush(self) -> None:
-        self.out += self._word.to_bytes(self._size // 8, "little")
-        self.out += self._pending
-        self._pending.clear()
-        self._word = 0
-        self._bits = 0
+        super()._flush()
         # How far the unpacked data has run ahead of the packed data at this
         # point — the overlap an unpack into its own buffer has to allow for.
         self.leeway = max(self.leeway, self.consumed - len(self.out))
-
-    def raw(self, chunk: bytes) -> None:
-        if self._bits:
-            self._pending += chunk
-        else:
-            self.out += chunk
 
     def finish(self) -> bytes:
         if self._bits:
@@ -698,37 +666,25 @@ def _ops_2(data: bytes) -> list[tuple[int, int]]:
     far_len, far_at = MatchFinder(data, min_match=3, window=M2_WINDOW).all_longest(
         M2_MAX_MATCH
     )
-    cost = [0] * (n + 1)
-    choice: list[tuple[int, int]] = [(1, 0)] * n
-    for i in range(n - 1, -1, -1):
-        best = cost[i + 1] + 9
-        pick = (1, 0)
+
+    def options(i: int, cost: list[float]) -> Iterator[tuple[int, float, int]]:
+        """Every op method 2 could write at ``i``, priced whole. The tag is the
+        distance, which is ``0`` for the two literal forms."""
+        yield 1, cost[i + 1] + 9, 0
         for run in range(M2_RUN_MIN, min(M2_RUN_MAX, n - i) + 1, M2_RUN_STEP):
-            value = cost[i + run] + M2_RUN_CODE[1] + 4 + 8 * run
-            if value < best:
-                best, pick = value, (run, 0)
+            yield run, cost[i + run] + M2_RUN_CODE[1] + 4 + 8 * run, 0
         if near_len[i]:
-            value = cost[i + 2] + _match_bits(2, i - near_at[i])
-            if value < best:
-                best, pick = value, (2, i - near_at[i])
+            distance = i - near_at[i]
+            yield 2, cost[i + 2] + _match_bits(2, distance), distance
         if far_len[i]:
             distance = i - far_at[i]
             for length in range(3, min(far_len[i], M2_LONG_MIN - 1) + 1):
-                value = cost[i + length] + _match_bits(length, distance)
-                if value < best:
-                    best, pick = value, (length, distance)
+                yield length, cost[i + length] + _match_bits(length, distance), distance
             if far_len[i] >= M2_LONG_MIN:
                 length = far_len[i]
-                value = cost[i + length] + _match_bits(length, distance)
-                if value < best:
-                    best, pick = value, (length, distance)
-        cost[i], choice[i] = best, pick
-    ops = []
-    at = 0
-    while at < n:
-        ops.append(choice[at])
-        at += choice[at][0]
-    return ops
+                yield length, cost[i + length] + _match_bits(length, distance), distance
+
+    return parse_shortest(n, tail_cost=0, options=options)
 
 
 def _pack_2(data: bytes, writer: _Writer) -> int:

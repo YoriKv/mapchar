@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 
 from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.core.table import TableSet, TokenKind
-from mapchar.core.text import graphemes, nfc
+from mapchar.core.text import units
 from mapchar.core.tokens import (
     CodeRef,
     TextRun,
@@ -70,6 +70,19 @@ def with_code_effects(box: TextBox, defaults: dict[str, CodeEffect]) -> TextBox:
     return replace(box, effects={**defaults, **box.effects})
 
 
+def effect_of(box: TextBox, label: str, page_label: str | None = None) -> CodeEffect:
+    """What the code ``label`` does to the cursor in ``box``.
+
+    A code the box says nothing about does nothing. A caller that knows the
+    block's page code passes ``page_label``: a code with that label breaks the
+    page whether or not the box lists it.
+    """
+    effect = box.effects.get(label, CodeEffect())
+    if page_label and label == page_label and effect.effect is not Effect.PAGE:
+        return CodeEffect(Effect.PAGE)
+    return effect
+
+
 @dataclass(frozen=True)
 class _Piece:
     """One drawable unit: a character or a code."""
@@ -78,6 +91,8 @@ class _Piece:
     is_code: bool
     index: int
     """Which token (or parsed item) the piece came from."""
+    label: str = ""
+    """The code's label, empty for a character or a code that has none."""
     raw: bool = False
     """Data no entry matched: it draws a placeholder."""
 
@@ -88,7 +103,7 @@ def _split_text(text: str, index: int, out: list[_Piece]) -> None:
     A character is a grapheme — a base character with the combining marks that
     follow it — so a decomposed dakuten kana is drawn and measured as one.
     """
-    for unit in graphemes(nfc(text)):
+    for unit in units(text):
         out.append(_Piece(unit, False, index))
 
 
@@ -98,12 +113,17 @@ def _pieces_from_tokens(tokens: list[Token]) -> list[_Piece]:
         if t.fallback:
             pieces.append(_Piece(t.text(), True, i))
         elif t.entry is None:
-            pieces.append(_Piece(t.text(), True, i, raw=True))
+            # Unmatched data is bracketed bytes: its label is what it spells,
+            # so a box that names one still reaches it.
+            text = t.text()
+            pieces.append(_Piece(text, True, i, label=text[1:-1], raw=True))
         elif t.entry.kind is TokenKind.TEXT and t.entry.label is None:
             _split_text(plain_text(t.entry.text), i, pieces)
         else:
             label = t.entry.label
-            pieces.append(_Piece(f"[{label}]" if label else t.text(), True, i))
+            pieces.append(
+                _Piece(f"[{label}]" if label else t.text(), True, i, label=label or "")
+            )
     return pieces
 
 
@@ -114,7 +134,9 @@ def _pieces_from_text(text: str) -> list[_Piece]:
             _split_text(item.text, i, pieces)
         else:
             ref: CodeRef = item
-            pieces.append(_Piece(f"[{ref.label}]", True, i, raw=ref.is_raw_byte))
+            pieces.append(
+                _Piece(f"[{ref.label}]", True, i, ref.label, raw=ref.is_raw_byte)
+            )
     return pieces
 
 
@@ -158,7 +180,7 @@ def layout(source: list[Token] | str, font: Font, box: TextBox) -> Layout:
     for piece in _pieces(source):
         index = piece.index
         if piece.is_code:
-            effect = box.effects.get(piece.text[1:-1], CodeEffect())
+            effect = effect_of(box, piece.label)
             if effect.effect is Effect.NEWLINE:
                 newline()
                 continue
@@ -216,7 +238,7 @@ class CharLayout:
 
 def char_count(text: str) -> int:
     """How many character cells a run of plain text takes: one per grapheme."""
-    return len(graphemes(nfc(text)))
+    return len(units(text))
 
 
 def char_layout(text: str, box: TextBox) -> CharLayout:
@@ -231,7 +253,7 @@ def char_layout(text: str, box: TextBox) -> CharLayout:
     x, lines = 0, 1
     for item in parse_text(text):
         if isinstance(item, CodeRef):
-            effect = box.effects.get(item.label, CodeEffect()).effect
+            effect = effect_of(box, item.label).effect
             if effect is Effect.NEWLINE:
                 x, lines = 0, lines + 1
                 result.lines = max(result.lines, lines)
@@ -255,9 +277,9 @@ def char_layout(text: str, box: TextBox) -> CharLayout:
 
 def measure(text: str, font: Font, box: TextBox) -> int:
     """Pixel width of a run of plain text through ``font``."""
-    units = graphemes(nfc(text))
-    width = sum(font.advance(unit) + box.letter_spacing for unit in units)
-    return max(0, width - box.letter_spacing) if units else 0
+    parts = units(text)
+    width = sum(font.advance(part) + box.letter_spacing for part in parts)
+    return max(0, width - box.letter_spacing) if parts else 0
 
 
 def unspellable(source: list[Token] | str, font: Font) -> list[str]:
@@ -329,7 +351,7 @@ def wrap(
             return char_count(word)
 
     def pieces_of(word: str) -> list[str]:
-        return graphemes(nfc(word))
+        return units(word)
 
     def emit_newline() -> None:
         nonlocal x, line, overflow
@@ -364,8 +386,8 @@ def wrap(
         if isinstance(item, CodeRef):
             words = " ".join(item.words)
             out.append(f"[{item.label}{' ' + words if words else ''}]")
-            effect = box.effects.get(item.label, CodeEffect())
-            if effect.effect is Effect.PAGE or item.label == page_label:
+            effect = effect_of(box, item.label, page_label)
+            if effect.effect is Effect.PAGE:
                 x, line = 0, 0
             elif effect.effect is Effect.NEWLINE:
                 x, line = 0, line + 1

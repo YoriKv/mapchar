@@ -21,7 +21,7 @@ from mapchar.core.table import TableSet
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import layout_block
 from mapchar.project.exchange.cartographer import parse_command_file
-from mapchar.project.formats.script import parse_config
+from mapchar.project.formats.blockspec import parse_config
 from mapchar.project.formats.table_native import parse_native
 
 SMW = "Super Mario World"

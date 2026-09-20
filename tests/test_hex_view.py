@@ -47,6 +47,19 @@ def test_the_dump_spells_the_chosen_address_format(window, tmp_path):
     assert window.hex_panel._hex_start == len("$00:8000") + 2
 
 
+def test_both_byte_views_size_and_spell_one_address_column(window, tmp_path):
+    """The dump and the raw view read the same file, so their address columns
+    are the same width and the same spelling — they were written twice and
+    disagreed, four digits in one and six in the other."""
+    _dock(window, tmp_path)
+    assert window.hex_panel._addr_width == window.raw._addr_width == 6
+    assert window.raw._addr_of(0x20) == window.hex_panel._addr_of(0x20) == "000020"
+    window.address_pick.setCurrentIndex(window.address_pick.findData("snes-lorom"))
+    window._sync_hex_panel()
+    assert window.hex_panel._addr_width == window.raw._addr_width == len("$00:8000")
+    assert window.raw._addr_of(0x20) == window.hex_panel._addr_of(0x20) == "$00:8020"
+
+
 def test_the_dump_follows_the_selection(window, tmp_path):
     _dock(window, tmp_path)
     assert window.hex_panel.follow.isChecked()

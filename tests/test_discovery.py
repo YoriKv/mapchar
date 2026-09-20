@@ -238,7 +238,7 @@ def test_an_edited_plugin_reloads_without_a_second_prompt(tmp_path, registry):
 
 
 def test_a_plugin_with_a_read_only_info_still_registers(tmp_path, registry):
-    """The category heading is presentation; the plugin is the point."""
+    """Nothing reads the category back; the plugin is the point."""
     user = tmp_path / "user"
     (user / "compression").mkdir(parents=True)
     (user / "compression" / "frozen.py").write_text(

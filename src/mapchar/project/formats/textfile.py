@@ -79,6 +79,12 @@ def escape(text: str, extra: str = "") -> str:
     return "".join(out)
 
 
+def quoted(text: str) -> str:
+    """``text`` in double quotes, spelled as :func:`escape` spells it: how a
+    script directive and a PO field name a string."""
+    return '"' + escape(text, '"') + '"'
+
+
 def unescape(text: str) -> str:
     """The inverse of :func:`escape`: ``\\n`` and ``\\t`` by name, ``\\x`` as ``x``."""
     return re.sub(r"\\(.)", lambda m: _UNNAMED.get(m.group(1), m.group(1)), text)

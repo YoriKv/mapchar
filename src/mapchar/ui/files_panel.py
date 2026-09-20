@@ -1,6 +1,6 @@
 """The Files panel: String Data — files with their blocks, bookmarks and
-folders — tables, fonts, and under each block, its strings; under a nested
-block, a row per inner pointer table with that table's strings under it."""
+folders — tables, and under each block, its strings; under a nested block, a
+row per inner pointer table with that table's strings under it."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.panel import WorkspaceTreePanel
 from mapchar.ui.theme import NOTICE_WASH, WARNING_INK
-from mapchar.ui.widgets import show_elided_tooltips
+from mapchar.ui.widgets import focus_field, show_elided_tooltips
 
 if TYPE_CHECKING:
     from mapchar.core.block import StringRecord
@@ -619,8 +619,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
     def focus_filter(self) -> None:
         """Put the cursor in the filter with its text selected, so a second
         search is typed over the first rather than appended to it."""
-        self.filter.setFocus(Qt.FocusReason.ShortcutFocusReason)
-        self.filter.selectAll()
+        focus_field(self.filter)
 
     def _on_clicked(self, item, column) -> None:
         self._activate(item)
@@ -759,12 +758,15 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
                     return found
         return None
 
-    def _select_item(self, item: QTreeWidgetItem) -> None:
+    def _select_item(self, item: QTreeWidgetItem | None) -> None:
+        """Select ``item`` alone, raising none of the signals a click on it
+        would; ``None`` leaves nothing selected."""
         self.tree.blockSignals(True)
         try:
             self.tree.clearSelection()
-            item.setSelected(True)
-            self.tree.setCurrentItem(item)
+            if item is not None:
+                item.setSelected(True)
+                self.tree.setCurrentItem(item)
         finally:
             self.tree.blockSignals(False)
 
@@ -800,13 +802,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         # own does not, since showing one of its strings makes it current first.
         if self._shown_string is not None and self._shown_string[0] != id(entry):
             self._shown_string = None
-        item = self._items.get(id(entry)) if entry is not None else None
-        self.tree.blockSignals(True)
-        self.tree.clearSelection()
-        if item is not None:
-            item.setSelected(True)
-            self.tree.setCurrentItem(item)
-        self.tree.blockSignals(False)
+        self._select_item(self._items.get(id(entry)) if entry is not None else None)
 
     # -- renaming -------------------------------------------------------
 
@@ -910,8 +906,8 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         before: QTreeWidgetItem | None,
     ) -> bool:
         """Whether rows may land under ``parent``: a file's or folder's rows
-        anywhere under that file — never into themselves — and a file, table or
-        font only between the rows of its own group."""
+        anywhere under that file — never into themselves — and a file or table
+        only between the rows of its own group."""
         found = [self._dragged_entry(s) for s in sources]
         entries = [e for e in found if e is not None]
         if not entries or len(entries) != len(found):
@@ -945,7 +941,7 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
         if not entries:
             return
         if parent_key is None:
-            # Between the rows of a group: a file, table or font reordered.
+            # Between the rows of a group: a file or table reordered.
             self.reorder_requested.emit(entries[0], before)
             return
         container = self.workspace.entry_by_id(parent_key)

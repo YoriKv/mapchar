@@ -339,18 +339,23 @@ class Table:
         self._includes = tuple(ids)
         self.revision += 1
 
-    def cached(self, name: str, make: Callable[[], _T]) -> _T:
+    def cached(self, name: str, make: Callable[[], _T], key: Any = None) -> _T:
         """``make()``, remembered until the table changes.
 
         Public because the lookups derived from a table are not all its own:
         the encoder's index over its entries is built the same way and kept
-        here too, so it outlives the one call that needed it.
+        here too, so it outlives the one call that needed it. ``key`` is what
+        the slot is remembered against, the table's own revision unless a
+        caller gives one — an include resolution turns over when any table it
+        reaches does, so it passes a key over all of them.
         """
+        if key is None:
+            key = self.revision
         hit = self._cache.get(name)
-        if hit is not None and hit[0] == self.revision:
+        if hit is not None and hit[0] == key:
             return hit[1]
         value = make()
-        self._cache[name] = (self.revision, value)
+        self._cache[name] = (key, value)
         return value
 
     def add(self, entry: Entry, *, replace: bool = False) -> None:
@@ -489,123 +494,11 @@ class Table:
             self.add(entry)
 
 
-def inherited(
-    table: Table, available: Mapping[str, Table]
-) -> dict[str, tuple[Entry, str]]:
-    """What ``table``'s includes give it before its own entries apply: per key,
-    the entry and the id of the table whose own entry it is.
-
-    Raises :class:`~mapchar.core.errors.TableError` for an include no table in
-    ``available`` answers to and for tables that include each other; a label
-    the merged table holds twice is :func:`resolve`'s to report.
-    """
-    layers: dict[str, tuple[Entry, str]] = {}
-    for inc in table.includes:
-        layers.update(_layers(_included(table, inc, available), available, (table.id,)))
-    return layers
-
-
-def _included(table: Table, inc: str, available: Mapping[str, Table]) -> Table:
-    target = available.get(inc)
-    if target is None:
-        raise TableError(f"table {table.id!r} includes unknown table {inc!r}")
-    return target
-
-
-def _layers(
-    table: Table, available: Mapping[str, Table], visiting: tuple[str, ...]
-) -> dict[str, tuple[Entry, str]]:
-    """Every entry resolved ``table`` holds, with the table it is own to."""
-    if table.id in visiting:
-        cycle = " → ".join((*visiting[visiting.index(table.id) :], table.id))
-        raise TableError(f"tables include each other: {cycle}")
-    below: dict[str, tuple[Entry, str]] = {
-        bits: (e, table.id) for bits, e in table.charset_entries.items()
-    }
-    for inc in table.includes:
-        target = _included(table, inc, available)
-        below.update(_layers(target, available, (*visiting, table.id)))
-    return _lay_own(table, below)
-
-
-def _lay_own(
-    table: Table, below: dict[str, tuple[Entry, str]]
-) -> dict[str, tuple[Entry, str]]:
-    """``table``'s own entries over ``below``: an entry with empty text over a
-    key ``below`` gives removes that key, as it does a charset's code."""
-    merged = dict(below)
-    for e in table.own_entries():
-        if e.kind is TokenKind.TEXT and e.text == "" and e.bits in below:
-            del merged[e.bits]
-        else:
-            merged[e.bits] = (e, table.id)
-    return merged
-
-
-def resolve(table: Table, available: Mapping[str, Table]) -> Table:
-    """``table`` with everything it includes laid under its own entries.
-
-    A table that includes nothing is itself. Otherwise the answer is a table of
-    its own, remembered on ``table`` until it or anything it includes changes.
-    Raises :class:`~mapchar.core.errors.TableError` as :func:`inherited` does.
-    """
-    if not table.includes:
-        return table
-    key = _resolve_key(table, available, ())
-    hit = table._cache.get("resolved")
-    if hit is not None and hit[0] == key:
-        return hit[1]
-    merged = _layers(table, available, ())
-    out = Table(table.id, table.charset)
-    out.comment = table.comment
-    out.charset_applied = table.charset_applied
-    out.charset_entries = dict(table.charset_entries)
-    out.includes = table.includes
-    seen: dict[str, tuple[str, str]] = {}
-    for bits, (entry, origin) in merged.items():
-        label = entry.label
-        if label is None:
-            continue
-        other = seen.get(label)
-        if other is not None:
-            where = sorted({origin, other[1]})
-            raise TableError(
-                f"duplicate label [{label}] in table {table.id!r}"
-                + (f" (from {' and '.join(where)})" if where != [table.id] else "")
-            )
-        seen[label] = (bits, origin)
-    for entry, _ in merged.values():
-        out.add(entry, replace=True)
-    for inc in table.includes:
-        for text, bits in resolve(available[inc], available).aliases.items():
-            if bits in out.entries:
-                out.aliases[text] = bits
-    for text, bits in table.aliases.items():
-        if bits in out.entries:
-            out.aliases[text] = bits
-    table._cache["resolved"] = (key, out)
-    return out
-
-
-def _resolve_key(
-    table: Table, available: Mapping[str, Table], visiting: tuple[str, ...]
-) -> tuple:
-    """What a resolution of ``table`` depends on: every table it reaches by
-    ``@include``, as the object and the revision it was at."""
-    if table.id in visiting:
-        cycle = " → ".join((*visiting[visiting.index(table.id) :], table.id))
-        raise TableError(f"tables include each other: {cycle}")
-    parts: list = [id(table), table.revision]
-    for inc in table.includes:
-        target = _included(table, inc, available)
-        parts.append(_resolve_key(target, available, (*visiting, table.id)))
-    return tuple(parts)
-
-
 @dataclass
 class TableSet:
     """The start table plus every table reachable from it by switches, each
-    resolved over what it includes (:func:`resolve`)."""
+    resolved over what it includes
+    (:func:`~mapchar.core.table_layers.resolve`)."""
 
     start: Table
     tables: dict[str, Table] = field(default_factory=dict)
@@ -614,6 +507,9 @@ class TableSet:
     def build(cls, start: Table, available: Mapping[str, Table]) -> TableSet:
         """Close over switch targets, failing on one that is not ``available``
         and on an include that does not resolve."""
+        # Here rather than at the top: the layering is written over this module.
+        from mapchar.core.table_layers import resolve
+
         start = resolve(start, available)
         tables = {start.id: start}
         pending = [start]

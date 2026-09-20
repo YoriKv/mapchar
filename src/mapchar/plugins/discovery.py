@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from mapchar.core.table import Table
-from mapchar.plugins.base import REQUIRED_METHODS, Stage
+from mapchar.plugins.base import Stage
 from mapchar.plugins.builtins.mappings import Banked
 from mapchar.plugins.registry import Registry, RegistryError
 from mapchar.plugins.trust import TrustStore, digest_of, is_approved
@@ -62,8 +62,10 @@ class DiscoveryResult:
 class ScopedRegistry:
     """What a code plugin's ``register(registry)`` receives.
 
-    Checks the stage against the folder and the required methods, relabels
-    the category, and records an issue instead of raising.
+    Checks the stage against the folder — which the registry cannot, knowing
+    nothing about folders — relabels the category, and records an issue instead
+    of raising. Everything else a plugin can get wrong,
+    :meth:`Registry.register` already refuses in the same terms.
     """
 
     def __init__(
@@ -85,18 +87,12 @@ class ScopedRegistry:
                 )
             )
             return
-        for method in REQUIRED_METHODS[self._stage]:
-            if not callable(getattr(plugin, method, None)):
-                self._issues.append(
-                    PluginLoadIssue(self._path, f"{info.id} lacks {method}()")
-                )
-                return
         from dataclasses import replace
 
         try:
-            # The heading is presentation, so a plugin that refuses the write
-            # (``__slots__``, a read-only descriptor, a property) is registered
-            # as it is rather than dropped — the plugin is the point.
+            # Nothing reads the category back yet, so a plugin that refuses the
+            # write (``__slots__``, a read-only descriptor, a property) is
+            # registered as it is rather than dropped — the plugin is the point.
             plugin.info = replace(info, category=self._category)
         except (AttributeError, TypeError):
             pass

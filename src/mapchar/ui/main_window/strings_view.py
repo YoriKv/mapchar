@@ -8,16 +8,17 @@ from collections import Counter
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMenu
 
-from mapchar.core.block import BlockConfig, Status, WriteMode, block_bound
+from mapchar.core.block import BlockConfig, Status, block_bound
 from mapchar.core.document import Document
 from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
 from mapchar.engines.layout import char_layout
 from mapchar.engines.layout import layout as layout_glyphs
 from mapchar.pipeline.extract import extract, respell_fixed_end
-from mapchar.pipeline.insert import room_for, string_ends
-from mapchar.project.workspace import Entry, EntryKind
-from mapchar.ui.strings_view import FLAGGED, CodeInfo, RowData
+from mapchar.pipeline.insert import room_for, room_note, string_ends
+from mapchar.project.workspace import Entry
+from mapchar.ui.code_editor import CodeInfo
+from mapchar.ui.strings_view import FLAGGED, OVERFLOWS, RowData
 from mapchar.ui.undo_commands import StringFieldCommand
 
 _CODE_IN_TEXT = re.compile(r"(?<!\\)\[([^\]\s]+)")
@@ -27,30 +28,6 @@ _CODE_IN_TEXT = re.compile(r"(?<!\\)\[([^\]\s]+)")
 def _same_key(text: str) -> str:
     """What two originals are the same by: their text, line breaks aside."""
     return text.replace("\n", "")
-
-
-def _room_note(used: int, room: int, cfg: BlockConfig | None) -> str:
-    """What the Bytes cell's room is made of, for its tooltip.
-
-    Two numbers do not say where the second comes from, and where it comes
-    from is what tells a translator whether the room is theirs: a slotted
-    string's is its own and a packed block's spare is every string's, so the
-    first string to take it takes it from all the rest.
-    """
-    if cfg is None:
-        return ""
-    if cfg.fixed_length is not None:
-        return f"{used} byte(s) now, of the block's fixed length of {room}"
-    if cfg.effective_write_mode is WriteMode.PACKED:
-        return (
-            f"{used} byte(s) now, of {room}: its own bytes and the "
-            f"{room - used} byte(s) the block has spare, which every string "
-            f"of the block shares — whichever takes them leaves the rest none"
-        )
-    return (
-        f"{used} byte(s) now, of {room}: its own bytes and the fill after "
-        f"them, which it keeps whether it uses them or not"
-    )
 
 
 class StringsViewMixin:
@@ -205,7 +182,7 @@ class StringsViewMixin:
         The edit lands by splicing exactly those bytes in, and the block is then
         read again to say what they now mean — the same bytes through the same
         tables, which is the reading already in hand
-        (:meth:`~mapchar.ui.main_window.string_edit.StringEditMixin._reads_back`).
+        (:func:`~mapchar.pipeline.insert.reads_back`).
         """
         self._checked_extraction = (data, self._reading_key(cfg, tables), extraction)
 
@@ -253,84 +230,6 @@ class StringsViewMixin:
         )
         self._note_load_problem(message + ":\n  " + "\n  ".join(problems))
         self.statusBar().showMessage(message, 8000)
-
-    def _edit_strings_now(
-        self, entry: Entry, doc: Document, texts: dict[int, str]
-    ) -> list[str]:
-        """The edits of :meth:`_edit_strings` landed with no undo step, whole
-        where they all go in and one at a time where they do not, so that one
-        refused leaves the rest in.
-
-        Refused on the same terms as the checked path
-        (:meth:`~mapchar.ui.main_window.string_edit.StringEditMixin._reads_back`):
-        a text that does not fit, that re-cuts the block, or that would not read
-        back as itself does not land — the bytes are the translation, so they
-        must say what the translator said, and a project's word for it is not
-        enough.
-        """
-        cfg = entry.config
-        tables = self._table_set_of(entry)
-        if cfg is None or tables is None:
-            return ["table not loaded"]
-        _, problems = self._edit_each(
-            entry,
-            texts,
-            "",
-            land=lambda _e, edits, _text: self._land_strings_now(
-                entry, doc, edits, cfg, tables
-            ),
-        )
-        return problems
-
-    def _land_strings_now(
-        self,
-        entry: Entry,
-        doc: Document,
-        edits: dict[int, str],
-        cfg: BlockConfig,
-        tables: TableSet,
-    ) -> list[str]:
-        """One batch of :meth:`_edit_strings_now`: the layout, the read-back
-        check, and the splice onto every document that holds the same bytes."""
-        from mapchar.pipeline.insert import apply_splices, layout_block
-
-        recs = {i: r for i in edits if (r := doc.string_by_index(i)) is not None}
-        if not recs:
-            return []
-        edits = {i: edits[i] for i in recs}
-        bound = self._bound_of(entry)
-        try:
-            for i, rec in recs.items():
-                rec.replacement = edits[i]
-            result = layout_block(
-                doc.data, cfg, tables, doc.strings, self.registry, entry.room
-            )
-        finally:
-            for rec in recs.values():
-                rec.replacement = None
-        if result.problems:
-            return [f"#{p.index}: {p.message}" for p in result.problems]
-        new_data = apply_splices(doc.data, result.splices)
-        span = (
-            min(s.offset for s in result.splices),
-            max(s.end for s in result.splices),
-        )
-        back = self._reads_back(cfg, tables, doc, new_data, edits, span)
-        if back.block is not None:
-            return [f"#{min(edits)}: {back.block}"]
-        if back.string is not None:
-            return [back.string]
-        shared = self.workspace.entries_sharing(entry)
-        for holder in shared:
-            holder.doc.data = new_data
-            holder.doc.extraction_key = None
-        self._stamp_shared_bytes(entry, self.workspace.next_revision(), shared)
-        # Read again so the next edit lays out over the strings as they now
-        # sit, and the records keep their state by index.
-        self._remember_extraction(new_data, cfg, tables, back.extraction)
-        self._extract_current(entry, doc, tables)
-        self._remember_room(entry, bound)
-        return []
 
     def _fill_strings(self, doc: Document) -> None:
         if self._rows_patched:
@@ -481,7 +380,7 @@ class StringsViewMixin:
         room = room_for(rec, cfg, bound, ends)
         status = rec.status.value
         if self._entry is not None and self._overflow_status(rec, self._entry):
-            status = "overflows box"
+            status = OVERFLOWS
         return RowData(
             rec.index,
             rec.start,
@@ -493,7 +392,7 @@ class StringsViewMixin:
             rec.notes,
             " ".join(f"{p.address:X}" for p in rec.pointers),
             (same[_same_key(rec.original)] - 1) if same is not None else 0,
-            _room_note(used, room, cfg),
+            room_note(used, room, cfg),
         )
 
     def _refresh_string_row(self, entry, index: int) -> None:
@@ -559,15 +458,7 @@ class StringsViewMixin:
         key = _same_key(rec.original)
         blocks = [entry]
         if project:
-            with self.files_panel.labels_held():
-                for other in self.workspace.of_kind(EntryKind.BLOCK):
-                    if other is entry or other.config is None:
-                        continue
-                    doc = self._load_document(other)
-                    if doc is None:
-                        continue
-                    self._extract_current(other, doc, self._table_set_of(other))
-                    blocks.append(other)
+            blocks += [b for b, _ in self._readable_blocks(besides=entry)]
         found: dict[Entry, list[int]] = {}
         for block in blocks:
             if block.doc is None:
@@ -590,26 +481,20 @@ class StringsViewMixin:
             return
         text = rec.current_text()
         found = self._identical_originals(rec, entry, project)
-        n, problems = 0, []
-        with self._macro("Apply to identical originals"):
+
+        def planned():
             for block, indices in found.items():
-                if block is not entry:
-                    self._activate_entry(block)
-                edits = {
-                    i: text
-                    for i in indices
-                    if (r := self._string(block, i)) is not None
-                    and r.current_text() != text
-                }
-                if not edits:
-                    continue
-                landed, failed = self._edit_each(
-                    block, edits, "Apply to identical originals"
+                yield (
+                    block,
+                    {
+                        i: text
+                        for i in indices
+                        if (r := self._string(block, i)) is not None
+                        and r.current_text() != text
+                    },
                 )
-                n += landed
-                problems += [f"{block.name} {p}" for p in failed]
-            if self._entry is not entry:
-                self._activate_entry(entry)
+
+        n, problems = self._edit_blocks(planned(), "Apply to identical originals")
         self.strings.select_index(index)
         self.statusBar().showMessage(f"Applied to {n} string(s)", 4000)
         if problems:
@@ -662,41 +547,6 @@ class StringsViewMixin:
         """Whether the current block's string at ``index`` is still untouched."""
         rec = self._string(self._entry, index)
         return rec is not None and rec.status is Status.UNTOUCHED
-
-    def _progress_text(self, doc: Document) -> str:
-        """How far the block and the project are: strings whose bytes no longer
-        say the original, over all of them."""
-
-        def counts(statuses) -> tuple[int, int, int]:
-            statuses = list(statuses)
-            touched = sum(s is not Status.UNTOUCHED for s in statuses)
-            done = sum(s is Status.DONE for s in statuses)
-            return touched, done, len(statuses)
-
-        touched, done, total = counts(rec.status for rec in doc.strings)
-        all_touched, all_done, all_total = 0, 0, 0
-        for e in self.workspace.of_kind(EntryKind.BLOCK):
-            if e.doc is not None:
-                a, d, t = counts(rec.status for rec in e.doc.strings)
-            elif e.pending_strings:
-                a, d, t = counts(st.status for st in e.pending_strings.values())
-            else:
-                continue
-            all_touched += a
-            all_done += d
-            all_total += t
-
-        def pct(d: int, t: int) -> str:
-            return f"{d} / {t} ({100 * d // t}%)" if t else "0 / 0"
-
-        text = f"translated {pct(touched, total)}"
-        if done:
-            text += f", done {done}"
-        if all_total != total:
-            text += f" · project {pct(all_touched, all_total)}"
-            if all_done:
-                text += f", done {all_done}"
-        return text
 
     def _on_string_row(self, index: int) -> None:
         rec = self._string(self._entry, index)

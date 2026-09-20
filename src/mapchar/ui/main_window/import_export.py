@@ -232,15 +232,9 @@ class ImportExportMixin:
         self._report("Cartographer Export", f"Exported {path}", notes)
 
     def _block_strings_by_name(self, file_entry: Entry | None) -> dict[str, list]:
-        out: dict[str, list] = {}
-        with self.files_panel.labels_held():
-            for e in self.workspace.of_kind(EntryKind.BLOCK):
-                if file_entry and e.parent is not file_entry:
-                    continue
-                strings = self._block_strings(e)
-                if strings is not None:
-                    out[e.name] = strings
-        return out
+        return {
+            e.name: doc.strings for e, doc in self._readable_blocks(of_file=file_entry)
+        }
 
     def _import(self, kind: str) -> None:
         filters = {
@@ -289,32 +283,28 @@ class ImportExportMixin:
         hold the rest of the file back. Whatever is refused is listed in
         ``notices`` and left as it was; how many landed comes back.
         """
-        landed = 0
-        with self._macro(label):
+
+        def planned():
             for name, by_index in texts.items():
-                entry = next(
-                    (
-                        e
-                        for e in self.workspace.entries
-                        if e.kind is EntryKind.BLOCK and e.name == name
-                    ),
-                    None,
-                )
+                entry = self.workspace.block_named(name)
                 if entry is None or entry.doc is None:
                     continue
-                edits = {
-                    i: t
-                    for i, t in by_index.items()
-                    if (rec := entry.doc.string_by_index(i)) is not None
-                    and not same_text(rec.current_text(), t)
-                }
-                if not edits:
-                    continue
-                if entry is not self._entry:
-                    self._activate_entry(entry)
-                went_in, problems = self._edit_each(entry, edits, label)
-                landed += went_in
-                notices += [f"{name}/{p}" for p in problems]
+                yield (
+                    entry,
+                    {
+                        i: t
+                        for i, t in by_index.items()
+                        if (rec := entry.doc.string_by_index(i)) is not None
+                        and not same_text(rec.current_text(), t)
+                    },
+                )
+
+        # The block that was current is put back by the caller, around all of
+        # the import rather than around the texts alone.
+        landed, problems = self._edit_blocks(
+            planned(), label, restore=False, separator="/"
+        )
+        notices += problems
         return landed
 
     def import_file(
@@ -382,14 +372,7 @@ class ImportExportMixin:
             notices = read_notices + notices
             applied = self._land_texts(report.texts, label, notices)
             for name, strs in blocks.items():
-                entry = next(
-                    (
-                        e
-                        for e in self.workspace.entries
-                        if e.kind is EntryKind.BLOCK and e.name == name
-                    ),
-                    None,
-                )
+                entry = self.workspace.block_named(name)
                 if entry is None:
                     continue
                 for rec in strs:

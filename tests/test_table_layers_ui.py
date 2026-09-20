@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QInputDialog
 from mapchar.core.block import RangeSource
 from mapchar.core.font import Effect, TextBox
 from mapchar.project.formats.table_native import HEADER
-from mapchar.ui.table_editor import DETAILS, KEY, ORIGIN_ROLE, TEXT
+from mapchar.ui.table_grid import DETAILS, KEY, ORIGIN_ROLE, TEXT
 from window_helpers import (
     add_block,
     grid_cell,

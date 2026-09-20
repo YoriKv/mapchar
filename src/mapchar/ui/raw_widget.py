@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QColor,
@@ -20,6 +17,9 @@ from PySide6.QtWidgets import QAbstractScrollArea, QToolTip, QWidget
 from mapchar.core.table import TokenKind
 from mapchar.core.tokens import Token
 from mapchar.ui import BYTES_PER_ROW, marks, theme
+from mapchar.ui.cell_text import CellText
+from mapchar.ui.number_fields import AddressSpelling, address_column
+from mapchar.ui.raw_cells import HEX_CELL, HEX_GROUP, CellGeometry, RowModel
 from mapchar.ui.token_text import (
     POINTER_TOKENS,
     display_text,
@@ -27,44 +27,6 @@ from mapchar.ui.token_text import (
     token_bytes,
 )
 from mapchar.ui.widgets import mono_font, wheel_steps
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
-
-HEX_CELL = 3
-"""Character widths a byte owns in the hex column: its pair and a space."""
-TEXT_CELL = 2.5
-"""Character widths a byte owns in the text column: a full-width glyph, with
-room for two of them squeezed, or a short code name."""
-HEX_GROUP = 4
-"""Bytes between the small gaps that make a hex row countable."""
-MIN_SQUEEZE = 0.7
-"""How far text wider than its cells is condensed before it is cut short, and
-how far one character with nothing left to drop goes before the notch says so."""
-
-
-@dataclass
-class RowModel:
-    """What the widget paints: a byte window and the tokens over it."""
-
-    offset: int
-    """Byte offset of the first row."""
-    data: bytes
-    """The bytes of the window."""
-    tokens: list[Token]
-    """Tokens with bit positions relative to ``offset * 8``."""
-    string_starts: set[int]
-    """Byte offsets (relative) where the current block starts a string."""
-    total: int
-    """Total bytes in the buffer, for the scrollbar."""
-    pointer_bytes: set[int] = field(default_factory=set)
-    """Relative byte offsets that hold the current block's pointers."""
-    bounds: tuple[int, int] | None = None
-    """The absolute byte range the view is confined to, which is what the
-    scrollbar spans; the whole buffer when ``None``."""
-    tips: dict[int, str] = field(default_factory=dict)
-    """A token's hover text in place of its own, by its first bit: what a
-    pointer holds and reaches."""
 
 
 class RawWidget(QAbstractScrollArea):
@@ -77,7 +39,11 @@ class RawWidget(QAbstractScrollArea):
     """The view has room for a different number of rows than it had: whoever
     feeds it a model may want to hand it a window of the new size."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self,
+        spelling: AddressSpelling | None = None,
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
         self._model: RowModel | None = None
         self._rows_shown = 0
@@ -85,20 +51,15 @@ class RawWidget(QAbstractScrollArea):
         self._label_font = QFont(self._font)
         self._label_font.setPointSize(8)
         self._metrics_key: tuple[str, float] | None = None
-        self._metrics = QFontMetrics(self._font, self.viewport())
-        self._char_width = 1
+        self._text = CellText(self._font, self._label_font)
+        """Drawing a token's text into its cells (:mod:`mapchar.ui.cell_text`)."""
         self._pair_width = 2.0
-        self._hex_x = self._text_x = self._text_w = 0
-        self._lefts: list[int] = []
-        """The x of each hex cell in a row."""
+        self._geom = CellGeometry(QFontMetrics(self._font, self.viewport()), 2.0, 6)
+        """Where every cell of a row sits (:mod:`mapchar.ui.raw_cells`), rebuilt
+        whenever the face or the address column's width moves; the
+        :meth:`_sync_metrics` at the end of this replaces the pair built here."""
         self._pairs: list[QStaticText] = []
         """Every byte's hex pair, laid out once for the face."""
-        self._measured: dict[tuple[bool, str], tuple[float, float]] = {}
-        """What a text's advance and ink measure in the face, by whether it is
-        a label — measured once, since a paint measures every token shown."""
-        self._laid: dict[tuple[bool, str], QStaticText] = {}
-        """Each text drawn whole, laid out once in its face."""
-        self._row_height = 1
         self._display: list[tuple[str, bool]] = []
         self._tints: list[QColor | None] = []
         """Each token's text and tint, worked out as the model is set rather
@@ -111,11 +72,13 @@ class RawWidget(QAbstractScrollArea):
         the selection is whole bytes."""
         self._anchor: int | None = None
         self._anchor_bits: tuple[int, int] | None = None
-        self._address_digits = 6
-        self._addr_of: Callable[[int], str] | None = None
-        self._addr_width = 0
-        """How the address column spells an offset and how wide it is; ``None``
-        spells flat hex as wide as the buffer needs."""
+        self._spelling = spelling
+        """The window's address format, so the column reads as every other
+        address it shows; ``None`` spells flat hex."""
+        self._total = 0
+        """Bytes in the buffer the model windows, which size the column."""
+        self._addr_of, self._addr_width = address_column(spelling, -1)
+        """How the address column spells an offset, and how wide it is."""
         self._base = 0
         """The byte the scrollbar's first row starts at: the bounds' start."""
         self._token_of: list[Token | None] = []
@@ -126,6 +89,10 @@ class RawWidget(QAbstractScrollArea):
         self.horizontalScrollBar().valueChanged.connect(
             lambda _: self.viewport().update()
         )
+        if spelling is not None:
+            # The address format changed under the column: it has to be spelled
+            # and sized again, and nothing else asks it to.
+            spelling.changed.connect(self._on_spelling_changed)
         self._syncing = False
         self._wheel_rest_x = self._wheel_rest_y = 0
         """What a wheel turned short of a notch, kept for the next turn."""
@@ -147,67 +114,44 @@ class RawWidget(QAbstractScrollArea):
         if key == self._metrics_key:
             return
         self._metrics_key = key
-        self._metrics = QFontMetrics(self._font, self.viewport())
-        self._row_height = self._metrics.height() + 4
-        self._char_width = self._metrics.horizontalAdvance("0")
         self._pair_width = QFontMetricsF(self._font, self.viewport()).horizontalAdvance(
             "00"
         )
-        self._measured.clear()
-        self._laid.clear()
-        self._pairs = [self._lay_out(f"{byte:02X}", False) for byte in range(256)]
+        self._text.clear()
+        self._pairs = [self._text.lay_out(f"{byte:02X}", False) for byte in range(256)]
         self._place_columns()
 
-    def _lay_out(self, text: str, label: bool) -> QStaticText:
-        """``text`` laid out in its face, ready to be placed."""
-        laid = QStaticText(text)
-        laid.setTextFormat(Qt.TextFormat.PlainText)
-        laid.prepare(font=self._label_font if label else self._font)
-        return laid
-
     def _place_columns(self) -> None:
-        """Lay the columns out from the face and the address width."""
-        cw = self._char_width
-        self._hex_x = (self._address_chars + 2) * cw
-        width, gap = HEX_CELL * cw, self._group_gap
-        self._lefts = [
-            self._hex_x + c * width + c // HEX_GROUP * gap for c in range(BYTES_PER_ROW)
-        ]
-        hex_w = BYTES_PER_ROW * width + (BYTES_PER_ROW - 1) // HEX_GROUP * gap
-        self._text_x = self._hex_x + hex_w + 2 * cw
-        self._text_w = BYTES_PER_ROW * self._text_width
+        """Lay the row's cells out again, for the face as it now measures."""
+        self._geom = CellGeometry(
+            QFontMetrics(self._font, self.viewport()),
+            self._pair_width,
+            self._addr_width,
+        )
 
-    @property
-    def _address_chars(self) -> int:
-        """How many characters the address column holds."""
-        if self._addr_of is None:
-            return self._address_digits
-        return self._addr_width
+    def _sync_address_column(self) -> bool:
+        """Read how the column spells an offset and how wide it is again;
+        ``True`` when its width moved, so the columns have to be placed anew."""
+        was = self._addr_width
+        self._addr_of, self._addr_width = address_column(
+            self._spelling, self._total - 1
+        )
+        return self._addr_width != was
 
-    def set_address_format(
-        self, addr_of: Callable[[int], str] | None, width: int = 0
-    ) -> None:
-        """Spell the address column with ``addr_of``, in a column ``width``
-        characters wide — the window's one ``AddressSpelling``, so the column
-        reads as every other address the window shows. ``None`` goes back to
-        flat hex, as wide as the buffer needs."""
-        self._addr_of, self._addr_width = addr_of, width
+    def _on_spelling_changed(self, _old=None) -> None:
+        """The window's address format changed under the column."""
+        self._sync_address_column()
         self._place_columns()
         self._sync_horizontal()
         self.viewport().update()
 
-    def _address_text(self, offset: int) -> str:
-        if self._addr_of is None:
-            return f"{offset:0{self._address_digits}X}"
-        return self._addr_of(offset)
-
     @property
     def row_height(self) -> int:
-        return self._row_height
+        return self._geom.row_height
 
     @property
     def char_width(self) -> int:
-        return self._char_width
+        return self._geom.char_width
 
     @property
     def visible_rows(self) -> int:
@@ -216,22 +160,9 @@ class RawWidget(QAbstractScrollArea):
     def visible_bytes(self) -> int:
         return self.visible_rows * BYTES_PER_ROW
 
-    @property
-    def _group_gap(self) -> int:
-        return max(3, self.char_width // 2)
-
-    @property
-    def _text_width(self) -> int:
-        return int(TEXT_CELL * self.char_width)
-
-    def _columns(self) -> tuple[int, int, int]:
-        """x of the hex column, x of the text column, text column width."""
-        return self._hex_x, self._text_x, self._text_w
-
     def content_width(self) -> int:
         """How wide the rows are drawn: address, hex, text and a margin."""
-        _, text_x, text_w = self._columns()
-        return text_x + text_w + self.char_width
+        return self._geom.content_width()
 
     def _sync_horizontal(self) -> None:
         bar = self.horizontalScrollBar()
@@ -244,34 +175,6 @@ class RawWidget(QAbstractScrollArea):
         """A viewport point in row coordinates, past any sideways scroll."""
         return QPoint(pos.x() + self.horizontalScrollBar().value(), pos.y())
 
-    def _hex_cell(self, rel: int, span: int = 1) -> QRect:
-        """The hex cells of ``span`` bytes from ``rel``, gaps between included.
-
-        A byte owns a fixed cell, and whatever is drawn for it — tint, hex
-        pair — is placed in that rect rather than advanced to by the font,
-        whose true character width is fractional.
-        """
-        row, col = divmod(rel, BYTES_PER_ROW)
-        width = HEX_CELL * self._char_width
-        left = self._lefts[col]
-        return QRect(
-            left,
-            row * self.row_height,
-            self._lefts[col + span - 1] + width - left,
-            self.row_height,
-        )
-
-    def _text_cell(self, rel: int, span: int = 1) -> QRect:
-        """The text cells of ``span`` bytes from ``rel``."""
-        row, col = divmod(rel, BYTES_PER_ROW)
-        width = self._text_width
-        return QRect(
-            self._columns()[1] + col * width,
-            row * self.row_height,
-            span * width,
-            self.row_height,
-        )
-
     def _text_segments(self, token: Token, limit: int) -> list[QRectF]:
         """Where a token sits in the text column, one rect per row it touches.
 
@@ -283,58 +186,7 @@ class RawWidget(QAbstractScrollArea):
         """
         start = max(token.bit_start, 0)
         end = token.bit_end if token.bit_end > start else start + 8
-        return self._text_span(start, min(end, limit * 8))
-
-    def _row_spans(self, start: int, end: int) -> Iterator[tuple[int, int, int]]:
-        """A relative bit range as ``(row, first, stop)`` pieces, one per row,
-        with ``first`` and ``stop`` counted from the row's first bit."""
-        row_bits = BYTES_PER_ROW * 8
-        while start < end:
-            row = start // row_bits
-            stop = min(end, (row + 1) * row_bits)
-            yield row, start - row * row_bits, stop - row * row_bits
-            start = stop
-
-    def _text_span(self, start: int, end: int) -> list[QRectF]:
-        """The text column over a relative bit range, one rect per row."""
-        text_x, width = self._columns()[1], self._text_width
-        return [
-            QRectF(
-                text_x + first / 8 * width,
-                row * self.row_height,
-                (stop - first) / 8 * width,
-                self.row_height,
-            )
-            for row, first, stop in self._row_spans(start, end)
-        ]
-
-    def _hex_span(self, start: int, end: int) -> list[QRectF]:
-        """The hex column over a relative bit range, one rect per row.
-
-        An edge on a byte boundary is its cell's own edge, so whole bytes read
-        as the byte selection does. An edge inside a byte falls inside the pair
-        at the bit it splits: each digit is a nibble, so a code over the last
-        two bits of one byte and the first four of the next covers half a digit
-        and then a whole one.
-        """
-        pair = self._pair_width
-
-        def edge(bit: int, closing: bool) -> float:
-            byte, inner = divmod(bit, 8)
-            if inner == 0:
-                cell = self._hex_cell(byte - 1 if closing else byte)
-                return cell.left() + (cell.width() if closing else 0)
-            cell = self._hex_cell(byte)
-            return cell.left() + (cell.width() - pair) / 2 + inner / 8 * pair
-
-        spans = []
-        for row, first, stop in self._row_spans(start, end):
-            bit = row * BYTES_PER_ROW * 8
-            left, right = edge(bit + first, False), edge(bit + stop, True)
-            spans.append(
-                QRectF(left, row * self.row_height, right - left, self.row_height)
-            )
-        return spans
+        return self._geom.text_span(start, min(end, limit * 8))
 
     # --- model ---------------------------------------------------------
 
@@ -351,9 +203,8 @@ class RawWidget(QAbstractScrollArea):
                         self._token_of[rel] = token
             self._display = [display_text(t) for t in model.tokens]
             self._tints = [self._tint(t) for t in model.tokens]
-            digits = max(4, len(f"{max(model.total - 1, 0):X}"))
-            if digits != self._address_digits:
-                self._address_digits = digits
+            self._total = model.total
+            if self._sync_address_column():
                 self._place_columns()
             # The bar's rows are counted from the bounds' start, so a view
             # confined to one string scrolls over that string and no further.
@@ -432,7 +283,7 @@ class RawWidget(QAbstractScrollArea):
         model = self._model
         if model is None:
             return
-        hex_x, text_x, text_w = self._columns()
+        hex_x, text_x, text_w = self._geom.columns()
         cw, rh = self.char_width, self.row_height
         rows = min(self.visible_rows + 1, -(-len(model.data) // BYTES_PER_ROW))
         shown = rows * BYTES_PER_ROW
@@ -459,8 +310,10 @@ class RawWidget(QAbstractScrollArea):
             lo, hi = max(s - model.offset, 0), min(e - model.offset, limit)
             for first, last in row_runs(range(lo, hi)):
                 span = last - first + 1
-                painter.fillRect(self._hex_cell(first, span), theme.TINT_STRUCTURE)
-                painter.fillRect(self._text_cell(first, span), theme.TINT_STRUCTURE)
+                painter.fillRect(self._geom.hex_cell(first, span), theme.TINT_STRUCTURE)
+                painter.fillRect(
+                    self._geom.text_cell(first, span), theme.TINT_STRUCTURE
+                )
 
         # Token tints: one chip per token per row, so where one ends reads.
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -472,7 +325,7 @@ class RawWidget(QAbstractScrollArea):
                 continue
             covered = [r for r in token_bytes(token) if r < limit]
             for first, last in row_runs(covered):
-                marks.chip(painter, self._hex_cell(first, last - first + 1), color)
+                marks.chip(painter, self._geom.hex_cell(first, last - first + 1), color)
             # Unmatched data is chipped in the hex column only: its dot already
             # says it in the text column, and chips there are noise.
             # A token that shows nothing — a table switch, a return — is a
@@ -486,7 +339,9 @@ class RawWidget(QAbstractScrollArea):
         pointers = [r for r in model.pointer_bytes if 0 <= r < len(model.data)]
         for first, last in row_runs(r for r in pointers if r < shown):
             marks.chip(
-                painter, self._hex_cell(first, last - first + 1), theme.TINT_POINTER
+                painter,
+                self._geom.hex_cell(first, last - first + 1),
+                theme.TINT_POINTER,
             )
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
@@ -496,20 +351,22 @@ class RawWidget(QAbstractScrollArea):
             base = model.offset * 8
             lo = max(self._bits[0] - base, 0)
             hi = min(self._bits[1] - base, limit * 8)
-            for rect in self._hex_span(lo, hi) + self._text_span(lo, hi):
+            for rect in self._geom.hex_span(lo, hi) + self._geom.text_span(lo, hi):
                 painter.fillRect(rect, theme.TINT_SELECTION)
         elif self._sel is not None:
             s, e = self._sel
             lo, hi = max(s - model.offset, 0), min(e - model.offset, len(model.data))
             for first, last in row_runs(range(lo, min(hi, shown))):
                 span = last - first + 1
-                painter.fillRect(self._hex_cell(first, span), theme.TINT_SELECTION)
-                painter.fillRect(self._text_cell(first, span), theme.TINT_SELECTION)
+                painter.fillRect(self._geom.hex_cell(first, span), theme.TINT_SELECTION)
+                painter.fillRect(
+                    self._geom.text_cell(first, span), theme.TINT_SELECTION
+                )
 
         # String boundary rules, in both columns.
         for rel in model.string_starts:
             if 0 <= rel < min(shown, len(model.data)):
-                for cell in (self._hex_cell(rel), self._text_cell(rel)):
+                for cell in (self._geom.hex_cell(rel), self._geom.text_cell(rel)):
                     marks.rule(painter, cell)
 
         # Addresses and hex, each pair centred in its own cell: the pairs are
@@ -522,15 +379,15 @@ class RawWidget(QAbstractScrollArea):
             start = row * BYTES_PER_ROW
             painter.setPen(QPen(dim))
             painter.drawText(
-                QRect(cw, row * rh, self._address_chars * cw + cw, rh),
+                QRect(cw, row * rh, self._addr_width * cw + cw, rh),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                self._address_text(model.offset + start),
+                self._addr_of(model.offset + start),
             )
             painter.setPen(QPen(ink))
             top = row * rh + dy
             for col, byte in enumerate(model.data[start : start + BYTES_PER_ROW]):
                 painter.drawStaticText(
-                    QPointF(self._lefts[col] + dx, top), self._pairs[byte]
+                    QPointF(self._geom.lefts[col] + dx, top), self._pairs[byte]
                 )
 
         # Decoded text, each token inside the cells of its own first row.
@@ -549,96 +406,12 @@ class RawWidget(QAbstractScrollArea):
             else:
                 painter.setFont(self._font)
                 painter.setPen(QPen(dim if token.entry is None else ink))
-            if self._fit(painter, cell, text, is_label):
+            if self._text.fit(painter, cell, text, is_label):
                 cut_marks.append(cell)
 
         # A corner notch on every token shown cut short; the tooltip has it all.
         for cell in cut_marks:
             marks.notch(painter, cell, dim)
-
-    def _measure(
-        self, painter: QPainter, text: str, label: bool
-    ) -> tuple[float, float]:
-        """``text``'s advance and its ink's width in the painter's face."""
-        key = (label, text)
-        measured = self._measured.get(key)
-        if measured is None:
-            metrics = painter.fontMetrics()
-            advance = metrics.horizontalAdvance(text)
-            measured = (advance, max(advance, metrics.boundingRect(text).width()))
-            self._measured[key] = measured
-        return measured
-
-    def _fit(
-        self, painter: QPainter, cell: QRectF, text: str, label: bool = False
-    ) -> bool:
-        """Draw ``text`` centred in ``cell``, never past it; ``True`` if cut short.
-
-        Text wider than the cell — a dictionary word on one byte, a long code
-        name — is condensed down to :data:`MIN_SQUEEZE`, and past that only as
-        many characters as fit are drawn, so it never covers the token beside
-        it. One character that is wider than its cell even condensed that far
-        is condensed the rest of the way instead: a glyph narrower than it
-        should be still reads, and one sliced down the middle by the cell's
-        edge does not.
-
-        What is measured is what will be drawn: the painter's own metrics, which
-        answer for the face and the surface actually drawing, and the ink rather
-        than the advance, since a glyph's bearings can carry it past the width
-        the advance claims. Measured anywhere else, or by the advance alone,
-        text is called narrow enough to fit and then drawn wider than its cell.
-        """
-        room = cell.width() - 2
-        advance, drawn = self._measure(painter, text, label)
-        if drawn <= room:
-            # Whole, it is drawn from its layout, centred as drawText would.
-            laid = self._laid.get((label, text))
-            if laid is None:
-                laid = self._laid[(label, text)] = self._lay_out(text, label)
-            size = laid.size()
-            painter.drawStaticText(
-                QPointF(
-                    cell.left() + (cell.width() - size.width()) / 2,
-                    cell.top() + (cell.height() - size.height()) / 2,
-                ),
-                laid,
-            )
-            return False
-        # As many characters as fit condensed: guessed from the width so far,
-        # since the ink runs about even with the count, then settled a
-        # character at a time from there rather than from the end of a preview
-        # that runs to eighty.
-        whole = text
-        keep = max(
-            1, min(len(whole) - 1, int(len(whole) * room / (drawn * MIN_SQUEEZE)))
-        )
-        text = whole[:keep]
-        advance, drawn = self._measure(painter, text, label)
-        while keep > 1 and drawn * MIN_SQUEEZE > room:
-            keep -= 1
-            text = whole[:keep]
-            advance, drawn = self._measure(painter, text, label)
-        while keep < len(whole):
-            more = self._measure(painter, whole[: keep + 1], label)
-            if more[1] * MIN_SQUEEZE > room:
-                break
-            keep += 1
-            text, (advance, drawn) = whole[:keep], more
-        cut = keep < len(whole)
-        squeeze = min(1.0, room / drawn) if drawn > 0 else 1.0
-        painter.save()
-        painter.setClipRect(cell)
-        painter.translate(cell.left() + cell.width() / 2, cell.top())
-        painter.scale(squeeze, 1)
-        painter.drawText(
-            QRectF(-advance / 2 - 1, 0, advance + 2, cell.height()),
-            Qt.AlignmentFlag.AlignCenter,
-            text,
-        )
-        painter.restore()
-        # Condensed past what is meant to be legible is as much a warning that
-        # the tooltip has more as a character dropped is.
-        return cut or squeeze < MIN_SQUEEZE
 
     @staticmethod
     def _tint(token: Token) -> QColor | None:
@@ -663,19 +436,19 @@ class RawWidget(QAbstractScrollArea):
         model = self._model
         if model is None:
             return None
-        hex_x, text_x, text_w = self._columns()
+        hex_x, text_x, text_w = self._geom.columns()
         cw = self.char_width
         row = pos.y() // self.row_height
         x = pos.x()
         if hex_x <= x < text_x - cw:
             # A gap between groups belongs to the byte before it.
-            group = HEX_GROUP * HEX_CELL * cw + self._group_gap
+            group = HEX_GROUP * HEX_CELL * cw + self._geom.group_gap
             index, inside = divmod(x - hex_x, group)
             col = index * HEX_GROUP + min(inside // (HEX_CELL * cw), HEX_GROUP - 1)
             if col >= BYTES_PER_ROW:
                 return None
         elif text_x <= x < text_x + text_w:
-            col = (x - text_x) // self._text_width
+            col = (x - text_x) // self._geom.text_width
         else:
             return None
         rel = row * BYTES_PER_ROW + int(col)
@@ -696,11 +469,13 @@ class RawWidget(QAbstractScrollArea):
         model = self._model
         if b is None or model is None:
             return None
-        _, text_x, _ = self._columns()
+        _, text_x, _ = self._geom.columns()
         if pos.x() < text_x:
             return self._token_of[b - model.offset]
         row = pos.y() // self.row_height
-        bit = row * BYTES_PER_ROW * 8 + int((pos.x() - text_x) * 8 / self._text_width)
+        bit = row * BYTES_PER_ROW * 8 + int(
+            (pos.x() - text_x) * 8 / self._geom.text_width
+        )
         return next(
             (
                 t
@@ -733,7 +508,7 @@ class RawWidget(QAbstractScrollArea):
     def _token_bits_at(self, pos: QPoint) -> tuple[int, int] | None:
         """The absolute bits of the token under a point in the text column."""
         model = self._model
-        if model is None or pos.x() < self._columns()[1]:
+        if model is None or pos.x() < self._geom.columns()[1]:
             return None
         token = self._token_at(pos)
         if token is None:

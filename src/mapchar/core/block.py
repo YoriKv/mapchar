@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import re
 import zlib
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from functools import lru_cache
 
+from mapchar.core.fill import DEFAULT_FILL, fill_bits
 from mapchar.core.notices import Notice
 from mapchar.core.table import TableSet
 from mapchar.core.text import nfc, same_text
@@ -192,9 +191,9 @@ class BlockConfig:
     """Exclusive end address strings may not cross on write."""
     write_mode: WriteMode | None = None
     """``None`` picks packed with pointers and slotted without."""
-    fill: bytes = b"\xff"
+    fill: bytes = DEFAULT_FILL
     """The pattern that pads unused room, repeated from the start of the room
-    it fills (:func:`fill_run`)."""
+    it fills (:func:`~mapchar.core.fill.fill_run`)."""
     show_end: bool = False
     """Append an artificial ``[end]`` code to every fixed string."""
     end_label: str = "end"
@@ -239,6 +238,28 @@ def default_write_mode(pointers: bool, skips: bool) -> WriteMode:
     return WriteMode.PACKED if pointers else WriteMode.SLOTTED
 
 
+READING_FIELDS = (
+    "source",
+    "string_type",
+    "strings_per_pointer",
+    "realign",
+    "skips",
+    "header",
+    "line_length",
+)
+"""What cuts a block's strings out of the bytes. The rest of a reading — the
+table the translation is written in, the bound, the fill, the labels — is what
+one adjusts while editing, and leaves every string where it is."""
+
+
+def recuts_strings(before: BlockConfig | None, after: BlockConfig | None) -> bool:
+    """Whether the change from ``before`` to ``after`` cuts the block's strings
+    out of the bytes differently (:data:`READING_FIELDS`)."""
+    if before is None or after is None:
+        return before is not after
+    return any(getattr(before, f) != getattr(after, f) for f in READING_FIELDS)
+
+
 def with_region(config: BlockConfig, start: int, stop: int) -> BlockConfig:
     """``config`` read over bytes ``start`` to ``stop``: what a new block made
     from a reading and a selection is.
@@ -268,48 +289,6 @@ def with_region(config: BlockConfig, start: int, stop: int) -> BlockConfig:
     return replace(config, source=source, skips=(), bound=None)
 
 
-DEFAULT_FILL = b"\xff"
-
-
-def fill_run(fill: bytes, length: int) -> bytes:
-    """``length`` bytes of the ``fill`` pattern, from its first byte."""
-    if length <= 0:
-        return b""
-    pattern = fill or DEFAULT_FILL
-    return (pattern * -(-length // len(pattern)))[:length]
-
-
-def is_fill(data: bytes, fill: bytes) -> bool:
-    """Whether ``data`` is nothing but the ``fill`` pattern from its first byte,
-    the last repeat allowed to be cut short — what :func:`fill_run` lays down."""
-    return data == fill_run(fill, len(data))
-
-
-@lru_cache(maxsize=16)
-def _fill_expression(fill: bytes) -> re.Pattern[bytes]:
-    """What :func:`is_fill` accepts, as one expression: whole patterns and a
-    last one cut short. A fill run is as long as the free space of an expanded
-    ROM, so it is measured in one match rather than a pattern at a time."""
-    expression = b"(?:" + re.escape(fill) + b")*"
-    if len(fill) > 1:
-        cut = b"|".join(re.escape(fill[:n]) for n in range(len(fill) - 1, 0, -1))
-        expression += b"(?:" + cut + b")?"
-    return re.compile(expression)
-
-
-def fill_end(data: bytes, start: int, fill: bytes, cap: int | None = None) -> int:
-    """Where the run of ``fill`` beginning at ``start`` in ``data`` ends.
-
-    The padding :func:`fill_run` would have laid there — whole patterns and a
-    last repeat cut short, since the pattern is laid from the start of the
-    room it fills — and never past ``cap`` or the end of ``data``.
-    """
-    limit = len(data) if cap is None else min(cap, len(data))
-    if not fill or start >= limit:
-        return start
-    return _fill_expression(fill).match(data, start, limit).end()
-
-
 def fill_reads_as_padding(config: BlockConfig, tables: TableSet) -> bool:
     """Whether a run of the block's fill between its strings is padding rather
     than text.
@@ -322,33 +301,12 @@ def fill_reads_as_padding(config: BlockConfig, tables: TableSet) -> bool:
     string begins with. The reading spells the same rule in bits
     (:func:`~mapchar.pipeline.extract.padding_bits`).
     """
-    pad = "".join(format(b, "08b") for b in config.fill)
+    pad = fill_bits(config.fill)
     if not pad:
         return False
     return not any(
         key.startswith(pad) or pad.startswith(key) for key in tables.start.entries
     )
-
-
-def parse_fill(text: str) -> bytes:
-    """A fill pattern as a configuration spells it: ``$`` and hex digits, a
-    byte for every two (``$FFFF`` is two bytes), or a decimal byte."""
-    text = text.strip()
-    if text.startswith("$"):
-        digits = text[1:]
-        if not digits:
-            raise ValueError("empty fill")
-        digits = digits.zfill(len(digits) + len(digits) % 2)
-        return bytes.fromhex(digits)
-    value = int(text, 10)
-    if not 0 <= value <= 0xFF:
-        raise ValueError(f"fill {value} is not a byte")
-    return bytes([value])
-
-
-def format_fill(fill: bytes) -> str:
-    """``fill`` spelled for a configuration: ``$`` and every byte in hex."""
-    return "$" + fill.hex().upper()
 
 
 class Status(Enum):

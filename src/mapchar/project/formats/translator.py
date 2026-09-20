@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 from mapchar.core.block import StringRecord
 from mapchar.core.numbers import format_num, parse_num
-from mapchar.project.formats.textfile import BOM, escape, split_lines, unescape
+from mapchar.project.formats.textfile import BOM, escape, quoted, split_lines, unescape
 
 FIELDS = ("id", "address", "original", "translation", "status", "notes")
 
@@ -132,10 +132,6 @@ DONE_COMMENT = "# done"
 flag for it, that survives the tools that keep such comments."""
 
 
-def _po_quote(text: str) -> str:
-    return '"' + escape(text, '"') + '"'
-
-
 def write_po(records: list[Record], rom: str = "rom") -> str:
     lines = [
         'msgid ""',
@@ -152,9 +148,9 @@ def write_po(records: list[Record], rom: str = "rom") -> str:
             lines.append("#, fuzzy")
         elif r.status == "done":
             lines.append(DONE_COMMENT)
-        lines.append(f"msgctxt {_po_quote(r.id)}")
-        lines.append(f"msgid {_po_quote(r.original)}")
-        lines.append(f"msgstr {_po_quote(r.translation)}")
+        lines.append(f"msgctxt {quoted(r.id)}")
+        lines.append(f"msgid {quoted(r.original)}")
+        lines.append(f"msgstr {quoted(r.translation)}")
         lines.append("")
     return "\n".join(lines)
 
@@ -169,7 +165,9 @@ def read_po(text: str) -> list[Record]:
 
     def flush() -> None:
         nonlocal entry, notes, fuzzy, done, address, current
-        if "msgctxt" in entry and entry.get("msgid", "") != "" or entry.get("msgctxt"):
+        if ("msgctxt" in entry and entry.get("msgid", "") != "") or entry.get(
+            "msgctxt"
+        ):
             if fuzzy:
                 status = "review"
             elif done:

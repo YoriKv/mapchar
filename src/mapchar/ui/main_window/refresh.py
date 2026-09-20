@@ -15,13 +15,14 @@ from mapchar.pipeline.view_read import (
     pointer_cells,
     target_string,
 )
+from mapchar.project.progress import progress_text
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.pointer_tokens import (
     hex_tokens,
     preview_reader,
     view_source,
 )
-from mapchar.ui.raw_widget import RowModel
+from mapchar.ui.raw_cells import RowModel
 
 VIEWS = ("raw", "text", "strings")
 """A session's name for each central tab, in tab order: Hex, Text, Strings."""
@@ -117,7 +118,7 @@ class RefreshMixin:
             self._fill_strings(doc)
             self.block_label.setText(
                 f"{self._block_label(block, len(doc.strings))} · "
-                f"{self._progress_text(doc)}"
+                f"{progress_text(self.workspace, doc)}"
             )
         elif block is None:
             # The bar keeps its row on a file, and says which file it is.

@@ -53,6 +53,25 @@ STRINGS_ID = 5
 GLOSSARY_ID = 6
 
 
+def _stamped(window, entry: Entry, before, after, *, fresh_when_same: bool = True):
+    """The two halves of a command's pair, each carrying the revision token that
+    belongs to it: the entry's own token on the way back, a fresh one forward.
+
+    ``fresh_when_same`` is the one thing the commands disagree on — what an edit
+    that lands on the value it started from stamps. Bytes are stamped whatever
+    they say, because the buffer was written; a field typed back to itself keeps
+    the token, so it does not leave the entry unsaved for a change that is not
+    one.
+    """
+    revision = entry.live_revision
+    forward = (
+        window.workspace.next_revision()
+        if fresh_when_same or after != before
+        else revision
+    )
+    return (before, revision), (after, forward)
+
+
 class _StateCommand(QUndoCommand):
     """One entry's state moving between a captured ``before`` and ``after``.
 
@@ -250,13 +269,11 @@ class StringFieldCommand(_MergingCommand, _EditContextCommand):
         *,
         run: int = 0,
     ):
-        revision = entry.live_revision
         super().__init__(
             window,
             entry,
             f"Edit {field}",
-            (before, revision),
-            (after, revision if after == before else window.workspace.next_revision()),
+            *_stamped(window, entry, before, after, fresh_when_same=False),
             "strings",
             index,
         )
@@ -315,14 +332,11 @@ class StringsEditCommand(_MergingCommand, _EditContextCommand):
         *,
         run: int | None = None,
     ):
-        owner = window._bytes_owner(entry)
-        revision = owner.live_revision
         super().__init__(
             window,
             entry,
             text,
-            (before, revision),
-            (after, window.workspace.next_revision()),
+            *_stamped(window, window._bytes_owner(entry), before, after),
             "strings",
             index,
         )
@@ -381,13 +395,11 @@ class BytesCommand(_EditContextCommand):
     """A splice of bytes into a file entry's buffer (hex overtype)."""
 
     def __init__(self, window, entry: Entry, offset: int, before: bytes, after: bytes):
-        revision = entry.live_revision
         super().__init__(
             window,
             entry,
             f"Edit bytes at {offset:X}",
-            (before, revision),
-            (after, window.workspace.next_revision()),
+            *_stamped(window, entry, before, after),
             "raw",
             offset,
         )
@@ -494,30 +506,28 @@ def _changed(before, after) -> frozenset[str]:
     )
 
 
-class _ValueCommand(_MergingCommand, _InPlaceCommand):
-    """One frozen value on an entry, replaced whole, with its revision token.
+class BoxCommand(_MergingCommand, _InPlaceCommand):
+    """A block's ``TextBox`` — its geometry and its codes' layout effects —
+    replaced whole, with its revision token.
 
-    Consecutive edits of **the same fields** of the same entry merge, so typing a
+    Consecutive edits of **the same fields** of the same block merge, so typing a
     number into one spin box is one step while moving to the next field starts
-    another. In place because both of these show in a panel and in the Preview
-    window rather than in the view the user is navigating.
+    another. In place because the box shows in a panel and in the Preview window
+    rather than in the view the user is navigating.
     """
 
-    _id = 0
     _stamps = True
 
-    def __init__(self, window, entry: Entry, before, after, text: str):
-        revision = entry.live_revision
+    def __init__(self, window, entry: Entry, before, after):
         super().__init__(
             window,
             entry,
-            text,
-            (before, revision),
-            (after, revision if after == before else window.workspace.next_revision()),
+            f"Edit text box of {entry.name}",
+            *_stamped(window, entry, before, after, fresh_when_same=False),
         )
 
     def id(self) -> int:
-        return self._id
+        return BOX_ID
 
     def _mergeable(self, other) -> bool:
         if type(other) is not type(self) or other.entry is not self.entry:
@@ -525,18 +535,6 @@ class _ValueCommand(_MergingCommand, _InPlaceCommand):
         return _changed(self.before[0], self.after[0]) == _changed(
             other.before[0], other.after[0]
         )
-
-    def _apply(self, state) -> None:
-        raise NotImplementedError
-
-
-class BoxCommand(_ValueCommand):
-    """A block's ``TextBox``: its geometry and its codes' layout effects."""
-
-    _id = BOX_ID
-
-    def __init__(self, window, entry: Entry, before, after):
-        super().__init__(window, entry, before, after, f"Edit text box of {entry.name}")
 
     def _apply(self, state) -> None:
         box, revision = state
@@ -589,13 +587,11 @@ class TableCommand(_InPlaceCommand):
     """
 
     def __init__(self, window, entry: Entry, before: Table, after: Table):
-        revision = entry.live_revision
         super().__init__(
             window,
             entry,
             f"Edit table {entry.name}",
-            (before, revision),
-            (after, window.workspace.next_revision()),
+            *_stamped(window, entry, before, after),
         )
 
     def _apply(self, state) -> None:

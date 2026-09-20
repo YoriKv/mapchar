@@ -16,14 +16,14 @@ from mapchar.core.block import (
     PointerListSource,
     PointerTableSource,
     RangeSource,
-    Status,
+    recuts_strings,
     source_span,
     source_start,
     with_region,
 )
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
 from mapchar.core.table import TokenKind
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.workspace import Entry, EntryKind, has_edits
 from mapchar.ui.undo_commands import BlockEditCommand, TableCommand
 
 _BLOCK_EDIT_FIELDS = ("name", "config", "compression_id", "spare_room", "room")
@@ -31,19 +31,6 @@ _BLOCK_EDIT_FIELDS = ("name", "config", "compression_id", "spare_room", "room")
 :class:`~mapchar.ui.undo_commands.BlockEditCommand` holds them: the four things
 a block is read by, and the room it remembers, which a change of reading
 forgets and an undo brings back."""
-
-_READING_FIELDS = (
-    "source",
-    "string_type",
-    "strings_per_pointer",
-    "realign",
-    "skips",
-    "header",
-    "line_length",
-)
-"""What cuts a block's strings out of the bytes. The rest of a reading — the
-table the translation is written in, the bound, the fill, the labels — is what
-one adjusts while editing, and leaves every string where it is."""
 
 _KIND_NAMES = {
     RangeSource: "Range",
@@ -58,33 +45,6 @@ _KIND_NAMES = {
 }
 """What the block bar calls a source or string type: the Block dialog's words
 for it, never the class name."""
-
-
-def _recuts_strings(before: BlockConfig | None, after: BlockConfig | None) -> bool:
-    """Whether the change from ``before`` to ``after`` cuts the block's strings
-    out of the bytes differently (:data:`_READING_FIELDS`)."""
-    if before is None or after is None:
-        return before is not after
-    return any(getattr(before, f) != getattr(after, f) for f in _READING_FIELDS)
-
-
-def _has_edits(entry: Entry) -> bool:
-    """Whether the block holds work a fresh cut would take with it: a string
-    that is no longer its original, or room a shortened string gave up.
-
-    A block whose strings are not read yet — never opened, or waiting on the
-    read a block edit left it — is told by the state it carries instead, where
-    any status but *untouched* counts: the project keeps one status per string,
-    so a translated string marked *review* or *done* says only that.
-    """
-    if entry.room is not None:
-        return True
-    if entry.doc is not None and entry.doc.strings:
-        return any(rec.edited for rec in entry.doc.strings)
-    return any(
-        state.status is not Status.UNTOUCHED
-        for state in (entry.pending_strings or {}).values()
-    )
 
 
 class BlocksMixin:
@@ -206,7 +166,7 @@ class BlocksMixin:
             return
         at = _BLOCK_EDIT_FIELDS.index
         scheme = after[at("compression_id")]
-        recut = _recuts_strings(before[at("config")], after[at("config")])
+        recut = recuts_strings(before[at("config")], after[at("config")])
         if not self._confirm_payload_loss(entry, scheme) or (
             recut and not self._confirm_recut(entry)
         ):
@@ -234,7 +194,7 @@ class BlocksMixin:
         again (:meth:`~mapchar.ui.main_window.string_edit.StringEditMixin.
         _remember_room`), so a spin box stepped up does not ask per tick.
         """
-        if self._reading_consent is entry or not _has_edits(entry):
+        if self._reading_consent is entry or not has_edits(entry):
             return True
         if not self._ask(
             "Edit Block",
@@ -500,7 +460,7 @@ class BlocksMixin:
         """The Files panel opened a block the session has not read: read it, so
         its strings can be listed without making it the view."""
         if entry.doc is None and entry.config is not None:
-            self._block_strings(entry)
+            self._read_block(entry)
 
     def _jump_to_source(self, entry: Entry) -> None:
         """Files panel ▸ Jump to Source: the parent file at the block's offset,
