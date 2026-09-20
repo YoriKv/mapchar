@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.4 - unreleased
+## v0.1.4 - 2026-09-20
 
 - Remove charset picker in table editor
 - Performance improvement for table editor
