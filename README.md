@@ -62,6 +62,10 @@ Grab the build for your platform from the [Releases page](https://github.com/Yor
 6. **Write/Save** - write the file back to disk. Save your project session to
    resume later: it is what remembers the original text once the ROM is written.
 
+For a full walkthrough with screenshots, from an unopened ROM to translated text
+written back, see the **[Getting Started guide](https://github.com/YoriKv/mapchar/wiki/Getting-Started)**
+on the wiki.
+
 Help -> Shortcuts (`F1`) to view a list of keyboard shortcuts.
 
 ## Thank You

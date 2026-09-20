@@ -112,6 +112,12 @@ Set **Header** to 2.
 bytes say now. Writing is **slotted**: each string keeps its address and its
 own room.
 
+Ctrl+1, Ctrl+2 and Ctrl+3 show the block as **Hex**, **Text** and **Strings**.
+
+| Hex | Text | Strings |
+|:-:|:-:|:-:|
+| [![Finishes in Hex](images/04-view-hex.png)](images/04-view-hex.png) | [![Finishes in Text](images/04-view-text.png)](images/04-view-text.png) | [![Finishes in Strings](images/04-view-strings.png)](images/04-view-strings.png) |
+
 ## 5. A Pointers block: Fighter names
 
 Select the ROM in the Files panel, go to `$8DE0`, select `$8E02`–`$8E4D`.
@@ -137,39 +143,18 @@ pointer to `$8E02` holds `$4E02`.
 Writing is now **packed**: strings share the room up to **Bound** — by default
 the end of the names — and pointers are rewritten.
 
-## 6. Hex, Text and Strings
+The same three views, Strings with **Panels ▸ Hex** open:
 
-Ctrl+1, Ctrl+2, Ctrl+3.
+| Hex | Text | Strings |
+|:-:|:-:|:-:|
+| [![The names in Hex](images/05-view-hex.png)](images/05-view-hex.png) | [![The names in Text](images/05-view-text.png)](images/05-view-text.png) | [![Strings with the Hex panel](images/05-view-strings.png)](images/05-view-strings.png) |
 
-**Finishes — Hex**
+In Hex, **Show as Pointers** shows the pointer table instead of the strings it
+points to.
 
-![Finishes in Hex](images/06-finishes-hex.png)
+![The pointer table in Hex](images/05-view-hex-pointers.png)
 
-**Finishes — Text**
-
-![Finishes in Text](images/06-finishes-text.png)
-
-**Finishes — Strings**
-
-![Finishes in Strings](images/06-finishes-strings.png)
-
-**Fighter names — Hex, Show as Pointers**
-
-![The pointer table in Hex](images/06-names-hex-pointers.png)
-
-**Fighter names — Hex, Show as Strings**
-
-![The names in Hex](images/06-names-hex-strings.png)
-
-**Fighter names — Text**
-
-![The names in Text](images/06-names-text.png)
-
-**Fighter names — Strings, with Panels ▸ Hex**
-
-![Strings with the Hex panel](images/06-names-strings-hex-panel.png)
-
-## 7. Build `mk2-translated.tbl`
+## 6. Build `mk2-translated.tbl`
 
 The font has 26 letter tiles, so Cyrillic reuses the Latin codes. Lookalikes
 keep their code; the other 14 are reassigned.
@@ -199,13 +184,13 @@ key `41`, all Cyrillic:
 АВСДЕФГНІЙКЛМИОРЧЯБТПЖШЇУЗ
 ```
 
-![Fill with a custom run](images/07-fill-cyrillic.png)
+![Fill with a custom run](images/06-fill-cyrillic.png)
 
 Add digits, punctuation and `[end]` as in step 2. **Save**.
 
-![mk2-translated.tbl](images/07-table-translated.png)
+![mk2-translated.tbl](images/06-table-translated.png)
 
-## 8. Redraw the font
+## 7. Redraw the font
 
 mapchar does not edit graphics. Until the font is redrawn, the game draws
 `ДОБИЙ ЙОГО!` as `DOSNJ JOGO!`.
@@ -223,11 +208,11 @@ mapchar does not edit graphics. Until the font is redrawn, the game draws
    `Д Ф Г Й Л И Ч Я Б П Ж Ш Ї З`.
 5. Every untranslated string shares the font and turns to gibberish.
 
-## 9. Translate the strings
+## 8. Translate the strings
 
 Open **Finishes** and set **Table** to **@mk2-translated**.
 
-![Finishes through the translated table](images/09-finishes-new-table.png)
+![Finishes through the translated table](images/08-finishes-new-table.png)
 
 The bytes are unchanged, so every string is still *untouched*; they only
 decode as Cyrillic now.
@@ -246,9 +231,9 @@ Double-click a **Translation** cell and type. Enter commits and moves on.
 
 A text longer than its slot is refused — `НІЧИЯ` for `DRAW`:
 
-![A refused edit](images/09-finishes-refused.png)
+![A refused edit](images/08-finishes-refused.png)
 
-![Finishes, translated](images/09-finishes-translated.png)
+![Finishes, translated](images/08-finishes-translated.png)
 
 Do the same for **Fighter names**, keeping each `[end]`:
 
@@ -263,17 +248,17 @@ Do the same for **Fighter names**, keeping each `[end]`:
 
 Packed strings share room: shorten some first, then `ДЖАКС` and `ДЖЕЙД` fit.
 
-![Fighter names, translated](images/09-names-translated.png)
+![Fighter names, translated](images/08-names-translated.png)
 
-## 10. Write the ROM
+## 9. Write the ROM
 
 **File ▸ Write All** (Ctrl+Shift+W), then **File ▸ Save Project** (Ctrl+S).
 
-![After Write All](images/10-written.png)
+![After Write All](images/09-written.png)
 
 Through `mk2`, the ROM shows what was written — moved names, rewritten
 pointers:
 
-![The ROM after writing](images/10-rom-after.png)
+![The ROM after writing](images/09-rom-after.png)
 
 Test in an emulator.
