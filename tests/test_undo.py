@@ -205,6 +205,17 @@ def test_write_all_over_two_files_is_one_step(window, tmp_path):
     assert second.doc.strings[0].current_text() == "A[end]"
 
 
+def test_a_plain_write_says_what_it_wrote_without_a_block_count(window, tmp_path):
+    """A plain block is written as its file's bytes, so there is no block of its
+    own to count: a number there would say 0 over a file full of translations."""
+    file_entry, _ = _block(window, tmp_path)
+    window._on_translation_edited(0, "B[end]")
+    assert window._write_all()
+    assert window.statusBar().currentMessage() == f"Wrote {file_entry.name}"
+    window.undo_stack.undo()
+    assert window.statusBar().currentMessage() == f"Restored {file_entry.name}"
+
+
 def test_a_file_changed_since_the_write_is_left_alone(window, tmp_path):
     file_entry, block = _block(window, tmp_path)
     window._on_translation_edited(0, "B[end]")

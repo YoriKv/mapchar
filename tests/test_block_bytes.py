@@ -217,6 +217,18 @@ def test_a_sibling_over_the_same_slot_is_unsaved_too(window, tmp_path):
     assert out[:3] == bytes.fromhex("42 00 EE")
 
 
+def test_a_write_counts_the_compressed_blocks_it_packed(window, tmp_path):
+    """Both blocks over the slot are written with it, so both are what the write
+    reports — the only blocks a write lands as things of their own."""
+    file_entry, first, _second = _two_over_one_slot(window, tmp_path)
+    window._activate_entry(first)
+    window._on_translation_edited(0, "B[end]")
+
+    assert window._write_all()
+    message = window.statusBar().currentMessage()
+    assert message == f"Wrote {file_entry.name} (2 compressed block(s))"
+
+
 def test_an_editing_run_that_ends_where_it_began_leaves_every_sibling_clean(
     window, tmp_path
 ):

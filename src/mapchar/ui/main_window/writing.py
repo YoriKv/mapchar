@@ -306,9 +306,12 @@ class WritingMixin:
         for written_path in entry.paths:
             self.workspace.invalidate_path(written_path, keep=entry)
         verb = "Wrote" if side.saved == side.live else "Restored"
-        self.statusBar().showMessage(
-            f"{verb} {entry.name} ({len(written)} block(s))", 5000
-        )
+        # Only a compressed block is written as a thing of its own — its slot
+        # packed again; a plain block's edits are the file's bytes, and a count
+        # of those would say 0 over a file full of translations.
+        packed = sum(1 for block in written if block.compression_id)
+        count = f" ({packed} compressed block(s))" if packed else ""
+        self.statusBar().showMessage(f"{verb} {entry.name}{count}", 5000)
         self.files_panel.refresh_labels()
         self._refresh_view()
 

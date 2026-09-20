@@ -7,6 +7,7 @@
 - Better errors when refusing a translation write
 - Fixed bytes column display in strings tab
 - Find Pointers leaves stray matches out of the pointer table it infers
+- Write status no longer reports 0 blocks
 
 ## v0.1.3 - 2026-09-18
 
