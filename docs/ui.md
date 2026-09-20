@@ -1,8 +1,9 @@
 # UI conventions
 
-The rules every surface of `mapchar.ui` follows, and the helpers in
-`src/mapchar/ui/widgets.py` that implement them. `tests/test_ui_layout.py`
-checks the ones a test can see.
+The rules every surface of `mapchar.ui` follows, and the helpers that
+implement them — `src/mapchar/ui/widgets.py`, `bars.py` for a bar that wraps
+and `progress.py` for long work. `tests/test_ui_layout.py` checks the ones a
+test can see.
 
 ## Labels
 
@@ -19,8 +20,11 @@ checks the ones a test can see.
 - **A number that means something else says so**: a spin box whose zero or −1
   is not a count shows a special value text — `off`, `none`, `fit`, `box`,
   `top-left` — rather than a label explaining the number.
-- **Words, never class names**: a source or string type is shown as the Block
-  dialog names it (`Pointer table · End token`).
+- **Words, never class names**: a source or string type is shown as the
+  Reading bar names it (`Pointer table · End token`). `ui/kind_names.py` is
+  the one table that decides it (`SOURCE_NAMES`, `STRING_TYPE_NAMES`), read by
+  the bar's pickers, the block bar's label, the Scan window and the Files
+  panel's tooltips alike.
 
 ## Modes
 
@@ -41,13 +45,15 @@ every control where it was.
   greyed where it stands, as a menu row is, never hidden.
 - **What only some readings have goes last**: the fields one kind of source or
   string type has and another has not sit at the end of their section — under
-  Strings on a row of their own (`widgets.ROW_BREAK`) — so nothing stands after
+  Strings on a row of their own (`bars.ROW_BREAK`) — so nothing stands after
   them to be pushed along. A bar's width counts them whether they are showing
-  or not (`FlowLayout.natural_width`), so the sections beside it do not shift
-  either.
+  or not (`bars.FlowLayout.natural_width`), so the sections beside it do not
+  shift either.
 - **Settings made once are folded away**: a block's write settings and its skip
   ranges are one line each, opening a popup under it (`WritingPicker`,
-  `SkipsPicker`).
+  `SkipsPicker`) — both `PopupPicker`s over a `PopupFrame`
+  (`mapchar.ui.popup_picker`), which is where the panel opens, that the combo
+  has no list, and the one row the summary is written to.
 - A window made narrower wraps its bars onto more rows; that is the user's
   doing and the only thing that moves them.
 
@@ -58,16 +64,17 @@ No layout's minimum size may be set by text or a count that varies.
 - **Status and summary lines** are `ElidedLabel`s: they draw what fits and ask
   for no width, so a long notice cannot widen the window.
 - **A row of variable length** (the Strings view's code buttons) is a
-  `FlowLayout`, which wraps onto more rows. A bar of labelled controls (the
-  Format and Reading bars) is a `WrapBar`: a `FlowLayout` that also asks for the
-  height its rows take at its width, so a short window cannot squeeze a row out
-  of sight. A long bar gathers its controls into framed, bold-captioned
+  `bars.FlowLayout`, which wraps onto more rows. A bar of labelled controls (the
+  Format and Reading bars) is a `bars.WrapBar`: a `FlowLayout` that also asks
+  for the height its rows take at its width, so a short window cannot squeeze a
+  row out of sight. A long bar gathers its controls into framed, bold-captioned
   sections (`WrapBar.add_section`) that sit side by side while there is room,
   stretch to fill their row, share one caption width, and wrap their own
   controls when narrower. A fixed row too long for a narrow
   window is split into two rows instead.
 - **Fields** keep a minimum from `fit_chars`, so no layout squeezes one below
-  what it holds; pickers in a bar are `CompactComboBox`es of one fixed width.
+  what it holds; pickers in a bar are `CompactComboBox`es of a stated width —
+  `PICKER_WIDTH` unless one whose items are shorter or longer passes its own.
 - **Content that grows** scrolls: the Preview canvas and the raw view, which
   scrolls sideways when narrower than its rows. The Hex and Text tabs are the exception: each holds the window its
   box has room for, and what does not fit is reached by moving the view — its
@@ -133,7 +140,7 @@ thing that works, and a block, a glossary or a result list is a screenful.
 A grid filled from a **table** is not — a table on the Shift-JIS charset is
 seven thousand entries, on UTF-8 a hundred and fifty thousand — so the Table
 Editor's grid is a `QTableView` over a model of the entries themselves
-(`table_editor._EntryModel`).
+(`table_grid._EntryModel`).
 
 - **A row is spelled when it is looked at**, and kept: nothing is built for a
   row that is never drawn, sorted on or filtered.
@@ -151,6 +158,11 @@ Editor's grid is a `QTableView` over a model of the entries themselves
 - **One selection tint**: the Hex tab and the Hex panel tint the selected
   bytes with `theme.TINT_SELECTION` in both columns, whether or not they have
   focus; characters picked in the Hex tab's text are tinted by their bits.
+- **One address column**: the raw view and the Hex panel size and spell it the
+  same way, from `address_column` — the window's address format, in a column
+  wide enough for the file's highest address and never narrower than
+  `ADDRESS_COLUMN_CHARS`, flat hex's six digits — so a small file's column
+  still reads like every other address.
 
 ## Keys
 
@@ -194,7 +206,8 @@ Editor's grid is a `QTableView` over a model of the entries themselves
 ## Reviewing by eye
 
 `uv run python local-tools/ui_screenshots.py [--theme dark]` opens the Dragon
-Quest IV sample (or `--project PATH`) from a scratch copy with scratch settings, and
+Quest IV sample ([development.md](development.md#layout)) or `--project PATH`
+from a scratch copy with scratch settings, and
 saves the main window, every dock, tool window and dialog — each also at its
 smallest size — and every menu and context menu to `tmp/ui-shots/<theme>/`.
 

@@ -37,7 +37,7 @@ app.py ─────────────► ui/ ────────�
 | `engines/`  | Pure algorithms over the model: decode, encode, relative search, text scan, pointer discovery, layout. No I/O. |
 | `pipeline/` | Runs the byte stages in both directions, extracts blocks into strings, and lays strings out for writing. |
 | `plugins/`  | The plugin API, registry, discovery, trust, detection, and every built-in plugin: containers, compressions, charsets, mappings. |
-| `project/`  | The open-entries model (`workspace.py`), the `.mapchar` file (`projectfile.py`), the glossary (`glossary.py`), reading a table file from disk (`tables.py`), the table-file and script readers and writers (`formats/`), and the other tools' formats (`exchange/`). |
+| `project/`  | The entry and the pure rules over a list of them (`entry.py`), the open-entries model (`workspace.py`), finding and re-pointing moved files (`missing_files.py`), the `.mapchar` file (`projectfile.py`), the glossary (`glossary.py`), reading a table file from disk (`tables.py`), the table-file and script readers and writers (`formats/`), and the other tools' formats (`exchange/`). |
 | `ui/`       | The PySide6 application: `MainWindow`, the raw and strings views, docks, tool windows, dialogs, undo commands, theme. |
 | `app.py`    | Entry point: `QApplication`, theme, plugin folders, trust store, registry, `MainWindow`. |
 | `resources/`| Package data: the plugin examples seeded into the user's folder, the icon font, the app icon. |
@@ -58,7 +58,7 @@ Rules:
 
 ### 2.1 Entries and documents
 
-- **`project.workspace.Entry`** — the persistent identity of an open thing:
+- **`project.entry.Entry`** — the persistent identity of an open thing:
   `EntryKind` (file, block, bookmark, folder, table); where its bytes
   are (`path`, `extra_paths`, block `offset`/`length`); for a file's rows —
   blocks, bookmarks and folders — the file they belong to (`parent`) and the
@@ -89,20 +89,13 @@ Entries are compared by identity. Blocks, bindings and undo commands hold
   added: `max_bits` and entries bucketed by key length, which `match` scans
   longest length first. `revision` counts every change; what is derived from
   the whole table — its switch targets, its labels' effects, its resolution —
-  is cached against it and left behind by a copy — `cached(name, make)` is how
-  anything derived asks for it, including the encoder's text index over the
-  entries (`engines/encode.py`), which every string encoded through the table
-  would otherwise rebuild.
-- **`resolve(table, available)`** — the table with its includes laid under its
-  own entries: charset, then each include resolved in order, then
-  `own_entries`, an empty text removing a key from below. A table that
-  includes nothing is itself; otherwise the result is a table of its own,
-  cached on the includer against every table it reaches and their revisions,
-  so an edit to an included table shows on the next build. It raises for an
-  include not in `available`, a cycle and a label twice. `inherited(table,
-  available)` is the include layer alone, with the table each entry is own to,
-  for the Table Editor.
-- **`Entry`** — frozen: `bits`, `kind` (text, end, code, switch, return),
+  is cached against it and left behind by a copy — `cached(name, make,
+  key=None)` is how anything derived asks for it, including the encoder's text
+  index over the entries (`engines/encode_index.py`), which every string
+  encoded through the table would otherwise rebuild. A slot is remembered
+  against the table's own revision unless the caller gives a `key`, which an
+  include resolution does over every table it reaches.
+- **`TableEntry`** — frozen: `bits`, `kind` (text, end, code, switch, return),
   `text` (text or label, composed to NFC on construction, so every dialect and
   every charset agree on one form), `weight`, `operands: tuple[OperandSpec]`,
   `params: tuple[SwitchParam]`, `comment`, and `effect` (`core.font.Effect`:
@@ -121,10 +114,21 @@ Entries are compared by identity. Blocks, bindings and undo commands hold
   parses back from text by the script grammar; both directions are in
   `core/tokens.py` and are inverse of each other.
 
+`core/table_layers.py` is the `@include` layering `TableSet.build` reaches:
+**`resolve(table, available)`** is the table with its includes laid under its
+own entries — charset, then each include resolved in order, then
+`own_entries`, an empty text removing a key from below. A table that includes
+nothing is itself; otherwise the result is a table of its own, cached on the
+includer against every table it reaches and their revisions, so an edit to an
+included table shows on the next build. It raises for an include not in
+`available`, a cycle and a label twice. **`inherited(table, available)`** is
+the include layer alone, with the table each entry is own to, for the Table
+Editor.
+
 Bit addressing: a table key, a token span and everything decode and encode
 carry are in bits, as abcde does, so odd-width entries and bit-packed text need
 no special case. The pipeline converts byte offsets at the edges. The engines
-that hunt for candidates rather than decode them — `scan` and `relsearch` — work
+that hunt for candidates rather than decode them — `textscan` and `relsearch` — work
 in bytes, which is the unit their results are reported and selected in.
 
 ### 2.3 Blocks and strings
@@ -138,10 +142,15 @@ in bytes, which is the unit their results are reported and selected in.
   `realign`, `skips`, `header` (bytes before each string of a range that are
   not text, at most `MAX_RECORD_HEADER`), `line_length`, `bound`, `write_mode`
   (`PACKED`, `SLOTTED`; `effective_write_mode` is slotted whatever it holds
-  once skip ranges or a header break the text up), `fill` (a byte pattern:
-  `fill_run` lays it down from the start
-  of the room it fills, `is_fill` recognises it), and the artificial codes a
-  fixed string is shown with: `show_end`, `end_label`, `line_label`.
+  once skip ranges or a header break the text up), `fill` (a byte pattern),
+  and the artificial codes a fixed string is shown with: `show_end`,
+  `end_label`, `line_label`.
+- **The fill pattern** is `core/fill.py`'s: `DEFAULT_FILL`, `fill_run` (which
+  lays a pattern down from the start of the room it fills, the last repeat
+  allowed to be cut short), `fill_end`, `is_fill`, `fill_bits`, `parse_fill`
+  and `format_fill`, so a pattern is written, measured and read back the one
+  way. `fill_reads_as_padding` stays in `core/block.py`, since it takes a
+  `BlockConfig`.
 - **Pointer sources** — `PointerTableSource` and `PointerListSource` carry a
   `null` value that reaches no string. `NestedPointerSource` is a table of
   records, two outer pointers each — an inner table and the base its pointers
@@ -157,12 +166,17 @@ in bytes, which is the unit their results are reported and selected in.
   properties), `tokens: list[Token]` (the decode of the bytes as they are —
   `current_text()` renders it), `original: str` (the text when the block was
   made: seeded from the tokens by an extraction and replaced by what the
-  project saved), `pointers: tuple[PointerRef]`, `replacement: str | None`
-  (text to encode in place of the bytes on the next layout; transient),
-  `status`, `notes`, the `notices` reading it raised, and `lines` — the token
-  indices a fixed-line piece starts at. *Edited* and *untouched* follow from
-  the texts (`refresh_status`); *review* is set; *overflows box* is computed
-  on demand, never stored.
+  project saved), `digest` and `original_digest` (a checksum of the bits the
+  string holds now, and of the bits `original` was taken from, which the
+  project keeps beside it — `bits_digest`), `pointers: tuple[PointerRef]`,
+  `replacement: str | None` (text to encode in place of the bytes on the next
+  layout; transient), `status`, `notes`, the `notices` reading it raised, and
+  `lines` — the token indices a fixed-line piece starts at. *Edited* and
+  *untouched* are settled from the bits' checksum (`refresh_status`), with the
+  text as the fallback for an original saved before digests and as the
+  tie-break when a re-encode reaches the same text through other codes;
+  *review* and *done* are set by hand and stay (`HELD`); *overflows box* is
+  computed on demand, never stored.
 - **`PointerRef`** — `address`, `size`, `endian`, `mapping_id`, `offset`, and
   the `value` read from disk. A nested source's inner pointer is `linear`, its
   `offset` the base of its group.
@@ -210,13 +224,13 @@ font is `ui/preview_font.py`'s, so nothing here imports Qt.
 
 | Module | Holds |
 |---|---|
-| `context.py` | `PipelineContext`, the `SourceSpan` a joined read publishes, and the `KEY_*` hint names (source files and offset, header size, suggested mapping and table, consumed size, complete, partial decode) |
+| `context.py` | `PipelineContext`, the `FileSpan` a joined read publishes, and the `KEY_*` hint names (source files and offset, header size, suggested mapping and table, consumed size, complete, partial decode) |
 | `notices.py` | Non-fatal `Notice`s — message, level, offset, detail, source — carried on the context and on extractions; `notice_lines()` renders one as its message with the detail indented under it |
 | `errors.py` | `MapcharError`, which everything mapchar raises derives from: `Stage`, `PipelineError` (stage, action, plugin, pathway), `LocatedError` and its `TableError` and `ScriptError`, `EncodeError` |
-| `bits.py` | `Bits` windows over a byte buffer, plus the bit/byte/hex conversions, key spelling, alignment and bit reversal every layer shares |
-| `numbers.py` | Every way a number is written: `parse_num`/`format_num` for the `$hex` spelling tables, scripts and command files share, and the one hex scanner behind `parse_hex`, `parse_hex_offset`/`format_hex_offset` and `parse_flat_hex`, which the UI's always-hex fields and `address.py` read through |
-| `text.py` | The Unicode model: `nfc`/`nfd`, `is_mark`, `graphemes` and `char_units` (a base character plus its combining marks — one glyph slot), and `fold` for a case- and form-insensitive comparison |
-| `textmatch.py` | The one filter every list runs: `words_of` folds and splits what was typed, and `matches_words` says whether each of those words is in one of a row's fields — fields folded apart, so no word matches over the seam between two |
+| `bits.py` | `Bits` windows over a byte buffer, plus the bit/byte/hex conversions, key spelling, alignment and bit reversal every layer shares, and `parse_hex_bytes`/`format_hex_bytes`, the one spelling a run of bytes is read and written in |
+| `numbers.py` | Every way a number is written: `parse_num`/`format_num` for the `$hex` spelling tables, scripts and command files share, and the one hex scanner behind `parse_hex`, `parse_hex_offset`/`format_hex_offset` and `parse_flat_hex`, which the UI's always-hex fields and `address.py` read through; plus `clamp`, the one bring-a-value-into-range helper |
+| `text.py` | The Unicode model: `nfc`/`nfd`, `is_mark`, `graphemes` and `units` (the graphemes of NFC — one glyph slot each), and `fold` for a case- and form-insensitive comparison |
+| `textmatch.py` | The one filter every list runs: `words_of` folds and splits what was typed, and `matches_words` says whether each of those words is in one of a row's fields — fields folded apart, so no word matches over the seam between two; and `next_match`, the wrapping byte search within the stretch a view is confined to, which the Find bar's next and previous walk |
 | `capabilities.py` | `EntryKind → frozenset[Capability]` (raw view, strings view, write, exchange, pointers, preview, …) and `supports()` |
 | `address.py` | Offset ↔ `bank:addr` display layouts for the navigation bar |
 
@@ -271,7 +285,10 @@ tokens are the canonical form of those bytes.
 
 `engines/encode.py`
 `encode(text, table_set, *, end_terminated, ends, verify) -> EncodeResult`
-searches for the cheapest bit string that **decodes back to the same tokens**:
+searches for the cheapest bit string that **decodes back to the same tokens**.
+The search is there; the per-table index and the atom model are
+`engines/encode_index.py` and the sentence a failure ends with is
+`engines/encode_why.py`, neither of which needs the other:
 
 - The input is text parsed into a token pattern: literal text runs split into
   **atoms** — one code, or one character of NFD-decomposed text — and codes
@@ -310,7 +327,7 @@ searches for the cheapest bit string that **decodes back to the same tokens**:
   give back the same tokens; a mismatch is an `EncodeError`, which refuses
   the edit.
 - **Failure** is diagnosed from the atom the search got furthest to and the
-  frames in use there (`_why`): a character no table has an entry for, named
+  frames in use there (`engines/encode_why.why`): a character no table has an entry for, named
   with its code points and composed with the mark it carries; one whose table
   is not in use there, with the switch code that reaches it; a code no table
   knows, or the operands one takes and what would not fit them; or an entry
@@ -338,7 +355,7 @@ builder turns into entries.
 
 ### 3.4 Text scan
 
-`engines/scan.py` slides a window over the buffer, decodes each window
+`engines/textscan.py` slides a window over the buffer, decodes each window
 through the table set, and scores it: the fraction of bits consumed by text
 entries, plus a capped bonus for dictionary hits (a small built-in word
 list), minus a penalty that grows with the square of the share of unmatched
@@ -424,9 +441,11 @@ newline-code question.
 
 ### 3.7 Code-aware find and replace
 
-`engines/scriptfind.py` splits script text into the pieces the grammar makes
-— a `[...]` code or an escape is one piece, everything else one character —
-and matches a needle as whole pieces. The needle is composed to NFC, and a
+`core/tokens.py`'s `piece_spans` splits script text into the pieces the
+grammar makes — a `[...]` code or an escape is one piece, everything else one
+character — the lenient reading beside `parse_text`'s strict one, for text a
+person is typing. `engines/scriptfind.py` matches a needle over those pieces,
+as whole pieces. The needle is composed to NFC, and a
 case-insensitive match folds each piece on its own, never the whole string,
 because folding changes lengths and the spans are the original text's. `[line]` in a needle matches the code
 and nothing inside it, and a needle of letters never matches part of a code.
@@ -458,9 +477,11 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   (reading and mapping pointer values, sorting numerically, merging
   duplicate targets into one string with several pointers), applies the
   string rule, and calls the decode engine per string.
-- **Nested sources** (`pipeline/extract.py`): `nested_records` maps the outer
-  table's records, `pointer_addresses` lists every pointer a source reads —
-  outer and inner — and `reextract` reads again only the groups a changed
+- **Nested sources**: `pipeline/pointers.py` is the table walk in front of the
+  cutting — `nested_records` maps the outer table's records and
+  `pointer_addresses` lists every pointer a source reads, outer and inner, so
+  extraction and the Hex tab read one walk and each keeps its own policy on
+  top of it. `pipeline/extract.py`'s `reextract` reads again only the groups a changed
   stretch reaches, keeping every other record as it was, which is what keeps
   an edit in a block of thousands of strings from reading them all.
 - **Fixed strings that stop at an end token** hide it: `_decode_fixed` marks
@@ -533,7 +554,13 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   The window runs it on every edit (`string_edit.py`): the splices land in the
   buffer every entry over those bytes reads, as one undo step, after a
   re-extraction has shown the block reads as the same strings with the edited
-  ones saying what was typed. Extraction passes over the fill byte a shortened
+  ones saying what was typed. That one rule is `reads_back`/`ReadBack` — the
+  bytes are the translation, so the block still reads as the same strings,
+  each edited string reads back as its text, and no other string changes —
+  and both landings, the undo step and the undo-free one a project load makes,
+  refuse on its terms and no other. `room_note` is the words the Bytes tooltip
+  puts on a string's room, since two numbers do not say where the second comes
+  from. Extraction passes over the fill byte a shortened
   string leaves behind — between the strings of a range, and at the end of a
   *next pointer* string, which keeps its whole extent — but only when the
   table maps nothing beginning with it (`padding_bits`); a fill byte the table
@@ -554,7 +581,7 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   a context of its own, and returns a `ContainerReport` of what it published and
   what it had to assume — reported, never raised, since it is reached precisely
   when an entry did not come out as expected.
-- **Scanning** (`pipeline/scan.py`) walks forward for the next complete
+- **Scanning** (`pipeline/structures.py`) walks forward for the next complete
   structure the schemes it is given can read (`find_next_structure`), with a
   progress/cancel callback; `decompress_at` is one probe of it, and asks for a partial decode
   when it is previewing. A scheme's `signature` says where a probe is worth
@@ -594,6 +621,10 @@ celPix's system, with these stages:
   whose decoder finds its own end inherits both of its methods from, publishing
   the consumed size and the complete flag the pipeline needs from one
   `_decode`.
+- **`PluginInfo.category`** is carried for the plugin author, and relabelled by
+  discovery to "Your plugins" or "Project plugins". No picker groups by it, so
+  it is shown nowhere; its default is `"Generic"`, what a built-in with nothing
+  else to say uses.
 - **One tier: plugins.** A **preset** is a TOML file naming a built-in engine
   and its parameters, adapted into an ordinary plugin as it loads, so the
   registry holds one kind of thing and a project stores one kind of id.
@@ -647,12 +678,17 @@ celPix's system, with these stages:
 
 ### 6.1 Workspace
 
-`project/workspace.py` is celPix's workspace: `entries`, one `current`,
-callback lists (`on_added`, `on_removed`, `on_reset`, `on_rows_changed`,
-`on_current_changed`, `on_dirty_changed`), deduplication by normalised path,
-cascade close from a file to its rows and from a folder to its contents,
-revision-token dirty tracking per entry,
-`free_name` (blocks and bookmarks never share a name), and
+`project/entry.py` holds the shape of one row and the pure rules over a list
+of them: `Entry`, `EntrySession` and `StringState`, `normalize_path`,
+`free_name` (blocks and bookmarks never share a name), `tree_order`, `moved`,
+`reordered`, `has_edits`, `within` and `holder` — each a function over a list
+or an entry it is handed.
+
+`project/workspace.py` is the `Workspace` class, celPix's workspace:
+`entries`, one `current`, callback lists (`on_added`, `on_removed`,
+`on_reset`, `on_rows_changed`, `on_current_changed`, `on_dirty_changed`),
+deduplication by normalised path, cascade close from a file to its rows and
+from a folder to its contents, revision-token dirty tracking per entry, and
 `invalidate_extractions` when a table changes. It answers every question
 about what is open — `find_file` / `find_table` by path, `entry_by_id` for a
 tree row, `entry_for_table`, `dirty_entries`, `files` /
@@ -685,8 +721,7 @@ file's own compression is the whole file's, decoded on the way in, so it is
 never a slot. Loading a second block over one slot, splicing an edit, and
 writing a file all ask it.
 
-Two more jobs are the workspace's because both are questions about the whole
-list, not about one entry:
+Two more jobs take the whole list rather than one entry:
 
 - **Dropping cached documents.** `drop_document` discards an entry's document
   but keeps what only it held (a block's originals, statuses and notes move to
@@ -698,7 +733,8 @@ list, not about one entry:
   unsaved would claim edits no buffer holds. `invalidate_path` does that for every entry reading a
   path a write just rewrote — sparing the entry that wrote, the blocks under
   it, and anything with unsaved edits of its own.
-- **Missing files.** `missing_paths` is the de-duplicated worklist of
+- **Missing files**, in `project/missing_files.py`, which takes a `Workspace`
+  rather than living on it. `missing_paths` is the de-duplicated worklist of
   referenced files not on disk, and `relocate_path` re-points every reference
   to one of them at a new file — so a ROM and the blocks and bookmarks under it
   are located once and corrected together, and a row still named after its file
@@ -719,6 +755,11 @@ Blocks are to files what celPix slices are, with these differences:
   cannot write is reported by name rather than skipped: one left out of a
   write that reported success would stay unsaved for ever.
 
+`project/progress.py`'s `progress_text` says how far the block in hand and the
+whole project have got, counting a block the session has not read from the
+state the project keeps for it, so a project's progress does not climb as
+blocks are opened.
+
 ### 6.2 Table files and scripts
 
 `project/formats/` reads and writes the text formats:
@@ -728,6 +769,7 @@ Blocks are to files what celPix slices are, with these differences:
 | `table_native.py`| the native grammar                                | the native grammar        |
 | `legacy/`        | romjuice, Cartographer, Atlas and abcde dialects, a module each, following their own tool's rules into the native model with conversion notices | the abcde dialect, which an Atlas export needs |
 | `script.py`      | native scripts, and `apply_script` walks one into a project's blocks | native scripts            |
+| `blockspec.py`   | the block-configuration line (`parse_config`), the one spelling the project file, a script's `@block` directive and a file's session reading all share | the same line (`format_config`) |
 | `translator.py`  | TSV, CSV, PO                                      | TSV, CSV, PO              |
 | `summary.py`     | — | either importer's report as the one shape the confirmation dialog draws: which blocks, how many strings, what was skipped |
 | `textfile.py`    | how a text file is spelled, under all of them: `read_text_any` (the one `open()` of a text file, which the window's imports and drop sniffing use too), `not_utf8` (the one wording of its notice), `split_lines`, `BOM` | the backslash `escape`/`unescape` |
@@ -820,7 +862,9 @@ and aliases for renamed plugin ids.
 ```
 
 A block's configuration is the `@block` line of the script grammar, so one
-spelling covers the project file, a script and a file's session reading. `parent` is an
+spelling covers the project file, a script and a file's session reading
+(`formats/blockspec.py`). The compression slot is `slice_offset`/`slice_length`
+in the file and `slot_offset`/`slot_length` on the `Entry`. `parent` is an
 index into `entries`, and so is `folder` on a block, bookmark or folder that
 sits in one; a reference that is not a folder of the same file, or that loops,
 leaves the row directly under its file, and the loaded list is put in tree
@@ -868,9 +912,9 @@ themselves — the script, table and translator grammars — are `project/format
 
 `ui/main_window/window.py` builds `MainWindow` from mixins, one per concern,
 with `QMainWindow` last, as celPix does. Mixins reach each other only through
-`self`. Nothing outside `main_window/` *changes* the model: the three workspace
-docks read it through `ui/panel.py`'s `WorkspaceTreePanel` — which owns their
-subscription and their row-to-entry lookup — and report intent by signal; every
+`self`. Nothing outside `main_window/` *changes* the model: the workspace dock
+reads it through `ui/panel.py`'s `WorkspaceTreePanel` — which owns its
+subscription and its row-to-entry lookup — and reports intent by signal; every
 other widget outside is handed values and knows nothing of a workspace.
 
 Two things are deliberately outside that rule. The **Table Editor** edits the
@@ -897,44 +941,61 @@ through `_push_command`.
 
 Widgets outside the mixins: `reading_bar.py` (the Reading bar, loaded from and
 read back as a `BlockConfig`), `pointer_tokens.py` (pointers in view as tokens
-the Hex and Text tabs place), `raw_widget.py` (the two-column byte view),
-`text_widget.py` (the plain-text display), `strings_view.py` (the string grid),
+the Hex and Text tabs place), `raw_widget.py` (the two-column byte view: its
+face, its paint, its selection and its input), `text_widget.py` (the
+plain-text display), `strings_view.py` (the string grid),
 `string_pane.py` (the pane under it, on the selected string), `code_editor.py`
 (the translation editor both open, with its code completion), `table_entry_form.py` (the Table Editor's entry form:
 one entry as pickers and fields, and as the line that spells it), the panels (`files_panel.py`,
 `hex_panel.py`), the tool windows, and the dialogs.
 
 What more than one of them needs lives in small modules: `ui/widgets.py`
-(`ResultsTable`, the `CancellableRun` run/stop/progress mixin for a tool window
-and `ModalProgress` for a menu row, `fill_pick` and `select_data` for combos,
+(`ResultsTable`, `fill_pick` and `select_data` for combos,
 `setting_toggle` and `apply_wrap`, the remembered checkbox and the wrap mode
 the Text tab and the strings pane share,
-`CompactComboBox`, the fixed-width picker of the bars whose open list
-widens to its longest item, `WrapBar`, a wrapping bar of labelled controls in
-optional framed sections, `ModeToggle`, side-by-side buttons one of which
-is down, and `carry_undo`, which gives a tool window Undo and Redo and keeps
+`CompactComboBox`, the stated-width picker of the bars whose open list
+widens to its longest item — `PICKER_WIDTH` is the width one takes unless it
+states its own — `ModeToggle`, side-by-side buttons one of which
+is down, `focus_field`, which focuses a field and selects what it holds,
+and `carry_undo`, which gives a tool window Undo and Redo and keeps
 its fields from spending their keys on their own typing history),
-`ui/panel.py` (`WorkspaceTreePanel`, which owns a
+`ui/bars.py` (`FlowLayout`, `ROW_BREAK` and `WrapBar`, a wrapping bar of
+labelled controls in optional framed sections), `ui/progress.py`
+(the `CancellableRun` run/stop/progress mixin for a tool window and
+`ModalProgress` for a menu row), `ui/tool_window.py` (`ToolWindow`, the title,
+size and `remember_layout` every tool window opens with — the size set before
+the restore, so the remembered one survives — and `ResultsRunWindow`, the
+parameter row, status, results and one action button the Search and Scan
+windows both are), `ui/popup_picker.py` (`PopupFrame` and `PopupPicker`, the
+base of the skips and writing pickers), `ui/table_grid.py` (the Table Editor's
+entry model and grid), `ui/panel.py` (`WorkspaceTreePanel`, which owns a
 dock's workspace subscription and its row-to-entry lookup), `ui/window_layout.py`
 (`WindowLayout` and `remember_layout`), `ui/find_row.py` (`FindRow`, the find
 field that steps to the next match on Enter and the previous on Shift+Enter),
-`ui/number_fields.py` (`AddressSpelling`, `HexEdit`, `AddressEdit` and the spin
-boxes sized to what they hold), `ui/marks.py` (the chip, tick, rule and notch
+`ui/number_fields.py` (`AddressSpelling`, `HexEdit`, `AddressEdit`, the spin
+boxes sized to what they hold, and `address_column`, the one answer both byte
+views get for how their address column spells an offset and how wide it is),
+`ui/raw_cells.py` (`RowModel` and `CellGeometry`: where every cell of a row
+sits), `ui/cell_text.py` (`CellText`: text drawn into a cell it may not fit,
+condensed, cut and notched), `ui/marks.py` (the chip, tick, rule and notch
 the byte views and the legend both paint), `ui/token_text.py` (what a token
 covers and how it reads on one line, and script text with its codes left out,
-with no Qt), `ui/alphabets.py` (the canned
-runs of characters a fill offers), `ui/preview_font.py` (`PreviewFont`, the
+with no Qt), `ui/alphabets.py` (the canned runs of characters a fill offers,
+which name the relative search's runs too), `ui/preview_font.py` (`PreviewFont`, the
 app's one system font and the `Font` values it measures),
 `ui/preview_render.py` (a laid-out page drawn into an image), `ui/font_tab.py`
 (`FontTab`, which picks that font), `ui/entry_tree.py` (the Files tree's drags and keys),
-`ui/entry_text.py` (what a Files row says, with no Qt), `ui/skips_picker.py`
+`ui/entry_text.py` (what a Files row says, with no Qt), `ui/kind_names.py`
+(what the window calls a source kind and a string type, in one table, with no
+Qt), `ui/skips_picker.py`
 (the Reading bar's skip ranges and their popup), `ui/writing_picker.py` (its
 write settings and theirs), `ui/table_dialogs.py` (Shift
-Keys and Fill), `ui/entry_rows.py` (a code's operand rows and a switch's
+Keys and Fill), `ui/table_entry_rows.py` (a code's operand rows and a switch's
 parameter rows), `ui/help_dialogs.py` (the live shortcut
 list and the legend) and `ui/__init__.py` (the `settings()` accessor, the
-`setting_bool`/`set_setting_bool` pair every stored switch is read through, and
-the view constants `BYTES_PER_ROW` and `DUMP_WINDOW_BYTES`).
+`setting_bool`/`set_setting_bool`/`setting_int` calls every stored switch and
+number is read through, and the view constants `BYTES_PER_ROW` and
+`DUMP_WINDOW_BYTES`).
 
 ### 7.2 Where UI state lives
 
@@ -1007,7 +1068,8 @@ silently gating nothing. The three capabilities whose surface is a *tool window*
 that drives that window instead, since each window already decides its own
 enablement from its own state. (`EntryKind` lives in `core/capabilities.py`
 because it keys that table and `core/` is the bottom layer;
-`project/workspace.py` imports it from there.)
+`project/entry.py` imports it from there and re-exports it, so a module can
+name a row and its kind in one import.)
 
 Undo is one `QUndoStack` for the session, and `ui/undo_commands.py` states three
 invariants once, in `_StateCommand`:
@@ -1091,17 +1153,26 @@ putting the factory arrangement back behind Panels ▸ Reset Panel Layout.
   [`../release.md`](../release.md).
 - **Tools** — `tools/` holds the development scripts
   [development.md](../development.md) describes: `regen_fixtures.py`,
-  `make_sample_projects.py` and `subset_icon_font.py`; the screenshot scripts
+  `make_sample_projects.py`, `mother3_sample.py`, `mk2_sample.py`,
+  `dump_script.py`, `subset_icon_font.py`, and `samples/`, the tables and
+  command files of the games abcde has no examples for; the screenshot scripts
   [ui.md](../ui.md) describes are in the gitignored `local-tools/`.
+- **The project-file linter** — `tools/mapchar-lint/` is a package of its own,
+  with its own `pyproject.toml` and its tests in `pyproject.toml`'s
+  `testpaths`, so `uv run pytest` runs them. It restates `projectfile.py`'s
+  reader to report what that reader drops or ignores ([lint.md](../lint.md)).
 - **Tests** — `tests/` is flat, one module per area, with the celPix
   headless setup (offscreen platform, automatic `qt` marking, isolated
-  `QSettings`, recorded dialogs). Model-layer tests run without Qt.
-- **Verification fixtures** — `tests/fixtures/` holds synthetic ROMs, tables
-  in every dialect, Cartographer command files and Atlas scripts, together
-  with expected outputs produced by running abcde and romjuice from
-  `../abcde/` and `../romjuice/`. `tools/regen_fixtures.py` regenerates them
-  and skips when the tools are absent. Tests compare mapchar's dumps and
-  insertions to those outputs.
+  `QSettings`, recorded dialogs). Model-layer tests run without Qt. Shared
+  helpers are `tests/helpers.py`, which is Qt-free, and
+  `tests/window_helpers.py`, which drives a live `MainWindow`.
+- **Verification fixtures** — `tests/fixtures/abcde/` holds a synthetic ROM,
+  its two tables and a Cartographer command file, plus `expected.txt`, abcde's
+  dump of them, and `DIVERGENCES.md`; `tests/fixtures/shift-jis.tbl` sits
+  beside it. `tools/regen_fixtures.py` regenerates them, running abcde from
+  `../abcde/` when perl and the checkout are there and writing the inputs alone
+  when they are not. `tests/test_verify_abcde.py` compares mapchar's
+  extraction with that dump.
 - **Deliberate divergences** from the reference tools are enumerated in one
   table in `tests/fixtures/abcde/DIVERGENCES.md`, each with the fixture that
   exercises it. The set is the replication notes of the reference docs:

@@ -41,6 +41,19 @@ def registry():
     return default_registry()
 
 
+@pytest.fixture
+def window(qtbot, monkeypatch):
+    """A live ``MainWindow`` with its modals answered, for the window tests.
+
+    :mod:`window_helpers` is imported inside the body rather than at module
+    scope, because importing it imports Qt, and ``-m 'not qt'`` must stay
+    headless.
+    """
+    from window_helpers import make_window
+
+    return make_window(qtbot, monkeypatch)
+
+
 @pytest.fixture(autouse=True)
 def unattended_dialogs(monkeypatch):
     """Answer the modal boxes a test never arranged for, rather than block.

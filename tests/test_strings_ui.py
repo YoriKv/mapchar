@@ -6,18 +6,14 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 
-import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent, QTextCursor
-from PySide6.QtWidgets import QMessageBox
 
 from mapchar.core.block import RangeSource, Status
 from mapchar.core.font import TextBox
 from mapchar.core.tokens import piece_spans
 from mapchar.engines import scriptfind
-from mapchar.project.formats.table_native import HEADER
 from mapchar.ui.code_editor import CodeEditor, CodeInfo
-from mapchar.ui.main_window import MainWindow
 from mapchar.ui.strings_view import (
     COL_NOTES,
     COL_TRANSLATION,
@@ -25,53 +21,11 @@ from mapchar.ui.strings_view import (
     StringsView,
 )
 from mapchar.ui.token_text import hide_codes
-from window_helpers import add_block, open_rom_and_table
-
-TABLE = (
-    f"{HEADER}\n@table main\n41=A\n42=B\n43=C\nFE=[line]\n$FD=[color],u8\n/00=[end]\n"
-)
-"""Three letters, a line code, a code with an operand, and an end token."""
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    """A window whose modals answer themselves: one left open is a hang.
-
-    The three-way "unsaved edits" gate is a box with its own labels rather
-    than a standard question, so it is answered by taking its destructive
-    button; errors are collected for a test to read.
-    """
-    monkeypatch.setattr(
-        "mapchar.ui.main_window.window.QMessageBox.question",
-        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Discard),
-    )
-    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
-    errors: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox,
-        "warning",
-        staticmethod(lambda _p, _t, message, *a, **k: errors.append(message)),
-    )
-    monkeypatch.setattr(
-        QMessageBox,
-        "clickedButton",
-        lambda self: next(
-            (
-                b
-                for b in self.buttons()
-                if self.buttonRole(b) == QMessageBox.ButtonRole.DestructiveRole
-            ),
-            None,
-        ),
-    )
-    w = MainWindow()
-    w.errors = errors
-    qtbot.addWidget(w)
-    return w
+from window_helpers import CODES_TABLE, add_block, open_rom_and_table
 
 
 def block_with(window, tmp_path, data, name="b", stop=None):
-    entry = open_rom_and_table(window, tmp_path, data, table=TABLE)
+    entry = open_rom_and_table(window, tmp_path, data, table=CODES_TABLE)
     return entry, add_block(
         window, entry, name, RangeSource(0, stop if stop else len(data))
     )

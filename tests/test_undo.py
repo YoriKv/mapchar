@@ -11,7 +11,6 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
-import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
@@ -23,14 +22,9 @@ from mapchar.ui.undo_commands import (
     BoxCommand,
     ContainerCommand,
 )
-from window_helpers import add_block, grid_row, make_window, open_rom_and_table
+from window_helpers import ab_ba_rom, add_block, grid_row, open_rom_and_table
 
-DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
+DATA = ab_ba_rom(4)
 
 
 def _block(window, tmp_path, name="b", rom_name="rom.bin"):

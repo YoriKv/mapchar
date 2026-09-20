@@ -24,7 +24,7 @@ from mapchar.core.numbers import clamp, format_hex_offset, parse_hex_offset
 from mapchar.project.formats.table_native import HEADER
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.main_window.navigation import CUSTOM_ID
-from window_helpers import add_block, make_window, open_rom_and_table
+from window_helpers import add_block, item_for, make_window, open_rom_and_table
 
 DATA = bytes(range(64))
 
@@ -89,11 +89,6 @@ def test_a_wider_bank_takes_more_address_digits():
 
 
 # --- the address format on the navigation bar ------------------------------
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 def _opened(window, tmp_path):
@@ -373,7 +368,7 @@ def test_walking_onto_a_string_selects_its_row_in_the_files_panel(window, tmp_pa
     block = add_block(window, file_entry, "b", RangeSource(0, 8))
     panel = window.files_panel
     window._show_string(block, 1)
-    item = panel._items[id(block)]
+    item = item_for(window, block)
     assert item.isExpanded()
     assert panel.string_of(panel.tree.selectedItems()[0]) == (block, 1)
     window._history_step(-1)

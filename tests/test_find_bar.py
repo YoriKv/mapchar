@@ -3,19 +3,13 @@ and buttons that walk its matches."""
 
 from __future__ import annotations
 
-import pytest
 from PySide6.QtCore import Qt
 
 from mapchar.core.block import RangeSource
-from window_helpers import add_block, make_window, open_rom_and_table
+from window_helpers import add_block, open_rom_and_table
 
 DATA = bytes(range(64)) + b"ABCABC" + bytes(8) + b"ABC" + bytes(5)
 """Two matches of ``ABC`` at 64 and 67, and a third at 78."""
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 def _open(window, tmp_path):

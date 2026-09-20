@@ -6,17 +6,17 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 from mapchar.core.block import RangeSource
-from window_helpers import TABLE, add_block, make_window, open_rom_and_table
+from window_helpers import (
+    TABLE,
+    ab_ba_rom,
+    add_block,
+    item_for,
+    menu_actions,
+    open_rom_and_table,
+)
 
-DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
+DATA = ab_ba_rom(20)
 
 
 def _codes_table(count: int) -> str:
@@ -193,7 +193,7 @@ def test_a_cut_short_cell_shows_its_whole_text_on_hover(window, tmp_path):
     tree = window.files_panel.tree
     window.files_panel.show()
     tree.resize(90, 300)
-    item = window.files_panel._items[id(block)]
+    item = item_for(window, block)
     shown = _hover(tree, tree.indexFromItem(item))
     assert shown and shown[0].startswith("a rather long block name indeed")
     # The row's own tooltip still follows the name.
@@ -273,7 +273,7 @@ def test_f2_renames_the_files_row_in_place(window, tmp_path, qtbot):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     tree = window.files_panel.tree
-    tree.setCurrentItem(window.files_panel._items[id(block)])
+    tree.setCurrentItem(item_for(window, block))
     qtbot.keyClick(tree, Qt.Key.Key_F2)
     assert window.files_panel._editing is block
 
@@ -299,25 +299,8 @@ def _title_case_problems(labels):
     return bad
 
 
-def _all_menu_rows(window):
-    from mapchar.ui.help_dialogs import submenus
-
-    below = submenus(window.menuBar())
-
-    def walk(menu):
-        for action in menu.actions():
-            if action.isSeparator():
-                continue
-            yield action
-            sub = below.get(action)
-            if sub is not None and sub is not window.recent_menu:
-                yield from walk(sub)
-
-    return list(walk(window.menuBar()))
-
-
 def test_every_menu_row_has_a_mnemonic_and_title_case(window):
-    rows = _all_menu_rows(window)
+    rows = [action for _, action in menu_actions(window)]
     assert [a.text() for a in rows if "&" not in a.text()] == []
     assert _title_case_problems(a.text() for a in rows) == []
 

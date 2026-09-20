@@ -13,32 +13,18 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
-
 from mapchar.core.block import RangeSource
 from mapchar.core.context import PipelineContext
 from mapchar.plugins.builtins.compression import GbaLz77
 from mapchar.project.entry import EntryKind
-from window_helpers import add_block, make_window, open_rom_and_table
+from window_helpers import add_block, gba_packed_rom, open_rom_and_table
 
 PAYLOAD = bytes.fromhex("41 42 00 42 41 00 41 41 00") + b"\xee" * 7
 """Three end-terminated strings — ``AB``, ``BA``, ``AA`` — and fill after them."""
 
 
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
-
-
-def _packed() -> tuple[bytes, int, bytes]:
-    """The payload compressed, the slot it needs, and a ROM holding it at 16."""
-    packed = GbaLz77().compress(PAYLOAD, PipelineContext())
-    slot = len(packed) + 16  # room for a re-compression that packs worse
-    return packed, slot, b"\xff" * 16 + packed + b"\xff" * (slot - len(packed) + 8)
-
-
 def _compressed_block(window, tmp_path, name="z", stop=6, rom_name="rom.bin"):
-    _packed_bytes, slot, data = _packed()
+    _packed_bytes, slot, data = gba_packed_rom(PAYLOAD)
     file_entry = open_rom_and_table(window, tmp_path, data, rom_name=rom_name)
     block = add_block(
         window,
@@ -281,7 +267,7 @@ def test_a_compressed_file_shares_its_buffer_with_its_plain_blocks(window, tmp_p
     the way in and the buffer is the result, which its plain blocks read. It is
     not a slot, and looking for one would leave those blocks showing bytes that
     are no longer there."""
-    packed, _slot, _data = _packed()
+    packed, _slot, _data = gba_packed_rom(PAYLOAD)
     open_rom_and_table(window, tmp_path, b"\xff" * 4, rom_name="other.bin")
     rom = tmp_path / "packed.bin"
     rom.write_bytes(packed)

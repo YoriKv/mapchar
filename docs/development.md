@@ -19,7 +19,9 @@ the editor, and the checks a change has to pass.
   `export UV_PROJECT_ENVIRONMENT=.venv-linux` first, or a bare `uv sync`
   overwrites the Windows `.venv` with Linux binaries.
 - `uv sync` creates the environment; `uv run mapchar` runs the app;
-  `uv run pytest`, `uv run ruff check .` and `uv run ruff format --check .`
+  PyCharm's inspections (`ide_diagnostics`) on the files a change touched,
+  then `uv run pytest`, `uv run ruff check .` and
+  `uv run ruff format --check .`,
   are the checks. `tools/` is git-ignored, so ruff passes it over: a change
   there runs `uv run ruff check tools/…` and `uv run ruff format tools/…`
   on what it touched, and its new files go in with `git add -f`.
@@ -42,7 +44,9 @@ the editor, and the checks a change has to pass.
   configuration, launching `python -m mapchar` with the project interpreter.
 - `.editorconfig` mirrors the ruff settings (88 columns, 4 spaces, LF, UTF-8)
   so the IDE and the linter agree.
-- Python navigation is by grep; the documentation is searched through qmd
+- Python symbols are navigated through the PyCharm MCP — `ide_search_text`,
+  `ide_find_references`, `ide_find_definition` and its refactoring tools —
+  rather than by grep; the documentation is searched through qmd
   (see [README.md](README.md)).
 
 ## Layout
@@ -54,7 +58,7 @@ mapchar/
 │   ├── engines/         decode, encode, search, scan, layout (Qt-free)
 │   ├── pipeline/        stages, extraction, insertion (Qt-free)
 │   ├── plugins/         plugin API, registry, built-ins (Qt-free)
-│   ├── project/         workspace, project file, table, script and exchange formats (Qt-free)
+│   ├── project/         entries and the open-entries model, project file, table, script and exchange formats (Qt-free)
 │   ├── ui/              the PySide6 application
 │   └── resources/       package data
 ├── tests/               pytest, flat, one module per area
@@ -64,6 +68,7 @@ mapchar/
 │                       subset_icon_font.py, samples/,
 │                       mapchar-lint/ (the project-file linter, see lint.md)
 ├── local-tools/         ui_screenshots.py, wiki_screenshots.py (gitignored, see ui.md)
+├── screenshots/         the six PNGs README.md's gallery shows
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
 ├── release.sh           cuts a release (see release.md)
@@ -81,6 +86,12 @@ mapchar/
   python tools/make_sample_projects.py [game…]` copies each game's tables and
   command file beside its ROM and saves a `<game>.mapchar` project there,
   ready to open; named games are the only ones built.
+- **Dragon Quest IV** and **Dragon Warrior II** are the two NES samples. Their
+  tables and Cartographer command file come from abcde's own examples in the
+  sibling checkout, `../abcde/eg/NES/<game>/`, so building one needs that
+  checkout as well as the ROM. `tests/test_examples.py` covers neither. Dragon
+  Quest IV is the project `local-tools/ui_screenshots.py` opens unless told
+  another ([ui.md](ui.md)).
 - **Mother 3**: `tools/mother3_sample.py` derives the sample's tables (`m3`,
   `m3battle`, `saturn`) and its 20 blocks — 12,997 strings, 7,825 of them in
   **Script**, one block over the main script's nested offset tables — from
@@ -148,6 +159,7 @@ mapchar/
   Anything installed on the `QApplication` — an event filter above all — is
   paid for by every test after it, so it is one shared object or is taken off
   when its window closes. Qt-free helpers shared by test modules live in
-  `tests/helpers.py`.
+  `tests/helpers.py`, and those that drive a live `MainWindow` in
+  `tests/window_helpers.py`.
 - **Line endings** are LF everywhere (`.gitattributes`); paths in docs and
   code are repository-relative.

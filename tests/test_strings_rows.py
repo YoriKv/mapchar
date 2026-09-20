@@ -10,23 +10,8 @@ that can.
 
 from __future__ import annotations
 
-import pytest
-from PySide6.QtWidgets import QMessageBox
-
 from mapchar.core.block import PointerTableSource, RangeSource, Status, WriteMode
-from mapchar.project.formats.table_native import HEADER
-from window_helpers import add_block, make_window, open_rom_and_table
-
-TABLE = f"{HEADER}\n@table main\n41=A\n42=B\n43=C\n/00=[end]\n"
-"""Three letters and an end token."""
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    monkeypatch.setattr("mapchar.ui.main_window.window.TextDialog.exec", lambda s: 0)
-    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
-    return make_window(qtbot, monkeypatch)
-
+from window_helpers import ABC_TABLE, add_block, open_rom_and_table
 
 # --- room ------------------------------------------------------------------
 
@@ -42,7 +27,7 @@ POINTER_ROM = (
 
 
 def _pointer_block(window, tmp_path):
-    file_entry = open_rom_and_table(window, tmp_path, POINTER_ROM, table=TABLE)
+    file_entry = open_rom_and_table(window, tmp_path, POINTER_ROM, table=ABC_TABLE)
     return add_block(
         window,
         file_entry,
@@ -105,7 +90,7 @@ def test_packed_room_is_the_string_s_own_bytes_and_the_block_s_spare(window, tmp
     What a string may grow to is its own bytes plus the spare the block has
     left over — the same spare in every row, and in no two rows at once.
     """
-    file_entry = open_rom_and_table(window, tmp_path, PACKED_ROM, table=TABLE)
+    file_entry = open_rom_and_table(window, tmp_path, PACKED_ROM, table=ABC_TABLE)
     block = add_block(
         window,
         file_entry,
@@ -143,7 +128,7 @@ def test_a_commit_refreshes_only_the_rows_its_bytes_reach(
     very rows it held before, and no row is rebuilt.
     """
     data = bytes.fromhex("41 42 00 EE EE EE 42 41 00 EE EE EE")
-    file_entry = open_rom_and_table(window, tmp_path, data, table=TABLE)
+    file_entry = open_rom_and_table(window, tmp_path, data, table=ABC_TABLE)
     block = add_block(window, file_entry, "b", RangeSource(0, 12), fill=b"\xee")
     kept = window.strings.rows_by_index()[1]
     rebuilt: list[int] = []
@@ -181,7 +166,7 @@ def test_apply_to_identical_keeps_the_strings_that_do_fit(window, tmp_path):
         + b"\xee" * 3
         + bytes.fromhex("41 42 00")  # 0x0C: AB[end], and no room at all
     )
-    file_entry = open_rom_and_table(window, tmp_path, data, table=TABLE)
+    file_entry = open_rom_and_table(window, tmp_path, data, table=ABC_TABLE)
     block = add_block(window, file_entry, "b", RangeSource(0, 15), fill=b"\xee")
     rows = window._row_data(block, block.doc)
     assert [r.room for r in rows] == [6, 6, 3]
@@ -202,7 +187,7 @@ def test_the_dirty_check_follows_a_string_s_state(window, tmp_path):
     serialisation is kept until its strings change; a status or a note the
     keeping missed would leave the project reading clean with work in it."""
     data = bytes.fromhex("41 42 00 EE EE EE 42 41 00 EE EE EE")
-    file_entry = open_rom_and_table(window, tmp_path, data, table=TABLE)
+    file_entry = open_rom_and_table(window, tmp_path, data, table=ABC_TABLE)
     block = add_block(window, file_entry, "b", RangeSource(0, 12), fill=b"\xee")
     proj = str(tmp_path / "p.mapchar")
     assert window._write_project(proj) and not window._project_dirty()

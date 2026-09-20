@@ -21,15 +21,10 @@ from mapchar.project.projectfile import load_project, save_project
 from mapchar.ui.reading_bar import END, LIST, NESTED, RANGE
 from mapchar.ui.token_text import POINTER_TOKENS
 from mapchar.ui.widgets import select_data
-from window_helpers import add_block, make_window, open_rom_and_table
+from window_helpers import add_block, open_rom_and_table
 
 ROM = pointer_rom((0x10, 0x13), "41 42 00 42 00")
 """Pointers at 0 and 2 to AB[end] at $10 and B[end] at $13."""
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 def _items(combo) -> list[object]:

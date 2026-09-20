@@ -15,18 +15,12 @@ from mapchar.ui import BYTES_PER_ROW
 from window_helpers import (
     ASCII_TABLE,
     add_block,
-    make_window,
     open_rom_and_table,
 )
 
 LINE = b"The quick brown fox jumps over the lazy dog. "
 PROSE = LINE * 400
 """Plain text with no line breaks, so every line is the box's own wrapping."""
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 def _shown(window, width: int, height: int):

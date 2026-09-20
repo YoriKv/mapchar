@@ -3,7 +3,6 @@ in the window."""
 
 from __future__ import annotations
 
-import pytest
 from PySide6.QtWidgets import QInputDialog
 
 from mapchar.core.block import RangeSource
@@ -14,18 +13,12 @@ from window_helpers import (
     add_block,
     grid_cell,
     grid_row,
-    make_window,
     open_rom_and_table,
     type_in_grid,
 )
 
 BASE = f"{HEADER}\n@table base\n41=A\n42=B\n/00=[end]\n01=[wait]\n"
 TOP = f"{HEADER}\n@table top\n@include base\n42=b\n"
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 def _tables(window, tmp_path):

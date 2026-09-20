@@ -64,7 +64,7 @@ opens quietly wrong.
 ## The schema is restated, not imported
 
 `mapchar_lint.schema`, `reading` and `config` restate the reader
-(`project/projectfile.py`, `formats/script.parse_config`): the linter runs
+(`project/projectfile.py`, `formats/blockspec.parse_config`): the linter runs
 where mapchar is not installed, and the reader cannot lint — by the time it
 returns an `Entry` the unknown key is gone and the bad word passed over. A
 change to the project format or the configuration grammar changes these

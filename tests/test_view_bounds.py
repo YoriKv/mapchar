@@ -4,7 +4,6 @@ that confinement is asked for."""
 
 from __future__ import annotations
 
-import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
@@ -23,15 +22,16 @@ from mapchar.core.capabilities import Capability
 from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.entry_text import ROW_PREVIEW_CHARS, string_preview
-from window_helpers import ASCII_TABLE, add_block, make_window, open_rom_and_table
+from window_helpers import (
+    ASCII_TABLE,
+    ab_ba_rom,
+    add_block,
+    item_for,
+    open_rom_and_table,
+)
 
-DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 0x40
+DATA = ab_ba_rom(0x40)
 """Two strings in the first six bytes, then filler."""
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 def _shown(window):
@@ -195,7 +195,7 @@ def test_the_text_tab_is_confined_too(window, tmp_path):
 
 
 def _string_rows(window, block):
-    item = window.files_panel._items[id(block)]
+    item = item_for(window, block)
     return [item.child(i) for i in range(item.childCount())]
 
 
@@ -203,7 +203,7 @@ def test_a_block_row_opens_to_its_strings(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     panel = window.files_panel
-    item = panel._items[id(block)]
+    item = item_for(window, block)
     # Closed, one stub keeps the expander and the strings are not built.
     assert not item.isExpanded()
     assert [panel.string_of(r) for r in _string_rows(window, block)] == [None]
@@ -223,9 +223,9 @@ def test_the_open_blocks_survive_a_rebuild(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     panel = window.files_panel
-    panel._items[id(block)].setExpanded(True)
+    item_for(window, block).setExpanded(True)
     panel.rebuild()
-    item = panel._items[id(block)]
+    item = item_for(window, block)
     assert item.isExpanded()
     assert len(_string_rows(window, block)) == 2
 
@@ -241,7 +241,7 @@ def test_opening_a_block_the_session_has_not_read_reads_it(window, tmp_path):
     )
     window._push_add(block)
     assert block.doc is None
-    window.files_panel._items[id(block)].setExpanded(True)
+    item_for(window, block).setExpanded(True)
     assert block.doc is not None
     assert len(_string_rows(window, block)) == 2
     # Read for its rows, not shown: the view stayed on the file.
@@ -253,7 +253,7 @@ def test_a_string_row_confines_the_view_to_that_string(window, tmp_path):
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     window._activate_entry(file_entry)
     panel = window.files_panel
-    panel._items[id(block)].setExpanded(True)
+    item_for(window, block).setExpanded(True)
     row = _string_rows(window, block)[1]
     panel._on_clicked(row, 0)
     assert window._entry is block
@@ -266,7 +266,7 @@ def test_a_string_row_confines_the_view_to_that_string(window, tmp_path):
     # The row clicked is the one selected, not the block's.
     assert panel.tree.selectedItems() == [row]
     # The block's own row brings the whole source back, from its start.
-    panel._on_clicked(panel._items[id(block)], 0)
+    panel._on_clicked(item_for(window, block), 0)
     assert window._bounds == (0, 6)
     assert window._offset == 0
     assert window._entry is block
@@ -277,10 +277,10 @@ def test_an_arrow_key_shows_the_row_it_lands_on(window, tmp_path):
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     window._activate_entry(file_entry)
     panel = window.files_panel
-    panel._items[id(block)].setExpanded(True)
-    panel.tree.setCurrentItem(panel._items[id(file_entry)])
+    item_for(window, block).setExpanded(True)
+    panel.tree.setCurrentItem(item_for(window, file_entry))
     QTest.keyClick(panel.tree, Qt.Key.Key_Down)
-    assert panel.tree.currentItem() is panel._items[id(block)]
+    assert panel.tree.currentItem() is item_for(window, block)
     assert window._entry is block
     assert window._bounds == (0, 6)
     # On down into the strings: the same confinement a click on the row gives.
@@ -293,12 +293,12 @@ def test_the_filter_reaches_the_strings(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     panel = window.files_panel
-    item = panel._items[id(block)]
+    item = item_for(window, block)
     item.setExpanded(True)
     panel.filter.setText("BA")
     rows = _string_rows(window, block)
     assert [r.isHidden() for r in rows] == [True, False]
-    assert not item.isHidden() and not panel._items[id(file_entry)].isHidden()
+    assert not item.isHidden() and not item_for(window, file_entry).isHidden()
     panel.filter.setText("nowhere")
     assert item.isHidden()
     panel.filter.setText("")

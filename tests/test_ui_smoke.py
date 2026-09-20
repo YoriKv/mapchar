@@ -6,55 +6,32 @@ from pathlib import Path
 
 import pytest
 
+from conftest import ROOT
 from helpers import pointer_rom, texts
 from mapchar.core.block import RangeSource, Status
 from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui.main_window import MainWindow
 from mapchar.ui.token_text import POINTER_TOKENS
 from window_helpers import (
+    ABCDE_TABLE,
     ASCII_TABLE,
     TABLE,
+    ab_ba_rom,
     add_block,
     arm_scheme,
+    gba_packed,
+    gba_packed_rom,
     grid_keys,
     grid_row,
+    item_for,
+    menu_actions,
     open_rom_and_table,
     type_in_grid,
 )
 
 
-@pytest.fixture
-def window(qtbot, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "mapchar.ui.main_window.window.QMessageBox.question",
-        lambda *a, **k: (
-            __import__("PySide6.QtWidgets").QtWidgets.QMessageBox.StandardButton.Discard
-        ),
-    )
-    monkeypatch.setattr("mapchar.ui.main_window.window.TextDialog.exec", lambda self: 0)
-    # The three-way "unsaved edits" gate is a box with its own labels, not a
-    # standard question: answer it the same way, by taking the destructive
-    # ("Continue Without" / "Discard") button.
-    qmessagebox = __import__("PySide6.QtWidgets").QtWidgets.QMessageBox
-    monkeypatch.setattr(
-        qmessagebox,
-        "clickedButton",
-        lambda self: next(
-            (
-                b
-                for b in self.buttons()
-                if self.buttonRole(b) == qmessagebox.ButtonRole.DestructiveRole
-            ),
-            None,
-        ),
-    )
-    w = MainWindow()
-    qtbot.addWidget(w)
-    return w
-
-
 def test_open_rom_table_and_block(window, tmp_path, monkeypatch):
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    data = ab_ba_rom(20)
     entry = open_rom_and_table(window, tmp_path, data, rom_name="game.bin")
     assert entry is not None and window._doc is not None and window._doc.size == 26
     assert window.format_pick.currentData() == "main"
@@ -126,7 +103,7 @@ def test_a_selection_goes_with_a_block_over_the_file_s_own_bytes(window, tmp_pat
     """The same buffer, so the same offsets: what is selected still means what
     it meant, which is what New Block from Selection reads off the file's Files
     row while a block is on screen."""
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     window._select_bytes(0, 3)
@@ -140,7 +117,7 @@ def test_a_selection_goes_with_a_block_over_the_file_s_own_bytes(window, tmp_pat
 def test_an_anchor_does_not_outlive_the_view_s_bounds(window, tmp_path):
     """A Shift+click reaches inside what is on screen: confining the view to
     one string, and widening it again, leaves nothing to reach from."""
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     window._select_bytes(0, 1)
@@ -153,7 +130,7 @@ def test_an_anchor_does_not_outlive_the_view_s_bounds(window, tmp_path):
 
 
 def test_text_tab(window, tmp_path):
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     open_rom_and_table(window, tmp_path, data)
     assert window.tabs.currentWidget() is window.raw
     assert [window.tabs.tabText(i) for i in range(3)] == ["Hex", "Text", "Strings"]
@@ -213,7 +190,7 @@ def test_the_text_tab_is_a_session_view(window, tmp_path):
 
 
 def test_edit_and_write(window, tmp_path):
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "b", RangeSource(0, 6), fill=b"\xee")
     window._on_translation_edited(0, "A[end]")
@@ -257,7 +234,7 @@ def test_edit_and_write(window, tmp_path):
 
 
 def test_import_export_and_find_replace(window, tmp_path):
-    data = bytes.fromhex("41 42 00 42 41 00")
+    data = ab_ba_rom(0)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "D", RangeSource(0, 6))
     window._on_translation_edited(0, "B[end]")
@@ -332,7 +309,7 @@ def test_pointer_block_in_window(window, tmp_path, monkeypatch):
 def test_cartographer_and_atlas_import(window, tmp_path):
     rom = tmp_path / "c.bin"
     rom.write_bytes(bytes.fromhex("41 42 00 42 00") + b"\xff" * 8)
-    (tmp_path / "main.tbl").write_text("@main\n41=A\n42=B\n/00=[end]\n")
+    (tmp_path / "main.tbl").write_text(ABCDE_TABLE)
     (tmp_path / "cmd.txt").write_text(
         "#BLOCK NAME: Intro\n#TYPE: NORMAL\n#METHOD: RAW\n#SCRIPT START: 0\n"
         "#SCRIPT STOP: $5\n#TABLE: main.tbl\n#COMMENTS: No\n#END BLOCK\n"
@@ -390,9 +367,8 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     from mapchar.plugins.builtins.compression import GbaLz77
 
     payload = b"HELLO HELLO HELLO\x00WORLD WORLD\x00" * 3
-    packed = GbaLz77().compress(payload, PipelineContext())
-    slot = len(packed) + 9  # the compressed slot has spare room at its end
-    data = b"\xff" * 16 + packed + b"\xff" * 9 + b"\xff" * 24
+    # The compressed slot has spare room at its end.
+    _packed, slot, data = gba_packed_rom(payload, spare=9, tail=24)
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     arm_scheme(window, "gba_lz77")
     window._go_to(16)
@@ -717,11 +693,8 @@ def test_a_scan_and_find_all_refuse_to_run_inside_each_other(window, tmp_path):
     Driven through a scheme that announces itself in no way, so Find All walks
     the buffer a byte at a time and reports progress on the way.
     """
-    from mapchar.core.context import PipelineContext
-    from mapchar.plugins.builtins.compression import GbaLz77
-
     payload = b"HELLO HELLO HELLO\x00" * 4
-    packed = GbaLz77().compress(payload, PipelineContext())
+    packed = gba_packed(payload)
     data = b"\xff" * 300 + packed + b"\xff" * 300
     open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     view = window.decompress_window
@@ -834,9 +807,7 @@ def test_find_all_lists_every_structure_in_the_mk2_rom(window):
     Find All against a real packer's output: the walk over a whole ROM finds
     every stream and nothing else.
     """
-    rom = Path(__file__).resolve().parent.parent / (
-        "sample-projects/MK2/Mortal Kombat II (USA, Europe).gb"
-    )
+    rom = ROOT / "sample-projects" / "MK2" / "Mortal Kombat II (USA, Europe).gb"
     if not rom.exists():
         pytest.skip("the Mortal Kombat II ROM is not present")
     window.open_rom(str(rom))
@@ -859,11 +830,7 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
     from mapchar.plugins.builtins.compression import GbaLz77
 
     payload = b"HELLO HELLO HELLO\x00WORLD WORLD\x00" * 3
-    packed = GbaLz77().compress(payload, PipelineContext())
-    # Room for a re-compression that packs worse than the original: breaking a
-    # long repetition up is what editing text does.
-    slot = len(packed) + 16
-    data = b"\xff" * 16 + packed + b"\xff" * 16 + b"\xff" * 24
+    _packed, slot, data = gba_packed_rom(payload, tail=24)
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     first = add_block(
         window,
@@ -905,9 +872,7 @@ def test_siblings_over_a_slot_share_its_payload_and_write_together(window, tmp_p
     from mapchar.plugins.builtins.compression import GbaLz77
 
     payload = b"HELLO HELLO HELLO\x00WORLD WORLD\x00" * 3
-    packed = GbaLz77().compress(payload, PipelineContext())
-    slot = len(packed) + 16
-    data = b"\xff" * 16 + packed + b"\xff" * 16 + b"\xff" * 24
+    _packed, slot, data = gba_packed_rom(payload, tail=24)
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     slice_fields = dict(
         fill=b"\xff", compression_id="gba_lz77", slot_offset=16, slot_length=slot
@@ -1036,7 +1001,7 @@ def test_cartographer_import_strips_the_header(window, tmp_path):
     header = NES_MAGIC + bytes([1, 0, 0, 0]) + b"\x00" * 8
     rom = tmp_path / "h.nes"
     rom.write_bytes(header + bytes.fromhex("41 42 00 42 00") + b"\xff" * 8)
-    (tmp_path / "main.tbl").write_text("@main\n41=A\n42=B\n/00=[end]\n")
+    (tmp_path / "main.tbl").write_text(ABCDE_TABLE)
     (tmp_path / "cmd.txt").write_text(
         "#BLOCK NAME: Intro\n#TYPE: NORMAL\n#METHOD: RAW\n#SCRIPT START: $10\n"
         "#SCRIPT STOP: $15\n#TABLE: main.tbl\n#COMMENTS: No\n#END BLOCK\n"
@@ -1048,7 +1013,7 @@ def test_cartographer_import_strips_the_header(window, tmp_path):
 
 
 def test_project_reads_clean_until_the_session_moves(window, tmp_path):
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    data = ab_ba_rom(20)
     file_entry = open_rom_and_table(window, tmp_path, data)
     add_block(window, file_entry, "b", RangeSource(0, 6))
     # A session never saved as a project has no file to differ from.
@@ -1071,7 +1036,7 @@ def test_project_reads_clean_until_the_session_moves(window, tmp_path):
 
 
 def test_opening_a_project_reads_its_blocks(window, tmp_path):
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    data = ab_ba_rom(20)
     file_entry = open_rom_and_table(window, tmp_path, data)
     add_block(window, file_entry, "b", RangeSource(0, 6))
     window._activate_entry(file_entry)
@@ -1083,7 +1048,7 @@ def test_opening_a_project_reads_its_blocks(window, tmp_path):
     # The file is the one on screen, yet the block is read and counted.
     assert window._entry is file_entry
     assert texts(block.doc.strings) == ["AB[end]", "BA[end]"]
-    assert window.files_panel._items[id(block)].text(0) == "b  (2)"
+    assert item_for(window, block).text(0) == "b  (2)"
     assert not window._project_dirty()
 
 
@@ -1095,7 +1060,7 @@ def test_the_files_panel_dresses_each_row_a_bounded_number_of_times(
     Files panel a few passes over its rows, not one per block: a project of
     hundreds of blocks would otherwise take the square of that — with the
     blocks in folders, one inside the other, as much as without."""
-    data = bytes.fromhex("41 42 00 42 41 00") * 40
+    data = ab_ba_rom(0) * 40
     file_entry = open_rom_and_table(window, tmp_path, data)
     blocks = [
         add_block(window, file_entry, f"b{n}", RangeSource(n * 6, n * 6 + 6))
@@ -1125,9 +1090,7 @@ def test_the_files_panel_dresses_each_row_a_bounded_number_of_times(
     assert len(dressed) <= 3 * rows
     blocks = window.workspace.of_kind(EntryKind.BLOCK)
     assert all((b.folder is not None) == bool(folders) for b in blocks)
-    assert all(
-        window.files_panel._items[id(b)].text(0) == f"{b.name}  (2)" for b in blocks
-    )
+    assert all(item_for(window, b).text(0) == f"{b.name}  (2)" for b in blocks)
     dressed.clear()
     window.workspace.invalidate_extractions()
     window.project_strings.show()
@@ -1137,7 +1100,7 @@ def test_the_files_panel_dresses_each_row_a_bounded_number_of_times(
 
 
 def test_opening_a_project_leaves_a_missing_files_blocks_unread(window, tmp_path):
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    data = ab_ba_rom(20)
     file_entry = open_rom_and_table(window, tmp_path, data)
     add_block(window, file_entry, "b", RangeSource(0, 6))
     window._activate_entry(file_entry)
@@ -1152,19 +1115,19 @@ def test_opening_a_project_leaves_a_missing_files_blocks_unread(window, tmp_path
 def test_tables_show_their_entry_count(window, tmp_path):
     open_rom_and_table(window, tmp_path, b"AB\x00")
     table_entry = window.workspace.table_entries()[0]
-    assert window.files_panel._items[id(table_entry)].text(0) == "main.tbl  (3)"
+    assert item_for(window, table_entry).text(0) == "main.tbl  (3)"
     assert window.format_pick.itemText(window.format_pick.findData("main")) == (
         "@main  (3)"
     )
     window._edit_table_entry(table_entry)
     window.table_editor.new_line.setText("44=D")
     window.table_editor._add()
-    assert window.files_panel._items[id(table_entry)].text(0) == "main.tbl  (4) ●"
+    assert item_for(window, table_entry).text(0) == "main.tbl  (4) ●"
     assert window.format_pick.currentText() == "@main  (4)"
 
 
 def test_saving_a_project_offers_to_write_the_unsaved_edits(window, tmp_path):
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    data = ab_ba_rom(20)
     file_entry = open_rom_and_table(window, tmp_path, data)
     add_block(window, file_entry, "b", RangeSource(0, 6))
     window._on_translation_edited(0, "BA[end]")
@@ -1178,7 +1141,7 @@ def test_saving_a_project_offers_to_write_the_unsaved_edits(window, tmp_path):
 
 
 def test_locate_repoints_a_moved_file_and_reloads_it(window, tmp_path, monkeypatch):
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    data = ab_ba_rom(20)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     proj = tmp_path / "p.mapchar"
@@ -1267,9 +1230,7 @@ def test_modal_progress_asks_the_engine_to_stop_once_cancelled(window):
         assert run.cancelled
 
 
-def test_pointer_discovery_runs_under_a_stop_button(
-    window, tmp_path, monkeypatch, unattended_dialogs
-):
+def test_pointer_discovery_runs_under_a_stop_button(window, tmp_path, monkeypatch):
     """The promise of architecture §1: every long operation pumps the event loop
     through a progress callback and can be cancelled. The search here is every
     mapping crossed with every width and endianness over the whole file."""
@@ -1287,7 +1248,7 @@ def test_pointer_discovery_runs_under_a_stop_button(
     monkeypatch.setattr("mapchar.ui.main_window.pointers.discover", stub)
     window._find_pointers()
     assert seen["hooked"] and seen["told_to_stop"]
-    assert any("stopped" in message for message in unattended_dialogs)
+    assert any("stopped" in message for message in window.errors)
 
 
 def test_the_table_editor_shows_a_table_file_s_notices(window, tmp_path):
@@ -1385,23 +1346,6 @@ ALWAYS_ON = frozenset(
 )
 
 
-def _menu_actions(window, menu=None):
-    """Every ``(label, action)`` in the menu bar, submenus walked in place.
-
-    Open Recent is skipped: its rows are project names that come and go.
-    """
-    from mapchar.ui.help_dialogs import submenus
-
-    menu = window.menuBar() if menu is None else menu
-    for action in menu.actions():
-        if action.isSeparator():
-            continue
-        yield action.text().replace("&", "").strip(), action
-        submenu = submenus(window.menuBar()).get(action)
-        if submenu is not None and submenu is not window.recent_menu:
-            yield from _menu_actions(window, submenu)
-
-
 def _gated_controls(window):
     from mapchar.ui.main_window.capability_sync import _GATES
 
@@ -1422,7 +1366,7 @@ def test_every_menu_action_is_gated_or_always_on(window):
     gated = _gated_controls(window)
     ungated = [
         label
-        for label, action in _menu_actions(window)
+        for label, action in menu_actions(window)
         # A row that only opens a submenu is not itself a row that acts, unless
         # the table gates it (Import and Export are gated on their whole menu).
         if action.menu() is None and id(action) not in gated and label not in ALWAYS_ON
@@ -1445,7 +1389,7 @@ def test_no_two_window_actions_share_a_shortcut(window):
     neither, so a duplicate is two dead keys rather than one."""
     seen: dict[str, str] = {}
     clashes = []
-    for label, action in _menu_actions(window):
+    for label, action in menu_actions(window):
         keys = action.shortcut().toString()
         if not keys:
             continue
@@ -1489,13 +1433,12 @@ def test_every_tool_window_remembers_its_geometry(window):
 def test_the_architecture_doc_lists_every_main_window_module():
     """§7.1's table is the map of the split, so a module added or renamed without
     a line there leaves the design describing a window that is not this one."""
-    root = Path(__file__).resolve().parent.parent
-    doc = (root / "docs/plan/architecture.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/plan/architecture.md").read_text(encoding="utf-8")
     section = doc.split("### 7.1 Composition", 1)[1].split("### 7.2", 1)[0]
     listed = set(re.findall(r"`(\w+\.py)`", section))
     on_disk = {
         path.name
-        for path in (root / "src/mapchar/ui/main_window").glob("*.py")
+        for path in (ROOT / "src/mapchar/ui/main_window").glob("*.py")
         if path.name != "__init__.py"
     }
     assert on_disk - listed == set()
@@ -1548,7 +1491,7 @@ def test_a_push_re_serialises_the_project_once(window, tmp_path, monkeypatch):
 def test_no_widget_wears_a_stylesheet():
     """The theme is one palette on Fusion; a stylesheet anywhere would paint one
     widget out of step with both themes (``ui/theme.py``)."""
-    root = Path(__file__).resolve().parent.parent / "src/mapchar/ui"
+    root = ROOT / "src/mapchar/ui"
     wearing = [
         path.relative_to(root).as_posix()
         for path in root.rglob("*.py")
@@ -1647,9 +1590,7 @@ navigation filter's, not any action's, and the reference writes them as prose
 
 def _documented_keys() -> set[str]:
     """Every sequence the Keyboard reference table in features.md advertises."""
-    doc = (Path(__file__).resolve().parent.parent / "docs/plan/features.md").read_text(
-        encoding="utf-8"
-    )
+    doc = (ROOT / "docs/plan/features.md").read_text(encoding="utf-8")
     table = doc.split("## Keyboard reference", 1)[1]
     return {m.group(0) for line in table.splitlines() for m in _KEY.finditer(line)}
 
@@ -1666,7 +1607,7 @@ def test_every_documented_shortcut_is_really_bound(window):
 
     bound = {
         action.shortcut().toString()
-        for _, action in _menu_actions(window)
+        for _, action in menu_actions(window)
         if action.shortcut().toString()
     }
     for _, rows in DISPLAY_ONLY:
@@ -1743,7 +1684,7 @@ def test_a_dialog_nobody_arranged_for_answers_itself(window):
 def test_an_in_app_table_edit_is_carried_by_the_project(window, tmp_path):
     """A table edit changes the project, never the table file: the file other
     tools read keeps saying what it said until Save As File folds the overlay in."""
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    data = ab_ba_rom(20)
     open_rom_and_table(window, tmp_path, data)
     table_entry = window.workspace.of_kind(EntryKind.TABLE)[0]
     tbl = Path(str(table_entry.path))
@@ -1891,7 +1832,7 @@ def test_open_recent_normalises_prunes_and_clears(window, tmp_path):
 def test_a_plugin_refresh_keeps_a_clean_block_s_originals(window, tmp_path):
     """F5 drops every cached document it can; a block's originals live in one,
     so they have to be stashed on the entry on the way out."""
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+    data = ab_ba_rom(20)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     window._on_translation_edited(0, "BB[end]")
@@ -1937,7 +1878,7 @@ def test_a_project_holding_translations_puts_them_in_the_bytes(window, tmp_path)
     and Write All writes them."""
     import json
 
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     add_block(window, file_entry, "b", RangeSource(0, 6), fill=b"\xee")
     proj = tmp_path / "p.mapchar"
@@ -1968,7 +1909,7 @@ def test_a_project_holding_translations_keeps_them_while_its_table_is_gone(
     the load says so in its notices, and they land when the table is back."""
     import json
 
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     add_block(window, file_entry, "b", RangeSource(0, 6), fill=b"\xee")
     proj = tmp_path / "p.mapchar"
@@ -2013,7 +1954,7 @@ def test_an_older_project_s_translation_that_would_re_cut_the_block_is_refused(
     kept in the notes and reported, not written."""
     import json
 
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     # The spare room a shorter string leaves is filled with the end token,
     # which the table maps and the block therefore reads as text: it would
@@ -2037,7 +1978,7 @@ def test_an_older_project_s_translation_that_would_re_cut_the_block_is_refused(
 
 
 def test_blocks_and_bookmarks_never_share_a_name(window, tmp_path):
-    data = bytes.fromhex("41 42 00 42 41 00")
+    data = ab_ba_rom(0)
     file_entry = open_rom_and_table(window, tmp_path, data)
     first = add_block(window, file_entry, "b", RangeSource(0, 3))
     second = add_block(window, file_entry, "b", RangeSource(3, 6))
@@ -2056,7 +1997,7 @@ def test_blocks_and_bookmarks_never_share_a_name(window, tmp_path):
 def test_a_command_file_s_repeated_block_names_are_numbered(window, tmp_path):
     rom = tmp_path / "c.bin"
     rom.write_bytes(bytes.fromhex("41 42 00 42 00") + b"\xff" * 8)
-    (tmp_path / "main.tbl").write_text("@main\n41=A\n42=B\n/00=[end]\n")
+    (tmp_path / "main.tbl").write_text(ABCDE_TABLE)
     block = (
         "#BLOCK NAME: Script\n#TYPE: NORMAL\n#METHOD: RAW\n#SCRIPT START: 0\n"
         "#SCRIPT STOP: $5\n#TABLE: main.tbl\n#COMMENTS: No\n#END BLOCK\n"
@@ -2085,7 +2026,7 @@ def test_fill_pick_leaves_blocked_signals_blocked(qtbot):
 def test_switching_entries_keeps_the_block_s_document(window, tmp_path):
     """Restoring a session picks the entry's table with signals blocked; the
     pick must not fire and drop the block's document on every switch."""
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     other = tmp_path / "other.tbl"
     other.write_text(TABLE.replace("@table main", "@table other"))
@@ -2403,7 +2344,7 @@ def test_adding_relative_search_entries_to_a_table_undoes(
 ):
     """Build Table ▸ add to the current table is a table change like any other:
     one step, and undoing it takes the entries back out."""
-    from PySide6.QtWidgets import QInputDialog
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
 
     from mapchar.engines.relsearch import UPPER, Hit
 
@@ -2413,9 +2354,7 @@ def test_adding_relative_search_entries_to_a_table_undoes(
     monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("A-Z", True))
     monkeypatch.setattr(
         "mapchar.ui.main_window.window.QMessageBox.question",
-        lambda *a, **k: (
-            __import__("PySide6.QtWidgets").QtWidgets.QMessageBox.StandardButton.Yes
-        ),
+        lambda *a, **k: QMessageBox.StandardButton.Yes,
     )
     hit = Hit(0, 1, "little", {UPPER: 0x80}, tuple(range(0x80, 0x86)))
     window._build_table_from_hit(hit)
@@ -2454,13 +2393,12 @@ def test_a_block_from_a_scanned_region_keeps_a_table_that_already_has_an_end(
     """A table that already labels [end] on other bits keeps it: the guessed
     terminator is not added, and the block still comes out."""
     from mapchar.engines.textscan import Region
-    from mapchar.project.formats.table_native import HEADER
 
     open_rom_and_table(
         window,
         tmp_path,
         b"AB\x0fCD\x0f",
-        table=f"{HEADER}\n@table main\n41=A\n42=B\n/00=[end]\n",
+        table=TABLE,
     )
     table_entry = window.workspace.entry_for_table("main")
     before = len(table_entry.table.entries)
@@ -2540,7 +2478,7 @@ def test_autosave_writes_a_copy_and_offers_it_back(window, tmp_path, monkeypatch
     goes with a save, and is offered when the project is next opened."""
     import time
 
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     proj = tmp_path / "p.mapchar"
@@ -2581,7 +2519,7 @@ def test_recovering_a_session_keeps_its_copy_and_never_names_it(
     in the data folder: the copy stays until the session is saved, and it is
     not a project the user has, so nothing lists it."""
     window.plugin_dir = str(tmp_path / "data" / "plugins")
-    data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 4
+    data = ab_ba_rom(4)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     block.doc.strings[0].notes = "from the session"
@@ -2645,7 +2583,7 @@ def _tsv(path: Path, *rows: str) -> Path:
 def test_an_import_is_confirmed_before_anything_lands(window, tmp_path, monkeypatch):
     """The dialog is shown the plan, not the result: cancelling leaves the
     strings as they were, and the same file imports once it is accepted."""
-    data = bytes.fromhex("41 42 00 42 41 00")
+    data = ab_ba_rom(0)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "D", RangeSource(0, 6))
     tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n")
@@ -2671,7 +2609,7 @@ def test_a_dropped_translator_file_is_confirmed_like_any_other_import(
 ):
     """A drop's kind is a guess from a suffix, so the drop is the path that
     most needs to say what it is about to do."""
-    data = bytes.fromhex("41 42 00 42 41 00")
+    data = ab_ba_rom(0)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "D", RangeSource(0, 6))
     tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n")
@@ -2688,7 +2626,7 @@ def test_a_dropped_translator_file_is_confirmed_like_any_other_import(
 def test_force_on_the_dialog_takes_back_what_drifted(window, tmp_path, monkeypatch):
     """The only way to an original the project has moved past, and the reason
     the dialog re-plans rather than filtering what it already drew."""
-    data = bytes.fromhex("41 42 00 42 41 00")
+    data = ab_ba_rom(0)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "D", RangeSource(0, 6))
     tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tmoved on[end]\tBB[end]\tedited\t\n")
@@ -2716,7 +2654,7 @@ def test_a_script_import_creates_its_block_and_lands_its_strings(
     from helpers import translated
     from mapchar.project.formats.script import DumpMode, write_script
 
-    data = bytes.fromhex("41 42 00 42 41 00")
+    data = ab_ba_rom(0)
     file_entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, file_entry, "D", RangeSource(0, 6))
     cfg = block.config
@@ -2738,7 +2676,7 @@ def test_the_dump_tool_writes_a_project_s_blocks_as_a_script(window, tmp_path):
     this is what keeps it working for the fixture comparisons."""
     import importlib.util
 
-    data = bytes.fromhex("41 42 00 42 41 00")
+    data = ab_ba_rom(0)
     file_entry = open_rom_and_table(window, tmp_path, data)
     add_block(window, file_entry, "b", RangeSource(0, 6))
     project = tmp_path / "p.mapchar"
@@ -2746,7 +2684,7 @@ def test_the_dump_tool_writes_a_project_s_blocks_as_a_script(window, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "dump_script",
-        Path(__file__).resolve().parent.parent / "tools" / "dump_script.py",
+        ROOT / "tools" / "dump_script.py",
     )
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
@@ -2802,7 +2740,7 @@ def test_a_shortened_string_leaves_the_block_the_room_it_gave_up(window, tmp_pat
     assert file_entry.doc.data[0x10:0x16] == bytes.fromhex("41 42 00 42 00 FF")
     window._on_translation_edited(1, "BA[end]")
     assert block.doc.strings[1].current_text() == "BA[end]"
-    assert file_entry.doc.data[0x10:0x16] == bytes.fromhex("41 42 00 42 41 00")
+    assert file_entry.doc.data[0x10:0x16] == ab_ba_rom(0)
     # A write that fills the room again leaves the room remembered.
     assert block.room == 0x16
 

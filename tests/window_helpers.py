@@ -16,7 +16,24 @@ TABLE = f"{HEADER}\n@table main\n41=A\n42=B\n/00=[end]\n"
 ASCII_TABLE = f"{HEADER}\n{_ASCII_BODY}"
 """The same as a file, over the ASCII charset."""
 
+ABC_TABLE = f"{HEADER}\n@table main\n41=A\n42=B\n43=C\n/00=[end]\n"
+"""Three letters and an end token."""
+
+CODES_TABLE = (
+    f"{HEADER}\n@table main\n41=A\n42=B\n43=C\nFE=[line]\n$FD=[color],u8\n/00=[end]\n"
+)
+"""Three letters, a line code, a code with an operand, and an end token."""
+
+ABCDE_TABLE = "@main\n41=A\n42=B\n/00=[end]\n"
+"""What :data:`TABLE` holds, in the abcde dialect a table read has to guess."""
+
 _ENTRY_FIELDS = ("compression_id", "slot_offset", "slot_length")
+
+
+def ab_ba_rom(tail: int = 20) -> bytes:
+    """``AB[end]BA[end]`` and ``tail`` bytes of ``$FF`` padding after it: the
+    six bytes most window tests read, over :data:`TABLE`."""
+    return bytes.fromhex("41 42 00 42 41 00") + b"\xff" * tail
 
 
 def open_rom_and_table(window, tmp_path, data, table=TABLE, rom_name="rom.bin"):
@@ -46,7 +63,7 @@ def add_block(window, file_entry, name, source, string_type=None, **config) -> E
 
     Keywords go to the block's :class:`BlockConfig`, which reads end-token
     strings — or ``string_type``'s — through the ``main`` table, except the
-    compression and slice fields, which belong to the entry.
+    compression and slot fields, which belong to the entry.
     """
     fields = {k: config.pop(k) for k in _ENTRY_FIELDS if k in config}
     block = Entry(
@@ -60,6 +77,58 @@ def add_block(window, file_entry, name, source, string_type=None, **config) -> E
     window._push_add(block)
     window._activate_entry(block)
     return block
+
+
+def gba_packed(payload: bytes) -> bytes:
+    """``payload`` as a GBA LZ77 stream."""
+    from mapchar.core.context import PipelineContext
+    from mapchar.plugins.builtins.compression import GbaLz77
+
+    return GbaLz77().compress(payload, PipelineContext())
+
+
+def gba_packed_rom(
+    payload: bytes, *, spare: int = 16, tail: int = 8
+) -> tuple[bytes, int, bytes]:
+    """The payload compressed, the slot it needs, and a ROM holding it at 16.
+
+    The slot is the stream plus ``spare`` bytes — room for a re-compression that
+    packs worse than the original, which is what editing text does — and the ROM
+    is ``$FF`` up to 16, the stream, the slot's spare room and ``tail`` bytes
+    past the slot.
+    """
+    packed = gba_packed(payload)
+    return packed, len(packed) + spare, b"\xff" * 16 + packed + b"\xff" * (spare + tail)
+
+
+def item_for(window, entry):
+    """The Files panel's row for ``entry``."""
+    return window.files_panel._items[id(entry)]
+
+
+def menu_actions(window, menu=None):
+    """Every ``(label, action)`` in the menu bar, submenus walked in place.
+
+    The label is the action's text with its mnemonic marker dropped. Open Recent
+    is skipped: its rows are project names that come and go.
+    """
+    from mapchar.ui.help_dialogs import submenus
+
+    menu = window.menuBar() if menu is None else menu
+    for action in menu.actions():
+        if action.isSeparator():
+            continue
+        yield action.text().replace("&", "").strip(), action
+        submenu = submenus(window.menuBar()).get(action)
+        if submenu is not None and submenu is not window.recent_menu:
+            yield from menu_actions(window, submenu)
+
+
+def menu_state(menu) -> dict[str, bool]:
+    """``{label: enabled}`` for the rows of one menu, mnemonic markers dropped."""
+    return {
+        a.text().replace("&", ""): a.isEnabled() for a in menu.actions() if a.text()
+    }
 
 
 def grid_keys(editor) -> list[str]:
@@ -126,5 +195,29 @@ def make_window(qtbot, monkeypatch):
     )
     window = MainWindow()
     window.errors = errors
+    qtbot.addWidget(window)
+    return window
+
+
+def make_yes_window(qtbot, monkeypatch):
+    """A live ``MainWindow`` whose every modal answers Yes without showing.
+
+    What the entry tests want, and where it parts from :func:`make_window`: a
+    question is taken rather than declined, and a reported warning is swallowed
+    rather than collected, so a path that warns carries straight on.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    from mapchar.ui.main_window import MainWindow
+
+    monkeypatch.setattr(
+        "mapchar.ui.main_window.window.QMessageBox.question",
+        lambda *a, **k: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        "mapchar.ui.main_window.window.QMessageBox.warning", lambda *a, **k: 0
+    )
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    window = MainWindow()
     qtbot.addWidget(window)
     return window

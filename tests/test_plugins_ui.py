@@ -4,14 +4,12 @@ a refresh re-reads, and what it refuses to throw away.
 
 from __future__ import annotations
 
-import pytest
-
 from mapchar.core.block import RangeSource
 from mapchar.plugins.base import Stage
 from mapchar.plugins.discovery import discover, plugin_roots
 from mapchar.plugins.registry import default_registry
 from mapchar.plugins.trust import TrustStore
-from window_helpers import add_block, make_window, open_rom_and_table
+from window_helpers import add_block, open_rom_and_table
 
 THEIRS = (
     "from mapchar.plugins.base import PluginInfo, Stage\n"
@@ -20,11 +18,6 @@ THEIRS = (
     "    def decompress(self, data, ctx): return data\n"
     "def register(r): r.register(C())\n"
 )
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 def wire_reload(window, asked: list[str]):

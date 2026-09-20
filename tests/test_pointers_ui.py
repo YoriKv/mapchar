@@ -13,15 +13,10 @@ from PySide6.QtWidgets import QMessageBox
 from helpers import pointer_rom
 from mapchar.core.block import RangeSource
 from mapchar.ui.dialogs import DiscoveryDialog, PointerSearchDialog
-from window_helpers import add_block, make_window, open_rom_and_table
+from window_helpers import add_block, open_rom_and_table
 
 ROM = pointer_rom((0x10, 0x13, 0x10), "41 42 00 42 00")
 """Three pointers at 0, one a duplicate, to AB[end] at $10 and B[end] at $13."""
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 @pytest.fixture

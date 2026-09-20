@@ -4,7 +4,6 @@ remembers between runs.
 
 from __future__ import annotations
 
-import pytest
 from PySide6.QtCore import Qt
 
 from mapchar.core.bits import format_hex_bytes, parse_hex_bytes
@@ -20,11 +19,6 @@ def test_a_byte_run_is_spelled_as_upper_case_pairs_and_reads_back():
     assert format_hex_bytes(b"") == ""
     assert format_hex_bytes(b"\x01\x02", sep="") == "0102"
     assert parse_hex_bytes(format_hex_bytes(DATA)) == DATA
-
-
-@pytest.fixture
-def window(qtbot, monkeypatch):
-    return make_window(qtbot, monkeypatch)
 
 
 def _dock(window, tmp_path):

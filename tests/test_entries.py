@@ -23,37 +23,25 @@ from mapchar.project.projectfile import entries_from_payload, entries_payload
 from mapchar.project.tables import same_table
 from mapchar.ui.entry_text import sorted_entries
 from mapchar.ui.files_panel import STATUS_COL, FilesPanel
-from mapchar.ui.main_window import MainWindow
 from window_helpers import (
     TABLE,
+    ab_ba_rom,
     add_block,
     arm_scheme,
+    item_for,
     make_window,
+    make_yes_window,
+    menu_state,
     open_rom_and_table,
 )
 
-DATA = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
+DATA = ab_ba_rom(20)
 
 
 @pytest.fixture
 def window(qtbot, monkeypatch):
     """A live window whose every modal answers Yes / Discard without showing."""
-    monkeypatch.setattr(
-        "mapchar.ui.main_window.window.QMessageBox.question",
-        lambda *a, **k: QMessageBox.StandardButton.Yes,
-    )
-    monkeypatch.setattr(
-        "mapchar.ui.main_window.window.QMessageBox.warning", lambda *a, **k: 0
-    )
-    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
-    monkeypatch.setattr("mapchar.ui.main_window.window.TextDialog.exec", lambda self: 0)
-    w = MainWindow()
-    qtbot.addWidget(w)
-    return w
-
-
-def item_for(window, entry):
-    return window.files_panel._items[id(entry)]
+    return make_yes_window(qtbot, monkeypatch)
 
 
 # -- string state survives what re-reads a block -------------------------------
@@ -565,24 +553,18 @@ def test_a_multi_selection_leaves_only_remove_the_moves_and_new_folder_live(
     assert live == {"Remove", "Move Up", "Move Down", "New Folder"}
 
 
-def _menu_state(menu) -> dict[str, bool]:
-    return {
-        a.text().replace("&", ""): a.isEnabled() for a in menu.actions() if a.text()
-    }
-
-
 def test_a_string_rows_menu_greys_what_would_edit_its_block(window, tmp_path):
     """A string row's menu is its block's, but the rows that edit the row name
     the block rather than the string clicked, so they go dead."""
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    state = _menu_state(window._build_files_menu(block, 0))
+    state = menu_state(window._build_files_menu(block, 0))
     dead = {"Rename…", "Cut", "Copy", "Duplicate", "Remove", "Move Up", "Move Down"}
     dead |= {"Sort By", "New Folder"}
     assert {row for row, live in state.items() if not live} >= dead
     assert state["Write"] and state["Export"]
     # The block's own row keeps every one of them.
-    assert all(_menu_state(window._build_files_menu(block))[row] for row in dead)
+    assert all(menu_state(window._build_files_menu(block))[row] for row in dead)
 
 
 def test_write_and_duplicate_are_dead_where_they_cannot_act(window, tmp_path):
@@ -599,11 +581,11 @@ def test_write_and_duplicate_are_dead_where_they_cannot_act(window, tmp_path):
         (table, {"Write"}),
         (file_entry, {"Duplicate"}),
     ):
-        state = _menu_state(window._build_files_menu(entry))
+        state = menu_state(window._build_files_menu(entry))
         assert {row for row in dead if not state[row]} == dead, entry.name
-    assert _menu_state(window._build_files_menu(table))["Duplicate"]
+    assert menu_state(window._build_files_menu(table))["Duplicate"]
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    state = _menu_state(window._build_files_menu(block))
+    state = menu_state(window._build_files_menu(block))
     assert state["Write"] and state["Duplicate"]
 
 

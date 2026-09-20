@@ -36,7 +36,7 @@ file spelled, and a file written back is NFC. Three kinds of line:
 | anything else    | an entry, or blank                                        |
 
 Comments are kept. The comment lines directly above an entry belong to it
-(`Entry.comment`, one line per `#` line, the `#` and one space dropped) and
+(`TableEntry.comment`, one line per `#` line, the `#` and one space dropped) and
 are written back above it; every other comment line — before the header,
 before a directive, set off by a blank line, or at the end — belongs to the
 file (`Table.comment`) and is written back under the header.
