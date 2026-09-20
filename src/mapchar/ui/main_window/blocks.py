@@ -17,7 +17,7 @@ from mapchar.core.block import (
 )
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
 from mapchar.core.table import TokenKind
-from mapchar.project.workspace import Entry, EntryKind, has_edits
+from mapchar.project.entry import Entry, EntryKind, has_edits
 from mapchar.ui.kind_names import SOURCE_NAMES, STRING_TYPE_NAMES
 from mapchar.ui.undo_commands import BlockEditCommand, TableCommand
 

@@ -18,9 +18,9 @@ from mapchar.core.block import (
     Status,
     StringRecord,
 )
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.projectfile import entries_from_payload, entries_payload
 from mapchar.project.tables import same_table
-from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.entry_text import sorted_entries
 from mapchar.ui.files_panel import STATUS_COL, FilesPanel
 from mapchar.ui.main_window import MainWindow

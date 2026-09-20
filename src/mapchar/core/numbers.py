@@ -80,3 +80,10 @@ def parse_flat_hex(text: str) -> int | None:
 def format_hex_offset(value: int) -> str:
     """A signed hex offset as the UI's offset fields spell it: ``1F0``, ``-10``."""
     return f"{value:X}" if value >= 0 else f"-{-value:X}"
+
+
+def clamp(value: int, lo: int, hi: int) -> int:
+    """``value`` brought inside ``[lo, hi]``. An empty range — ``hi`` below
+    ``lo`` — gives ``lo``, so a caller whose upper bound can fall away is not
+    handed something below its lower one."""
+    return max(lo, min(value, hi))

@@ -27,10 +27,10 @@ class EntryKind(Enum):
 
     ``value`` is the string the project file stores, so the on-disk schema is a
     name rather than an ordinal that reordering this enum would silently change.
-    Here rather than in :mod:`mapchar.project.workspace` because it is the key of
-    :data:`CAPABILITIES` and ``core`` is the bottom layer; workspace imports it
-    from here, so ``from mapchar.project.workspace import EntryKind`` still
-    reads as it always did.
+    Here rather than in :mod:`mapchar.project.entry` because it is the key of
+    :data:`CAPABILITIES` and ``core`` is the bottom layer; the entry module
+    imports it from here, so ``from mapchar.project.entry import Entry,
+    EntryKind`` names the row and its kind in one line.
     """
 
     FILE = "file"

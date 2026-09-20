@@ -13,7 +13,7 @@ from mapchar.pipeline.pipeline import (
     compress_for_slot,
     save,
 )
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui.dialogs import TextDialog
 from mapchar.ui.undo_commands import BlockSide, BytesCommand, WriteCommand, WriteSide
 

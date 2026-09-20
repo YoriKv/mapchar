@@ -12,13 +12,13 @@ import os
 
 from mapchar.core.context import KEY_HEADER_SIZE
 from mapchar.core.errors import MapcharError
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.exchange.addresses import shift_config
 from mapchar.project.exchange.atlas import read_atlas_script, write_atlas
 from mapchar.project.exchange.cartographer import (
     parse_command_file,
     write_command_file,
 )
-from mapchar.project.workspace import Entry, EntryKind
 
 
 class LegacyExchangeMixin:

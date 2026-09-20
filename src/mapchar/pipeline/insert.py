@@ -662,7 +662,6 @@ def apply_splices(data: bytes, splices: list[Splice]) -> bytes:
 def room_for(
     rec: StringRecord,
     config: BlockConfig | None,
-    bound: int,
     ends: dict[int, int] | None = None,
 ) -> int:
     """How many bytes ``rec`` may take: the length a fixed-length block gives
@@ -783,7 +782,6 @@ __all__ = [
     "ReadBack",
     "Splice",
     "apply_splices",
-    "block_bound",
     "group_bounds",
     "layout_block",
     "packed_ends",

@@ -6,7 +6,7 @@ from mapchar.core.block import BlockConfig
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.pipeline.extract import extract, respell_fixed_end
-from mapchar.project.workspace import Entry
+from mapchar.project.entry import Entry
 
 
 class ExtractionMixin:

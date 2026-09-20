@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from mapchar.core.document import Document
-from mapchar.project.workspace import Entry, EntryKind, missing_paths
+from mapchar.project.entry import Entry, EntryKind
+from mapchar.project.missing_files import missing_paths
 
 
 class BlockReadingMixin:

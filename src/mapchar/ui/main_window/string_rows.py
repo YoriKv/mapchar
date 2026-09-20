@@ -12,7 +12,7 @@ from mapchar.core.table import TableSet
 from mapchar.engines.layout import char_layout
 from mapchar.engines.layout import layout as layout_glyphs
 from mapchar.pipeline.insert import room_for, room_note, string_ends
-from mapchar.project.workspace import Entry
+from mapchar.project.entry import Entry
 from mapchar.ui.code_editor import CodeInfo
 from mapchar.ui.strings_view import OVERFLOWS, RowData
 
@@ -98,9 +98,9 @@ class StringRowsMixin:
                 (rec.end > lo and hi > rec.start)
                 or rec.start != old.address
                 or rec.byte_length(cfg.skips) != old.used
-                or room_for(rec, cfg, bound, ends) != old.room
+                or room_for(rec, cfg, ends) != old.room
             ):
-                row = self._row_for(rec, cfg, bound, same, ends)
+                row = self._row_for(rec, cfg, same, ends)
                 if row != old:
                     self.strings.update_row(row)
         return True
@@ -190,13 +190,11 @@ class StringRowsMixin:
         bound = block_bound(cfg, doc.strings, entry.room) if cfg is not None else 0
         same = self._same_originals(doc)
         ends = self._string_slots(entry, doc, bound)
-        return [self._row_for(rec, cfg, bound, same, ends) for rec in doc.strings]
+        return [self._row_for(rec, cfg, same, ends) for rec in doc.strings]
 
-    def _row_for(
-        self, rec, cfg, bound: int, same: Counter | None = None, ends=None
-    ) -> RowData:
+    def _row_for(self, rec, cfg, same: Counter | None = None, ends=None) -> RowData:
         used = rec.byte_length(cfg.skips) if cfg is not None else rec.length
-        room = room_for(rec, cfg, bound, ends)
+        room = room_for(rec, cfg, ends)
         status = rec.status.value
         if self._entry is not None and self._overflow_status(rec, self._entry):
             status = OVERFLOWS
@@ -225,7 +223,7 @@ class StringRowsMixin:
         bound = block_bound(entry.config, doc.strings, entry.room)
         self.strings.update_row(
             self._row_for(
-                rec, entry.config, bound, same, self._string_slots(entry, doc, bound)
+                rec, entry.config, same, self._string_slots(entry, doc, bound)
             )
         )
         self._sync_preview()

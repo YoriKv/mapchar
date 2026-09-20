@@ -20,7 +20,7 @@ from __future__ import annotations
 from mapchar.engines.pointers import discover
 from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import resolve_mapping
-from mapchar.project.workspace import Entry
+from mapchar.project.entry import Entry
 from mapchar.ui.dialogs import DiscoveryDialog, PointerSearchDialog
 from mapchar.ui.progress import ModalProgress
 from mapchar.ui.undo_commands import PointerCommand

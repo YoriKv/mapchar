@@ -37,7 +37,8 @@ from mapchar.core.address import (
     PRESETS_BY_ID,
 )
 from mapchar.core.capabilities import Capability
-from mapchar.project.workspace import Entry
+from mapchar.core.numbers import clamp
+from mapchar.project.entry import Entry
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.undo_commands import OffsetCommand
 
@@ -191,7 +192,13 @@ class NavigationMixin:
         """``offset`` held inside the view's bounds — what a step does, so
         walking off the end of a string cannot widen the view to the file."""
         start, end = self._view_range()
-        return max(start, min(offset, max(end - 1, start)))
+        return clamp(offset, start, max(end - 1, start))
+
+    def _clamp_to_file(self, offset: int) -> int:
+        """``offset`` held inside the open file — the last byte at most, and
+        zero for an empty one."""
+        size = self._doc.size if self._doc is not None else 0
+        return clamp(offset, 0, max(size - 1, 0))
 
     def _view_fits(self) -> bool:
         """Whether the open tab shows the view's whole range from its start —
@@ -213,7 +220,7 @@ class NavigationMixin:
     def _go_to(self, offset: int) -> None:
         if self._doc is None:
             return
-        offset = max(0, min(offset, max(self._doc.size - 1, 0)))
+        offset = self._clamp_to_file(offset)
         if offset == self._offset:
             return
         if not self._applying_undo and self._entry is not None:

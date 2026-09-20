@@ -7,7 +7,7 @@ from dataclasses import replace
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMenu
 
-from mapchar.core.bits import Bits
+from mapchar.core.bits import Bits, format_hex_bytes
 from mapchar.engines.decode import DecodeRules, decode
 
 
@@ -58,7 +58,7 @@ class RawViewMixin:
             menu.addAction(
                 "Copy &Hex",
                 lambda: QApplication.clipboard().setText(
-                    " ".join(f"{b:02X}" for b in self._doc.data[sel[0] : sel[1]])
+                    format_hex_bytes(self._doc.data[sel[0] : sel[1]])
                 ),
             )
             menu.addAction("Copy &Text", self._copy_selection_text)

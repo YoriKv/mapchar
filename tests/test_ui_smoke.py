@@ -8,7 +8,7 @@ import pytest
 
 from helpers import pointer_rom, texts
 from mapchar.core.block import RangeSource, Status
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui.main_window import MainWindow
 from mapchar.ui.token_text import POINTER_TOKENS
 from window_helpers import (
@@ -2523,7 +2523,7 @@ def test_a_block_from_a_scanned_region_reads_through_the_current_table(
 
 
 def test_the_scan_window_says_how_each_region_cuts_its_strings():
-    """The Strings column is the Block dialog's words, never a class name."""
+    """The Strings column is the Reading bar's words, never a class name."""
     from mapchar.engines.textscan import Records, Region
     from mapchar.ui.scan_window import _strings_of
 

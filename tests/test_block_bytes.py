@@ -18,7 +18,7 @@ import pytest
 from mapchar.core.block import RangeSource
 from mapchar.core.context import PipelineContext
 from mapchar.plugins.builtins.compression import GbaLz77
-from mapchar.project.workspace import EntryKind
+from mapchar.project.entry import EntryKind
 from window_helpers import add_block, make_window, open_rom_and_table
 
 PAYLOAD = bytes.fromhex("41 42 00 42 41 00 41 41 00") + b"\xee" * 7

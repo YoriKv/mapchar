@@ -8,6 +8,8 @@ from PySide6.QtWidgets import QMessageBox
 
 from mapchar import APP_NAME
 from mapchar.core.errors import MapcharError
+from mapchar.project.entry import Entry, EntryKind, normalize_path
+from mapchar.project.missing_files import missing_paths
 from mapchar.project.projectfile import (
     PROJECT_VERSION,
     LoadedProject,
@@ -17,7 +19,6 @@ from mapchar.project.projectfile import (
     save_project,
 )
 from mapchar.project.tables import adopt_table, read_table_file
-from mapchar.project.workspace import Entry, EntryKind, missing_paths
 from mapchar.ui.dialogs import TextDialog
 from mapchar.ui.main_window.autosave import AUTOSAVE_SUFFIX
 
@@ -51,7 +52,7 @@ class ProjectMixin:
         block's thousands of strings are nearly the whole of it. Each block's
         strings are lifted out of the dictionary and serialised on their own,
         and a block whose strings are as they were hands back the very list it
-        handed back before (:attr:`~mapchar.project.workspace.Entry.
+        handed back before (:attr:`~mapchar.project.entry.Entry.
         strings_cache`) — so its text is the text already in hand, and only
         what changed is written out again.
         """
@@ -330,20 +331,13 @@ class ProjectMixin:
             value = [value]
         return [str(v) for v in value or []]
 
-    @staticmethod
-    def _recent_key(path: str) -> str:
-        """What a recent entry is de-duplicated by: separators normalised, and
-        case folded where the file system folds it.
-
-        The same project reaches us spelled differently depending on how it was
-        opened, and a list that stores both spellings grows a second row for a
-        project the user only has one of.
-        """
-        return os.path.normcase(os.path.normpath(os.path.abspath(path)))
-
     def _add_recent(self, path: str) -> None:
-        key = self._recent_key(path)
-        recent = [p for p in self._recent() if self._recent_key(p) != key]
+        # De-duplicated by :func:`~mapchar.project.entry.normalize_path`: the same
+        # project reaches us spelled differently depending on how it was opened,
+        # and a list that stores both spellings grows a second row for a project
+        # the user only has one of.
+        key = normalize_path(path)
+        recent = [p for p in self._recent() if normalize_path(p) != key]
         recent.insert(0, os.path.normpath(os.path.abspath(path)))
         self.settings.setValue("recent", recent[:MAX_RECENT])
         self._rebuild_recent()

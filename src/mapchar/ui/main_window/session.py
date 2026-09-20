@@ -6,7 +6,7 @@ from mapchar.core.block import source_start
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.pipeline.pipeline import FileRef, PathwayConfig, SlotFill, load
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 
 
 class SessionMixin:

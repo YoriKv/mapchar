@@ -882,7 +882,7 @@ through `_push_command`.
 
 | Concern | Modules in `ui/main_window/` |
 |---|---|
-| Shell | `window.py` (the state every mixin shares, the undo stack and its guards, the title and dirty marker, file dialogs, alerts), `layout.py` (the widget tree, the two docks and the tool windows, with the signals that wire them), `menus.py` (the menu bar), `help.py` (the Help menu's dialogs and the View menu's theme rows) |
+| Shell | `window.py` (the state every mixin shares, the undo stack and its guards, the title and dirty marker, file dialogs, alerts), `widget_tree.py` (the widget tree, the two docks and the tool windows, with the signals that wire them), `menus.py` (the menu bar), `help.py` (the Help menu's dialogs and the View menu's theme rows) |
 | Active entry and refresh | `session.py`, `refresh.py`, `capability_sync.py` |
 | Text view | `text_tab.py` (the Text tab's window, and moving it by lines) |
 | Interpretation and position | `format_bar.py` (the Format and Reading bars, the reading of the entry on screen, the encodings as tables), `navigation.py`, `history.py` |

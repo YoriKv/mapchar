@@ -37,8 +37,8 @@ from mapchar.core.errors import TableError
 from mapchar.core.table import ID_PATTERN, Table, TableEntry, TokenKind
 from mapchar.core.text import nfc
 from mapchar.engines.relsearch import entries_from_base
+from mapchar.project.entry import Entry
 from mapchar.project.formats.table_native import format_entry, parse_entry
-from mapchar.project.workspace import Entry
 from mapchar.ui import as_bool, set_setting_bool, setting_bool, settings
 from mapchar.ui.bars import WrapBar
 from mapchar.ui.table_dialogs import FillDialog, ShiftKeysDialog

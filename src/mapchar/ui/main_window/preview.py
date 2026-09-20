@@ -5,7 +5,7 @@ from __future__ import annotations
 from mapchar.core.font import CodeEffect, Font, TextBox
 from mapchar.core.tokens import Token
 from mapchar.engines.layout import code_effects, with_code_effects
-from mapchar.project.workspace import Entry
+from mapchar.project.entry import Entry
 from mapchar.ui.preview_font import preview_font
 from mapchar.ui.undo_commands import BoxCommand
 

@@ -30,7 +30,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QMenu
 
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 
 Visit = tuple[Entry, int | None]
 """One place the view has been: an entry, and the string of it that was opened

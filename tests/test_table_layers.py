@@ -17,6 +17,7 @@ from mapchar.core.tokens import render
 from mapchar.engines.decode import DecodeRules, decode
 from mapchar.engines.encode import encode
 from mapchar.engines.layout import char_layout, code_effects, with_code_effects, wrap
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.formats.table_native import (
     HEADER,
     format_entry,
@@ -25,7 +26,6 @@ from mapchar.project.formats.table_native import (
     write_native,
 )
 from mapchar.project.tables import capture_overlay, fold_overlay
-from mapchar.project.workspace import Entry, EntryKind
 
 # -- @include ----------------------------------------------------------------
 

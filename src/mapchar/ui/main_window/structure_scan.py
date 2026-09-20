@@ -7,7 +7,7 @@ from dataclasses import replace
 from mapchar.core.block import with_region
 from mapchar.engines.textscan import score_window
 from mapchar.pipeline.structures import find_next_structure, find_structures
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 
 NOTHING_TO_WALK = "Pick a scheme, or one that announces itself."
 """What Scan and Find All say with no scheme to walk the file for at all."""

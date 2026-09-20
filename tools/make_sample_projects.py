@@ -95,8 +95,8 @@ def _derived(window, rom: str, module) -> list:
     """Opens ``rom`` in ``window`` with the tables ``module`` derives, written
     beside the ROM, and its blocks, in their folders."""
     from mapchar.core.capabilities import EntryKind
+    from mapchar.project.entry import Entry
     from mapchar.project.formats.blockspec import parse_config
-    from mapchar.project.workspace import Entry
 
     with open(rom, "rb") as f:
         data = f.read()

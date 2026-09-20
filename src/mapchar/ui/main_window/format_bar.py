@@ -10,7 +10,7 @@ from mapchar.core.block import BlockConfig, EndToken, RangeSource
 from mapchar.core.errors import MapcharError
 from mapchar.core.table import TableSet
 from mapchar.plugins.base import Stage
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui.widgets import fill_pick, select_data
 
 DEFAULT_ENCODING = "ascii"

@@ -18,6 +18,7 @@ from mapchar.core.table import (
     TokenKind,
 )
 from mapchar.core.table_layers import inherited, resolve
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.formats.table_native import write_native
 from mapchar.project.tables import (
     capture_overlay,
@@ -25,7 +26,6 @@ from mapchar.project.tables import (
     free_table_id,
     table_id_for,
 )
-from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import TableCommand
 
 

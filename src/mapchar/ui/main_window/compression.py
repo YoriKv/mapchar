@@ -11,7 +11,7 @@ from mapchar.pipeline.structures import (
     signature_of,
 )
 from mapchar.plugins.base import Stage
-from mapchar.project.workspace import EntryKind
+from mapchar.project.entry import EntryKind
 from mapchar.ui import DUMP_WINDOW_BYTES
 from mapchar.ui.raw_cells import RowModel
 from mapchar.ui.widgets import fill_pick, select_data

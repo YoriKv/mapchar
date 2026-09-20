@@ -13,11 +13,7 @@ from mapchar.core.errors import MapcharError
 from mapchar.core.font import CodeEffect, Effect, TextBox
 from mapchar.core.table import Table
 from mapchar.plugins.aliases import current_config_ids, current_id
-from mapchar.project.formats.blockspec import format_config, parse_config
-from mapchar.project.formats.table_native import sanitize_id
-from mapchar.project.glossary import GlossaryTerm, glossary_dicts, glossary_from
-from mapchar.project.tables import adopt_table
-from mapchar.project.workspace import (
+from mapchar.project.entry import (
     NAMED_UNIQUELY,
     Entry,
     EntryKind,
@@ -26,6 +22,10 @@ from mapchar.project.workspace import (
     free_name,
     tree_order,
 )
+from mapchar.project.formats.blockspec import format_config, parse_config
+from mapchar.project.formats.table_native import sanitize_id
+from mapchar.project.glossary import GlossaryTerm, glossary_dicts, glossary_from
+from mapchar.project.tables import adopt_table
 
 PROJECT_VERSION = 2
 
@@ -151,7 +151,7 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
     plus a status and notes where they are not the defaults.
 
     Read from the extracted document when there is one, and otherwise from
-    :attr:`~mapchar.project.workspace.Entry.pending_strings` — the state a block
+    :attr:`~mapchar.project.entry.Entry.pending_strings` — the state a block
     that was loaded but never opened is still carrying. Without that fallback a
     save would write back only the blocks the user happened to look at, and drop
     the originals of every other one. A translation an older project was still
@@ -174,7 +174,7 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
     if kept is not None and kept[0] == states:
         # The same list object, not an equal one: what serialises it can then
         # tell by identity that its own text still stands
-        # (:attr:`~mapchar.project.workspace.Entry.strings_cache`).
+        # (:attr:`~mapchar.project.entry.Entry.strings_cache`).
         return kept[1]
     records: list[dict[str, Any]] = []
     for index, original, status, notes, translation, digest in states:

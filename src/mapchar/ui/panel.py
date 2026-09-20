@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
 )
 
 if TYPE_CHECKING:
-    from mapchar.project.workspace import Entry, Workspace
+    from mapchar.project.entry import Entry
+    from mapchar.project.workspace import Workspace
 
 
 class WorkspaceTreePanel(QWidget):

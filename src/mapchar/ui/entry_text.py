@@ -20,7 +20,7 @@ from mapchar.core.block import (
 )
 from mapchar.core.notices import notice_lines
 from mapchar.core.text import fold
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui.kind_names import SOURCE_NAMES
 from mapchar.ui.token_text import ellipsize
 

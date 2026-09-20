@@ -20,7 +20,7 @@ from mapchar.core.address import (
     parse_address,
 )
 from mapchar.core.block import PointerListSource, RangeSource
-from mapchar.core.numbers import format_hex_offset, parse_hex_offset
+from mapchar.core.numbers import clamp, format_hex_offset, parse_hex_offset
 from mapchar.project.formats.table_native import HEADER
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.main_window.navigation import CUSTOM_ID
@@ -181,6 +181,13 @@ def test_an_offset_is_signed_hex_with_an_optional_dollar():
     for unreadable in ("", "-", "$", "1-2", "zz"):
         with pytest.raises(ValueError):
             parse_hex_offset(unreadable)
+
+
+def test_clamp_holds_a_value_in_range_and_gives_the_low_end_of_an_empty_one():
+    assert [clamp(v, 0, 10) for v in (-1, 0, 5, 10, 11)] == [0, 0, 5, 10, 10]
+    # An empty file has no last byte: the upper bound falls below the lower one
+    # and the answer is still the lower one.
+    assert clamp(7, 0, -1) == 0
 
 
 def test_every_address_field_follows_the_address_format(window, tmp_path):

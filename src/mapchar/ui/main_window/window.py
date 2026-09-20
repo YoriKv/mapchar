@@ -6,7 +6,7 @@ docstring): the documented state the mixins share, the shared undo stack
 together with the guard, the grouping and the reach every command applies
 through, the window title and the project's unsaved marker, the file dialogs
 and the text IO, and the error modal. The widget tree itself is
-:mod:`mapchar.ui.main_window.layout`. Not one more surface — the shell the
+:mod:`mapchar.ui.main_window.widget_tree`. Not one more surface — the shell the
 mixins hang off.
 """
 
@@ -31,11 +31,9 @@ from mapchar.core.bits import Bits
 from mapchar.core.document import Document
 from mapchar.pipeline.text_view import TextDecode
 from mapchar.plugins.registry import Registry, default_registry
+from mapchar.project.entry import Entry
 from mapchar.project.formats.textfile import not_utf8, read_text_any
-from mapchar.project.workspace import (
-    Entry,
-    Workspace,
-)
+from mapchar.project.workspace import Workspace
 from mapchar.ui import settings
 from mapchar.ui.dialogs import (
     TextDialog,
@@ -58,7 +56,6 @@ from mapchar.ui.main_window.help import HelpMixin
 from mapchar.ui.main_window.hex_view import HexViewMixin
 from mapchar.ui.main_window.history import HistoryMixin
 from mapchar.ui.main_window.import_export import ImportExportMixin
-from mapchar.ui.main_window.layout import WidgetsMixin
 from mapchar.ui.main_window.legacy_exchange import LegacyExchangeMixin
 from mapchar.ui.main_window.menus import MenuBarMixin
 from mapchar.ui.main_window.navigation import NavigationMixin
@@ -82,6 +79,7 @@ from mapchar.ui.main_window.structure_scan import StructureScanMixin
 from mapchar.ui.main_window.table_edits import TableEditorMixin
 from mapchar.ui.main_window.table_files import TableFilesMixin
 from mapchar.ui.main_window.text_tab import TextViewMixin
+from mapchar.ui.main_window.widget_tree import WidgetsMixin
 from mapchar.ui.main_window.wrap import WrapMixin
 from mapchar.ui.main_window.writing import WritingMixin
 from mapchar.ui.window_layout import WindowLayout

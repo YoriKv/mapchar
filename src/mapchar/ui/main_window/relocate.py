@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 
 from mapchar.core.errors import MapcharError
+from mapchar.project.entry import Entry, EntryKind
+from mapchar.project.missing_files import missing_paths, relocate_path
 from mapchar.project.tables import adopt_table, read_table_file
-from mapchar.project.workspace import Entry, EntryKind, missing_paths, relocate_path
 
 
 class RelocateMixin:

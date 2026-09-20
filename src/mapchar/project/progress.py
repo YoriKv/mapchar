@@ -6,7 +6,8 @@ from collections.abc import Iterable
 
 from mapchar.core.block import Status
 from mapchar.core.document import Document
-from mapchar.project.workspace import EntryKind, Workspace
+from mapchar.project.entry import EntryKind
+from mapchar.project.workspace import Workspace
 
 
 def _counts(statuses: Iterable[Status]) -> tuple[int, int, int]:

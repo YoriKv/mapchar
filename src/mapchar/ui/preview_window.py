@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.font import CodeEffect, Effect, TextBox
+from mapchar.core.numbers import clamp
 from mapchar.core.tokens import Token
 from mapchar.engines.layout import Layout, layout, unspellable, with_code_effects
 from mapchar.ui.font_tab import FontTab
@@ -278,7 +279,7 @@ class PreviewWindow(ThemedIcons, ToolWindow):
     def _set_page(self, page: int) -> None:
         if self._result is None:
             return
-        self._page = max(0, min(page, self._result.pages - 1))
+        self._page = clamp(page, 0, self._result.pages - 1)
         self._paint()
 
     def _copy(self) -> None:

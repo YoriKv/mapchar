@@ -14,6 +14,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QAbstractScrollArea, QToolTip, QWidget
 
+from mapchar.core.bits import format_hex_bytes
 from mapchar.core.table import TokenKind
 from mapchar.core.tokens import Token
 from mapchar.ui import BYTES_PER_ROW, marks, theme
@@ -494,7 +495,7 @@ class RawWidget(QAbstractScrollArea):
             event.ignore()
             return
         rels = [r for r in token_bytes(token) if r < len(model.data)]
-        spelled = " ".join(f"{model.data[r]:02X}" for r in rels)
+        spelled = format_hex_bytes(model.data[r] for r in rels)
         tip = model.tips.get(token.bit_start)
         if tip is not None:
             QToolTip.showText(event.globalPos(), f"{tip}\n{spelled}", self)

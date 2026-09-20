@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.block import NestedPointerSource, grouped_strings
 from mapchar.core.textmatch import matches_words, words_of
-from mapchar.project.workspace import Entry, EntryKind, Workspace, within
+from mapchar.project.entry import Entry, EntryKind, within
+from mapchar.project.workspace import Workspace
 from mapchar.ui.entry_text import (
     block_extra,
     folder_extra,

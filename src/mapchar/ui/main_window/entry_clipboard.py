@@ -7,9 +7,9 @@ from copy import deepcopy
 from PySide6.QtWidgets import QApplication
 
 from mapchar.core.errors import MapcharError
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.projectfile import entries_from_payload, entries_payload
 from mapchar.project.tables import adopt_table, free_table_id, read_table_file
-from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import EntryCommand
 
 

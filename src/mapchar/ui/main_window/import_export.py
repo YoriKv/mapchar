@@ -10,6 +10,7 @@ import os
 
 from mapchar.core.errors import MapcharError
 from mapchar.core.text import same_text
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.formats.script import (
     ScriptImportReport,
     apply_script,
@@ -29,7 +30,6 @@ from mapchar.project.formats.translator import (
     write_delimited,
     write_po,
 )
-from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.dialogs import ImportDialog
 from mapchar.ui.undo_commands import StringFieldCommand
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 
+from mapchar.core.address import format_hex
 from mapchar.core.block import BlockConfig, PointerSource, PointerTableSource
 from mapchar.core.table import TableEntry, TokenKind
 from mapchar.core.tokens import Token, render
@@ -131,7 +132,8 @@ def text_tokens(
     its value, where it points and, with ``resolve_pointers``, the string there."""
     tokens = []
     for cell in cells:
-        line = f"{cell.address:06X}  ${cell.value:0{cell.size * 2}X} → {_target(cell)}"
+        at = format_hex(cell.address)
+        line = f"{at}  ${cell.value:0{cell.size * 2}X} → {_target(cell)}"
         role = _role(cell)
         if role:
             # A nested source's outer pointer: the line says what it reaches,

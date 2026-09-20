@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mapchar.project.workspace import Entry
+from mapchar.project.entry import Entry
 from mapchar.ui.project_strings_window import ProjectString
 from mapchar.ui.strings_view import OVERFLOWS
 

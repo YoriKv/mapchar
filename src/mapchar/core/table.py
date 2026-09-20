@@ -260,9 +260,10 @@ class Table:
     """One logical table: entries keyed by bits, plus derived lookups.
 
     ``entries`` is what the table's own file says over its charset. The tables
-    it includes (``includes``) are not folded in: :func:`resolve` lays them
-    under it when a :class:`TableSet` is built, so an included table edited in
-    the app reaches every table that includes it.
+    it includes (``includes``) are not folded in:
+    :func:`~mapchar.core.table_layers.resolve` lays them under it when a
+    :class:`TableSet` is built, so an included table edited in the app reaches
+    every table that includes it.
     """
 
     def __init__(self, id: str, charset: str = "none"):

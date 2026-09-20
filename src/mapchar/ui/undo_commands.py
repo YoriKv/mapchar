@@ -41,7 +41,7 @@ from PySide6.QtGui import QUndoCommand
 
 from mapchar.core.table import Table
 from mapchar.pipeline.filechange import FileChange
-from mapchar.project.workspace import Entry
+from mapchar.project.entry import Entry
 
 # QUndoStack only attempts mergeWith between commands whose id() match, and -1
 # never merges; any other command landing in between breaks the chain.

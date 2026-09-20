@@ -7,8 +7,8 @@ from PySide6.QtCore import Qt
 
 from helpers import ASCII_TABLE as _ASCII_BODY
 from mapchar.core.block import BlockConfig, EndToken
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.formats.table_native import HEADER
-from mapchar.project.workspace import Entry, EntryKind
 
 TABLE = f"{HEADER}\n@table main\n41=A\n42=B\n/00=[end]\n"
 """A native table file: two letters and an end token."""

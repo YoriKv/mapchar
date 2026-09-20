@@ -7,17 +7,18 @@ import os
 from PySide6.QtWidgets import QInputDialog
 
 from mapchar.core.table import Table
-from mapchar.project.tables import capture_overlay
-from mapchar.project.workspace import (
+from mapchar.project.entry import (
     NAMED_UNIQUELY,
     Entry,
     EntryKind,
-    Workspace,
     free_name,
     holder,
+    moved,
     normalize_path,
+    reordered,
     within,
 )
+from mapchar.project.tables import capture_overlay
 from mapchar.ui.entry_text import sorted_entries
 from mapchar.ui.undo_commands import EntryCommand, EntryOrderCommand, RenameEntryCommand
 
@@ -109,7 +110,7 @@ class EntriesMixin:
         """
         if self._applying_undo:
             return
-        order = self.workspace.reordered(self.workspace.entries, entry, before)
+        order = reordered(self.workspace.entries, entry, before)
         self._push_order("Reorder entries", order)
 
     def _push_order(self, text: str, order: list[Entry]) -> None:
@@ -170,7 +171,7 @@ class EntriesMixin:
         try:
             for e in moving:
                 e.folder = folder
-            order = Workspace.moved(self.workspace.entries, moving, container, before)
+            order = moved(self.workspace.entries, moving, container, before)
             after = [(e, e.folder) for e in order]
         finally:
             for e, above in layout:
@@ -234,7 +235,7 @@ class EntriesMixin:
             target = self.files_panel.move_target(entry, delta)
             if target is False:
                 continue
-            order = self.workspace.reordered(order, entry, target)
+            order = reordered(order, entry, target)
         self._push_order(f"Move {len(entries)} entr(y/ies)", order)
 
     def _sort_entries(self, entry: Entry, key: str) -> None:
@@ -253,7 +254,7 @@ class EntriesMixin:
         # already in its final order, so the next move only has to reach its head.
         order = list(self.workspace.entries)
         for at in range(len(wanted) - 2, -1, -1):
-            order = self.workspace.reordered(order, wanted[at], wanted[at + 1])
+            order = reordered(order, wanted[at], wanted[at + 1])
         self._push_order(f"Sort by {key.lower()}", order)
 
     def apply_entry_order(self, layout: list[tuple[Entry, Entry | None]]) -> None:

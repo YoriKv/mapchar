@@ -20,7 +20,7 @@ from mapchar.core.block import (
     source_span,
 )
 from mapchar.core.capabilities import Capability
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui import BYTES_PER_ROW
 from mapchar.ui.entry_text import ROW_PREVIEW_CHARS, string_preview
 from window_helpers import ASCII_TABLE, add_block, make_window, open_rom_and_table

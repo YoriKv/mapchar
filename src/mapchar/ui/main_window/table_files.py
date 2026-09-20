@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 
 from mapchar.core.errors import MapcharError
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.tables import adopt_table, read_table_file, same_table
-from mapchar.project.workspace import Entry, EntryKind
 
 
 class TableFilesMixin:

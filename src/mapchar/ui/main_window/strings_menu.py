@@ -6,7 +6,7 @@ from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMenu
 
 from mapchar.core.block import Status
-from mapchar.project.workspace import Entry
+from mapchar.project.entry import Entry
 from mapchar.ui.main_window.string_rows import same_key
 from mapchar.ui.strings_view import FLAGGED
 from mapchar.ui.undo_commands import StringFieldCommand

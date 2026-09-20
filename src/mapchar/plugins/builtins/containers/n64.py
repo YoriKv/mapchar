@@ -7,6 +7,7 @@ offset is quoted in, and the write restores the order the file arrived in.
 
 from __future__ import annotations
 
+from mapchar.core.bits import format_hex_bytes
 from mapchar.core.context import PipelineContext
 from mapchar.plugins.base import (
     ContainerField,
@@ -124,7 +125,7 @@ class N64Rom:
         return (
             ContainerField(
                 "Header bytes",
-                " ".join(f"{byte:02X}" for byte in head) or "file is empty",
+                format_hex_bytes(head) or "file is empty",
                 "The same four header bytes in whichever order this dump was "
                 "made in - the only thing that says which, the suffix being "
                 "no guarantee.",

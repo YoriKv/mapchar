@@ -7,8 +7,9 @@ import pytest
 from mapchar.core.block import Status, StringRecord
 from mapchar.core.context import PipelineContext
 from mapchar.core.document import Document
+from mapchar.project.entry import Entry, EntryKind, StringState
 from mapchar.project.progress import progress_text
-from mapchar.project.workspace import Entry, EntryKind, StringState, Workspace
+from mapchar.project.workspace import Workspace
 
 
 def doc(*statuses: Status) -> Document:

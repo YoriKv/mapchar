@@ -25,7 +25,7 @@ from mapchar.pipeline.insert import (
     reads_back,
     room_for,
 )
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui.undo_commands import StringFieldCommand, StringsEditCommand
 
 
@@ -510,9 +510,7 @@ class StringEditMixin:
         used = -(-len(result.bits) // 8)
         bound = self._bound_of(entry)
         room = (
-            room_for(
-                rec, entry.config, bound, self._string_slots(entry, entry.doc, bound)
-            )
+            room_for(rec, entry.config, self._string_slots(entry, entry.doc, bound))
             if rec
             else 0
         )

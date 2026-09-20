@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapchar.core.bits import format_hex_bytes
 from mapchar.engines.relsearch import Hit, relative_search
 from mapchar.ui.number_fields import number_spin
 from mapchar.ui.tool_window import ResultsRunWindow
@@ -97,9 +98,7 @@ class SearchWindow(ResultsRunWindow):
         return [
             f"{item.offset:X}",
             f"{item.width * 8}-bit {item.endian}" if item.width > 1 else "8-bit",
-            " ".join(
-                f"{b:02X}" for b in self._data[item.offset : item.offset + item.length]
-            ),
+            format_hex_bytes(self._data[item.offset : item.offset + item.length]),
             ", ".join(f"{k}={v:X}" for k, v in item.bases.items()),
         ]
 

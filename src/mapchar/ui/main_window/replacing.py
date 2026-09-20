@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from mapchar.engines import scriptfind
-from mapchar.project.workspace import Entry
+from mapchar.project.entry import Entry
 
 
 class FindReplaceMixin:

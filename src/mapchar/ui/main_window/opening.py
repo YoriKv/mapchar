@@ -10,11 +10,11 @@ from PySide6.QtWidgets import QMessageBox
 from mapchar import APP_NAME
 from mapchar.core.errors import MapcharError
 from mapchar.plugins.registry import SIGNATURE_HEAD
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.formats.script import HEADER as SCRIPT_HEADER
 from mapchar.project.formats.table_native import HEADER as TABLE_HEADER
 from mapchar.project.formats.textfile import read_text_any, split_lines
 from mapchar.project.tables import adopt_table, read_table_file
-from mapchar.project.workspace import Entry, EntryKind
 
 
 class OpeningMixin:

@@ -7,11 +7,19 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import Qt
 
+from mapchar.core.bits import format_hex_bytes, parse_hex_bytes
 from mapchar.ui import BYTES_PER_ROW, settings
 from mapchar.ui.hex_panel import FOLLOW_SELECTION_KEY, HexPanel
 from window_helpers import make_window, open_rom_and_table
 
 DATA = bytes(range(64)) + b"ABCABC" + bytes(16)
+
+
+def test_a_byte_run_is_spelled_as_upper_case_pairs_and_reads_back():
+    assert format_hex_bytes(b"\x00\x0a\xff") == "00 0A FF"
+    assert format_hex_bytes(b"") == ""
+    assert format_hex_bytes(b"\x01\x02", sep="") == "0102"
+    assert parse_hex_bytes(format_hex_bytes(DATA)) == DATA
 
 
 @pytest.fixture

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.bits import parse_hex_bytes
+from mapchar.core.bits import format_hex_bytes, parse_hex_bytes
 from mapchar.ui import (
     BYTES_PER_ROW,
     DUMP_WINDOW_BYTES,
@@ -243,7 +243,7 @@ class HexPanel(QWidget):
             lines = []
             for at, address in zip(rows, addresses, strict=True):
                 chunk = self._data[at : at + BYTES_PER_ROW]
-                hexes = " ".join(f"{b:02X}" for b in chunk)
+                hexes = format_hex_bytes(chunk)
                 ascii_ = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in chunk)
                 lines.append(
                     f"{address:<{self._addr_width}}{' ' * _ADDRESS_GAP}"

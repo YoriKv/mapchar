@@ -8,7 +8,8 @@ from mapchar.core.notices import notice_lines
 from mapchar.pipeline.inspection import inspect_container
 from mapchar.pipeline.pipeline import FileRef, PathwayConfig
 from mapchar.plugins.base import Stage
-from mapchar.project.workspace import Entry, EntryKind, retarget_files
+from mapchar.project.entry import Entry, EntryKind
+from mapchar.project.missing_files import retarget_files
 from mapchar.ui.dialogs import ContainerDialog, TextDialog
 from mapchar.ui.undo_commands import ContainerCommand
 
@@ -101,7 +102,7 @@ class ContainerMixin:
         """Re-point a file entry and read it again — a container edit and its undo.
 
         The file list moves through
-        :func:`~mapchar.project.workspace.retarget_files`, so every block and
+        :func:`~mapchar.project.missing_files.retarget_files`, so every block and
         bookmark under it is re-pointed with it — their offsets are counted
         against the join, so a change to the file list changes what they address
         — and a row still named after its first file follows the new one.

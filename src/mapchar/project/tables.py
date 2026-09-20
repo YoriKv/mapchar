@@ -4,7 +4,7 @@ Reading is one half: :func:`read_table_file` turns a file in any dialect into
 a table. The other half is the **overlay** — the entries added, changed and
 removed in the app, which the project file carries rather than rewriting a table
 file other tools read. The two meet on the entry: what the file gave is the
-baseline (:attr:`~mapchar.project.workspace.Entry.file_table`), the overlay is
+baseline (:attr:`~mapchar.project.entry.Entry.file_table`), the overlay is
 laid back over it on every read, and **Save As File** folds it in.
 """
 
@@ -18,6 +18,7 @@ from mapchar.core.errors import MapcharError
 from mapchar.core.notices import Level, Notice
 from mapchar.core.table import Table
 from mapchar.plugins.charsets import apply_charset
+from mapchar.project.entry import free_name
 from mapchar.project.formats.legacy import load_table_text
 from mapchar.project.formats.table_native import (
     format_entry_lines,
@@ -25,12 +26,11 @@ from mapchar.project.formats.table_native import (
     sanitize_id,
 )
 from mapchar.project.formats.textfile import not_utf8, read_text_any
-from mapchar.project.workspace import free_name
 
 if TYPE_CHECKING:
     from mapchar.plugins.registry import Registry
+    from mapchar.project.entry import Entry
     from mapchar.project.formats.table_native import TableFile
-    from mapchar.project.workspace import Entry
 
 
 def table_id_for(path: str | None) -> str:

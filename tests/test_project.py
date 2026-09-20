@@ -15,7 +15,9 @@ from mapchar.core.document import Document
 from mapchar.core.font import TextBox
 from mapchar.core.table import Table, TableEntry, TokenKind
 from mapchar.pipeline.extract import extract
+from mapchar.project.entry import Entry, EntryKind, StringState, moved, tree_order
 from mapchar.project.glossary import GlossaryTerm, matching_terms
+from mapchar.project.missing_files import missing_paths, relocate_path, retarget_files
 from mapchar.project.projectfile import (
     PROJECT_VERSION,
     entries_from_payload,
@@ -30,16 +32,7 @@ from mapchar.project.tables import (
     fold_overlay,
     overlay_of,
 )
-from mapchar.project.workspace import (
-    Entry,
-    EntryKind,
-    StringState,
-    Workspace,
-    missing_paths,
-    relocate_path,
-    retarget_files,
-    tree_order,
-)
+from mapchar.project.workspace import Workspace
 
 
 def test_workspace_children_and_close():
@@ -651,13 +644,13 @@ def test_closing_a_folder_takes_what_it_holds_and_leaves_the_rest():
 
 def test_moving_rows_lifts_what_they_hold_in_one_pass():
     ws, r = _foldered("/tmp/a.nes")
-    order = Workspace.moved(ws.entries, [r["outer"]], r["f"], r["loose"])
+    order = moved(ws.entries, [r["outer"]], r["f"], r["loose"])
     assert [e.name for e in order] == [
         "a.nes", "Outer", "Inner", "deep", "near", "mark", "loose", "top",
     ]  # fmt: skip
     # No row to land in front of: last among what the container holds.
     r["top"].folder = r["inner"]
-    order = Workspace.moved(ws.entries, [r["top"]], r["inner"], None)
+    order = moved(ws.entries, [r["top"]], r["inner"], None)
     assert [e.name for e in order][3:6] == ["Inner", "deep", "top"]
 
 

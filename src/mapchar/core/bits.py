@@ -8,6 +8,8 @@ materialising the whole buffer as one.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 _CHUNK_BITS = 4096 * 8
 """How much of the buffer one cached bit string spells."""
 
@@ -114,3 +116,10 @@ def parse_hex_bytes(text: str) -> bytes:
     spaces or commas between them. Raises ``ValueError`` on anything else."""
     cleaned = text.replace("$", "").replace(",", " ")
     return bytes.fromhex(cleaned)
+
+
+def format_hex_bytes(data: Iterable[int], sep: str = " ") -> str:
+    """``data`` spelled as two-digit hex bytes with ``sep`` between them — the
+    one spelling a byte run is shown and copied in, and what
+    :func:`parse_hex_bytes` reads back."""
+    return sep.join(f"{b:02X}" for b in data)

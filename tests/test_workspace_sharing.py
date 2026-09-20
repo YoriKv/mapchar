@@ -7,7 +7,8 @@ import pytest
 
 from mapchar.core.context import PipelineContext
 from mapchar.core.document import Document
-from mapchar.project.workspace import Entry, EntryKind, Workspace
+from mapchar.project.entry import Entry, EntryKind
+from mapchar.project.workspace import Workspace
 
 
 def doc(data: bytes = b"") -> Document:

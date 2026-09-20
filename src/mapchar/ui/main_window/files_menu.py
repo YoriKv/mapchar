@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
 from mapchar.core.capabilities import Capability, supports
-from mapchar.project.workspace import Entry, EntryKind
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui.files_panel import SORT_KEYS
 from mapchar.ui.help_dialogs import submenus
 
