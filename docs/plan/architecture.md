@@ -1091,7 +1091,8 @@ putting the factory arrangement back behind Panels ▸ Reset Panel Layout.
   [`../release.md`](../release.md).
 - **Tools** — `tools/` holds the development scripts
   [development.md](../development.md) describes: `regen_fixtures.py`,
-  `make_sample_projects.py`, `subset_icon_font.py` and `ui_screenshots.py`.
+  `make_sample_projects.py` and `subset_icon_font.py`; the screenshot scripts
+  [ui.md](../ui.md) describes are in the gitignored `local-tools/`.
 - **Tests** — `tests/` is flat, one module per area, with the celPix
   headless setup (offscreen platform, automatic `qt` marking, isolated
   `QSettings`, recorded dialogs). Model-layer tests run without Qt.

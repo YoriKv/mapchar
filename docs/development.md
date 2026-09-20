@@ -61,8 +61,9 @@ mapchar/
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
 ├── tools/               regen_fixtures.py, make_sample_projects.py,
 │                       mother3_sample.py, mk2_sample.py, dump_script.py,
-│                       subset_icon_font.py, ui_screenshots.py, samples/,
+│                       subset_icon_font.py, samples/,
 │                       mapchar-lint/ (the project-file linter, see lint.md)
+├── local-tools/         ui_screenshots.py, wiki_screenshots.py (gitignored, see ui.md)
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
 ├── release.sh           cuts a release (see release.md)
