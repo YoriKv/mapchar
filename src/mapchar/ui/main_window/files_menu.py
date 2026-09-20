@@ -32,8 +32,8 @@ class FilesMenuMixin:
         instead of hiding it. Three questions take rows out of play:
 
         * the kind — a bookmark has no bytes to Write and a table is written
-          with Save As File…; a ROM or a table can only be open once, so there
-          is nothing for Duplicate to make a second of;
+          with Save As File…; a ROM can only be open once, so there is nothing
+          for Duplicate to make a second of;
         * a right-click inside a multi-row selection, which keeps it and makes
           the menu about the set: Remove, the two moves and, on a file's rows,
           New Folder act on all of it and every other row goes dead;
@@ -126,9 +126,12 @@ class FilesMenuMixin:
         duplicate = menu.addAction(
             "Dupl&icate", lambda: self._duplicate_entries(acting)
         )
-        # A ROM or a table is its path, so it can only be open once and there is
-        # nothing a second row of it would mean; its blocks duplicate.
-        duplicate.setEnabled(any(e.is_child for e in acting))
+        # A ROM is its path, so it can only be open once and there is nothing a
+        # second row of it would mean; its blocks duplicate. A table duplicates
+        # into a copy with no file of its own, which is how one starts the next.
+        duplicate.setEnabled(
+            any(e.is_child or e.kind is EntryKind.TABLE for e in acting)
+        )
         menu.addSeparator()
         up = menu.addAction("Move &Up", lambda: self._move_entries(acting, -1))
         down = menu.addAction("Move Dow&n", lambda: self._move_entries(acting, 1))

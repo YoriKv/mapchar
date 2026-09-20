@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from PySide6.QtWidgets import QApplication
 
+from mapchar.core.errors import MapcharError
 from mapchar.project.projectfile import entries_from_payload, entries_payload
+from mapchar.project.tables import adopt_table, free_table_id, read_table_file
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.undo_commands import EntryCommand
 
@@ -66,41 +70,78 @@ class EntryClipboardMixin:
         No confirmation, unlike Remove: a cut says where the rows are going,
         they are on the clipboard the moment they leave, and one Ctrl+Z brings
         them back. Remove says only "gone", which is why it asks.
+
+        A block left without its table keeps its strings all the same — the cut
+        stashes them the way a removal does, since a table off the clipboard may
+        not come back to this window at all.
         """
         group = self._entry_group(entries)
         if not group:
             return
         self._copy_entries(entries)
         roots = self._roots(entries)
+        going = {id(e) for e in group}
+        for block in self.workspace.blocks_on_tables(entries):
+            if id(block) not in going:
+                block.stash_strings()
         with self._macro("Cut entries"), self.workspace.batch():
             for e in roots:
                 if e in self.workspace.entries:
                     self._push_command(EntryCommand(self, e, add=False))
 
     def _duplicate_entries(self, entries: list[Entry]) -> None:
-        """A second row over the same region, without touching the clipboard.
+        """A second row over the same thing, without touching the clipboard.
 
-        Only where a second row can mean anything — a block, a bookmark, or a
-        folder with its contents — and in the folder the original sits in. A
-        file's identity is its path, and Ctrl+D doing nothing at all would read
-        as a bug, so it answers with a message instead of a dead key.
+        A block, a bookmark or a folder with its contents lands in the folder
+        the original sits in. A table lands as a copy the project carries whole,
+        which is how one table starts the next. A ROM's identity is its path, so
+        it can only be open once, and a Duplicate that did nothing at all would
+        read as a bug — it answers with a message instead.
         """
+        tables = [e for e in entries if e.kind is EntryKind.TABLE]
         movable = self._roots([e for e in entries if e.is_child])
-        if not movable:
+        if not movable and not tables:
             self.statusBar().showMessage(
-                "A ROM or table can only be open once — duplicate one of "
-                "its blocks or bookmarks instead.",
+                "A ROM can only be open once — duplicate one of its blocks "
+                "or bookmarks instead.",
                 5000,
             )
             return
-        # Round-tripped through the payload rather than copied by hand, so a
-        # duplicate is the same operation as a paste and cannot drift from it.
-        group = self._entry_group(movable)
-        copies = entries_from_payload(entries_payload(group))
-        for original, copy in zip(group, copies, strict=True):
-            if copy.folder is None and original in movable:
-                copy.folder = original.folder
-        self._place_copies(copies, None, "Duplicated")
+        with self._macro("Duplicate entries"):
+            for entry in tables:
+                self._duplicate_table(entry)
+            if movable:
+                # Round-tripped through the payload rather than copied by hand,
+                # so a duplicate is the same operation as a paste and cannot
+                # drift from it.
+                group = self._entry_group(movable)
+                copies = entries_from_payload(entries_payload(group))
+                for original, copy in zip(group, copies, strict=True):
+                    if copy.folder is None and original in movable:
+                        copy.folder = original.folder
+                self._place_copies(copies, None, "Duplicated")
+
+    def _duplicate_table(self, entry: Entry) -> Entry | None:
+        """``entry``'s table again, as a table the project carries whole.
+
+        A table *is* its file, and two rows on one path would each claim to say
+        what it holds; so the copy starts with no file of its own — the table as
+        it reads here, the in-app edits folded in, under a free id — and
+        **Save As File…** is what gives it one. That is the way to a new table
+        that starts from an existing one rather than from nothing.
+        """
+        if entry.table is None:
+            self.statusBar().showMessage(f"{entry.name} holds no table to copy", 4000)
+            return None
+        table = deepcopy(entry.table)
+        table.id = free_table_id(table.id, self.workspace.loaded_tables())
+        copy = self._add_memory_table(table, self._free_name(f"{table.id}.tbl"))
+        self._activate_entry(copy)
+        self.statusBar().showMessage(
+            f"Duplicated {entry.name} as {copy.name} — Save As File… gives it a file",
+            5000,
+        )
+        return copy
 
     def _paste_entries(self, target: Entry | None) -> None:
         copied = entries_from_payload(self._clipboard_text())
@@ -182,6 +223,7 @@ class EntryClipboardMixin:
                     entry.folder = None
             if entry.kind is not EntryKind.FOLDER:
                 entry.name = self._free_name(entry.name)
+        placed = [e for e in placed if self._adopt_pasted_table(e)]
         if not placed:
             if already:
                 self._activate_entry(already[0])
@@ -199,6 +241,40 @@ class EntryClipboardMixin:
             self._activate_entry(first)
         note = f" ({len(already)} already open)" if already else ""
         self.statusBar().showMessage(f"{verb} {len(placed)} entr(y/ies){note}", 4000)
+
+    def _adopt_pasted_table(self, entry: Entry) -> bool:
+        """Read the file behind a pasted table row; say whether to keep the row.
+
+        The payload carries a table's path and the in-app edits over it, never
+        the file's own entries — so this is where a pasted table is read, the
+        way opening one is, and arrives holding what it holds rather than empty.
+        A file that cannot be read, or a table whose id is already loaded, is
+        reported and left out; a table with no file of its own came whole on the
+        clipboard and only needs an id no other row is using.
+        """
+        if entry.kind is not EntryKind.TABLE:
+            return True
+        if not entry.path:
+            if entry.table is not None:
+                entry.table.id = free_table_id(
+                    entry.table.id, self.workspace.loaded_tables()
+                )
+            return True
+        if entry.table is not None:
+            return True
+        try:
+            tf = read_table_file(entry.path, entry.dialect, self.registry)
+        except (OSError, MapcharError) as exc:
+            self._error(f"Cannot load table {entry.path}: {exc}")
+            return False
+        clash = set(self.workspace.loaded_tables()) & {t.id for t in tf.tables}
+        if clash:
+            self._error(f"Table id(s) already loaded: {', '.join(sorted(clash))}")
+            return False
+        adopt_table(entry, tf.table, tf.notices)
+        entry.dialect = tf.dialect
+        self._watch_table(entry)
+        return True
 
     def _cut_selection(self) -> None:
         self._cut_entries(self._panel_selection())

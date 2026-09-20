@@ -209,14 +209,21 @@ the preview system in [preview.md](preview.md).
   File Manager, Remove. Empty space offers Open ROM…, Open Table…, New Table…
   and Paste. A row the clicked kind cannot do is greyed, never dropped: Write
   on a bookmark or a table (a bookmark has no bytes of its own; a table is
-  written with Save As File…), Duplicate on a file or a table (either is its
-  path, so it can only be open once), Sort By ▸ Offset outside a file's rows,
-  and Paste with nothing on the clipboard.
+  written with Save As File…), Duplicate on a file (it is its path, so it can
+  only be open once), Sort By ▸ Offset outside a file's rows, and Paste with
+  nothing on the clipboard.
 - **Cut / Copy / Paste / Duplicate** act on entries (references plus
   settings), never on bytes. The clipboard carries absolute paths, so entries
-  paste into another mapchar window. A folder travels with what it holds.
-  Rows pasted onto a folder, or onto a row inside one, land in that folder;
-  a duplicate lands in the folder its original is in.
+  paste into another mapchar window — a table pasted there is read from its
+  file the way Open Table… reads it, and refused for an id already loaded. A
+  folder travels with what it holds. Rows pasted onto a folder, or onto a row
+  inside one, land in that folder; a duplicate lands in the folder its original
+  is in. A cut stashes the strings of every block left without its table, as a
+  removal does.
+- **Duplicate on a table** copies it into a table with no file of its own,
+  under a free id (`main_2`), which the project carries whole until **Save As
+  File…** gives it one: the way to a new table that starts from an existing one
+  rather than from nothing.
 - **Remove (Del)** asks once for the whole selection and names the rows that
   go with it (a file's rows; a folder's contents, which a folder takes as a
   file takes its rows and as a cut carries them, so one step and its undo
@@ -348,8 +355,8 @@ the preview system in [preview.md](preview.md).
   saying what it said for every other tool that reads it; includes chosen in
   the app in place of the file's are carried the same way.
   **Save As File** writes them out and spends the overlay. A table with no file of its own —
-  from a relative search, or from **Add from selection** — is carried whole by
-  the project the same way.
+  from a relative search, from **Add from selection**, or from **Duplicate** on
+  another table — is carried whole by the project the same way.
 - **Reload** — a table file edited outside the app is re-read when its
   timestamp changes, with a prompt if the in-app copy has edits, and
   **File ▸ Refresh Tables** asks for the same of every table file at once —

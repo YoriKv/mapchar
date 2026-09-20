@@ -19,6 +19,7 @@ from mapchar.core.block import (
     StringRecord,
 )
 from mapchar.project.projectfile import entries_from_payload, entries_payload
+from mapchar.project.tables import same_table
 from mapchar.project.workspace import Entry, EntryKind
 from mapchar.ui.entry_text import sorted_entries
 from mapchar.ui.files_panel import STATUS_COL, FilesPanel
@@ -363,7 +364,7 @@ def test_cut_takes_the_row_out_without_asking(window, tmp_path):
     assert [b.name for b in window.workspace.of_kind(EntryKind.BLOCK)] == ["b"]
 
 
-def test_duplicate_only_applies_to_children(window, tmp_path):
+def test_duplicate_applies_to_children_but_not_to_a_rom(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     clip = QApplication.clipboard().text()
@@ -372,6 +373,48 @@ def test_duplicate_only_applies_to_children(window, tmp_path):
     assert QApplication.clipboard().text() == clip  # never touches the clipboard
     window._duplicate_entries([file_entry])
     assert len(window.workspace.files()) == 1
+
+
+def test_duplicating_a_table_copies_it_with_no_file_of_its_own(window, tmp_path):
+    """The way to a new table that starts from an existing one: the copy holds
+    the same entries under a free id, and the project carries it until a
+    Save As File gives it a file."""
+    open_rom_and_table(window, tmp_path, DATA)
+    table = window.workspace.of_kind(EntryKind.TABLE)[0]
+    window._duplicate_entries([table])
+    tables = window.workspace.of_kind(EntryKind.TABLE)
+    assert [e.name for e in tables] == ["main.tbl", "main_2.tbl"]
+    copy = tables[1]
+    assert copy.path is None
+    assert copy.table.id == "main_2"
+    assert copy.table.own_entries() == table.table.own_entries()
+    # Every entry is overlay, so the project carries the whole table.
+    assert copy.table_overlay and copy.dirty
+    # An edit to the copy is the copy's own.
+    assert copy.table is not table.table
+    # Undone in one step, and nothing was written.
+    window.undo_stack.undo()
+    assert len(window.workspace.of_kind(EntryKind.TABLE)) == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["main.tbl", "rom.bin"]
+
+
+def test_a_table_pasted_into_a_second_window_is_read_from_its_file(
+    qtbot, monkeypatch, tmp_path
+):
+    """The payload carries a table's path and the edits over it, never the
+    file's own entries — so the paste reads the file, the way opening it does."""
+    first = make_window(qtbot, monkeypatch)
+    open_rom_and_table(first, tmp_path, DATA)
+    table = first.workspace.of_kind(EntryKind.TABLE)[0]
+    first._copy_entries([table])
+
+    second = make_window(qtbot, monkeypatch)
+    second._paste_entries(None)
+    pasted = second.workspace.of_kind(EntryKind.TABLE)
+    assert [e.name for e in pasted] == ["main.tbl"]
+    assert pasted[0].table is not None
+    assert same_table(pasted[0].table, table.table)
+    assert "main" in second.workspace.loaded_tables()
 
 
 def test_entries_paste_into_a_second_window(qtbot, monkeypatch, tmp_path):
@@ -532,7 +575,8 @@ def test_a_string_rows_menu_greys_what_would_edit_its_block(window, tmp_path):
 
 def test_write_and_duplicate_are_dead_where_they_cannot_act(window, tmp_path):
     """A bookmark has no bytes and a table is written with Save As File…; a ROM
-    or a table is its path, so neither has a second row to make."""
+    is its path, so it has no second row to make. A table does: the copy has no
+    file of its own."""
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     window._go_to(3)
     window._new_bookmark()
@@ -540,11 +584,12 @@ def test_write_and_duplicate_are_dead_where_they_cannot_act(window, tmp_path):
     table = window.workspace.of_kind(EntryKind.TABLE)[0]
     for entry, dead in (
         (bookmark, {"Write"}),
-        (table, {"Write", "Duplicate"}),
+        (table, {"Write"}),
         (file_entry, {"Duplicate"}),
     ):
         state = _menu_state(window._build_files_menu(entry))
         assert {row for row in dead if not state[row]} == dead, entry.name
+    assert _menu_state(window._build_files_menu(table))["Duplicate"]
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
     state = _menu_state(window._build_files_menu(block))
     assert state["Write"] and state["Duplicate"]
