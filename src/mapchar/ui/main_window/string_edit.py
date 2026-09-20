@@ -395,13 +395,13 @@ class StringEditMixin:
             self.strings.set_readout(str(exc), problem=True)
             return
         used = -(-len(result.bits) // 8)
-        bound = block_bound(entry.config, entry.doc.strings, entry.doc.data)
+        bound = block_bound(entry.config, entry.doc.strings, entry.doc.data, tables)
         room = (
             room_for(
                 rec,
                 entry.config,
                 bound,
-                self._string_slots(entry, entry.doc, bound),
+                self._string_slots(entry, entry.doc, bound, tables),
             )
             if rec
             else 0

@@ -243,7 +243,10 @@ class BlocksMixin:
             file_entry.path,
             parent=file_entry,
             bookmark_offset=self._offset,
-            compression_id=self._preview_scheme,
+            # Only a scheme that was *picked*: one the bytes armed by themselves
+            # is what automatic does here, and recording it would turn automatic
+            # into that scheme the next time the bookmark is jumped to.
+            compression_id=None if self._auto_armed else self._preview_scheme,
         )
         entry.session.table_id = self._current_table_id()
         entry.session.config = self._reading()
@@ -257,8 +260,12 @@ class BlocksMixin:
         if entry.parent is None:
             return
         self._read_file_as(entry.parent, entry.session.config, entry.session)
-        self._arm_scheme(entry.compression_id)
-        self._go_to(entry.bookmark_offset)
+        # Only when there is one to arm: a bookmark that named no scheme was
+        # made under automatic, and the file's own pick is an instruction that
+        # holds wherever the view goes.
+        if entry.compression_id:
+            self._arm_scheme(entry.compression_id)
+        self._go_to_structure(entry.bookmark_offset)
         self._show_view(entry.session.view)
 
     def _read_file_as(self, file_entry: Entry, config, session) -> None:
@@ -412,13 +419,16 @@ class BlocksMixin:
         """Files panel ▸ Jump to Source: the parent file at the block's offset,
         set up to read it — read the way the block reads and, for a decompressed
         block, its scheme armed in the Compression preview, since what sits at
-        that address in the file is the packed structure."""
+        that address in the file is the packed structure. A block that is not
+        read through one arms nothing: the file's own pick is an instruction,
+        and a plain block has nothing to say about it."""
         if entry.parent is None or entry.config is None:
             return
         offset = self._block_file_offset(entry)
         self._read_file_as(entry.parent, entry.config, entry.session)
-        self._arm_scheme(entry.compression_id)
-        self._go_to(offset)
+        if entry.compression_id:
+            self._arm_scheme(entry.compression_id)
+        self._go_to_structure(offset)
 
     def _jump_to_string_source(self, entry: Entry, index: int) -> None:
         """Files panel ▸ Jump to Source on one of a block's strings: that string
@@ -435,12 +445,18 @@ class BlocksMixin:
         """A block over a scanned region, read the way the scan found it: a
         chain of records behind its length prefix and header, else terminated
         text with the guessed terminator as end token — the block and the token
-        together, so undoing the block takes the token with it."""
+        together, so undoing the block takes the token with it.
+
+        Either way the block keeps the current reading, the table it decodes
+        through included: that is what the file is read through and what the
+        scan scored the region with. A chain of records only cuts it another
+        way."""
         records = region.records
         reading = (
-            BlockConfig(
-                RangeSource(region.start, region.end),
-                Pascal(records.width),
+            replace(
+                self._reading() or self._default_reading(),
+                source=RangeSource(region.start, region.end),
+                string_type=Pascal(records.width),
                 header=records.header,
             )
             if records is not None

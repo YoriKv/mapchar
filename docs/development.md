@@ -97,9 +97,10 @@ mapchar/
   `sample-projects/MK2/Mortal Kombat II (USA, Europe).gb`: each block from the
   `ld hl,nn` before a call to a print routine, each table from that routine's
   compares. Menu strings are list sources over those code operands; the
-  `[u16 screen offset][u8 length]` records are Pascal strings with a skip
-  range over every header. Its docstring cites each routine, and names the
-  two RNC-compressed screens (legal, credits) mapchar cannot read.
+  `[u16 screen offset][u8 length]` records are Pascal strings behind a
+  two-byte record header (`header=2`). Its docstring cites each routine, and
+  names the two RNC-compressed screens (legal, credits), whose streams mapchar
+  decompresses and the sample builds no block over.
   `tests/test_examples.py` reads every block and edits a record and a menu
   string.
 - **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's

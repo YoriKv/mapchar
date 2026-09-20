@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 import zlib
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from functools import lru_cache
 
 from mapchar.core.notices import Notice
+from mapchar.core.table import TableSet
 from mapchar.core.text import nfc, same_text
 from mapchar.core.tokens import Token
 
@@ -163,6 +166,11 @@ class WriteMode(Enum):
     SLOTTED = "slotted"
 
 
+MAX_RECORD_HEADER = 255
+"""The largest record header, in bytes: what the Header control sets, and what
+a configuration line may name."""
+
+
 @dataclass(frozen=True)
 class BlockConfig:
     source: Source
@@ -207,11 +215,13 @@ class BlockConfig:
 
     @property
     def effective_write_mode(self) -> WriteMode:
-        if self.write_mode is not None:
+        """How this block is written. Skip ranges and a record header force
+        slotted whatever :attr:`write_mode` says: packing lays the strings end
+        to end, over the very bytes they step around."""
+        forced = bool(self.skips) or bool(self.record_header)
+        if self.write_mode is not None and not forced:
             return self.write_mode
-        return default_write_mode(
-            self.has_pointers, bool(self.skips) or bool(self.record_header)
-        )
+        return default_write_mode(self.has_pointers, forced)
 
     @property
     def record_header(self) -> int:
@@ -273,6 +283,51 @@ def is_fill(data: bytes, fill: bytes) -> bool:
     """Whether ``data`` is nothing but the ``fill`` pattern from its first byte,
     the last repeat allowed to be cut short — what :func:`fill_run` lays down."""
     return data == fill_run(fill, len(data))
+
+
+@lru_cache(maxsize=16)
+def _fill_expression(fill: bytes) -> re.Pattern[bytes]:
+    """What :func:`is_fill` accepts, as one expression: whole patterns and a
+    last one cut short. A fill run is as long as the free space of an expanded
+    ROM, so it is measured in one match rather than a pattern at a time."""
+    expression = b"(?:" + re.escape(fill) + b")*"
+    if len(fill) > 1:
+        cut = b"|".join(re.escape(fill[:n]) for n in range(len(fill) - 1, 0, -1))
+        expression += b"(?:" + cut + b")?"
+    return re.compile(expression)
+
+
+def fill_end(data: bytes, start: int, fill: bytes, cap: int | None = None) -> int:
+    """Where the run of ``fill`` beginning at ``start`` in ``data`` ends.
+
+    The padding :func:`fill_run` would have laid there — whole patterns and a
+    last repeat cut short, since the pattern is laid from the start of the
+    room it fills — and never past ``cap`` or the end of ``data``.
+    """
+    limit = len(data) if cap is None else min(cap, len(data))
+    if not fill or start >= limit:
+        return start
+    return _fill_expression(fill).match(data, start, limit).end()
+
+
+def fill_reads_as_padding(config: BlockConfig, tables: TableSet) -> bool:
+    """Whether a run of the block's fill between its strings is padding rather
+    than text.
+
+    A fill pattern no entry of the start table can begin a token with is
+    padding wherever it sits: nothing in the block reads as it, so what a
+    shorter replacement left behind is safe to pass over. A fill the table
+    does map is text — a string may begin with it, or be nothing but it — and
+    is read like any other bytes, which is why a block's fill should be one no
+    string begins with. The reading spells the same rule in bits
+    (:func:`~mapchar.pipeline.extract.padding_bits`).
+    """
+    pad = "".join(format(b, "08b") for b in config.fill)
+    if not pad:
+        return False
+    return not any(
+        key.startswith(pad) or pad.startswith(key) for key in tables.start.entries
+    )
 
 
 def parse_fill(text: str) -> bytes:
@@ -401,16 +456,20 @@ class StringRecord:
 
     @property
     def edited(self) -> bool:
-        """Whether the bytes are no longer the original's.
+        """Whether the string is no longer the original.
 
-        Told by the bytes, not the text: a block switched to the table its
-        translation is written in reads every string as other text, and none of
-        them has been touched. An original kept without a digest goes by the
-        text.
+        Told by the bytes first: a block switched to the table its translation
+        is written in reads every string as other text, and none of them has
+        been touched. Untouched either way, though — bytes that say the
+        original text are the original however they spell it, since a re-encode
+        may reach the same text through other codes. An original kept without a
+        digest goes by the text alone.
         """
         if self.original_digest is None or self.digest is None:
             return not self.matches_original(self.current_text())
-        return self.digest != self.original_digest
+        return self.digest != self.original_digest and not self.matches_original(
+            self.current_text()
+        )
 
     def matches_original(self, text: str) -> bool:
         """Whether ``text`` is the original text, line breaks and form aside."""
@@ -463,26 +522,29 @@ def string_groups(
 
 
 def block_bound(
-    config: BlockConfig, strings: list[StringRecord], data: bytes | None = None
+    config: BlockConfig,
+    strings: list[StringRecord],
+    data: bytes | None = None,
+    tables: TableSet | None = None,
 ) -> int:
     """The exclusive end packed strings may not cross.
 
     The configured bound; else a range source's stop; else the end of the
     text the pointers reach (a pointer table's stop bounds pointers, not
-    text), and past it, in ``data``, the run of whole fill patterns a shorter
-    layout left — so room given up is room to take back, as it is for a nested
-    source's group.
+    text), and past it, in ``data``, the run of fill a shorter layout left —
+    so room given up is room to take back, as it is for a nested source's
+    group. That run is the block's only where the block reads the fill as
+    padding (:func:`fill_reads_as_padding`), which is what ``tables`` says:
+    fill the block reads as text is a string, here or in the block after it.
     """
     if config.bound is not None:
         return config.bound
     if isinstance(config.source, RangeSource):
         return config.source.stop
     end = max((rec.end for rec in strings), default=0)
-    fill = config.fill
-    if data is not None and fill:
-        while data[end : end + len(fill)] == fill:
-            end += len(fill)
-    return end
+    if data is None or tables is None or not fill_reads_as_padding(config, tables):
+        return end
+    return fill_end(data, end, config.fill)
 
 
 @dataclass

@@ -485,6 +485,12 @@ def decompress(
         (_unpack_1 if method == METHOD_1 else _unpack_2)(src, target, out)
     except _Truncated:
         return bytes(out), min(src.pos, len(data)), False
+    if not whole:
+        # The decoder reached the declared size inside what the buffer holds —
+        # a stream whose packed size covers padding it never reads. The rest of
+        # the stream is still missing, its CRC unchecked, so this is a prefix
+        # and `consumed` stops where the buffer does.
+        return bytes(out), min(end, len(data)), False
     if crc16(out) != int.from_bytes(data[12:14], "big"):
         raise _fail("unpacked data fails its CRC")
     return bytes(out), end, True

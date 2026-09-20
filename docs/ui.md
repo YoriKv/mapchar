@@ -42,7 +42,9 @@ every control where it was.
 - **What only some readings have goes last**: the fields one kind of source or
   string type has and another has not sit at the end of their section — under
   Strings on a row of their own (`widgets.ROW_BREAK`) — so nothing stands after
-  them to be pushed along.
+  them to be pushed along. A bar's width counts them whether they are showing
+  or not (`FlowLayout.natural_width`), so the sections beside it do not shift
+  either.
 - **Settings made once are folded away**: a block's write settings and its skip
   ranges are one line each, opening a popup under it (`WritingPicker`,
   `SkipsPicker`).

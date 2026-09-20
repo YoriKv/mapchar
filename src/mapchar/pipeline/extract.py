@@ -22,6 +22,7 @@ from mapchar.core.block import (
     RangeSource,
     StringRecord,
     bits_digest,
+    fill_reads_as_padding,
     is_fill,
 )
 from mapchar.core.mapping import read_pointer
@@ -347,21 +348,13 @@ def pointer_target(mapping, source: PointerSource, value, address, size) -> int 
 
 
 def padding_bits(config: BlockConfig, tables: TableSet) -> str | None:
-    """The block's fill pattern as bits when a run of it is padding, else
-    ``None``.
-
-    A fill byte no entry of the start table can begin a token with is padding
-    wherever it sits between strings: nothing in the block reads as it, so
-    what a shorter replacement left behind is safe to pass over. A fill byte
-    the table does map is text — a string may begin with it, or be nothing but
-    it — and every byte of it is read, which is why a block's fill byte should
-    be one no string begins with.
-    """
-    pad = "".join(format(b, "08b") for b in config.fill)
-    for key in tables.start.entries:
-        if key.startswith(pad) or pad.startswith(key):
-            return None
-    return pad
+    """The block's fill pattern as bits when a run of it is padding
+    (:func:`~mapchar.core.block.fill_reads_as_padding`, where the rule is), and
+    ``None`` when the block reads the fill as text: what the reading passes
+    over between strings, spelled the way :meth:`Bits.window` spells it."""
+    if not fill_reads_as_padding(config, tables):
+        return None
+    return "".join(format(b, "08b") for b in config.fill)
 
 
 def _without_padding(bits: Bits, start: int, limit: int, pad: str | None) -> int:
@@ -537,15 +530,18 @@ def _extract_range(
                 start += width
             if start >= stop_bit:
                 break
-        # A string that begins on a skip range begins where it lands, and
-        # one behind a record header begins after it.
-        start = follow_skips(start, skips) + config.header * 8
+        # A string that begins on a skip range begins where it lands, and one
+        # behind a record header begins past it — the header's own bytes step
+        # over the skips between them.
+        start = advance(start, config.record_header * 8, skips)
         if start >= stop_bit:
             break
         tokens, record_end, res_notices = decode_one(
             bits, config, tables, start, stop_bit
         )
-        if record_end <= start:
+        # A record of no bytes, or one that leaves the position where it was —
+        # a header reading backwards — would be read again for ever.
+        if record_end <= start or record_end <= pos:
             break
         strings.append(
             StringRecord(len(strings), start, record_end, tokens, notices=res_notices)

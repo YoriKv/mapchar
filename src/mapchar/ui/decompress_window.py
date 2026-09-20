@@ -5,7 +5,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QPushButton,
+    QSizePolicy,
+    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -48,6 +51,13 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
     :class:`~mapchar.ui.widgets.CancellableRun`'s, as in the Search and Scan
     windows, and :meth:`set_scanning` disables everything else, so nothing can be
     asked of a window whose offset is about to move.
+
+    The window is opened either way round: by hand from the menu
+    (:meth:`keep_open`), or by a scheme arming itself where the view landed
+    (:meth:`show_armed`). Only the second kind hides itself again
+    (:meth:`hide_if_armed`); the first stays, and says in both readings that
+    nothing decodes here (:meth:`show_nothing`), since a window that vanished
+    would take Find All with it.
     """
 
     jump_next = Signal()
@@ -74,8 +84,16 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         self.tabs = QTabWidget()
         self.raw = RawWidget()
         self.text = TextWidget()
-        self.tabs.addTab(self.raw, "Hex")
-        self.tabs.addTab(self.text, "Text")
+        hex_pane, self.hex_note = self._reading_tab(self.raw)
+        text_pane, self.text_note = self._reading_tab(self.text)
+        self._readings = (
+            (hex_pane, self.raw, self.hex_note),
+            (text_pane, self.text, self.text_note),
+        )
+        """Each reading as its tab, the view in it, and the note shown in the
+        view's place while nothing decodes."""
+        self.tabs.addTab(hex_pane, "Hex")
+        self.tabs.addTab(text_pane, "Text")
         self.tabs.addTab(self._structures_tab(), "Structures")
         layout.addWidget(self.tabs, 1)
         row = QHBoxLayout()
@@ -102,11 +120,31 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         self.text.fit_changed.connect(self._show_text)
         self.bind_run(self.scan, self.stop, self.status, "Scanning")
         self._scanning = False
+        self._armed_open = False
+        """Whether the window is on screen only because a scheme armed itself
+        where the view is; one opened by hand stays open."""
         self.tabs.setCurrentIndex(_stored_tab())
         self.tabs.currentChanged.connect(
             lambda index: settings().setValue(TAB_KEY, index)
         )
         self.resize(760, 360)
+
+    def _reading_tab(self, view: QWidget) -> tuple[QStackedWidget, QLabel]:
+        """One reading of the payload, or a line in its place when there is none.
+
+        The note takes the whole tab rather than sitting above the view: an
+        empty dump beside "nothing decodes here" reads as a payload of zero
+        bytes, which is a different thing. Its size is ignored so a message of
+        any length leaves the window as small as its controls need.
+        """
+        pane = QStackedWidget()
+        note = QLabel()
+        note.setWordWrap(True)
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        pane.addWidget(view)
+        pane.addWidget(note)
+        return pane, note
 
     def _structures_tab(self) -> QWidget:
         """The Structures tab: Find All over its list of what it found."""
@@ -124,18 +162,46 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         box.addWidget(self.results, 1)
         return pane
 
+    # -- opening and closing ----------------------------------------------------
+
+    def keep_open(self) -> None:
+        """Opened by hand: from here it stays open, whatever decodes."""
+        self._armed_open = False
+
+    def show_armed(self) -> None:
+        """Show the window because a scheme armed itself where the view is.
+
+        A window already on screen is left as it is: what opened it is what
+        decides whether it closes itself again.
+        """
+        if not self.isVisible():
+            self._armed_open = True
+            self.show()
+
+    def hide_if_armed(self) -> None:
+        """Take back a window that opened itself, now that nothing decodes.
+
+        Not one the user opened, not one a walk is running in, and not one
+        holding a list of structures: the list is the whole file's and outlives
+        the offset the view happens to sit on.
+        """
+        if self._armed_open and not self._scanning and not self._structures:
+            self.hide()
+
     def set_scanning(self, active: bool) -> None:
         """Freeze everything a running scan does not drive, and thaw it.
 
-        Scan and Stop are :meth:`~mapchar.ui.widgets.CancellableRun.running`'s
-        to swap; what is left is the rest of the window. The structure buttons
-        come back under :meth:`show_result`, which the refresh after the scan
-        calls, so nothing here re-arms a button the new position does not
-        justify.
+        Stop is :meth:`~mapchar.ui.widgets.CancellableRun.running`'s to swap
+        with whichever button started the walk; every other control that starts
+        one or reads the position it is about to move is switched off here. The
+        structure buttons come back under :meth:`show_result`, which the refresh
+        after the scan calls, so nothing here re-arms a button the new position
+        does not justify.
         """
         self._scanning = active
         self.next.setEnabled(False)
         self.block.setEnabled(False)
+        self.scan.setEnabled(not active)
         self.find_button.setEnabled(not active)
         self.tabs.setEnabled(not active)
 
@@ -153,15 +219,39 @@ class DecompressWindow(EscapeCloses, CancellableRun, QWidget):
         Text tabs are.
         """
         self.raw.set_model(model)
+        # Another payload, so a Shift+click has nothing left to reach from.
+        self.raw.clear_anchor()
         self._tokens = tokens
         self._window = model.data if model is not None else b""
         self._show_text()
         self.status.setText(status)
+        self._show_notes(False)
         # A scan's own progress refreshes run through here; while one is running
         # the only live control is Stop.
         live = model is not None and complete and not self._scanning
         self.block.setEnabled(live)
         self.next.setEnabled(live)
+
+    def show_nothing(self, message: str) -> None:
+        """Nothing decodes where the view is: say so in place of both readings.
+
+        What a window the user opened shows for as long as it takes to get
+        somewhere a scheme reads, so the two tabs answer the question the empty
+        window otherwise leaves open. The structure list is untouched: it is the
+        file's, not this offset's.
+        """
+        # An empty decode, which is what clears the two views and the buttons
+        # over them, and then the message in the views' place.
+        self.show_result(None, [], message, False)
+        for _pane, _view, note in self._readings:
+            note.setText(message)
+        self._show_notes(True)
+
+    def _show_notes(self, showing: bool) -> None:
+        """Put the message in front of the Hex and Text readings, or the
+        readings back in front of it."""
+        for pane, view, note in self._readings:
+            pane.setCurrentWidget(note if showing else view)
 
     def _show_text(self) -> None:
         """Render the kept tokens as text, as the box now shows them."""

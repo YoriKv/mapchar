@@ -123,6 +123,16 @@ def test_a_line_break_in_a_quoted_name_round_trips():
     assert script.rom == 'a"b\nc' and script.blocks[0].name == "two\nlines"
 
 
+def test_a_header_outside_what_a_block_can_hold_is_refused():
+    """A header the Header control cannot set does not read: a negative one
+    walks the reading backwards, and the project would not open."""
+    line = "source=range start=$0 stop=$10 type=end table=main header="
+    assert parse_config(line + "255").header == 255
+    for bad in ("-1", "256"):
+        with pytest.raises(ValueError):
+            parse_config(line + bad)
+
+
 def test_script_errors():
     with pytest.raises(ScriptError):
         parse_script("hello\n")

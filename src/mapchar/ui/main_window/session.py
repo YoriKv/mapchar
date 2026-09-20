@@ -70,9 +70,17 @@ class SessionMixin:
         """
         if capture:
             self._capture_session()
+        before = self._doc
         self._doc = (
             self._load_document(self._entry) if self._entry is not None else None
         )
+        # A selection is offsets into the buffer on screen, and so is the anchor
+        # a Shift+click reaches from. Another buffer — another file, a
+        # decompressed payload — means neither, while a block over its parent's
+        # own bytes keeps both: they are the same offsets.
+        if before is None or self._doc is None or self._doc.data is not before.data:
+            self._selection = None
+            self.raw.set_selection(0, 0)
         self._restore_session()
         self._refresh_view()
 

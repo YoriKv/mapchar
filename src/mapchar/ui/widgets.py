@@ -424,11 +424,29 @@ class FlowLayout(QLayout):
         return self.minimumSize()
 
     def natural_width(self) -> int:
-        """The width that lays every item out on one row."""
-        hints = [item.sizeHint().width() for item in self._items if not item.isEmpty()]
+        """The width the items ask for, whatever of them is showing.
+
+        The widest of the two rows the break rule makes — what comes before the
+        first :data:`ROW_BREAK` item, and that item with everything after it —
+        since a row of its own is not laid beside the one above it. Every item
+        counts, hidden or not: a control that comes and goes would otherwise
+        change the width its bar asks for, and everything beside it would move.
+        """
+        rows: list[list[int]] = [[]]
+        broke = False
+        for item in self._items:
+            widget = item.widget()
+            if not broke and widget is not None and widget.property(ROW_BREAK):
+                broke = True
+                rows.append([])
+            # A hidden item measures nothing; the widget under it still knows
+            # how wide it would be.
+            hint = widget.sizeHint() if widget is not None else item.sizeHint()
+            rows[-1].append(hint.width())
+        across = self._gap(Qt.Orientation.Horizontal)
         margins = self.contentsMargins()
-        gaps = self._gap(Qt.Orientation.Horizontal) * max(len(hints) - 1, 0)
-        return sum(hints) + gaps + margins.left() + margins.right()
+        widest = max(sum(row) + across * max(len(row) - 1, 0) for row in rows)
+        return widest + margins.left() + margins.right()
 
     def minimumSize(self) -> QSize:  # noqa: N802 - Qt override
         size = QSize()

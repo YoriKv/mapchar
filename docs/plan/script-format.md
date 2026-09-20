@@ -53,7 +53,7 @@ done well.[end]
   configuration alone. The source is `source=range`, `pointers`, `list` or
   `nested`; a pointer source's `null=$0` is its null value, and a nested one
   adds `inner_size`, `inner_endian` and `inner_null`, its `stride` defaulting
-  to two pointers. `header=2` is a range's record header, in bytes.
+  to two pointers. `header=2` is a range's record header, 0 to 255 bytes.
   `fill=$FFFF` is a fill pattern, a byte for every two hex digits:
 
   ```

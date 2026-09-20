@@ -12,6 +12,7 @@ from enum import Enum
 
 from mapchar.core.block import (
     DEFAULT_FILL,
+    MAX_RECORD_HEADER,
     BlockConfig,
     EndToken,
     FixedLength,
@@ -149,8 +150,8 @@ def format_config(config: BlockConfig) -> str:
             "skips="
             + ",".join(f"{format_num(a)}>{format_num(b)}" for a, b in config.skips)
         )
-    if config.header:
-        parts.append(f"header={config.header}")
+    if config.record_header:
+        parts.append(f"header={config.record_header}")
     if config.line_length:
         parts.append(f"lines={config.line_length}")
     if config.show_end:
@@ -285,6 +286,9 @@ def parse_config(spec: str) -> BlockConfig:
     if "realign" in fields:
         m, o = fields["realign"].split(":")
         realign = (int(m), int(o))
+    header = int(fields.get("header", "0"))
+    if not 0 <= header <= MAX_RECORD_HEADER:
+        raise ValueError(f"header={header} is not 0 to {MAX_RECORD_HEADER}")
     skips = ()
     if fields.get("skips"):
         skips = tuple(
@@ -298,7 +302,7 @@ def parse_config(spec: str) -> BlockConfig:
         strings_per_pointer=int(fields.get("spp", "1")),
         realign=realign,
         skips=skips,
-        header=int(fields.get("header", "0")),
+        header=header,
         line_length=int(fields.get("lines", "0")),
         bound=parse_num(fields["bound"]) if "bound" in fields else None,
         write_mode=WriteMode(fields["mode"]) if "mode" in fields else None,

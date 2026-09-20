@@ -23,6 +23,7 @@ from mapchar.core.block import (
     StringRecord,
     WriteMode,
     block_bound,
+    fill_end,
     fill_run,
     string_groups,
 )
@@ -200,17 +201,19 @@ def slot_ends(
     data: bytes | None = None,
     fill: bytes | None = None,
     header: int = 0,
+    skips=(),
 ) -> dict[int, int]:
     """Where each string's slot ends, by index.
 
-    A slot is the bytes the string itself holds plus the run of whole fill
-    patterns directly after them — the padding a shorter replacement left
-    behind, which the next edit may use again — and stops at the next string
-    in address order, at ``bound``, or at the end of ``data``, whichever comes
-    first. Bytes between two strings that are not that padding belong to no
-    slot: nothing the block writes may touch them. The ``header`` bytes in
-    front of the next string are its record's, fill-valued or not, and no slot
-    reaches into them.
+    A slot is the bytes the string itself holds plus the run of fill directly
+    after them (:func:`~mapchar.core.block.fill_end`) — the padding a shorter
+    replacement left behind, which the next edit may use again — and stops at
+    the next string in address order, at ``bound``, or at the end of ``data``,
+    whichever comes first. Bytes between two strings that are not that padding
+    belong to no slot: nothing the block writes may touch them. The ``header``
+    bytes in front of the next string are its record's, fill-valued or not,
+    and no slot reaches into them — counted back over the ``skips`` the
+    reading stepped over on its way through them (:func:`_before`).
 
     Without ``data`` and ``fill`` there is no telling padding from anything
     else, and a slot is the whole gap to the next string — the room a block
@@ -221,16 +224,38 @@ def slot_ends(
     ends: dict[int, int] = {}
     limit = bound if data is None else min(bound, len(data))
     for i, rec in enumerate(ordered):
-        stop = ordered[i + 1].start - header if i + 1 < len(ordered) else limit
+        nxt = ordered[i + 1].start if i + 1 < len(ordered) else None
+        stop = _before(nxt, header, skips) if nxt is not None else limit
         if data is None or not fill:
             ends[rec.index] = max(rec.end, stop)
             continue
-        end = rec.end
-        width = len(fill)
-        while end + width <= min(stop, len(data)) and data[end : end + width] == fill:
-            end += width
-        ends[rec.index] = end
+        ends[rec.index] = fill_end(data, rec.end, fill, stop)
     return ends
+
+
+def _before(pos: int, n: int, skips) -> int:
+    """``n`` bytes back from ``pos``, over the skip ranges reading crossed on
+    the way: where a record whose string starts at ``pos`` begins, the other
+    way round from the walk the reading makes forward over its header
+    (:func:`~mapchar.engines.decode.advance`)."""
+    if not skips or n <= 0:
+        return pos - n
+    landings: dict[int, int] = {}
+    for start, stop in skips:
+        if start < stop:
+            # Two skips landing on one byte: the earlier start, which is the
+            # further back a slot may be asked to stop.
+            landings[stop] = min(start, landings.get(stop, start))
+    left = n
+    while left > 0:
+        if pos in landings:
+            # Reading arrived here by jumping: the bytes before it are the
+            # ones in front of where the skip began.
+            pos = landings[pos]
+            continue
+        pos -= 1
+        left -= 1
+    return pos
 
 
 def packed_ends(strings: list[StringRecord], bound: int, skips=()) -> dict[int, int]:
@@ -262,16 +287,22 @@ def group_bounds(
 ) -> list[int]:
     """The exclusive end each group of a nested block may be written up to.
 
-    A group's own last byte, and past it the run of whole fill patterns a
-    shorter layout left — so room given up is room to take back — but never as
-    far as the next thing the outer table points at (another group's inner
-    table or text), nor past the block's ``bound``.
+    A group's own last byte, and past it the run of fill a shorter layout left
+    (:func:`~mapchar.core.block.fill_end`) — so room given up is room to take
+    back — but never as far as the next thing the outer table points at
+    (another group's inner table or text), nor past the block's ``bound``.
+
+    That cap is what makes the run the group's, so unlike a block's own bound
+    (:func:`~mapchar.core.block.block_bound`) it does not ask whether the
+    table reads the fill as padding: the outer table has already said the
+    stretch holds nothing else of the block's, and a table whose codes begin
+    with the fill byte — a 16-bit script whose end token is ``FFFF`` — would
+    otherwise never take back a byte it gave up.
     """
     source = config.source
     assert isinstance(source, NestedPointerSource)
     records, _ = nested_records(data, source, registry)
     marks = sorted({r.table for r in records} | {r.base for r in records})
-    fill = config.fill
     bounds = []
     for group in groups:
         first = min(r.start for r in group)
@@ -280,25 +311,30 @@ def group_bounds(
         cap = marks[at] if at < len(marks) else len(data)
         if config.bound is not None:
             cap = min(cap, config.bound)
-        end = own
-        while fill and end + len(fill) <= cap and data[end : end + len(fill)] == fill:
-            end += len(fill)
-        bounds.append(max(own, min(end, cap)))
+        bounds.append(max(own, fill_end(data, own, config.fill, cap)))
     return bounds
 
 
 def string_ends(
-    data: bytes, config: BlockConfig, strings: list[StringRecord], registry=None
+    data: bytes,
+    config: BlockConfig,
+    strings: list[StringRecord],
+    registry=None,
+    tables: TableSet | None = None,
 ) -> dict[int, int]:
     """Where each string's room ends, by index: its slot's end
     (:func:`slot_ends`) when the block is slotted, and its own bytes plus its
     group's spare (:func:`packed_ends`) when it is packed. What
-    :func:`room_for` reads a string's room from."""
+    :func:`room_for` reads a string's room from, and ``tables`` is what says
+    whether the fill past the text is the block's
+    (:func:`~mapchar.core.block.block_bound`)."""
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     if not isinstance(config.source, NestedPointerSource):
-        bound = block_bound(config, strings, data)
+        bound = block_bound(config, strings, data, tables)
         if slotted:
-            return slot_ends(strings, bound, data, config.fill, config.record_header)
+            return slot_ends(
+                strings, bound, data, config.fill, config.record_header, config.skips
+            )
         return packed_ends(strings, bound, config.skips)
     groups = string_groups(config, strings)
     ends: dict[int, int] = {}
@@ -306,7 +342,9 @@ def string_ends(
         groups, group_bounds(data, config, groups, registry), strict=True
     ):
         if slotted:
-            ends |= slot_ends(group, bound, data, config.fill, config.record_header)
+            ends |= slot_ends(
+                group, bound, data, config.fill, config.record_header, config.skips
+            )
         else:
             ends |= packed_ends(group, bound, config.skips)
     return ends
@@ -336,7 +374,7 @@ def layout_block(
         ] or groups
         bounds = group_bounds(data, config, groups, registry)
     else:
-        bounds = [block_bound(config, strings, data)]
+        bounds = [block_bound(config, strings, data, tables)]
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     for group, bound in zip(groups, bounds, strict=True):
         for rec in group:
@@ -347,7 +385,7 @@ def layout_block(
         if slotted:
             _layout_slotted(data, config, group, bound, result)
         else:
-            _layout_packed(config, group, bound, result, registry)
+            _layout_packed(data, config, group, bound, result, registry)
     if not result.ok:
         result.splices.clear()
     return result
@@ -364,7 +402,9 @@ def _layout_slotted(
     fixed_len = config.fixed_length
     out = bytearray()
     first = min(s.start for s in strings)
-    ends = slot_ends(strings, bound, data, config.fill, config.record_header)
+    ends = slot_ends(
+        strings, bound, data, config.fill, config.record_header, config.skips
+    )
     last = min(max(max(s.end for s in strings), max(ends.values())), len(data))
     out[:] = data[first:last]
     used = 0
@@ -422,6 +462,7 @@ def _layout_slotted(
 
 
 def _layout_packed(
+    data: bytes,
     config: BlockConfig,
     strings: list[StringRecord],
     bound: int,
@@ -488,9 +529,29 @@ def _layout_packed(
     result.used += pos - first
     result.available += bound - first
     if result.ok:
-        out += fill_run(fill, bound - first - len(out))
+        # The fill goes as far as the bound, but the splice need not: past
+        # both the new text and the old, bytes that are already the fill the
+        # write would lay there are left alone, and the spare of a block whose
+        # bound is the fill run behind it can be a megabyte of free space.
+        # The pattern is laid from ``pos``, so what stands has to carry it on
+        # at its own phase — a multi-byte fill starting over mid-pattern is
+        # not one run, and the next reading would not read it as padding.
+        end = min(max(pos, max(rec.end for rec in strings)), bound)
+        carried = _rotated(fill, end - pos)
+        if end < bound and fill_end(data, end, carried, bound) < bound:
+            end = bound
+        out += fill_run(fill, end - first - len(out))
         result.splices.append(Splice(first, bytes(out)))
         result.splices.extend(_pointer_splices(config, strings, result, registry))
+
+
+def _rotated(fill: bytes, by: int) -> bytes:
+    """``fill`` as it reads ``by`` bytes into a run of it: the pattern a write
+    carrying on from there would lay."""
+    if not fill:
+        return fill
+    at = by % len(fill)
+    return fill[at:] + fill[:at]
 
 
 def _is_tail(
@@ -506,12 +567,18 @@ def _is_tail(
 
 
 def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Splice]:
-    """Rewrite every pointer of a packed block to its string's new position,
-    each through its own mapping and from its own offset — a nested source's
-    inner pointers count from their group's base."""
-    if not config.has_pointers:
-        return []
-    source = config.source
+    """Rewrite every pointer the block's strings carry to its string's new
+    position, each through its own mapping and from its own offset — a nested
+    source's inner pointers count from their group's base, and the pointers
+    **Attach** put on the strings of a range source are rewritten like a
+    pointer source's own.
+
+    A pointer is written only where it reads back as the string it reaches:
+    the bank is the source's where it has one and the mapping's
+    ``bank_of(target)`` otherwise, and a value that lands somewhere else in
+    that bank — a string packed out of the bank a short pointer reads in —
+    refuses the write rather than leave the pointer pointing at nothing.
+    """
     registry = registry if registry is not None else default_registry()
     mappings: dict[str, Any] = {}
     splices = []
@@ -530,15 +597,18 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
                 )
                 return []
             target = new_start - ref.offset
-            value = mapping.to_value(target, source.bank, ref.address)
+            bank = _pointer_bank(config.source, mapping, target)
+            value = mapping.to_value(target, bank, ref.address)
             short = value & ((1 << (ref.size * 8)) - 1)
             if (
                 short != value
-                and getattr(mapping, "needs_bank", False)
-                and mapping.to_offset(short, source.bank, ref.address) == target
+                and getattr(mapping, "needs_bank", True)
+                and mapping.to_offset(short, bank, ref.address) == target
             ):
                 # A pointer too short for the bank leaves it to the block's:
                 # the address alone still reaches the string from there.
+                # Absent, ``needs_bank`` is read as set, as everywhere else;
+                # the value still has to read back as the string.
                 value = short
             if value < 0 or value >= 1 << (ref.size * 8):
                 result.problems.append(
@@ -547,10 +617,30 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
                     )
                 )
                 continue
+            if mapping.to_offset(value, bank, ref.address) != target:
+                result.problems.append(
+                    Problem(
+                        rec.index,
+                        f"pointer at ${ref.address:X} cannot reach ${target:X} "
+                        f"in bank {bank}",
+                    )
+                )
+                continue
             splices.append(
                 Splice(ref.address, pointer_bytes(value, ref.size, ref.endian))
             )
     return splices
+
+
+def _pointer_bank(source, mapping, target: int) -> int:
+    """The bank a pointer at ``target`` is written in: the source's where it
+    has one — a pointer source names the bank its table is read in — else the
+    bank the mapping puts the target in, and 0 where neither says."""
+    bank: int | None = getattr(source, "bank", None)
+    if bank is not None:
+        return bank
+    bank_of = getattr(mapping, "bank_of", None)
+    return bank_of(target) if bank_of is not None else 0
 
 
 def _crosses_skip(rec: StringRecord, config: BlockConfig) -> bool:

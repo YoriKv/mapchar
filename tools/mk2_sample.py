@@ -32,9 +32,10 @@ What the ROM holds, and where each fact comes from:
 - **PRESS START** is 11 title-font tiles copied by ``$4104``, blinking against
   the 11 blank tiles after it. The title font's letters are ASCII + ``$90``
   and its space is ``01``, read off those two runs.
-- **Not reachable**: the legal screen (``$B3F3``) and the credits (``$D255``)
-  are tilemaps in two of the 29 ``RNC`` method-2 streams, which mapchar has no
-  codec for. No other run of ASCII or tile-coded words is in the ROM.
+- **Not in the sample**: the legal screen (``$B3F3``) and the credits
+  (``$D255``) are tilemaps in two of the 29 ``RNC`` method-2 streams, which
+  mapchar decompresses; no block is built over them. No other run of ASCII or
+  tile-coded words is in the ROM.
 """
 
 from __future__ import annotations

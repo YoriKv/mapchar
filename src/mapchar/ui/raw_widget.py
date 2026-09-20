@@ -369,9 +369,25 @@ class RawWidget(QAbstractScrollArea):
         self.viewport().update()
 
     def set_selection(self, start: int, end: int) -> None:
+        """Select bytes on somebody else's behalf — a search hit, a string the
+        Files panel opened, the Text tab's own selection.
+
+        This is where a Shift+click then reaches from: the anchor moves to the
+        selection's start, and an empty selection leaves none. The widget's own
+        picking and extending do not come through here, so a drag keeps the
+        anchor it started at.
+        """
         self._sel = (start, end) if end > start else None
         self._bits = None
+        self._anchor = self._sel[0] if self._sel is not None else None
+        self._anchor_bits = None
         self.viewport().update()
+
+    def clear_anchor(self) -> None:
+        """Forget where a Shift+click reaches from: the bytes under the anchor
+        are not the ones on screen any more — another entry, other bounds, or
+        another payload in the Decompressed view."""
+        self._anchor = self._anchor_bits = None
 
     def selection(self) -> tuple[int, int] | None:
         return self._sel
@@ -761,19 +777,32 @@ class RawWidget(QAbstractScrollArea):
         their bits in the text column, bytes in the hex column. A point that is
         not in the column the anchor was set in reaches nothing, and the
         selection stays as it was; without an anchor there is nothing to reach
-        from at all.
+        from at all. Neither end reaches past what the view holds.
         """
         if self._anchor is None:
             return
+        first, stop = self._reach()
         if self._anchor_bits is not None:
             if bits is not None:
-                lo = min(self._anchor_bits[0], bits[0])
-                self._select_bits(lo, max(self._anchor_bits[1], bits[1]))
+                lo = max(min(self._anchor_bits[0], bits[0]), first * 8)
+                hi = min(max(self._anchor_bits[1], bits[1]), stop * 8)
+                if hi > lo:
+                    self._select_bits(lo, hi)
             return
         if byte is None:
             return
-        lo, hi = min(self._anchor, byte), max(self._anchor, byte)
-        self._select(lo, hi + 1)
+        lo = max(min(self._anchor, byte), first)
+        hi = min(max(self._anchor, byte), stop - 1)
+        if hi >= lo:
+            self._select(lo, hi + 1)
+
+    def _reach(self) -> tuple[int, int]:
+        """The absolute bytes a selection may cover: the view's bounds, else
+        the whole buffer."""
+        model = self._model
+        if model is None:
+            return (0, 0)
+        return model.bounds or (0, model.total)
 
     def mouseMoveEvent(self, event) -> None:
         if self._anchor is None or not (event.buttons() & Qt.MouseButton.LeftButton):

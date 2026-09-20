@@ -21,6 +21,10 @@
 - The Decompressed View reads its payload as Hex and Text, and Find All lists every structure in the file
 - The Hex view washes the structure on preview
 - The bars keep their place: what does not apply is greyed, and Writing opens from one line
+- View ▸ Decompressed View (Ctrl+Shift+D) opens the view anywhere, and it says why nothing decodes
+- Skip ranges and a record header always write slotted, so Packed no longer lays strings over them
+- A packed write rewrites the pointers attached to a range block, and refuses a pointer that cannot reach its string
+- Hex and Text stay in step past the padding of a shortened length-prefixed string
 
 ## v0.1.3 - 2026-09-18
 

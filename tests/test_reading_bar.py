@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import QPoint
 
-from helpers import pointer_rom
+from helpers import pointer_rom, texts
 from mapchar.core.block import (
     BlockConfig,
     FixedLength,
@@ -18,7 +18,7 @@ from mapchar.core.block import (
     RangeSource,
 )
 from mapchar.project.projectfile import load_project, save_project
-from mapchar.ui.reading_bar import NESTED, RANGE
+from mapchar.ui.reading_bar import END, LIST, NESTED, RANGE
 from mapchar.ui.token_text import POINTER_TOKENS
 from mapchar.ui.widgets import select_data
 from window_helpers import add_block, make_window, open_rom_and_table
@@ -513,6 +513,43 @@ def test_the_writing_section_says_what_a_blank_bound_and_automatic_mean(
     assert bar.bound.placeholderText() == window.address_spelling.format(0x15)
 
 
+def test_packed_is_unavailable_where_skips_or_a_header_force_slotted(window, tmp_path):
+    """A write cannot lay end to end what it has to step around, so Packed is
+    disabled there and says what the block is written as instead of leaving an
+    edit silently slotted."""
+    from mapchar.core.block import WriteMode
+
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    block = add_block(window, entry, "b", RangeSource(0x10, 0x15))
+    bar = window.reading_bar
+    at = bar.write_mode.findData(WriteMode.PACKED)
+    select_data(bar.write_mode, WriteMode.PACKED)
+    assert bar.write_mode.model().item(at).isEnabled()
+    assert bar.writing.currentText().startswith("Packed ·")
+    bar.header.setValue(2)
+    assert not bar.write_mode.model().item(at).isEnabled()
+    assert bar.write_mode.itemText(at) == "Packed (slotted)"
+    assert bar.writing.currentText().startswith("Packed (slotted) ·")
+    # The block keeps the mode it holds, so taking the header away is enough
+    # to write it packed again.
+    assert block.config.write_mode is WriteMode.PACKED
+    assert block.config.effective_write_mode is WriteMode.SLOTTED
+    bar.header.setValue(0)
+    assert bar.write_mode.model().item(at).isEnabled()
+    assert bar.writing.currentText().startswith("Packed ·")
+    # Skip ranges force it just the same.
+    add_block(
+        window,
+        entry,
+        "s",
+        RangeSource(0x10, 0x15),
+        skips=((0x11, 0x12),),
+        write_mode=WriteMode.PACKED,
+    )
+    assert not bar.write_mode.model().item(at).isEnabled()
+    assert bar.writing.currentText().startswith("Packed (slotted) ·")
+
+
 def test_fixed_length_strings_on_a_range_have_a_count_that_sets_stop(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, ROM)
     block = add_block(window, entry, "b", RangeSource(0x10, 0x16))
@@ -526,6 +563,31 @@ def test_fixed_length_strings_on_a_range_have_a_count_that_sets_stop(window, tmp
     assert block.config.source == RangeSource(0x10, 0x19)
     assert block.config.string_type == FixedLength(3)
     assert [s.start for s in block.doc.strings] == [0x10, 0x13, 0x16]
+
+
+def test_the_count_of_fixed_records_steps_over_their_header(window, tmp_path):
+    """A record behind a header is header + length bytes long, so that is what
+    Count counts and what a count typed in sets Stop by. It counts the records
+    the reading extracts, a last one cut short by Stop included."""
+    from mapchar.project.formats.table_native import HEADER
+
+    data = b"\x00\x00AAAA\x00\x01BBBB\x00\x02CCCC\x00\x03DDDD"
+    table = f"{HEADER}\n@table main\n41=A\n42=B\n43=C\n44=D\n/00=[end]\n"
+    entry = open_rom_and_table(window, tmp_path, data, table=table)
+    block = add_block(
+        window, entry, "b", RangeSource(0, 0x18), FixedLength(4), header=2
+    )
+    bar = window.reading_bar
+    assert bar.count.value() == 4
+    assert texts(block.doc.strings) == ["AAAA", "BBBB", "CCCC", "DDDD"]
+    bar.count.setValue(3)
+    assert block.config.source == RangeSource(0, 0x12)
+    assert texts(block.doc.strings) == ["AAAA", "BBBB", "CCCC"]
+    # The header taken away, the same range holds four whole records and a
+    # fourth cut short by Stop.
+    bar.header.setValue(0)
+    assert bar.count.value() == 5
+    assert len(block.doc.strings) == 5
 
 
 NESTED_ROM = bytes.fromhex(
@@ -646,3 +708,31 @@ def test_a_header_is_a_range_block_s_setting(window, tmp_path):
         window, entry, "p", PointerTableSource(0, 2, 2, 2, "little", "linear", 0)
     )
     assert pointers.config.header == 0 and not bar.header.isEnabled()
+
+
+@pytest.mark.parametrize("width", (1920, 2560, 3000))
+def test_the_bar_keeps_its_sections_in_place_at_any_width(window, tmp_path, width):
+    """Nothing moves: at a width where sections share a row as much as at one
+    where they do not, picking another source kind or string type leaves every
+    section where it was and the bar as tall as it was."""
+    from PySide6.QtWidgets import QApplication
+
+    from mapchar.ui.reading_bar import FIXED_LENGTH, LINES, PASCAL, TABLE
+
+    entry = open_rom_and_table(window, tmp_path, ROM)
+    add_block(window, entry, "b", PointerTableSource(0, 4, 2, 2))
+    window.resize(width, 900)
+    window.show()
+    bar = window.reading_bar
+
+    def placed():
+        QApplication.processEvents()
+        return [(bar.sections[t].x(), bar.height()) for t in bar.sections]
+
+    laid_out = placed()
+    for kind in (LIST, NESTED, TABLE):
+        select_data(bar.source_kind, kind)
+        assert placed() == laid_out, kind
+    for string_type in (FIXED_LENGTH, PASCAL, LINES, END):
+        select_data(bar.string_type, string_type)
+        assert placed() == laid_out, string_type

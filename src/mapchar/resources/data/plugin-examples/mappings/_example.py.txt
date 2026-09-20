@@ -28,6 +28,13 @@ class TableBanked:
     sizes = (2, 3)
     needs_bank = True
 
+    # Optional, and worth having: which bank reaches an offset — the bank table
+    # read the other way round. Find Pointers asks it for each string's own
+    # bank, and without it has only the bank the block is read in to go on.
+    def bank_of(self, offset: int) -> int:
+        chunk = offset // BANK_SIZE
+        return BANK_ORDER.index(chunk) if chunk in BANK_ORDER else 0
+
     def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
         address = value & 0xFFFF
         if value > 0xFFFF:  # a 3-byte pointer carries its own bank

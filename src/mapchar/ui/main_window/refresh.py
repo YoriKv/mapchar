@@ -103,7 +103,10 @@ class RefreshMixin:
         else:
             self.reading_bar.show_bound_default(
                 block_bound(
-                    replace(configured.config, bound=None), doc.strings, doc.data
+                    replace(configured.config, bound=None),
+                    doc.strings,
+                    doc.data,
+                    tables,
                 )
                 if configured is not None
                 else None

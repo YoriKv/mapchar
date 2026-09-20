@@ -178,6 +178,9 @@ class NavigationMixin:
         if bounds == self._bounds and inside:
             return
         self._bounds = bounds
+        # A Shift+click reaches inside what is on screen, and these are other
+        # bytes than the anchor was set in.
+        self.raw.clear_anchor()
         self._sync_view_mode()
         if inside:
             self._refresh_view(moved=True)
@@ -289,20 +292,36 @@ class NavigationMixin:
         self._go_to(offset)
 
     def _select_bytes(self, offset: int, length: int) -> None:
+        """Select ``length`` bytes at ``offset``, and show them.
+
+        The selection is set before the view moves, so the refresh the move
+        ends in already reads the decompression preview from where the
+        selection now is; a view that was there already refreshes it here
+        instead. Either way one preview decode, which is the expensive part of
+        a jump.
+        """
         if self._doc is None:
             return
-        self._go_to(offset)
+        was = self._offset
         self.raw.set_selection(offset, offset + length)
-        self._on_selection(offset, offset + length)
+        self._on_selection(offset, offset + length, previewing=False)
+        self._go_to(offset)
+        if self._offset == was and self._doc is not None:
+            self._refresh_decompress_preview(self._doc, self._table_set())
 
-    def _on_selection(self, start: int, end: int, from_text: bool = False) -> None:
+    def _on_selection(
+        self, start: int, end: int, from_text: bool = False, *, previewing: bool = True
+    ) -> None:
+        # A selection is the closest thing the byte views have to a cursor, and
+        # the decompression preview reads from where it starts
+        # (:mod:`mapchar.ui.main_window.compression`) — only from there, so a
+        # drag that grows the selection away from its anchor decodes nothing
+        # again. ``previewing`` is off for a caller that refreshes anyway.
+        was = self._preview_offset()
         self._selection = (start, end) if end > start else None
         self._update_nav_status()
         self._sync_hex_panel()
-        # A selection is the closest thing the byte views have to a cursor, and
-        # the decompression preview reads from where it starts
-        # (:mod:`mapchar.ui.main_window.compression`).
-        if self._doc is not None:
+        if previewing and self._doc is not None and self._preview_offset() != was:
             self._refresh_decompress_preview(self._doc, self._table_set())
         # Not back into the text view it came from: rewriting its cursor mid-drag
         # moves the drag's anchor, so a selection dragged upward never grows.

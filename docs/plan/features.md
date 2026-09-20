@@ -494,9 +494,16 @@ The exploration surface, the equivalent of celPix's tile canvas.
 - **In step** — the view reads from wherever it starts, and cuts its strings
   in step with the ones the block reads: a fixed length runs from the source's
   start, so a view that starts part-way through a string shows the rest of that
-  one and whole ones after it, whichever byte it was moved to. Only a range of
-  fixed strings has such a grid: a Pascal count is read from the data, and a
-  pointer source's strings are each at their own target.
+  one and whole ones after it, whichever byte it was moved to. A record header
+  is stepped over in front of every string, as the block steps over it, and its
+  bytes show as the bytes they are — strings that end at an end token are cut
+  that way only to step over one; the grid is then the header and the length
+  together. Only a range of fixed strings has such a grid: a Pascal count is
+  read from the data, and a pointer source's strings are each at their own
+  target. The padding a string written shorter than its slot left behind it is
+  passed over as the block passes over it, and shows as its bytes too; a window
+  that begins on a run of it passes that one as well, which the block, having
+  nothing in front of its first string, never does.
 - **Bounds** — the view can be confined to a stretch of the file: a block
   opens on its source, and a string's row in the Files panel confines it to
   that string. Inside them the tabs show those bytes and no more, the
@@ -526,14 +533,15 @@ The exploration surface, the equivalent of celPix's tile canvas.
   which spend the arrows themselves. The Text tab's box is not one: read-only,
   it has no cursor for them to move.
 - **Selection** — drag over hex or text, or Shift+click to take the selection
-  out to there from where the last click set it, in the same units the drag
-  works in; both columns follow, and a click in
+  out to there from where it was last set — by a click, or by a search hit or a
+  string opened — in the same units the drag works in, and never past what the
+  view holds; both columns follow, and a click in
   the text that selects nothing clears the selection in both. The hex selects
   whole bytes. The text selects characters by their **bits**, so a 6-bit code
   over two bytes is tinted as it straddles them — in the text, and in the hex
   down to the digit and bit, each digit being a nibble; the rest of the window
   gets the bytes it touches. The status bar shows offset, length and the
-  selected bytes' decode.
+  selected bytes' decode. Another entry opens with nothing selected.
 - **Context menu** — New Block from Selection, New Bookmark, Jump to Pointer
   Target (on a pointer of the current block) and Jump to Pointer (on a string
   one of its pointers reaches), Add to Table… (opens the Table Editor with
@@ -579,7 +587,12 @@ compression, and report offsets in the file's coordinates.
     grows with the share of unmatched data;
   - a region is cut to what it holds, not to the window grid: a chain of
     length-prefixed records over its own first and last record, terminated
-    text over whole strings;
+    text over whole strings — every run of them, one long string included, and
+    a table with no end token cuts its strings on the byte the scan guesses
+    instead;
+  - a chain scores on its characters less what its headers waste and has to
+    reach the threshold like anything else, so a length byte in front of a
+    single character is no string table;
   - results are ranked regions with their score, how each cuts its strings —
     **End token** and the most common terminator byte, or **Length prefix**
     and the bytes of header in front of it — and the byte the region most
@@ -588,7 +601,9 @@ compression, and report offsets in the file's coordinates.
     creates a block over it, read the way the region was found: records behind
     their length prefix and header, else terminated text with the guessed end
     token;
-  - the scan runs with a Stop button and a percentage readout.
+  - the scan runs with a Stop button and a percentage readout: the first half
+    scores the windows, the second cuts the regions, and Stop at either point
+    hands back what was cut.
 - **Pointer discovery** — see [Pointers](#pointers).
 
 ## Blocks
@@ -690,12 +705,16 @@ of end-token strings.
   that splits each string into lines marked with a `[line]` code.
 - **Bound** — the exclusive end address strings may not cross on write;
   defaults to `stop`, or for pointer sources to the end of the text the
-  pointers reach and the run of whole fill patterns after it — so the room a
-  shorter string gave up is still the block's — and the field's placeholder
-  shows which. A nested source's groups each have
+  pointers reach and the run of fill after it that the block reads as padding
+  — so the room a shorter string gave up is still the block's, while fill the
+  table maps is text and belongs to whatever block reads it — and the field's
+  placeholder shows which. A nested source's groups each have
   their own ([Writing](#writing-back-to-disk)), which the bound caps.
 - **Write mode** — **Packed**, **Slotted**, or **Automatic**, which says
-  which of the two it picks; see [Writing](#writing-back-to-disk).
+  which of the two it picks; see [Writing](#writing-back-to-disk). Skip ranges
+  or a record header leave nothing to pack into: Packed is greyed there and
+  reads *Packed (slotted)*, so a block that holds it says what it is written
+  as, and takes it up again once they are gone.
 - **Fill** — what pads unused space on write: a byte, or a pattern of
   several (`FFFF` is a word), repeated from the start of the space it fills —
   a slot's tail, a packed block's tail, a fixed string's padding. A run of
@@ -734,23 +753,30 @@ of end-token strings.
     each of 16/24/32 bits, both endiannesses and each offset in the range —
     a mapping that needs a bank taking each string's own from where the string
     sits, so a banked table is found without being told the bank and strings
-    of one block may sit in different banks;
+    of one block may sit in different banks, and one that cannot say which
+    bank an offset sits in falling back to the block's own;
   - search the file for those byte patterns;
   - results are grouped by the (mapping, size, endian, offset) combination,
     ranked by the strings the table they make explains, then by how many they
     explain at all and how regular their addresses are, and shown with the
-    stride between those addresses and the range of the table: the longest run
-    of them a whole number of strides apart, which leaves out a pointer value
-    that turns up elsewhere in the file by chance;
+    stride between those addresses and the range of the table: the run of them
+    a whole number of strides apart that reaches the most strings, which leaves
+    out a pointer value that turns up elsewhere in the file by chance and a
+    string whose value is a common byte pair found all through a stretch of
+    fill;
+  - the bank the table is read in is the one its pointers that need a bank are
+    read in, a pointer into a bank that is always mapped saying nothing about
+    it;
   - the search runs with a Stop button and a progress bar, and a stopped
     search still offers what it had ranked;
   - **Use as Pointer Table** converts the block's source to a pointer table
     from the chosen result, as one undo step; **Attach** adds the found
     addresses to the strings without changing the source — a string the table
-    run reaches taking only its addresses inside the run, since the rest are
-    coincidences a packed write would rewrite, and a string the run does not
-    reach taking all of them, which is what a block of scattered pointers
-    needs.
+    run reaches taking its addresses in every run that reads as a table, so a
+    file that holds the same table twice keeps both in step, and dropping the
+    strays between them, since a packed write would rewrite a coincidence; a
+    string the run does not reach takes all of its addresses, which is what a
+    block of scattered pointers needs.
 - **Overlays** — the raw view marks bytes that are pointers of the current
   block — a nested source's outer pointers as well as its inner ones — and
   jumping from a pointer to its target and back is a click: **Jump to Pointer
@@ -772,10 +798,12 @@ The editing surface, opened on a block.
   the fill after them, or a packed string's own bytes plus the block's spare
   — the bytes its group has left over, which every string of the group shares
   and no two of them may take.
-- **Status**, per string: **untouched** (the bytes are still the original's),
-  **edited** (they are not) — told by the bytes, through a checksum of them
-  the project keeps beside each original, so a block switched to the table
-  its translation is written in reads as other text and as untouched — **review** and **done** (set by hand
+- **Status**, per string: **untouched** (the bytes are still the original's,
+  or say its text again), **edited** (neither) — told by the bytes, through a
+  checksum of them the project keeps beside each original, so a block switched
+  to the table its translation is written in reads as other text and as
+  untouched, while text typed back as it was is untouched however the encoder
+  spells it — **review** and **done** (set by hand
   — **Edit ▸ Toggle Review / Toggle Done on Selected**, Ctrl+Alt+D for done —
   or by import, and kept whatever the text does), and **overflows box** when
   the block has a text box (see [preview.md](preview.md#text-boxes)). Nothing is ever *too long* or
@@ -871,23 +899,28 @@ The editing surface, opened on a block.
   back. The buffer is written whole, edits from every surface in it.
 - **Write mode**, per block, governs how an edit lays the block out:
   - **Packed** (default with pointers) — strings are laid end to end from the
-    block's first string address, each pointer is rewritten to its string's
-    new position, and leftover space up to the bound gets the fill. A string
-    that starts inside the string before it and ends with it — the last page
-    of a message, with pointers of its own — is written once while its bytes
-    still end that string's, its pointers reaching into it; edited apart, each
-    has bytes of its own from then on. A nested source packs each group apart,
-    from its first string to its own bound: the end of its last string and
-    the run of whole fill patterns after it, never as far as the next inner
-    table or text the outer table points at, nor past the block's bound. Only
-    the groups an edit touches are laid out and read again, and only their
-    inner pointers are rewritten;
+    block's first string address, every pointer a string carries — the
+    source's own, and the ones **Attach** put on a range block's strings — is
+    rewritten to its string's new position, and leftover space up to the
+    bound gets the fill. A pointer that cannot reach where its string landed,
+    a short one whose string was packed out of the bank it reads in, refuses
+    the write. A string that starts inside the string before it and ends with
+    it — the last page of a message, with pointers of its own — is written
+    once while its bytes still end that string's, its pointers reaching into
+    it; edited apart, each has bytes of its own from then on. A nested source
+    packs each group apart, from its first string to its own bound: the end of
+    its last string and the run of fill after it — which is the group's
+    whatever the table makes of the fill, the outer table having said so —
+    never as far as the next inner table or text that table points at, nor
+    past the block's bound.
+    Only the groups an edit touches are laid out and read again, and only
+    their inner pointers are rewritten;
   - **Slotted** (default without pointers, and always with skip ranges or a
     record header) —
     every string stays at its address and may use up to its slot, padded with
-    the fill. A slot is the bytes the string holds itself and the run of whole
-    fill patterns after them — the padding a shorter string left, which the
-    next edit takes back — stopping at the next string, at the bound (a
+    the fill. A slot is the bytes the string holds itself and the run of fill
+    after them — the padding a shorter string left, which the next edit takes
+    back — stopping at the next string, at the bound (a
     nested source's group bound), or at the end of the bytes, whichever comes
     first, and a fixed length caps it. Bytes between two strings that are not
     that padding belong to no slot and are left standing. A run of the fill
@@ -967,7 +1000,13 @@ The editing surface, opened on a block.
   the view's own — goes into the floating **Decompressed View**. Two of its
   tabs read that payload, from one decode: a **Hex** dump, and the **Text** the
   reading's table decodes it to. Which tab is in front is remembered like the
-  window's placement. It hides when nothing decodes. The main Hex view washes
+  window's placement. **View ▸ Decompressed View…** (Ctrl+Shift+D) opens it
+  wherever the view is, which is how Scan and Find All are reached from a file
+  that is not already sitting on a structure; a window opened that way stays
+  open, its Hex and Text tabs saying that nothing decodes here and, where the
+  scheme gives one, why. A window that opened *itself* — because a scheme armed
+  where the view landed — hides itself again when nothing decodes, unless a walk
+  is running in it or it holds a structure list. The main Hex view washes
   the compressed bytes of a complete structure on preview, so where it sits in
   the file and how far it runs shows in the file itself.
 - **The picker** lists **automatic**, **none** and every registered scheme, and
@@ -977,16 +1016,28 @@ The editing surface, opened on a block.
   then has to read a complete structure there, and the view names the scheme
   that answered, since the picker only says it was left to the bytes. Moving off
   the structure disarms it. A scheme picked by name is an instruction and holds
-  wherever the view goes, whatever the bytes at it announce; **Jump to Source**
-  from a compressed block, and a bookmark made under one, pick that block's
-  scheme.
+  wherever the view goes, whatever the bytes at it announce; only a *picked*
+  scheme is ever recorded or armed elsewhere — **Jump to Source** from a
+  compressed block, and a bookmark made under a picked scheme, pick that
+  scheme, while a bookmark made where the bytes armed themselves records none
+  and leaves the file's pick as it is. A scheme the project names but no plugin
+  provides is shown as `id (missing)` and arms nothing, and picking another
+  works as ever.
 - **Jump to Next** skips past a complete structure; **Scan** searches forward
-  for the next complete structure with a Stop button; **To Block** creates a
+  for the next complete structure with a Stop button, over the picked scheme or,
+  on automatic, every scheme that announces itself — so it works where nothing
+  is armed yet, which is where a search for the first structure starts, and says
+  so in the window's status line when there is no scheme to walk for at all;
+  **To Block** creates a
   decompressed block over one, recording the scheme that actually decoded it.
   All three want a *complete* structure: the preview
   will show the prefix of a stream that runs out mid-way, but a
   prefix's length is the window's rather than the structure's, so nothing steps
-  by it or records it as a block's slot.
+  by it or records it as a block's slot. Each jump this view makes — Jump to
+  Next, a Scan hit, a Structures row, Jump to Source, a bookmark — selects the
+  byte it lands on, as a click would, so what is previewed, stepped past and
+  scanned from is where the view now is. While either walk runs, the other's
+  button and everything that reads the position are switched off.
 - **Find All**, in its third tab, **Structures**, walks the whole file once for
   the armed scheme — for every scheme with a signature, on automatic — and lists
   each structure's offset, packed and unpacked size and how text-like its
@@ -994,8 +1045,10 @@ The editing surface, opened on a block.
   progress line as Scan. A
   signature makes that cheap: the search is a byte scan and the scheme throws
   out stray magic before unpacking anything, where a scheme without one is
-  walked a byte at a time. Selecting a row shows the file there, which is what
-  arms the preview on it. The list is one file's and goes when another opens.
+  walked a byte at a time; the progress line runs from 0 to 100% once, however
+  many schemes that takes. Selecting a row selects the structure's first byte
+  in the file, which is what arms the preview on it. The list is one file's and
+  goes when another opens.
 - **Editing** decompressed text goes through such a block; writing
   re-compresses into the slot, and **spare room** decides what becomes of the
   room a shorter result leaves — *fill* writes the block's fill byte over it,
@@ -1147,7 +1200,7 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 |---|---|
 | File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Shift+F5 Refresh Tables · F5 Refresh Plugins · Ctrl+Q Quit |
 | Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Shift+L Glossary · Ctrl+Alt+D toggle done · F4 / Shift+F4 next / previous untranslated · F6 / Shift+F6 next / previous flagged |
-| View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
+| View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview · Ctrl+Shift+D Decompressed View |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
 | Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers · Ctrl+Shift+G Project Strings |
 | Find bar | Enter next · Shift+Enter previous · Esc closes Find and Replace |

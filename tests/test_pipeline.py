@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
+from helpers import ABC_TABLE, pointer_rom, relayout, table_set, texts
+from mapchar.core.block import (
+    BlockConfig,
+    EndToken,
+    PointerRef,
+    PointerTableSource,
+    RangeSource,
+    WriteMode,
+    block_bound,
+    fill_run,
+)
 from mapchar.core.context import KEY_HEADER_SIZE, KEY_SOURCE_FILES, PipelineContext
 from mapchar.core.errors import PipelineError
+from mapchar.pipeline.extract import extract
 from mapchar.pipeline.filechange import FileChange
+from mapchar.pipeline.insert import apply_splices, layout_block, string_ends
 from mapchar.pipeline.inspection import inspect_container
 from mapchar.pipeline.pipeline import (
     FileRef,
@@ -210,7 +225,7 @@ def test_find_next_structure_can_be_stopped(slotted):
         return True
 
     result = find_next_structure(
-        b"\x00" * 512, plugin, 0, progress_every=8, on_tick=tick
+        b"\x00" * 512, [plugin], 0, progress_every=8, on_tick=tick
     )
     assert result.stopped and result.found is None and result.end == 8
     assert seen == [8]
@@ -358,3 +373,231 @@ def test_a_file_change_moves_a_file_between_its_sides_and_no_further(tmp_path):
     dest.write_bytes(b"\x00" * 8 + b"QQ" + b"\xff" * 8)
     assert not change.apply()
     assert dest.read_bytes() == b"\x00" * 8 + b"QQ" + b"\xff" * 8
+
+
+# --- The write path: a block's bound, and the pointers a packed write moves --
+
+TS = table_set(ABC_TABLE, "main")
+
+END_FF_TABLE = "@table main\n41=A\n42=B\n43=C\n/FF=[end]\n"
+"""A table whose end token is the usual fill byte: ``FF`` is text here."""
+
+TS_FF = table_set(END_FF_TABLE, "main")
+
+
+def _pointer_block(start: int, stop: int, **kw) -> BlockConfig:
+    source = PointerTableSource(start, stop, 2, 2, "little", "linear", 0)
+    return BlockConfig(source, EndToken(), "main", **kw)
+
+
+def test_a_default_bound_stops_where_the_fill_reads_as_text(registry):
+    """The run after a pointer block's text is its own only where the block
+    reads it as padding: a table that maps the fill byte reads it as text, and
+    what follows is the next block's strings rather than room to take back.
+    """
+    data = bytearray(b"\x00" * 0x20)
+    data[0:4] = bytes.fromhex("10 00 13 00")  # this block's strings
+    data[4:10] = bytes.fromhex("16 00 17 00 18 00")  # the next block's
+    data[0x10:0x1B] = bytes.fromhex("41 42 FF 42 41 FF FF FF 43 43 FF")
+    rom = bytes(data)
+    cfg, nxt = _pointer_block(0, 4), _pointer_block(4, 10)
+    ex = extract(rom, cfg, TS_FF, registry)
+    assert texts(ex) == ["AB[end]", "BA[end]"]
+    assert texts(extract(rom, nxt, TS_FF, registry)) == ["[end]", "[end]", "CC[end]"]
+    assert block_bound(cfg, ex.strings, rom, TS_FF) == 0x16
+    # Two bytes longer, and it would land on the next block's first strings.
+    res, _ = relayout(rom, cfg, TS_FF, {1: "BACA[end]"}, registry)
+    assert not res.ok
+    # A fill byte the table maps nothing with is padding, as it always was.
+    plain = pointer_rom((0x10, 0x13), "41 42 00 42 41 00", tail=2)
+    ex = extract(plain, cfg, TS, registry)
+    assert block_bound(cfg, ex.strings, plain, TS) == len(plain)
+
+
+def test_a_default_bound_counts_a_fill_repeat_cut_short(registry):
+    """A fill pattern is laid from the start of the room it fills, so its last
+    repeat may be cut short: an odd byte of it is padding too, and the room a
+    shortening gave up is all there for the next edit."""
+    rom = pointer_rom((0x10, 0x14), "41 42 43 00 42 41 43 00", tail=0) + b"\x77"
+    cfg = _pointer_block(0, 4, fill=bytes.fromhex("FFFE"))
+    res, out = relayout(rom, cfg, TS, {1: "BA[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0x14:0x19] == bytes.fromhex("42 41 00 FF 77")
+    assert block_bound(cfg, extract(out, cfg, TS, registry).strings, out, TS) == 0x18
+    res, back = relayout(out, cfg, TS, {1: "BAC[end]"}, registry)
+    assert res.ok, res.problems
+    assert back == rom
+
+
+def test_a_default_bound_stops_at_the_end_of_the_bytes(registry):
+    """Text that runs to the end of the file has the fill after it and no
+    more: the bound never reaches past the bytes there are."""
+    rom = pointer_rom((0x10,), "41 42 00", tail=3)
+    cfg = _pointer_block(0, 2)
+    ex = extract(rom, cfg, TS, registry)
+    assert block_bound(cfg, ex.strings, rom, TS) == len(rom) == 0x16
+    res, out = relayout(rom, cfg, TS, {0: "ABABA[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0x10:] == bytes.fromhex("41 42 41 42 41 00")
+    assert len(out) == len(rom)
+    # One byte more is one byte past the file.
+    assert not relayout(rom, cfg, TS, {0: "ABABAB[end]"}, registry)[0].ok
+
+
+def test_a_default_bound_over_a_long_fill_run_is_measured_not_walked(registry):
+    """An expanded ROM's free space is where a relocated script lives, and the
+    bound is asked for on every keystroke: the run is measured at once, not a
+    pattern at a time."""
+    rom = pointer_rom((0x10,), "41 42 00", tail=0) + b"\xff" * (1 << 20)
+    cfg = _pointer_block(0, 2)
+    ex = extract(rom, cfg, TS, registry)
+    started = time.perf_counter()
+    bounds = [block_bound(cfg, ex.strings, rom, TS) for _ in range(20)]
+    assert bounds == [len(rom)] * 20
+    assert time.perf_counter() - started < 1.0
+    # Nor is the spare laid down again: the fill is already there, so the
+    # splice stops where the block's text does.
+    res, out = relayout(rom, cfg, TS, {0: "A[end]"}, registry)
+    assert res.ok, res.problems
+    # The new text, and the byte of the old it no longer covers.
+    assert [(s.offset, len(s.data)) for s in res.splices] == [(0x10, 3), (0, 2)]
+    assert out == rom[:0x10] + bytes.fromhex("41 00 FF") + rom[0x13:]
+
+
+def test_a_packed_write_rewrites_the_pointers_attached_to_a_range_block(registry):
+    """**Find Pointers ▸ Attach** puts the pointers it found on the strings of
+    a range block without touching its source: a packed write moves the
+    strings, so it rewrites those pointers like any others."""
+    rom = pointer_rom((0x10, 0x14), "41 42 43 00 43 00", tail=0)
+    cfg = BlockConfig(
+        RangeSource(0x10, 0x16), EndToken(), "main", write_mode=WriteMode.PACKED
+    )
+    ex = extract(rom, cfg, TS, registry)
+    assert texts(ex) == ["ABC[end]", "C[end]"]
+    ex.strings[0].pointers = (PointerRef(0, 2, "little", "linear", 0, 0x10),)
+    ex.strings[1].pointers = (PointerRef(2, 2, "little", "linear", 0, 0x14),)
+    ex.strings[0].replacement = "A[end]"
+    res = layout_block(rom, cfg, TS, ex.strings, registry)
+    assert res.ok, res.problems
+    out = apply_splices(rom, res.splices)
+    assert out[0:4] == bytes.fromhex("10 00 12 00")
+    assert out[0x10:0x16] == bytes.fromhex("41 00 43 00 FF FF")
+
+
+def _banked_rom() -> bytes:
+    """``A[end] B[end]`` at the very end of bank 1 of a ``banked`` ROM, with
+    the two pointers that reach them at 0."""
+    rom = bytearray(b"\xff" * 0x8010)
+    rom[0:4] = bytes.fromhex("FC BF FE BF")
+    rom[0x7FFC:0x8000] = bytes.fromhex("41 00 42 00")
+    return bytes(rom)
+
+
+def _banked_block() -> BlockConfig:
+    source = PointerTableSource(0, 4, 2, 2, "little", "banked", 0, 1)
+    return BlockConfig(source, EndToken(), "main")
+
+
+def test_a_packed_write_refuses_a_pointer_that_cannot_reach_its_string(registry):
+    """A short pointer reads in its block's bank, so a string pushed out of
+    that bank cannot be pointed at: the write says so rather than leave a
+    value that reads somewhere else entirely."""
+    rom, cfg = _banked_rom(), _banked_block()
+    assert texts(extract(rom, cfg, TS, registry)) == ["A[end]", "B[end]"]
+    res, _ = relayout(rom, cfg, TS, {0: "AAA[end]"}, registry)
+    assert not res.ok
+    assert any("$2" in p.message for p in res.problems), res.problems
+    # One byte less, and the string it moves is still in the bank.
+    res, out = relayout(rom, cfg, TS, {0: "AA[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0:4] == bytes.fromhex("FC BF FF BF")
+    assert texts(extract(out, cfg, TS, registry)) == ["AA[end]", "B[end]"]
+
+
+class _ToyBanked:
+    """A banked mapping that declares no ``needs_bank`` — absent is read as
+    set — and no ``bank_of``: banks of $20 bytes mapped at $8000, the bank
+    written above bit 16 where the pointer is wide enough to hold it."""
+
+    info = PluginInfo("toy_banked", "Toy banked", Stage.MAPPING, "Test")
+    sizes = (2, 3)
+
+    def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
+        addr = value & 0xFFFF
+        if value > 0xFFFF:
+            bank = value >> 16
+        return bank * 0x20 + (addr - 0x8000) if addr >= 0x8000 else None
+
+    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
+        return ((offset // 0x20) << 16) | (0x8000 + offset % 0x20)
+
+
+def test_a_packed_write_shortens_a_pointer_of_a_mapping_that_says_no_bank(registry):
+    """A mapping that never says whether it needs a bank is taken to need one,
+    as every other surface takes it: its pointers keep the bank the block is
+    read in, and what makes that safe is that the value still reads back as
+    the string it reaches."""
+    registry.register(_ToyBanked())
+    rom = bytearray(b"\xff" * 0x40)
+    rom[0:4] = bytes.fromhex("00 80 03 80")
+    rom[0x20:0x25] = bytes.fromhex("41 42 00 43 00")
+    source = PointerTableSource(0, 4, 2, 2, "little", "toy_banked", 0, 1)
+    cfg = BlockConfig(source, EndToken(), "main")
+    assert texts(extract(bytes(rom), cfg, TS, registry)) == ["AB[end]", "C[end]"]
+    res, out = relayout(bytes(rom), cfg, TS, {0: "A[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0:4] == bytes.fromhex("00 80 02 80")
+    assert texts(extract(out, cfg, TS, registry)) == ["A[end]", "C[end]"]
+
+
+@pytest.mark.parametrize("fill", [b"\xff\xfe", b"\xff\xfe\x7d"])
+@pytest.mark.parametrize(
+    "text, encoded", [("BA[end]", "42 41 00"), ("B[end]", "42 00"), ("[end]", "00")]
+)
+def test_a_packed_write_leaves_the_spare_as_one_run_of_the_fill(
+    registry, fill, text, encoded
+):
+    """What the splice leaves standing has to be the fill the write would have
+    laid there, phase and all: a multi-byte pattern carries on from where the
+    text now ends, and a run that starts over out of step is not padding any
+    more — the room would read as gone at the next edit."""
+    rom = (
+        pointer_rom((0x10, 0x14), "41 42 43 00 42 41 43 00", tail=0)
+        + fill_run(fill, 8)
+        + b"\x77"
+    )
+    cfg = _pointer_block(0, 4, fill=fill)
+    ex = extract(rom, cfg, TS, registry)
+    assert block_bound(cfg, ex.strings, rom, TS) == 0x20
+    res, out = relayout(rom, cfg, TS, {1: text}, registry)
+    assert res.ok, res.problems
+    new = bytes.fromhex(encoded)
+    assert out == rom[:0x14] + new + fill_run(fill, 0x20 - 0x14 - len(new)) + b"\x77"
+    again = extract(out, cfg, TS, registry)
+    assert block_bound(cfg, again.strings, out, TS) == 0x20
+    # And the room is there to take back, to the byte.
+    res, back = relayout(out, cfg, TS, {1: "BAC[end]"}, registry)
+    assert res.ok, res.problems
+    assert back == rom
+
+
+def test_a_slot_stops_before_a_record_header_read_across_a_skip(registry):
+    """A record header is stepped over the way the reading steps over it: with
+    a skip range between one record and the next, the bytes the header takes
+    are on both sides of the skip, and no slot may reach into them."""
+    data = bytes.fromhex("05 CB 41 00 06 EE EE CB 42 00")
+    cfg = BlockConfig(
+        RangeSource(0, len(data)), EndToken(), "main", skips=((5, 7),), header=2
+    )
+    ex = extract(data, cfg, TS, registry)
+    assert [(s.start, s.current_text()) for s in ex.strings] == [
+        (2, "A[end]"),
+        (8, "B[end]"),
+    ]
+    assert string_ends(data, cfg, ex.strings, registry, TS) == {0: 4, 1: 10}
+    res, out = relayout(data, cfg, TS, {0: "B[end]"}, registry)
+    assert res.ok, res.problems
+    assert out == bytes.fromhex("05 CB 42 00 06 EE EE CB 42 00")
+    # One byte longer would land on the next record's header.
+    res, _ = relayout(data, cfg, TS, {0: "AB[end]"}, registry)
+    assert not res.ok

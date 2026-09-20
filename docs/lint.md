@@ -49,7 +49,7 @@ something at or above `--fail-on` (default `error`) is found, **0** otherwise,
 | `E3xx` `W3xx` | the disk: missing, empty or folder paths, one file opened twice, a block's addresses, a bookmark or a slot past the end of its file (measured over `path` and `extra_paths` joined) |
 | `E4xx` `W4xx` `I4xx` | plugin ids — container, compression, mapping — and table dialects, renamed ids, a pointer size the mapping does not offer |
 | `E5xx` `W5xx` | references between entries: parents, folders, names two blocks share, the table a block, a session or an include names, table ids two tables share |
-| `E60x`–`W625` | the block's configuration line, read as `parse_config` reads it: what raises (the block is dropped) and what it passes over (`tabel=main`, `stride` on a list source) or misreads (`endian=Big` reads as little) |
+| `E60x`–`W627` | the block's configuration line, read as `parse_config` reads it: what raises (the block is dropped) and what it passes over (`tabel=main`, `stride` on a list source) or misreads (`endian=Big` reads as little) |
 | `E64x` `W65x` | a block's saved strings, text box and compression slot |
 | `E7xx` `W7xx` | a table entry's overlay and includes |
 

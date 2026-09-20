@@ -25,13 +25,15 @@ freeze in
 deliberately absent, and the freeze reaches them anyway by disabling the menu
 bar and the central widget above them.
 
-:data:`_GATES` covers the *window's* controls. Three capabilities name surfaces
-that are not among them — the Preview window's Wrap button
-(:class:`~mapchar.core.capabilities.Capability.WRAP`), the Decompressed view's
-structure scan (``COMPRESSION_SCAN``) and the Table Editor (``TABLE_EDIT``) —
-each a tool window that decides its own enablement from its own state, so a
-both-directions gate here would fight it. Those three are
-asked instead by the mixin that drives the surface, through :meth:`_can` or
+:data:`_GATES` covers the *window's* controls, and ``COMPRESSION_SCAN`` gates
+the menu row that opens the Decompressed view rather than anything inside it:
+the view's own buttons follow what the current position justifies, which only
+the mixin driving it knows. Two capabilities name surfaces that are not here at
+all — the Preview window's Wrap button
+(:class:`~mapchar.core.capabilities.Capability.WRAP`) and the Table Editor
+(``TABLE_EDIT``) — each a tool window that decides its own enablement from its
+own state, so a both-directions gate here would fight it. Both are asked
+instead by the mixin that drives the surface, through :meth:`_can` or
 :func:`~mapchar.core.capabilities.supports`, so every declared capability is
 enforced somewhere.
 """
@@ -60,6 +62,7 @@ _GATES: dict[Capability, tuple[str, ...]] = {
     Capability.BLOCK_CONFIG: ("block_bar",),
     Capability.FIND_REPLACE: ("find_replace_action",),
     Capability.PREVIEW: ("preview_action",),
+    Capability.COMPRESSION_SCAN: ("decompress_action",),
     Capability.IMPORT_EXPORT: ("import_action", "export_action", "block_export"),
     Capability.WRITE: ("write_action",),
 }

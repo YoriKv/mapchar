@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from mapchar.core.block import with_region
 from mapchar.core.capabilities import Capability
+from mapchar.core.context import KEY_DECOMPRESS_PARTIAL, PipelineContext
 from mapchar.core.document import Document
 from mapchar.engines.scan import score_window
 from mapchar.pipeline.scan import (
@@ -28,6 +29,18 @@ picked anything is on."""
 
 NO_SCHEME = ""
 """Its second: preview nothing, whatever the bytes look like."""
+
+MISSING = " (missing)"
+"""What a scheme no plugin provides is marked with, wherever it is shown."""
+
+NOTHING_ARMED = (
+    "No scheme is armed here. Pick one on the Format bar, or go to a structure "
+    "that announces itself."
+)
+"""What the Decompressed View says with nothing to read the bytes through."""
+
+NOTHING_TO_WALK = "Pick a scheme, or one that announces itself."
+"""What Scan and Find All say with no scheme to walk the file for at all."""
 
 
 class CompressionMixin:
@@ -67,18 +80,33 @@ class CompressionMixin:
         entry, pick = self._entry, self.compression_pick
         block = self._current_block()
         with self._bars_quiet():
+            # A missing scheme is one entry's own, so the row the last one
+            # needed goes before this one is shown: it is not on offer.
+            for index in range(pick.count() - 1, -1, -1):
+                if pick.itemText(index).endswith(MISSING):
+                    pick.removeItem(index)
             if block is not None:
-                scheme = block.compression_id or NO_SCHEME
-                if not select_data(pick, scheme):
-                    # A scheme no plugin provides is still what the block reads
-                    # through: said so, rather than shown as some other scheme.
-                    pick.addItem(f"{scheme} (missing)", scheme)
-                    pick.setCurrentIndex(pick.count() - 1)
+                self._show_scheme(block.compression_id or NO_SCHEME)
                 pick.setEnabled(False)
                 return
             on_file = entry is not None and entry.kind is EntryKind.FILE
             pick.setEnabled(on_file)
-            select_data(pick, entry.session.preview_scheme if on_file else AUTOMATIC)
+            self._show_scheme(entry.session.preview_scheme if on_file else AUTOMATIC)
+
+    def _show_scheme(self, scheme: str | None) -> None:
+        """Show ``scheme`` on the picker, adding a row for one no plugin
+        provides.
+
+        A scheme nothing can read is still what the entry is set to — the
+        project keeps it, so a plugin that comes back arms it again — and shown
+        as automatic it would claim the bytes decide while nothing decodes at
+        all, with no change to make to get out of it.
+        """
+        pick = self.compression_pick
+        if select_data(pick, scheme):
+            return
+        pick.addItem(f"{scheme}{MISSING}", scheme)
+        pick.setCurrentIndex(pick.count() - 1)
 
     def _on_compression_pick(self) -> None:
         """A scheme picked on a file: arm the preview through it from here on.
@@ -91,6 +119,8 @@ class CompressionMixin:
         if entry is None or entry.kind is not EntryKind.FILE:
             return
         entry.session.preview_scheme = self.compression_pick.currentData()
+        # The row a scheme no plugin provides needed is not on offer any more.
+        self._sync_compression_pick()
         self._refresh_view(moved=True)
 
     # -- what is armed ----------------------------------------------------------
@@ -145,22 +175,26 @@ class CompressionMixin:
             return NO_SCHEME
         return entry.session.preview_scheme
 
-    def _arm_automatically(self, doc: Document, offset: int) -> None:
-        """On automatic, arm whichever scheme's signature sits at ``offset``.
+    def _arm_automatically(self, doc: Document, offset: int):
+        """On automatic, arm whichever scheme's signature sits at ``offset``,
+        and hand back the structure it read there.
 
         Run wherever the view lands, so it compares a few bytes per scheme
         before anything is decoded (:func:`~mapchar.pipeline.scan.scheme_at`),
         and only a complete structure counts — moving off one disarms, which is
-        what hides the view again.
+        what hides a view that armed itself. The structure comes back because
+        the probe decoded it whole: the preview shows that reading rather than
+        running the decoder a second time over the same bytes.
         """
         pick = self._preview_pick()
         if pick is not AUTOMATIC:
             self._preview_scheme = pick or None
             self._auto_armed = False
-            return
+            return None
         found = scheme_at(doc.data, self._armed_schemes(), offset)
         self._preview_scheme = found[0].info.id if found is not None else None
         self._auto_armed = found is not None
+        return found[1] if found is not None else None
 
     # -- the preview ------------------------------------------------------------
 
@@ -196,7 +230,30 @@ class CompressionMixin:
         found = self._decompress_at(doc, offset, partial=False)
         return found if found is not None and found.complete else None
 
+    def _nothing_decodes(self, doc: Document, offset: int) -> str:
+        """Why the Decompressed View has nothing to show at ``offset``.
+
+        The probe reports rather than raises, which is right for a walk over a
+        whole file and leaves the one offset the user is looking at with nothing
+        to say; the decode that already failed is asked again here for its own
+        words, since it fails the same way and at the same place.
+        """
+        plugin = self._scheme()
+        if plugin is None:
+            return NOTHING_ARMED
+        said = ""
+        ctx = PipelineContext()
+        ctx.set(KEY_DECOMPRESS_PARTIAL, True)
+        try:
+            plugin.decompress(doc.data[offset:], ctx)
+        except ValueError as exc:  # how every scheme here refuses bytes
+            said = f" — {exc}"
+        except Exception:  # noqa: BLE001 - one that fails otherwise says nothing
+            pass
+        return f"Nothing decodes at {offset:X} through {plugin.info.name}{said}"
+
     def _refresh_decompress_preview(self, doc: Document, tables) -> None:
+        view = self.decompress_window
         block = self._current_block()
         # A block that is *already* read through a scheme is looking at the
         # decompressed bytes, so there is nothing left to preview; anything else
@@ -205,14 +262,21 @@ class CompressionMixin:
             block is not None and block.compression_id
         ):
             self.raw.set_structure(None)
-            self.decompress_window.hide()
+            view.show_nothing("There is nothing here to read through a scheme.")
+            view.hide_if_armed()
             return
         offset = self._preview_offset()
-        self._arm_automatically(doc, offset)
-        found = self._decompress_at(doc, offset)
+        # Whatever automatic arming decoded to arm itself; a scheme picked by
+        # name is read here, as a preview, so a stream that runs past the
+        # window still shows its prefix.
+        found = self._arm_automatically(doc, offset) or self._decompress_at(doc, offset)
         if found is None:
             self.raw.set_structure(None)
-            self.decompress_window.hide()
+            # Asking the scheme why costs a decode, and only a window on screen
+            # has anyone to tell; one opened later is refreshed as it opens.
+            said = self._nothing_decodes(doc, offset) if view.isVisible() else ""
+            view.show_nothing(said)
+            view.hide_if_armed()
             return
         data, consumed, complete = found.data, found.consumed, found.complete
         # Where the structure sits in the file shows in the file: only a
@@ -228,9 +292,32 @@ class CompressionMixin:
             status = f"{self._scheme().info.name}  ·  {status}"
         if not complete:
             status += "  ·  no end marker before the window's edge"
-        self.decompress_window.show_result(model, tokens, status, complete)
-        if not self.decompress_window.isVisible():
-            self.decompress_window.show()
+        view.show_result(model, tokens, status, complete)
+        view.show_armed()
+
+    def _show_decompress(self) -> None:
+        """View ▸ Decompressed View…: the floating view, opened as any other
+        tool window is — and kept open, whatever the bytes here decode to.
+
+        The only way to the structure scan and Find All from a file that is not
+        already sitting on a structure, which is where a search for one starts.
+        """
+        view = self.decompress_window
+        view.keep_open()
+        view.show()
+        view.raise_()
+        view.activateWindow()
+        if self._doc is not None:
+            self._refresh_decompress_preview(self._doc, self._table_set())
+
+    def _go_to_structure(self, offset: int) -> None:
+        """A row of the structure list: show the file there, armed on it.
+
+        Through the selection, as every jump this feature makes is: the preview
+        reads from the selection's first byte, so a jump that moved the view
+        alone would leave it reading the byte last clicked.
+        """
+        self._select_bytes(offset, 1)
 
     def _jump_next_structure(self) -> None:
         if self._doc is None:
@@ -243,7 +330,7 @@ class CompressionMixin:
             )
             return
         if found.consumed > 0:
-            self._go_to(offset + found.consumed)
+            self._go_to_structure(offset + found.consumed)
 
     def _scan_next_structure(self) -> None:
         """Walk forward to the next complete structure, cancellably.
@@ -251,13 +338,22 @@ class CompressionMixin:
         The walk itself is :func:`~mapchar.pipeline.scan.find_next_structure`,
         which is Qt-free; all that is left here is reporting through the
         Decompressed view's own run/stop/progress line, which pumps the event
-        loop so Stop stays clickable.
+        loop so Stop stays clickable — and so a click on a button that pumping
+        delivers can reach this again, which the flag refuses.
+
+        Over the same schemes Find All covers: the one picked, or every scheme
+        that announces itself on automatic. Automatic is the default, and
+        nothing is armed where a search for the first structure starts, so a
+        scan of the armed scheme alone would be a button that does nothing.
         """
         doc = self._doc
-        plugin = self._scheme()
-        if doc is None or plugin is None:
+        schemes = self._armed_schemes()
+        if doc is None or self._scanning:
             return
         view = self.decompress_window
+        if not schemes:
+            view.status.setText(NOTHING_TO_WALK)
+            return
         start = self._preview_offset() + 1
         total = max(doc.size - start, 1)
 
@@ -272,12 +368,12 @@ class CompressionMixin:
         self._set_scan_ui(True)
         try:
             with view.running():
-                result = find_next_structure(doc.data, plugin, start, on_tick=tick)
+                result = find_next_structure(doc.data, schemes, start, on_tick=tick)
         finally:
             self._set_scan_ui(False)
         if result.found is not None:
             self.statusBar().showMessage(f"Structure at {result.found:X}", 5000)
-            self._go_to(result.found)
+            self._go_to_structure(result.found)
         elif result.stopped:
             self.statusBar().showMessage(f"Scan stopped at {result.end:X}", 5000)
         else:
@@ -310,24 +406,33 @@ class CompressionMixin:
         Qt-free and looks for a scheme's signature where it has one; what is
         left here is the same run/stop/progress line the structure scan uses,
         and scoring each payload for how text-like it reads under the current
-        tables.
+        tables. Re-entry is refused for the reason
+        :meth:`_scan_next_structure` refuses it: one walk owns the view.
         """
         doc = self._doc
         schemes = self._armed_schemes()
+        if self._scanning:
+            return
         if doc is None or not schemes:
-            self.decompress_window.set_structures(
-                [], "Pick a scheme, or one that announces itself."
-            )
+            self.decompress_window.set_structures([], NOTHING_TO_WALK)
             return
         view = self.decompress_window
         tables = self._table_set()
-        total = max(doc.size, 1)
+        # The walk restarts at 0 for each scheme, so the line counts every
+        # scheme's pass: one run from 0 to 100%, however many schemes it takes.
+        total = max(doc.size * len(schemes), 1)
+        walked = 0
+        last = 0
 
         def scored(data: bytes) -> float:
             return score_window(data, tables)[0]
 
         def tick(at: int) -> bool:
-            return not view.progress(at, total)
+            nonlocal walked, last
+            if at < last:  # a position that went backwards is the next scheme
+                walked += doc.size
+            last = at
+            return not view.progress(walked + at, total)
 
         self._set_scan_ui(True)
         try:

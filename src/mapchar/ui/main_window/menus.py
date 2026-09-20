@@ -173,6 +173,9 @@ class MenuBarMixin:
         view_menu.addSeparator()
         act(view_menu, "&Table Editor…", self._show_table_editor, "Ctrl+Shift+T")
         self.preview_action = act(view_menu, "&Preview…", self._show_preview, "Ctrl+P")
+        self.decompress_action = act(
+            view_menu, "Decompressed &View…", self._show_decompress, "Ctrl+Shift+D"
+        )
         view_menu.addSeparator()
         # One of the two is always the theme in use, so they read as a choice.
         themes = QActionGroup(self)

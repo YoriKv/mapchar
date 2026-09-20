@@ -257,3 +257,76 @@ def test_a_header_is_a_range_s_and_goes_in_the_config_line():
     pointers = replace(cfg, source=table)
     assert pointers.record_header == 0
     assert pointers.effective_write_mode is WriteMode.PACKED
+    # A block switched to pointers keeps the setting on screen and saves none
+    # of it: a pointer reaches its string past any header.
+    assert "header=" not in format_config(pointers)
+
+
+def test_a_header_settles_the_write_mode_as_a_skip_range_does():
+    """Packed would lay the strings over the headers, so a header forces
+    slotted whatever the block's mode says."""
+    data = bytes.fromhex("05 CB 02 41 42  06 CB 01 42  07 CB 02 42 41")
+    cfg = BlockConfig(
+        RangeSource(0, len(data)),
+        Pascal(1),
+        "main",
+        header=2,
+        write_mode=WriteMode.PACKED,
+    )
+    assert cfg.effective_write_mode is WriteMode.SLOTTED
+    res, out = relayout(data, cfg, TS, {0: "A"})
+    assert res.ok, res.problems
+    assert out == bytes.fromhex("05 CB 01 41 FF  06 CB 01 42  07 CB 02 42 41")
+    skipped = BlockConfig(
+        RangeSource(0, 5),
+        EndToken(),
+        "main",
+        skips=((1, 3),),
+        write_mode=WriteMode.PACKED,
+    )
+    assert skipped.effective_write_mode is WriteMode.SLOTTED
+
+
+def test_a_header_before_every_kind_of_string():
+    """The header is the record's, whatever ends the string in it; a header
+    with no room for a string after it ends the reading."""
+    fixed = bytes.fromhex("05 CB 41 42  06 CB 43 41  07 CB")
+    cfg = BlockConfig(RangeSource(0, len(fixed)), FixedLength(2), "main", header=2)
+    assert [(s.start, s.current_text()) for s in extract(fixed, cfg, TS).strings] == [
+        (2, "AB"),
+        (6, "CA"),
+    ]
+    ended = bytes.fromhex("05 CB 41 42 00  06 CB 43 00")
+    cfg = replace(cfg, source=RangeSource(0, len(ended)), string_type=EndToken())
+    assert [(s.start, s.current_text()) for s in extract(ended, cfg, TS).strings] == [
+        (2, "AB[end]"),
+        (7, "C[end]"),
+    ]
+    lined = bytes.fromhex("05 CB 41 FE  06 CB 42 FE")
+    cfg = replace(cfg, source=RangeSource(0, len(lined)), string_type=Lines(1))
+    assert [s.start for s in extract(lined, cfg, TS).strings] == [2, 6]
+
+
+def test_a_header_steps_over_the_skip_ranges_in_front_of_its_string():
+    """A header is read where the block's skips leave it, as the string it
+    belongs to is."""
+    data = bytes.fromhex("05 CB 41 00  06 EE EE CB 42 00")
+    cfg = BlockConfig(
+        RangeSource(0, len(data)),
+        EndToken(),
+        "main",
+        header=2,
+        skips=((5, 7),),
+    )
+    assert [(s.start, s.current_text()) for s in extract(data, cfg, TS).strings] == [
+        (2, "A[end]"),
+        (8, "B[end]"),
+    ]
+
+
+def test_a_record_that_leaves_the_position_where_it_was_ends_the_reading():
+    """No control sets a header behind the position, but a hand-edited project
+    could, and a record that does not advance would be read for ever."""
+    data = bytes.fromhex("41 42 43 00  41 42 00 43")
+    cfg = BlockConfig(RangeSource(4, 8), EndToken(), "main", header=-1)
+    assert texts(extract(data, cfg, TS)) == []

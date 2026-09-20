@@ -4,9 +4,11 @@ Offsets are into the decompressed payload, which is already header-less.
 ``bank`` supplies what a short pointer leaves out; ``ptr_address`` is where
 the pointer itself sits, for relative mappings.
 
-A mapping with ``needs_bank`` also answers ``bank_of(offset)``: which bank an
-offset sits in, so that a search for the pointers reaching it need not be told
-the bank it would have to guess (:func:`mapchar.engines.pointers.discover`).
+Every mapping here with ``needs_bank`` also answers ``bank_of(offset)``: which
+bank an offset sits in, so that a search for the pointers reaching it need not
+be told the bank it would have to guess
+(:func:`mapchar.engines.pointers.discover`). It is optional, since a mapping
+whose banks are not the file's own order may not be able to say.
 """
 
 from __future__ import annotations

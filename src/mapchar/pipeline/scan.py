@@ -5,7 +5,8 @@ A scheme's decoder is the only thing that can answer any of those, so each is
 one decode attempt reported rather than raised — at almost every offset the
 answer is no, and that is an answer, not a failure. A scheme that declares a
 ``signature`` says which offsets are worth asking about at all, which is what
-:func:`scheme_at` and :func:`find_structures` lean on; the decode still decides.
+every probe here leans on — :func:`scheme_at` where the view is, and both walks
+through :func:`_candidate`; the decode still decides.
 """
 
 from __future__ import annotations
@@ -81,6 +82,22 @@ def decompress_at(
     return Structure(data, int(ctx.get(KEY_CONSUMED) or 0), bool(ctx.get(KEY_COMPLETE)))
 
 
+@dataclass
+class _Probe:
+    """One scheme's place in a forward walk.
+
+    Its context is what the scheme was bound against, so every probe reads the
+    tables that binding published; ``at`` is the next offset it is worth a
+    decode at, kept so the search for its signature starts where the last one
+    left off rather than at the top of the buffer.
+    """
+
+    plugin: Any
+    ctx: PipelineContext
+    signature: bytes
+    at: int = -1
+
+
 @dataclass(frozen=True)
 class ScanResult:
     """Where a forward structure scan ended (:func:`find_next_structure`).
@@ -98,7 +115,7 @@ class ScanResult:
 
 def find_next_structure(
     buffer: bytes,
-    plugin: Any,
+    plugins: Iterable[Any],
     start: int,
     *,
     min_size: int = 16,
@@ -106,31 +123,67 @@ def find_next_structure(
     progress_every: int = 256,
     on_tick: Callable[[int], bool] | None = None,
 ) -> ScanResult:
-    """The first offset at or after ``start`` where ``plugin`` reads a structure.
+    """The first offset at or after ``start`` where one of ``plugins`` reads a
+    structure.
 
-    Walks the buffer a byte at a time, trying a **strict** decode at each one; a
-    hit is a *complete* structure of at least ``min_size`` bytes. Strict and
-    complete because a best-effort partial decode succeeds on almost any bytes,
-    which would make every offset a hit and the scan useless.
+    Walks forward over the offsets worth a decode, trying a **strict** one at
+    each; a hit is a *complete* structure of at least ``min_size`` bytes. Strict
+    and complete because a best-effort partial decode succeeds on almost any
+    bytes, which would make every offset a hit and the scan useless.
 
-    Qt-free, and cancellable: every ``progress_every`` bytes ``on_tick(pos)`` is
-    called if given, and returning True abandons the scan. That is the whole of
-    how the toolbar's Stop button reaches in — the UI pumps its event loop in
-    the callback and answers from whatever the user did.
+    The schemes to consider are the caller's, as they are for :func:`scheme_at`
+    and :func:`find_structures`: one when a scheme is picked, every scheme that
+    announces itself when the reader is left to the bytes. Each of them is asked
+    about the offsets its signature says are worth a decode (:func:`_candidate`),
+    and the walk goes to whichever is nearest, so the answer is the *nearest*
+    structure rather than the first scheme's — and a scan for a scheme that
+    announces itself costs a byte search over the buffer plus one decode per
+    stray magic, where a decode at every offset would be minutes over a ROM.
+
+    Qt-free, and cancellable: ``on_tick(pos)`` is called if given at each offset
+    worth a decode and every ``progress_every`` bytes of plain walking, and
+    returning True abandons the scan. That is the whole of how the toolbar's
+    Stop button reaches in — the UI pumps its event loop in the callback and
+    answers from whatever the user did. It is called once more at the end, so a
+    progress line a long jump skipped past still reaches it.
     """
-    # One context for the whole walk: it is what the scheme was bound against,
-    # so every probe reads the tables that binding published.
-    ctx = PipelineContext()
-    bind_tables(plugin, buffer, ctx)
+    probes = [
+        _Probe(plugin, _bound(plugin, buffer), signature_of(plugin))
+        for plugin in plugins
+    ]
     pos = max(0, start)
     size = len(buffer)
+    next_tick = pos + progress_every
     while pos < size:
-        found = decompress_at(buffer, plugin, pos, window=window, ctx=ctx)
-        if found is not None and found.complete and len(found.data) >= min_size:
-            return ScanResult(pos, pos, False)
+        nearest = size
+        for probe in probes:
+            if probe.at < pos:
+                at = _candidate(buffer, probe.signature, pos)
+                probe.at = size if at < 0 else at
+            nearest = min(nearest, probe.at)
+        if nearest >= size:
+            pos = size
+            break
+        # Bytes no signature sits in are not worth a decode, and skipping them
+        # is what makes this cheap; the tick follows the jump so Stop still
+        # answers when one of them covers a megabyte.
+        jumped = nearest > pos
+        pos = nearest
+        for probe in probes:
+            if probe.at != pos:
+                continue
+            found = decompress_at(
+                buffer, probe.plugin, pos, window=window, ctx=probe.ctx
+            )
+            if found is not None and found.complete and len(found.data) >= min_size:
+                return ScanResult(pos, pos, False)
         pos += 1
-        if on_tick is not None and pos % progress_every == 0 and on_tick(pos):
-            return ScanResult(None, pos, True)
+        if on_tick is not None and (jumped or pos >= next_tick):
+            next_tick = pos + progress_every
+            if on_tick(pos):
+                return ScanResult(None, pos, True)
+    if on_tick is not None:
+        on_tick(pos)  # the end of the buffer is the end of the progress line
     return ScanResult(None, pos, False)
 
 
@@ -145,6 +198,27 @@ def signature_of(plugin: Any) -> bytes:
     if isinstance(signature, (bytes, bytearray)) and signature:
         return bytes(signature)
     return b""
+
+
+def _bound(plugin: Any, buffer: bytes) -> PipelineContext:
+    """A context for one scheme over ``buffer``, with its tables bound."""
+    ctx = PipelineContext()
+    bind_tables(plugin, buffer, ctx)
+    return ctx
+
+
+def _candidate(buffer: bytes, signature: bytes, at: int) -> int:
+    """The next offset at or after ``at`` worth decoding ``signature``'s scheme
+    at, or ``-1`` when there is none left.
+
+    What both walks lean on: a scheme that announces itself is only worth a
+    decode where its signature sits, which is a byte search rather than a
+    decode per offset, and a scheme that announces itself in no way is worth a
+    try at every one.
+    """
+    if not signature:
+        return at if at < len(buffer) else -1
+    return buffer.find(signature, at)
 
 
 def scheme_at(
@@ -224,15 +298,13 @@ def find_structures(
     for plugin in plugins:
         # One context per scheme, for the same reason the forward scan keeps
         # one: it is what this scheme was bound against.
-        ctx = PipelineContext()
-        bind_tables(plugin, buffer, ctx)
+        ctx = _bound(plugin, buffer)
         signature = signature_of(plugin)
         at, size, next_tick = 0, len(buffer), progress_every
         while at < size:
-            if signature:
-                at = buffer.find(signature, at)
-                if at < 0:
-                    break
+            at = _candidate(buffer, signature, at)
+            if at < 0:
+                break
             structure = decompress_at(buffer, plugin, at, ctx=ctx)
             hit = structure is not None and structure.complete
             if hit and not signature:

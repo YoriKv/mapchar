@@ -346,8 +346,8 @@ class StringsViewMixin:
         A row shows what its string's bytes say, how much of its slot they take
         and what its status is; a string the changed bytes do not reach shows
         the same row it did. Its room can still move — a packed block's bound
-        is its last string's end — so a row whose address, use or room has
-        changed is refreshed too, and the rest are left alone.
+        follows its text and the fill behind it — so a row whose address, use
+        or room has changed is refreshed too, and the rest are left alone.
 
         ``False`` when the grid cannot be patched at all — the block edited is
         not the one on screen, or the reading has cut it into other strings —
@@ -365,8 +365,8 @@ class StringsViewMixin:
         rows = self.strings.rows_by_index()
         if len(rows) != len(doc.strings):
             return False
-        bound = block_bound(cfg, doc.strings, doc.data)
-        ends = self._string_slots(entry, doc, bound)
+        bound = block_bound(cfg, doc.strings, doc.data, tables)
+        ends = self._string_slots(entry, doc, bound, tables)
         same = self._same_originals(doc)
         for rec in doc.strings:
             old = rows.get(rec.index)
@@ -416,7 +416,9 @@ class StringsViewMixin:
                 return f"[{label}]"
         return "[line]"
 
-    def _string_slots(self, entry, doc: Document, bound: int) -> dict[int, int] | None:
+    def _string_slots(
+        self, entry, doc: Document, bound: int, tables: TableSet | None = None
+    ) -> dict[int, int] | None:
         """Where each string's room ends (:func:`string_ends`), worked out once
         per reading.
 
@@ -442,7 +444,7 @@ class StringsViewMixin:
             and cached[2] == (bound, cfg)
         ):
             return cached[3]
-        ends = string_ends(doc.data, cfg, doc.strings, self.registry)
+        ends = string_ends(doc.data, cfg, doc.strings, self.registry, tables)
         self._slots_cache = (doc.strings, doc.data, (bound, cfg), ends)
         return ends
 
@@ -465,9 +467,11 @@ class StringsViewMixin:
         cfg = entry.config if entry is not None else None
         # Once for the block, not once per row: the bound is the same for every
         # string, and a pointer block has thousands.
-        bound = block_bound(cfg, doc.strings, doc.data) if cfg is not None else 0
+        bound = (
+            block_bound(cfg, doc.strings, doc.data, tables) if cfg is not None else 0
+        )
         same = self._same_originals(doc)
-        ends = self._string_slots(entry, doc, bound)
+        ends = self._string_slots(entry, doc, bound, tables)
         return [self._row_for(rec, cfg, bound, same, ends) for rec in doc.strings]
 
     def _row_for(
@@ -500,10 +504,15 @@ class StringsViewMixin:
         if rec is None:
             return
         same = self._same_originals(doc)
-        bound = block_bound(entry.config, doc.strings, doc.data)
+        tables = self._table_set_of(entry)
+        bound = block_bound(entry.config, doc.strings, doc.data, tables)
         self.strings.update_row(
             self._row_for(
-                rec, entry.config, bound, same, self._string_slots(entry, doc, bound)
+                rec,
+                entry.config,
+                bound,
+                same,
+                self._string_slots(entry, doc, bound, tables),
             )
         )
         self._sync_preview()

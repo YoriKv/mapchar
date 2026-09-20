@@ -590,6 +590,178 @@ def test_every_rnc2_stream_in_the_mk2_rom_unpacks_to_its_declared_size() -> None
     assert found == 29
 
 
+def test_rnc_refuses_a_target_over_the_cap_a_keyed_stream_and_an_empty_chunk() -> None:
+    """Three headers and flags that are refused before any output is made."""
+    over_cap = (
+        b"RNC\x02"
+        + (MAX_OUT + 1).to_bytes(4, "big")
+        + (2).to_bytes(4, "big")
+        + b"\x00\x00\x00\x00\x00\x01"
+    )
+    with pytest.raises(ValueError, match="past the"):
+        decode(Rnc2(), over_cap + b"\x00\x00", partial=True)
+    # The second flag bit is the key: the data alone can never be unpacked, so a
+    # keyed stream is refused rather than decoded to noise.
+    with pytest.raises(ValueError, match="encrypted"):
+        decode(Rnc2(), _rnc_stream(2, b"\x40", b"A"))
+    with pytest.raises(ValueError, match="encrypted"):
+        decode(Rnc1(), _rnc_stream(1, _lsb_words([(0, 1), (1, 1)]), b"A"))
+    # Method 1's three tables, then a subchunk count of zero: a chunk that
+    # produces nothing and would be read again forever.
+    tables = [
+        (0, 1), (0, 1),
+        (3, 5), (1, 4), (0, 4), (1, 4),
+        (2, 5), (0, 4), (1, 4),
+        (4, 5), (0, 4), (0, 4), (0, 4), (1, 4),
+    ]  # fmt: skip
+    empty = _rnc_stream(1, _lsb_words([*tables, (0, 16)]), b"ABABABAB")
+    with pytest.raises(ValueError, match="no subchunks"):
+        decode(Rnc1(), empty)
+
+
+def test_rnc_partial_decode_never_reports_a_stream_the_buffer_does_not_hold() -> None:
+    """A buffer that stops short of the packed size holds no whole structure.
+
+    Its packed CRC was never checked and its last bytes were never read, so the
+    decode is a prefix however much of the payload it managed — and ``consumed``
+    is where the buffer ends, never the position past it the header declares.
+    """
+    # A trailing pad byte inside the packed size: the decoder reaches the
+    # declared output before it, so a buffer cut there decodes in full anyway.
+    stream = _rnc_stream(2, hexs("084142780100") + b"\x00", b"ABABAB")
+    cut = stream[:-1]
+    with pytest.raises(ValueError, match="source ends"):
+        decode(Rnc2(), cut)
+    out, consumed, complete = decode(Rnc2(), cut, partial=True)
+    assert out == b"ABABAB"
+    assert complete is False and consumed == len(cut)
+    # And the ordinary cut, inside a literal run: the bytes that arrived, and
+    # the position they stopped at.
+    plain = bytes((i * 7919) % 251 for i in range(600))
+    whole = rnc.compress(plain, method=2)
+    short = whole[: len(whole) // 2]
+    prefix, consumed, complete = decode(Rnc2(), short, partial=True)
+    assert plain.startswith(prefix) and 0 < len(prefix) < len(plain)
+    assert complete is False and consumed <= len(short)
+
+
+def test_find_structures_reads_the_edges_of_the_buffer(registry) -> None:
+    """Three things the whole-file walk meets at a buffer's end.
+
+    A signature in the last few bytes, a stream the file stops inside, and two
+    streams with nothing between them: the first two are not structures, the
+    walk still ends, and the third pair is found at both offsets.
+    """
+    from mapchar.pipeline.scan import find_structures
+
+    rnc2 = registry.plugin(Stage.COMPRESSION, "rnc2")
+    first = rnc.compress(b"HELLO HELLO HELLO\x00" * 6, method=2)
+    second = rnc.compress(b"WORLD WORLD WORLD\x00" * 4, method=2)
+
+    assert find_structures(b"\xff" * 32 + b"RNC\x02", [rnc2]).found == []
+    assert find_structures(b"\xff" * 16 + first[:-4], [rnc2]).found == []
+
+    both = find_structures(first + second, [rnc2]).found
+    assert [(f.offset, f.consumed) for f in both] == [
+        (0, len(first)),
+        (len(first), len(second)),
+    ]
+
+
+def test_find_next_structure_walks_the_schemes_it_is_given(registry) -> None:
+    """The nearest structure of any of them, from the one walk.
+
+    The forward scan takes the schemes to consider like the other two probes,
+    so the Decompressed View's Scan is the picked scheme on a pick and every
+    scheme that announces itself on automatic.
+    """
+    from mapchar.pipeline.scan import find_next_structure
+
+    rnc1 = registry.plugin(Stage.COMPRESSION, "rnc1")
+    rnc2 = registry.plugin(Stage.COMPRESSION, "rnc2")
+    one = rnc.compress(b"HELLO HELLO HELLO\x00" * 4, method=1)
+    two = rnc.compress(b"WORLD WORLD WORLD\x00" * 4, method=2)
+    data = b"\xff" * 8 + two + b"\xff" * 8 + one + b"\xff" * 8
+    at_two, at_one = 8, 8 + len(two) + 8
+
+    assert find_next_structure(data, [rnc1], 0).found == at_one
+    assert find_next_structure(data, [rnc2], 0).found == at_two
+    assert find_next_structure(data, [rnc1, rnc2], 0).found == at_two
+    assert find_next_structure(data, [rnc1, rnc2], at_two + 1).found == at_one
+    # Nothing to walk for is not a walk that found nothing: both end the same
+    # way, and the caller is what tells them apart.
+    assert find_next_structure(data, [], 0).found is None
+
+
+def _stray_rnc2() -> bytes:
+    """An ``RNC\\x02`` header no decode gets past: its packed CRC is nothing the
+    bytes behind it give."""
+    return (
+        b"RNC\x02"
+        + (100).to_bytes(4, "big")
+        + (50).to_bytes(4, "big")
+        + b"\x12\x34\x56\x78\x00\x01"
+    )
+
+
+def test_find_next_structure_looks_where_a_signature_says_to(registry) -> None:
+    """A whole ROM's worth of bytes, walked in the time a byte scan takes.
+
+    A strict decode at every offset of a 4 MB buffer is minutes of work, and
+    the scan behind the Decompressed View's Scan button runs it on a keypress.
+    A scheme that announces itself is only decoded where its signature sits, so
+    the walk is `bytes.find` plus a decode per stray magic.
+    """
+    import time
+
+    from mapchar.pipeline.scan import find_next_structure
+
+    rnc2 = registry.plugin(Stage.COMPRESSION, "rnc2")
+    stream = rnc.compress(b"HELLO HELLO HELLO\x00" * 8, method=2)
+    stray = _stray_rnc2()
+    head = b"\xff" * 0x100000 + stray + b"\xff" * 0x100000 + stray
+    data = head + b"\xff" * 0x200000 + stream + b"\xff" * 0x100
+    at = len(head) + 0x200000
+
+    started = time.perf_counter()
+    result = find_next_structure(data, [rnc2], 0)
+    assert result.found == at and not result.stopped
+    assert time.perf_counter() - started < 1.0
+    # And Stop still reaches in, on the first offset worth a decode rather than
+    # after a megabyte of walking.
+    seen: list[int] = []
+
+    def tick(pos: int) -> bool:
+        seen.append(pos)
+        return True
+
+    stopped = find_next_structure(data, [rnc2], 0, on_tick=tick)
+    assert stopped.stopped and stopped.found is None
+    # The first stray magic, decoded and stepped past: a tick a megabyte in
+    # rather than after a megabyte of walking.
+    assert seen == [0x100000 + 1]
+
+
+def test_find_next_structure_mixes_schemes_that_announce_themselves_and_not(
+    registry,
+) -> None:
+    """A signature jumps, no signature walks, and the nearest structure wins."""
+    from mapchar.pipeline.scan import find_next_structure
+
+    gba = registry.plugin(Stage.COMPRESSION, "gba_lz77")
+    rnc2 = registry.plugin(Stage.COMPRESSION, "rnc2")
+    packed = gba.compress(b"HELLO HELLO HELLO\x00" * 4, PipelineContext())
+    stream = rnc.compress(b"WORLD WORLD WORLD\x00" * 4, method=2)
+    # 0xFF starts no structure of either scheme, so only the two laid here do.
+    data = b"\xff" * 64 + packed + b"\xff" * 64 + stream + b"\xff" * 64
+    at_packed, at_stream = 64, 64 + len(packed) + 64
+
+    assert find_next_structure(data, [gba], 0).found == at_packed
+    assert find_next_structure(data, [rnc2], 0).found == at_stream
+    assert find_next_structure(data, [rnc2, gba], 0).found == at_packed
+    assert find_next_structure(data, [rnc2, gba], at_packed + 1).found == at_stream
+
+
 # -- PackBits ----------------------------------------------------------------
 
 

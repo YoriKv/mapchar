@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right, insort
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,10 +26,14 @@ WORDS = frozenset(
 MAX_HEADER = 4
 """Bytes in front of a record's length a chain is looked for with, at most."""
 MIN_RECORDS = 3
-"""Records in a row before a chain counts as one: with fewer, a small byte
-inside ordinary text reads as a length."""
-MIN_CHAIN = 16
-"""Bytes a chain covers before it counts as one."""
+"""Records with characters in a row before a chain counts as one: with fewer,
+a small byte inside ordinary text reads as a length. Terminated text has no
+such rule — an intro or an ending is one long string."""
+MIN_LENGTH = 16
+"""Bytes a region covers before it counts as one, chain or terminated text."""
+MIN_MEAN = 4
+"""Characters a chain's records hold on average before it counts as one: a
+header with a byte behind it is a table of positions, not of strings."""
 
 
 @dataclass(frozen=True)
@@ -99,15 +104,17 @@ def scan(
 
     The windows say where to look; what comes back is what is there
     (:func:`_refine`): a record chain over its own ends, or terminated text
-    over whole strings, never the window grid.
+    over whole strings, never the window grid. Both halves of the work report
+    through ``progress`` and stop when it says to, so a stopped scan ranks
+    what it had — and a scan stopped over the windows still cuts what scored,
+    since Stop stays pressed and the cutting is the cheap half.
     """
+    total = 2 * len(data)
     scores: list[tuple[int, float]] = []
+    stopped = False
     for at in range(0, max(len(data) - 1, 1), step):
-        if (
-            progress is not None
-            and at % (step * 64) == 0
-            and not progress(at, len(data))
-        ):
+        if progress is not None and at % (step * 64) == 0 and not progress(at, total):
+            stopped = True
             break
         score, _ = score_window(data[at : at + window], tables)
         scores.append((at, score))
@@ -125,12 +132,15 @@ def scan(
         merging = True
     if not coarse:
         return []
-    text = _text_bytes(tables)
-    runs = _text_runs(data, text)
+    chains = _Chains(data, tables)
     regions: list[Region] = []
-    for start, end in coarse:
-        regions.extend(_refine(data, tables, runs, text, start, end, window, threshold))
-    regions = _uncontained(regions)
+    for lo, hi in _spans(coarse, len(data), window, step):
+        # Stop stays pressed, so a scan already stopped over the windows is
+        # not asked again: what scored is cut all the same.
+        if not stopped and progress is not None and not progress(len(data) + lo, total):
+            break
+        regions.extend(_refine(data, tables, chains, lo, hi, threshold))
+    regions = _uncontained(_reached(regions, coarse))
     for region in regions:
         if region.records is None:
             region.terminator, region.initial = _guess_terminator(
@@ -140,51 +150,66 @@ def scan(
     return regions
 
 
+def _spans(
+    coarse: list[tuple[int, int]], size: int, window: int, step: int
+) -> list[tuple[int, int]]:
+    """Where the coarse regions are searched: each widened to what a reading of
+    it may reach, and those that then meet merged into one.
+
+    The grid cuts a chain at both ends, and a window that scored begins after
+    its text as easily as before it — by up to a window or a step, whichever is
+    the coarser. Merging what overlaps is what keeps one run of strings one
+    region instead of two that cross.
+    """
+    spans: list[tuple[int, int]] = []
+    for start, end in coarse:
+        lo, hi = max(0, start - max(window, step)), min(size, end + window)
+        if spans and lo <= spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], hi))
+        else:
+            spans.append((lo, hi))
+    return spans
+
+
 def _refine(
     data: bytes,
     tables: TableSet,
-    runs: list[int],
-    text: list[bool],
-    start: int,
-    end: int,
-    window: int,
+    chains: _Chains,
+    lo: int,
+    hi: int,
     threshold: float,
 ) -> list[Region]:
-    """One coarse region as the readings it really holds.
+    """One span as the readings it really holds.
 
-    Every record chain it meets comes out over the chain's own ends, which a
-    chain that began before the first window to score reaches by walking back;
-    what the chains leave of it comes out as terminated text over whole
-    strings. A chain is looked for a window either side, since the grid cuts
-    both ends of one, and the text is only followed forward, since a window
-    that scored already begins at or before its text.
+    Every record chain it meets comes out over the chain's own ends; what the
+    chains leave of it comes out as terminated text over whole strings. Both
+    have to reach ``threshold``, a chain on a score that discounts the bytes of
+    it that are not characters, so a run of one-byte records is no string
+    table and does not head the ranking either.
     """
-    reach = min(len(data), end + window)
-    chains = [
-        chain
-        for chain in _record_chains(data, runs, text, max(0, start - window), reach)
-        if chain[0] < end and chain[1] > start
-    ]
-    regions = [
-        Region(
-            a, b, score_window(_record_text(data, a, b, rec), tables)[0], records=rec
-        )
-        for a, b, rec in chains
-    ]
-    at = start
-    for a, b in [(c[0], c[1]) for c in chains] + [(reach, reach)]:
-        bounds = _string_bounds(data, tables, at, a) if a > at else None
-        if bounds is not None and bounds[0] < end and bounds[1] > start:
-            score = score_window(data[bounds[0] : bounds[1]], tables)[0]
-            if score >= threshold:
-                regions.append(Region(bounds[0], bounds[1], score))
-        at = max(at, b)
+    regions = [r for r in chains.meeting(lo, hi) if r.score >= threshold]
+    at = lo
+    for start, end in [(r.start, r.end) for r in regions] + [(hi, hi)]:
+        if start > at:
+            regions.extend(_string_runs(data, tables, at, min(start, hi), threshold))
+        at = max(at, end)
     return regions
 
 
+def _reached(regions: list[Region], coarse: list[tuple[int, int]]) -> list[Region]:
+    """Only the regions a window that scored reaches: the spans are widened
+    beyond the coarse regions, and what lies wholly outside them was never
+    found, only passed over."""
+    return [
+        r
+        for r in regions
+        if any(start < r.end and r.start < end for start, end in coarse)
+    ]
+
+
 def _uncontained(regions: list[Region]) -> list[Region]:
-    """Every region but those another already covers: two coarse regions that
-    reach the same chain each find the whole of it."""
+    """Every region but those another already covers: two spans that reach the
+    same chain each find the whole of it."""
     kept: list[Region] = []
     for region in sorted(regions, key=lambda r: (r.start, -r.length)):
         if not any(k.start <= region.start and region.end <= k.end for k in kept):
@@ -203,6 +228,163 @@ def _text_bytes(tables: TableSet) -> list[bool]:
     return out
 
 
+def _has_end(tables: TableSet) -> bool:
+    """Whether anything in the set ends a string. A table fresh from a relative
+    search has no end token, and then a break between two runs of characters is
+    all there is to cut strings on."""
+    return any(
+        entry.kind is TokenKind.END
+        for table in tables.tables.values()
+        for entry in table.entries.values()
+    )
+
+
+class _Chains:
+    """Chains of length-prefixed records, found once each over the whole file.
+
+    A record is a header of 0 to :data:`MAX_HEADER` bytes, a one-byte length
+    and that many bytes of text; a chain is :data:`MIN_RECORDS` of them with
+    characters in a row, back to back, all with the same header, covering
+    :data:`MIN_LENGTH` bytes and holding :data:`MIN_MEAN` characters a record.
+    At least one byte of a record's header and length has to be one the table
+    does not read as text, or every run of text would count as a chain of its
+    own. An empty record is crossed but never counted, and two in a row are no
+    chain: a table may hold a blank slot, a run of zeroes is not a string
+    table.
+
+    Chains are found a header size at a time and the longest wins the bytes it
+    covers, since one length byte is also another header's. Each span asks for
+    the chains meeting it; a chain already found is never walked or scored
+    again, which is what keeps a file whose chains are longer than its windows
+    linear.
+    """
+
+    def __init__(self, data: bytes, tables: TableSet):
+        self._data = data
+        self._tables = tables
+        self._text = _text_bytes(tables)
+        self._runs = _text_runs(data, self._text)
+        self._found: list[list[tuple[int, int]]] = [[] for _ in range(MAX_HEADER + 1)]
+        self._regions: dict[tuple[int, int, int], Region] = {}
+
+    def meeting(self, lo: int, hi: int) -> list[Region]:
+        """The chains meeting ``[lo, hi)`` as regions, in order; the longest
+        claims the bytes it covers, since one length byte is also another
+        header's."""
+        found: list[tuple[int, int, int]] = []
+        for header in range(MAX_HEADER + 1):
+            self._sweep(header, lo, hi)
+            found += [
+                (start, end, header)
+                for start, end in self._found[header]
+                if start < hi and end > lo
+            ]
+        taken: list[tuple[int, int, int]] = []
+        for chain in sorted(found, key=lambda c: (c[0] - c[1], c[2])):
+            if not any(chain[0] < b and a < chain[1] for a, b, _ in taken):
+                taken.append(chain)
+        return [self._region(*chain) for chain in sorted(taken)]
+
+    def _region(self, start: int, end: int, header: int) -> Region:
+        """A chain as a region, scored on its characters and on how little of
+        its span is anything else.
+
+        A chain's characters are text by construction, so reading them alone
+        says nothing a table of screen positions would not say too; what tells
+        the two apart is how much of the span the characters are, and squaring
+        what they are not leaves an ordinary header alone while it costs a
+        chain that is mostly header.
+        """
+        key = (start, end, header)
+        region = self._regions.get(key)
+        if region is None:
+            rec = Records(header)
+            text = _record_text(self._data, start, end, rec)
+            waste = 1 - len(text) / max(end - start, 1)
+            score = score_window(text, self._tables)[0] * (1 - waste**2)
+            region = self._regions[key] = Region(start, end, score, records=rec)
+        return region
+
+    def _sweep(self, header: int, lo: int, hi: int) -> None:
+        """Find every chain of this header size beginning in ``[lo, hi)``."""
+        found = self._found[header]
+        at = lo
+        while at < hi:
+            known = self._covering(found, at)
+            if known is not None:
+                at = max(known, at + 1)
+                continue
+            count, _, _ = self._walk(header, at)
+            if count < MIN_RECORDS:
+                at += 1
+                continue
+            start = self._back(header, at)
+            count, end, chars = self._walk(header, start)
+            if (
+                count >= MIN_RECORDS
+                and end - start >= MIN_LENGTH
+                and chars >= MIN_MEAN * count
+            ):
+                insort(found, (start, end))
+            at = max(end, at + 1)
+
+    @staticmethod
+    def _covering(found: list[tuple[int, int]], at: int) -> int | None:
+        """The end of the chain already found over ``at``, if there is one."""
+        i = bisect_right(found, (at, float("inf")))
+        return found[i - 1][1] if i and found[i - 1][1] > at else None
+
+    def _length(self, header: int, p: int) -> int | None:
+        """The length of the record at ``p``, or ``None`` if there is none."""
+        data, step = self._data, header + 1
+        if p < 0 or p + step > len(data):
+            return None
+        length = data[p + header]
+        if length > self._runs[p + step]:
+            return None
+        if all(self._text[b] for b in data[p : p + step]):
+            return None
+        return length
+
+    def _walk(self, header: int, p: int) -> tuple[int, int, int]:
+        """How many records with characters run on from ``p``, where the last
+        of them ends, and how many characters they hold between them."""
+        step, count, end, chars, empty = header + 1, 0, p, 0, False
+        while True:
+            length = self._length(header, p)
+            if length is None or (length == 0 and empty):
+                return count, end, chars
+            p += step + length
+            empty = length == 0
+            if length:
+                count, end, chars = count + 1, p, chars + length
+
+    def _back(self, header: int, p: int) -> int:
+        """The start of the chain ``p`` continues: the first record with
+        characters of the run of records that reaches it."""
+        data, start, empty = self._data, p, False
+        while True:
+            q = self._previous(header, p, empty)
+            if q is None:
+                return start
+            p, empty = q, not data[q + header]
+            if not empty:
+                start = q
+
+    def _previous(self, header: int, p: int, empty: bool) -> int | None:
+        """The record ending at ``p``, if one does. The length a record at
+        ``q`` would need is ``p - q`` less its header and length byte, so the
+        byte that would hold it is one lookup."""
+        data, step = self._data, header + 1
+        for q in range(p - step, max(-1, p - step - 0x100), -1):
+            length = p - q - step
+            if data[q + header] != length or (length == 0 and empty):
+                continue
+            if self._length(header, q) is not None:
+                return q
+        return None
+
+
 def _text_runs(data: bytes, text: list[bool]) -> list[int]:
     """How many text bytes run on from each offset, so that "the next ``n``
     bytes are all text" is one comparison."""
@@ -210,70 +392,6 @@ def _text_runs(data: bytes, text: list[bool]) -> list[int]:
     for i in range(len(data) - 1, -1, -1):
         runs[i] = runs[i + 1] + 1 if text[data[i]] else 0
     return runs
-
-
-def _record_chains(
-    data: bytes, runs: list[int], text: list[bool], lo: int, hi: int
-) -> list[tuple[int, int, Records]]:
-    """Maximal chains of length-prefixed records meeting ``[lo, hi)``.
-
-    A record is a header of 0 to :data:`MAX_HEADER` bytes, a one-byte length
-    and that many bytes of text; a chain is :data:`MIN_RECORDS` of them in a
-    row, back to back, all with the same header. At least one byte of a
-    record's header and length has to be one the table does not read as text,
-    or every run of text would count as a chain of its own.
-
-    Chains are found a header at a time and the longest wins the bytes it
-    covers, since one length byte is also another header's.
-    """
-    found: list[tuple[int, int, Records]] = []
-    for header in range(MAX_HEADER + 1):
-        step = header + 1
-
-        def is_record(p: int, step: int = step, header: int = header) -> bool:
-            if p < 0 or p + step > len(data):
-                return False
-            length = data[p + header]
-            if not 0 < length <= runs[p + step]:
-                return False
-            return any(not text[b] for b in data[p : p + step])
-
-        def walk(p: int, step: int = step, header: int = header) -> tuple[int, int]:
-            count = 0
-            while is_record(p):
-                p += step + data[p + header]
-                count += 1
-            return count, p
-
-        def back(p: int, step: int = step, header: int = header) -> int:
-            """The start of the chain ``p`` continues: the record before it,
-            for as long as there is one."""
-            while True:
-                for q in range(max(0, p - step - 0xFF), p - step + 1):
-                    if is_record(q) and q + step + data[q + header] == p:
-                        p = q
-                        break
-                else:
-                    return p
-
-        at = lo
-        while at < hi:
-            count, _ = walk(at)
-            if count >= MIN_RECORDS:
-                start = back(at)
-                count, end = walk(start)
-                if end - start >= MIN_CHAIN:
-                    found.append((start, end, Records(header)))
-                at = max(end, at + 1)
-            else:
-                at += 1
-    taken: list[tuple[int, int]] = []
-    chains: list[tuple[int, int, Records]] = []
-    for start, end, rec in sorted(found, key=lambda c: (c[0] - c[1], c[2].header)):
-        if not any(start < b and a < end for a, b in taken):
-            taken.append((start, end))
-            chains.append((start, end, rec))
-    return sorted(chains, key=lambda c: c[0])
 
 
 def _record_text(data: bytes, start: int, end: int, rec: Records) -> bytes:
@@ -289,51 +407,69 @@ def _record_text(data: bytes, start: int, end: int, rec: Records) -> bytes:
     return bytes(out)
 
 
-def _string_bounds(
-    data: bytes, tables: TableSet, lo: int, hi: int
-) -> tuple[int, int] | None:
-    """The longest run of whole readable strings in ``[lo, hi)``.
+def _string_runs(
+    data: bytes, tables: TableSet, lo: int, hi: int, threshold: float
+) -> list[Region]:
+    """Every run of whole readable strings in ``[lo, hi)`` that is a region:
+    one whole string over :data:`MIN_LENGTH` bytes, scoring at least
+    ``threshold``. One long string is a region — an intro or an ending is
+    exactly that.
 
-    A string runs to an end token, and one holding anything the table does not
-    read as text is no part of the run: either the region's edge cut it or the
-    bytes are not text at all. The run begins at the first character after the
-    last of those bytes, though — a string whose front the run-up ate is still
-    a string — and ends at the last end token a run of characters reached.
+    A string runs to an end token — or, under a table set that has none, to
+    the byte :func:`_guess_terminator` picks out of the gap, since a table
+    fresh from a relative search has nothing else to cut strings on. Codes are
+    the text's own and cut nothing; anything else the table cannot read is not
+    text at all, so it ends the run, which begins again at the next thing that
+    is read. A run ends at the last end token a string reached, so what comes
+    back is whole strings.
     """
     if hi <= lo:
-        return None
-    _, tokens = score_window(data[lo:hi], tables)
-    best: tuple[int, int] | None = None
-    after_junk = lo
-    run_start: int | None = None
-    start: int | None = None
-    clean = True
+        return []
+    chunk = data[lo:hi]
+    _, tokens = score_window(chunk, tables)
+    stopper = None if _has_end(tables) else _breaks(tokens, chunk)[0]
+    regions: list[Region] = []
+    start: int | None = None  # the run's first byte, once something readable began it
+    stop: int | None = None  # the end of the last whole string in it
     seen = False
+
+    def flush() -> None:
+        nonlocal start, stop, seen
+        if start is not None and stop is not None and stop - start >= MIN_LENGTH:
+            score = score_window(data[start:stop], tables)[0]
+            if score >= threshold:
+                regions.append(Region(start, stop, score))
+        start, stop, seen = None, None, False
+
     for t in tokens:
+        at = lo + t.bit_start // 8
+        after = lo + -(-t.bit_end // 8)
         kind = t.entry.kind if t.entry is not None else None
-        if start is None:
-            start = lo + t.bit_start // 8
-        if kind is TokenKind.TEXT:
-            seen = True
-        elif kind is not TokenKind.END:
-            clean = False
-            after_junk = lo + -(-t.bit_end // 8)
-        if kind is TokenKind.END:
-            stop = lo + -(-t.bit_end // 8)
-            if clean and seen and start is not None:
-                begin = run_start if run_start is not None else min(start, after_junk)
-                run_start = begin
-                if best is None or stop - begin > best[1] - best[0]:
-                    best = (begin, stop)
+        unreadable = kind is None
+        terminates = after - at == 1 and chunk[at - lo] == stopper
+        if kind is TokenKind.END or (unreadable and terminates):
+            if seen:
+                stop, seen = after, False
             else:
-                run_start = None
-            start, clean, seen = None, True, False
-    return best
+                flush()  # an end with no characters in front of it ends the run
+            continue
+        if unreadable:
+            flush()
+            continue
+        if start is None:
+            start = at
+        seen = seen or kind is TokenKind.TEXT
+    flush()
+    return regions
 
 
 def _guess_terminator(data: bytes, tables: TableSet) -> tuple[int | None, int | None]:
     """The unmatched or end byte most often followed by text, and what follows it."""
-    _, tokens = score_window(data, tables)
+    return _breaks(score_window(data, tables)[1], data)
+
+
+def _breaks(tokens: list, data: bytes) -> tuple[int | None, int | None]:
+    """The same, of an already decoded ``data``."""
     enders: Counter[int] = Counter()
     initials: Counter[int] = Counter()
     for a, b in zip(tokens, tokens[1:], strict=False):

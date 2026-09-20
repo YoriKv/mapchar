@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from helpers import ABC_TABLE, table_set
+from helpers import ABC_TABLE, relayout, table_set
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -512,6 +512,33 @@ def test_a_bookmark_can_never_be_the_restored_current_entry(tmp_path):
     assert loaded.current is None and len(loaded.entries) == 2
 
 
+def test_a_files_preview_scheme_is_saved_loaded_and_saved_again(tmp_path):
+    """Three answers the Compression picker can hold, over two saves.
+
+    Automatic is the default and is written as nothing at all; ``""`` is the
+    preview switched off, which is a choice; an id no plugin provides is still
+    what the file was set to, kept so a plugin that comes back arms it again.
+    """
+    ws = Workspace()
+    names = ("auto", "off", "gone")
+    for name, scheme in zip(names, (None, "", "gone_scheme"), strict=True):
+        rom = tmp_path / f"{name}.bin"
+        rom.write_bytes(b"\xff" * 4)
+        ws.open_file(str(rom)).session.preview_scheme = scheme
+    proj = tmp_path / "p.mapchar"
+    save_project(str(proj), ws.entries, None, [])
+    first = proj.read_text()
+    assert '"preview_scheme": ""' in first
+    assert '"preview_scheme": "gone_scheme"' in first
+
+    loaded = load_project(str(proj)).entries
+    assert [e.session.preview_scheme for e in loaded] == [None, "", "gone_scheme"]
+    # And back out unchanged: a round trip neither invents a pick for the file
+    # that has none nor drops the one nothing can read.
+    save_project(str(proj), loaded, None, [])
+    assert proj.read_text() == first
+
+
 def test_a_renamed_plugin_id_is_forwarded_as_the_project_loads(tmp_path, monkeypatch):
     """Every id a project names goes through the alias table on the way in."""
     import json
@@ -779,3 +806,73 @@ def test_a_version_1_block_whose_fixed_strings_stop_at_an_end_is_marked(tmp_path
     assert saved[1]["fixed_ends_shown"] and "fixed_ends_shown" not in saved[2]
     proj.write_text(json.dumps(saved and {"version": 2, "entries": saved}))
     assert load_project(str(proj)).entries[1].fixed_ends_shown
+
+
+# --- What tells an edited string from an untouched one ----------------------
+
+DTE_TABLE = "@table main\n41=A\n42=B\n80=AB\n/00=[end]\n"
+"""A table with a pair code, so text has more than one spelling in bytes."""
+
+
+def test_a_string_re_encoded_to_other_bytes_still_says_the_original(registry):
+    """Status goes by the bytes, but text that says the original again is
+    untouched however it is spelled: a pair code encodes ``AB`` in one byte,
+    so putting the original text back gives bytes the original never had."""
+    rom = bytes.fromhex("41 42 00")
+    cfg = BlockConfig(RangeSource(0, 3), EndToken(), "main")
+    ts = table_set(DTE_TABLE, "main")
+    before = extract(rom, cfg, ts, registry).strings
+    assert before[0].original == "AB[end]" and not before[0].edited
+    res, out = relayout(rom, cfg, ts, {0: "AB[end]"}, registry)
+    assert res.ok, res.problems
+    assert out == bytes.fromhex("80 00 FF")
+    rec = extract(out, cfg, ts, registry).strings[0]
+    rec.original, rec.original_digest = before[0].original, before[0].original_digest
+    rec.refresh_status()
+    assert rec.current_text() == "AB[end]" and rec.digest != rec.original_digest
+    assert not rec.edited and rec.status is Status.UNTOUCHED
+    # The other way round is what the checksum is for: a block read in the
+    # table its translation is written in says other text over the same bytes.
+    rec.original = "something else"
+    rec.original_digest = rec.digest
+    rec.refresh_status()
+    assert not rec.edited and rec.status is Status.UNTOUCHED
+
+
+def test_a_bit_level_string_is_told_by_the_bits_it_holds(registry):
+    """A string that stops mid-byte shares that byte with the next, so only
+    its own bits say whether it is still the original's."""
+    ts = table_set("@table main\n%00001=A\n%00010=B\n/%00000=[end]\n", "main")
+    rom = bytes.fromhex("08 04 00 80 40")
+    cfg = BlockConfig(RangeSource(0, 5), EndToken(), "main")
+    strings = extract(rom, cfg, ts, registry).strings
+    assert [s.current_text() for s in strings] == ["A[end]", "B[end]"] * 2
+    assert strings[1].start_bit % 8 and strings[2].start_bit % 8
+    # Same bits, other bytes and other bit offsets: the same checksum.
+    assert strings[0].digest == strings[2].digest == bits_digest("0000100000")
+    assert strings[1].digest != strings[0].digest
+    assert not any(s.edited for s in strings)
+    # The string a neighbour's bits were taken from is another string.
+    strings[1].original, strings[1].original_digest = "A[end]", strings[0].digest
+    assert strings[1].edited
+    strings[1].original = strings[1].current_text()
+    assert not strings[1].edited
+
+
+def test_a_string_record_with_a_broken_checksum_still_loads(tmp_path):
+    """``h`` is the checksum of the bytes an original was taken from; one a
+    build cannot read leaves the string going by its text, not a broken load.
+    """
+    proj = tmp_path / "p.mapchar"
+    proj.write_text(
+        f'{{"version": {PROJECT_VERSION}, "entries": ['
+        '{"kind": "file", "name": "x", "path": "x.bin"}, '
+        '{"kind": "block", "name": "b", "path": "x.bin", "parent": 0, '
+        '"strings": [{"i": 0, "o": "A[end]", "h": "zz"}, '
+        '{"i": 1, "o": "B[end]", "h": 42}, '
+        '{"i": 2, "o": "C[end]", "h": ["nonsense"]}, '
+        '{"i": 3, "o": "D[end]", "h": "0000FFFF"}]}]}'
+    )
+    loaded = load_project(str(proj))
+    saved = loaded.entries[1].pending_strings
+    assert [saved[i].digest for i in range(4)] == [None, None, None, 0xFFFF]

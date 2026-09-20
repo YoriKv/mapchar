@@ -566,7 +566,7 @@ class MainWindow(
         self.decompress_window.scan_next.connect(self._scan_next_structure)
         self.decompress_window.to_block.connect(self._structure_to_block)
         self.decompress_window.find_all.connect(self._find_all_structures)
-        self.decompress_window.go_to.connect(self._go_to)
+        self.decompress_window.go_to.connect(self._go_to_structure)
         self.preview_window.font_changed.connect(self._on_preview_font_changed)
         self.preview_window.box_changed.connect(self._on_box_changed)
         self.preview_window.wrap_requested.connect(self._wrap_selected)

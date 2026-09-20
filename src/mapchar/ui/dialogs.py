@@ -327,12 +327,14 @@ class DiscoveryDialog(QDialog):
                 c.endian,
                 format_hex_offset(c.offset),
                 # Bank 0 is what every unbanked mapping reads too: left blank.
-                f"{c.bank():02X}" if c.bank() else "",
+                f"{bank:02X}" if bank else "",
                 str(c.explained),
                 str(c.stride),
                 f"{run[0]:X}–{run[-1]:X}" if run else "",
             ]
-            for c, run in ((c, c.table_run()) for c in candidates)
+            # Each asked once: a candidate over a file of fill has a million
+            # addresses behind its run and its bank.
+            for c, run, bank in ((c, c.table_run(), c.bank()) for c in candidates)
         )
         if candidates:
             self.table.selectRow(0)

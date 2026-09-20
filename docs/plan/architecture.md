@@ -135,8 +135,10 @@ in bytes, which is the unit their results are reported and selected in.
   `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens, endian)`,
   `NextPointer`, `Lines(count)`), `table_id`, `strings_per_pointer`,
   `realign`, `skips`, `header` (bytes before each string of a range that are
-  not text), `line_length`, `bound`, `write_mode` (`PACKED`,
-  `SLOTTED`), `fill` (a byte pattern: `fill_run` lays it down from the start
+  not text, at most `MAX_RECORD_HEADER`), `line_length`, `bound`, `write_mode`
+  (`PACKED`, `SLOTTED`; `effective_write_mode` is slotted whatever it holds
+  once skip ranges or a header break the text up), `fill` (a byte pattern:
+  `fill_run` lays it down from the start
   of the room it fills, `is_fill` recognises it), and the artificial codes a
   fixed string is shown with: `show_end`, `end_label`, `line_label`.
 - **Pointer sources** — `PointerTableSource` and `PointerListSource` carry a
@@ -340,50 +342,73 @@ through the table set, and scores it: the fraction of bits consumed by text
 entries, plus a capped bonus for dictionary hits (a small built-in word
 list), minus a penalty that grows with the square of the share of unmatched
 data. Regions above a threshold merge, and each is then cut to what it
-actually holds rather than to the window grid.
+actually holds rather than to the window grid. Both halves of the work report
+through the `progress` hook and stop when it returns `False`, so a stopped
+scan still ranks what it had; a scan stopped over the windows still cuts what
+scored, since Stop stays pressed and the cutting is the cheap half.
 
-A region is first searched, a window either side, for chains of
-length-prefixed records: 0 to `MAX_HEADER` header bytes, a one-byte length and
-that many bytes of text, back to back, at least `MIN_RECORDS` of them and with
-at least one byte of every record's header and length one the table does not
-read as text — otherwise every run of characters would count. Chains are found
-a header size at a time, the longest wins the bytes it covers, and each walks
-back to the record it continues, so a chain that began before the first window
-to score comes out whole. A chain carries a `Records(header, width)` on its
-region, is scored on the characters alone, and becomes a `Pascal` block over a
+Every region is widened by a window behind it and by a window or a step — the
+coarser — in front, since the grid cuts a chain at both ends and a window that
+scored may begin after its text; the ones that then overlap merge, so one run
+of strings is one region and never two that cross. Each of those spans is
+searched for chains of length-prefixed records: 0 to `MAX_HEADER` header bytes,
+a one-byte length and that many bytes of text, back to back, at least
+`MIN_RECORDS` of them over `MIN_LENGTH` bytes holding `MIN_MEAN` characters a
+record, and with at least one byte of every record's header and length one the
+table does not read as text — otherwise every run of characters would count. An
+empty record is crossed but not counted, and two in a row end the chain.
+Chains are found a header size at a time, the longest wins the bytes it covers,
+and each walks back to the record it continues, so a chain that began before
+the first window to score comes out whole; a chain already found is never
+walked or scored again, whatever else reaches it. A chain carries a
+`Records(header, width)` on its region, scores on its characters discounted by
+how much of the span is not characters, and becomes a `Pascal` block over a
 range with that header.
 
-What the chains leave of a region comes out as terminated text, cut to the
-longest run of strings the table reads whole: the run begins at the first
-character after the last byte the table does not read (a string whose front
-the run-up ate is still a string) and ends at the last end token a run of
-characters reached. Those regions report their most frequent candidate
-terminator (the byte most often followed by a fresh text run) and their most
-frequent string-initial byte.
+What the chains leave of a span comes out as terminated text: every run of
+strings the table reads whole that covers `MIN_LENGTH` bytes and reaches the
+threshold, one whole string being run enough — an intro or an ending is exactly
+that. A string ends at an end token, or, under a table set that has none — one
+fresh from a relative search — at the candidate terminator below; a code is the
+text's own and cuts nothing, and anything else the table cannot read ends the
+run, which begins again at the next thing that is read. Those regions report
+their most frequent candidate terminator (the byte most often followed by a
+fresh text run) and their most frequent string-initial byte.
 
 ### 3.5 Pointer discovery
 
 `engines/pointers.py` takes string start offsets, a bank number and the
 candidate space (mappings × sizes × endianness × an offset range) and
 produces, for each candidate, the addresses where the encoded values occur, the
-value found at each and the bank it is read in. A mapping that `needs_bank`
-answers `bank_of(offset)`, and that — not the bank number passed in, which is
-only the fallback for a mapping that does not say — is the bank each string's
-value is computed in, so a banked table is found without the bank being known
-first and the strings of one block may sit in different banks. Candidates are
-ranked by `run_explained()` — the strings the table itself reaches, a far
-better signal than the raw count because a short value turns up all over a file
-— then by how many strings they explain at all and how regular the stride
-between their addresses is. Each carries both answers a result can be taken as:
-`source()` is the inferred `PointerTableSource` over `table_run()` — the
-longest run of hit addresses a whole number of strides apart, at most `RUN_GAP`
-of them, so stray matches elsewhere in the file stay out of the table — under
-the bank its run mostly reads in, a source carrying one; and `refs()` the
-`PointerRef`s per string that **Attach** puts on the strings instead, a string
-the run reaches keeping only its in-run addresses, since a packed write
-rewrites every attached pointer and a coincidence kept is a byte pair
-corrupted. A `progress` hook is called per combination and stops the walk when
-it returns `False`, so a stopped search still ranks what it had.
+value found at each and the bank it is read in. A mapping that `needs_bank` may
+answer `bank_of(offset)`, and that — not the bank number passed in, which is
+the block's own and only the fallback for a mapping that does not say — is the
+bank each string's value is computed in, so a banked table is found without the
+bank being known first and the strings of one block may sit in different banks.
+Without `bank_of` the fallback is a guess, so a value is taken as found rather
+than checked back against it; a mapping that raises loses its combination and
+no more. Candidates are ranked by `run_explained()` — the strings the table
+itself reaches, a far better signal than the raw count because a short value
+turns up all over a file — then by how many strings they explain at all and how
+regular the stride between their addresses is. The stride is voted on by the
+strings whose value is not found all over the file (`STRAY_HITS`), and each
+address counts once however many strings share it, so a stretch of fill decides
+neither the stride nor the run. Each candidate carries both answers a result
+can be taken as: `source()` is the inferred `PointerTableSource` over
+`table_run()` — of the runs of hit addresses a whole number of strides apart,
+at most `RUN_GAP` of them, the one reaching the most different strings, so
+stray matches elsewhere in the file stay out of the table — under the bank its
+run mostly reads in, counting only the pointers whose target moves with the
+bank and breaking a tie towards the bank the table itself sits in, a source
+carrying one; and `refs()` the `PointerRef`s per string that **Attach** puts on
+the strings instead, a string the run reaches keeping its addresses in any run
+that reads as a table (`TABLE_RUN`), so that a second copy of the table stays
+in step, and dropping the strays between them, since a packed write rewrites
+every attached pointer and a coincidence kept is a byte pair corrupted. One
+walk of a candidate's addresses works all of that out (`Reading`), the ranking
+and the results dialog reading it rather than repeating it. A `progress` hook
+is called per combination and stops the walk when it returns `False`, so a
+stopped search still ranks what it had.
 
 ### 3.6 Layout
 
@@ -450,10 +475,17 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   string a target reaches, by the same `decode_one` extraction uses. The cut is in step with the strings
   the block reads: a range's fixed length runs from its start, so a view that
   starts part-way through a string is handed the byte it begins at and shows
-  the rest of that one, then whole ones. Only a range of fixed strings has such
+  the rest of that one, then whole ones, and a range's record header is stepped
+  over in front of every string and shown as its bytes, so the grid is the
+  header and the length together. Only a range of fixed strings has such
   a grid — a Pascal count is read from the data, and a view that starts inside
   one of those cannot find it; a pointer source's strings are each at their own
-  target.
+  target. Padding between strings is passed over on `_extract_range`'s terms
+  (`padding_bits`, over a range of strings that are not all one length) and
+  shown as its bytes, at the view's own start too, since a window may begin on
+  a run the block never meets. Strings that end at an end token are cut this
+  way only where a record header stands in front of them, which alone costs the
+  Text tab's resumable token cache (`cuts_at_end_tokens`).
 - **Text view** (`pipeline/text_view.py`) turns those tokens into what the Text
   tab shows: a body, a map from characters to bytes (`TextModel`), and
   `TextDecode`, which keeps the tokens from one window to the next. A string's
@@ -464,15 +496,24 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   splice: encode each string's `replacement` (or reuse its bytes when it has
   none), lay the results out in *packed* or *slotted* mode, compute the new
   pointer values through the mappings, and refuse the whole block when any
-  string crosses its bound, reporting each offender. Its output is a list of
-  `(offset, bytes)` splices over the decompressed buffer plus the pointer
-  splices. A slotted string's slot (`slot_ends`) is its own bytes and the run
-  of whole fill patterns after them, up to the next string in address order,
-  the bound or the end of the buffer, whichever is first. A packed string has
-  no place of its own, so its room (`packed_ends`) is its own bytes plus its
-  group's **spare** — everything between what the group's strings hold and its
-  bound — which is in every string's room and in no two at once. The Bytes
-  column and the byte readout pass the bytes too (`string_ends`), so what they
+  string crosses its bound, reporting each offender. A block with no bound of
+  its own ends where its text does, plus the fill behind it (`block_bound`) —
+  which is the block's only where its table reads the fill as padding
+  (`fill_reads_as_padding`, which the reading spells in bits as
+  `padding_bits`), since fill the table maps is some block's text. A nested
+  block's group (`group_bounds`) asks no such question: the next inner table
+  or base its outer table names says the stretch in front of it is that
+  group's. Its output is a list of `(offset, bytes)` splices over the
+  decompressed buffer plus the pointer splices. A slotted string's slot
+  (`slot_ends`) is its own bytes and the run of fill after them (`fill_end`:
+  whole patterns and a last one cut short, as `fill_run` lays them), up to the
+  next string in address order — in front of that record's header, counted
+  back over the skip ranges the reading counted forward over — the bound or
+  the end of the buffer, whichever is first. A packed string has no place of
+  its own, so its room (`packed_ends`) is its own bytes plus its group's
+  **spare** — everything between what the group's strings hold and its bound —
+  which is in every string's room and in no two at once. The Bytes column and
+  the byte readout pass the bytes too (`string_ends`), so what they
   report is the room the layout will take; a caller with none to hand gets the
   bytes the string holds now, and the layout is the one that refuses.
   Nothing outside a slot is written, so a splice never touches bytes no string
@@ -480,8 +521,12 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   (`string_groups`): a nested block lays out only the groups holding a
   replacement, each up to its own bound (`group_bounds`). A packed layout
   writes a string that is the tail of the one before it once
-  (`_is_tail`). A fixed string that stops at an end token encodes its text,
-  then an end token where one fits (`_encode_stopping`).
+  (`_is_tail`), and rewrites every pointer its strings carry — a pointer
+  source's own and the ones **Attach** put on a range block's strings —
+  through the bank the source names or, where it names none, the one the
+  mapping reads the target in (`bank_of`); a value that does not read back as
+  its string refuses the write. A fixed string that stops at an end token
+  encodes its text, then an end token where one fits (`_encode_stopping`).
   The window runs it on every edit (`string_edit.py`): the splices land in the
   buffer every entry over those bytes reads, as one undo step, after a
   re-extraction has shown the block reads as the same strings with the edited
@@ -507,14 +552,17 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   what it had to assume — reported, never raised, since it is reached precisely
   when an entry did not come out as expected.
 - **Scanning** (`pipeline/scan.py`) walks forward for the next complete
-  structure a scheme can read (`find_next_structure`), with a progress/cancel
-  callback; `decompress_at` is one probe of it, and asks for a partial decode
+  structure the schemes it is given can read (`find_next_structure`), with a
+  progress/cancel callback; `decompress_at` is one probe of it, and asks for a partial decode
   when it is previewing. A scheme's `signature` says where a probe is worth
   making at all (`signature_of`): `scheme_at` is what arms the Decompressed view
-  as the view moves, and `find_structures` lists every structure in a buffer,
-  searching for the signature where there is one and walking byte by byte where
-  there is not. Each takes the schemes to consider, so the caller decides
-  whether that is one or all of them.
+  as the view moves, and both walks — `find_next_structure` forward from an
+  offset, `find_structures` over a whole buffer — ask the same `_candidate` for
+  the next offset worth a decode, searching for the signature where there is one
+  and walking byte by byte where there is not. Each takes the schemes to
+  consider, so the caller decides whether that is one or all of them; the
+  forward walk goes to whichever of them is nearest, so a mixed list still
+  reports the nearest structure.
 
 ## 5. The plugin system
 
@@ -525,7 +573,7 @@ celPix's system, with these stages:
 | Container    | `read(ReadSource, ctx)`         | `write(data, WriteTarget, ctx)` | `describe`, `default_mapping`, `header_size` |
 | Compression  | `decompress(data, ctx)`         | `compress`                | `bind_tree(rom)`, `signature`         |
 | Charset      | `entries() -> Iterable[(bits, text)]` | —                   | `aliases()`, `codec`                  |
-| Mapping      | `to_offset(value, bank, ptr_address)`, `to_value(offset, bank, ptr_address)` | — | `sizes`, `needs_bank` |
+| Mapping      | `to_offset(value, bank, ptr_address)`, `to_value(offset, bank, ptr_address)` | — | `sizes`, `needs_bank`, `bank_of(offset)` |
 
 - **Optional is optional.** Every hook in the last column is reached by
   `getattr` and probed: one that is absent and one that raises mean the same
@@ -783,8 +831,10 @@ Every string is written with its original (`o`) and the checksum of the bytes
 it was read from (`h`, a CRC-32 of the string's bits in eight hex digits), plus
 a status and notes where they are not the defaults; translations are not
 stored, being the ROM's bytes. *Edited* is the string's bytes no longer giving
-that checksum; an original saved without one goes by its text until its bytes
-say it again.
+that checksum and no longer saying its text either, so a re-encode that reaches
+the original text through other codes is untouched; an original saved without a
+checksum goes by its text until its bytes say it again, and one whose `h` a
+build cannot read is read as having none.
 A block that was loaded but never opened keeps its own in
 `Entry.pending_strings` until an extraction adopts them — so a save writes back
 the state of every block, not only the ones that were looked at. A translation

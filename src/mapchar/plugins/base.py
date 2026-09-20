@@ -254,8 +254,12 @@ class Mapping(Protocol):
     #     width the block does.
     # needs_bank: bool
     #     Whether a short pointer needs a bank supplied alongside it. Absent is
-    #     read as True by the reading bar, which is the safe way round: the
-    #     field is offered rather than hidden from a mapping that needs it.
+    #     True, which is the safe way round: the field is offered rather than
+    #     hidden from a mapping that needs it.
+    # bank_of: Callable[[int], int]
+    #     Which bank an offset is reached in, for a mapping that needs one.
+    #     Absent, pointer discovery has only the bank it was given, so it takes
+    #     a value it finds rather than checking it back against that guess.
 
 
 REQUIRED_METHODS: dict[Stage, tuple[str, ...]] = {

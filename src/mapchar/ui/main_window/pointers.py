@@ -74,6 +74,10 @@ class PointerDiscoveryMixin:
                     starts,
                     mappings,
                     offsets=setup.offsets(),
+                    # The block's own bank, for a mapping that needs one and
+                    # cannot work out an offset's for itself: the block is
+                    # already read in it, so it is the better guess than zero.
+                    bank=getattr(entry.config.source, "bank", 0),
                     progress=run.progress,
                 )
             finally:

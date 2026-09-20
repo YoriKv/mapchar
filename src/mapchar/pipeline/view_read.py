@@ -32,6 +32,7 @@ from mapchar.engines.decode import DecodeRules, RunResult, decode_run
 from mapchar.pipeline.extract import (
     decode_one,
     nested_records,
+    padding_bits,
     pointer_addresses,
     pointer_target,
     string_at,
@@ -47,7 +48,17 @@ def decode_strings(
 
     ``offset`` is the byte ``data`` begins at, which a fixed length cuts in
     step with (:func:`_head`): without it a view moved by a line lands inside a
-    string and reads every string after it out of step.
+    string and reads every string after it out of step. A record header is
+    stepped over before each string, as the block steps over it, and its bytes
+    are shown as the bytes they are.
+
+    So is the padding a string written shorter than its slot left behind it
+    (:func:`~mapchar.pipeline.extract.padding_bits`), which stands in front of
+    the next record's header: read as text — an ``FF`` read as a length of 255
+    — it would put every string after it on the wrong byte. The block passes
+    none in front of its first string, having none before it; a view past the
+    range's start may begin on a run instead, and passes that one too, which is
+    what puts its first string where the block's is.
     """
     bits = Bits(data)
     cut = _view_cut(config)
@@ -59,38 +70,87 @@ def decode_strings(
             runs=None,
             ends_only=False,
         )
-    head = _head(cut, offset)
+    pad = _view_padding(cut, tables)
+    header, head = _head(cut, offset)
     tokens: list[Token] = []
     starts: list[int] = []
     pos = 0
     while pos < bits.length:
-        one = cut if pos or head is None else replace(cut, string_type=head)
+        if pad is not None and pos % 8 == 0 and (starts or offset > cut.source.start):
+            run = _pad_run(bits, pos, pad)
+            tokens += _raw_tokens(bits, pos, run)
+            pos += run
+            if pos >= bits.length:
+                break
+        if header:
+            tokens += _raw_tokens(bits, pos, header)
+            pos = min(pos + header, bits.length)
+            if pos >= bits.length:
+                break
+        one = cut if head is None else replace(cut, string_type=head)
         found, end, _ = decode_one(bits, one, tables, pos, bits.length)
         starts.append(pos)
         tokens.extend(found)
         if end <= pos:
             break
         pos = end
+        header, head = cut.record_header * 8, None
     return RunResult(tokens, pos, starts)
 
 
-def _head(cut: BlockConfig, offset: int) -> FixedLength | None:
-    """The first string's length where a view from ``offset`` starts inside
-    one, so the strings after it start where the block's do; ``None`` where it
-    starts on one already.
+def _raw_tokens(bits: Bits, pos: int, count: int) -> list[Token]:
+    """``count`` bits from ``pos``, a byte to a token: a record header or the
+    padding behind a string is no string's text, and the view shows it as
+    ``[$xx]``."""
+    end = min(pos + count, bits.length)
+    tokens: list[Token] = []
+    for at in range(pos, end, 8):
+        chunk = bits.window(at, min(8, end - at))
+        tokens.append(Token(chunk, at, at + len(chunk)))
+    return tokens
 
-    Only a range of fixed strings has a grid to be in step with: a Pascal count
-    is read from the data, and a view that starts inside one of those cannot
-    find the count that says how long it is; a pointer source's strings are
-    each at their own target, which no phase gives.
+
+def _view_padding(cut: BlockConfig, tables: TableSet) -> str | None:
+    """The fill pattern a view passes over between strings, or ``None`` where
+    none is padding — on the same terms as
+    :func:`~mapchar.pipeline.extract._extract_range`: over a range, where the
+    strings are not all of one length, and where the fill begins no token."""
+    if not isinstance(cut.source, RangeSource) or cut.fixed_length is not None:
+        return None
+    return padding_bits(cut, tables)
+
+
+def _pad_run(bits: Bits, pos: int, pad: str) -> int:
+    """The bits of whole fill patterns from ``pos``."""
+    width = len(pad)
+    end = pos
+    while end + width <= bits.length and bits.window(end, width) == pad:
+        end += width
+    return end - pos
+
+
+def _head(cut: BlockConfig, offset: int) -> tuple[int, FixedLength | None]:
+    """Where a view from ``offset`` starts within a record: the header bits
+    still in front of its first string, and that string's length where the view
+    starts inside one — ``None`` where it starts on one already.
+
+    Only a range of fixed strings has a grid to be in step with, the header and
+    the length together: a Pascal count is read from the data, and a view that
+    starts inside one of those cannot find the count that says how long it is;
+    a pointer source's strings are each at their own target, which no phase
+    gives — and no header either.
     """
+    header = cut.record_header
     string_type = cut.string_type
     if not isinstance(string_type, FixedLength) or string_type.length <= 0:
-        return None
+        return header * 8, None
     if not isinstance(cut.source, RangeSource):
-        return None
-    phase = (offset - cut.source.start) % string_type.length
-    return replace(string_type, length=string_type.length - phase) if phase else None
+        return header * 8, None
+    phase = (offset - cut.source.start) % (header + string_type.length)
+    if phase < header:
+        return (header - phase) * 8, None
+    phase -= header
+    return 0, replace(string_type, length=string_type.length - phase) if phase else None
 
 
 def cuts_at_end_tokens(config: BlockConfig | None) -> bool:
@@ -142,17 +202,27 @@ def align_before(
 
 
 def _view_cut(config: BlockConfig | None) -> BlockConfig | None:
-    """The reading a view cuts by, or ``None`` for plain end tokens."""
+    """The reading a view cuts by, or ``None`` for plain end tokens.
+
+    The header is kept, since it stands between the strings; a header behind
+    the position, which no control sets, is none, so the view always advances.
+
+    A string that ends at an end token needs no cut of its own, the view
+    reading to end tokens as the block does — unless a record header stands in
+    front of each of them, which only a cut steps over: read as text, its bytes
+    show as whatever the table maps them to and take the string's start with
+    them.
+    """
     if config is None:
         return None
     string_type = config.string_type
-    if not isinstance(string_type, FixedLength | Pascal):
+    if not isinstance(string_type, FixedLength | Pascal) and not config.record_header:
         return None
     return replace(
         config,
         string_type=string_type,
         skips=(),
-        header=0,
+        header=max(config.record_header, 0),
         realign=(0, 0),
         line_length=0,
         show_end=False,

@@ -202,6 +202,7 @@ def test_config_lines_that_drop_the_block(project, doc, files):
         "E607": config(type="fixed"),
         "E608": config(mode="packd"),
         "E609": config(fill="$"),
+        "E626": RECORDS + " header=-1",
     }
     for code, line in cases.items():
         assert code in project(doc(block={"config": line}), files), code
@@ -228,6 +229,14 @@ def test_config_words_that_are_ignored_or_misread(project, doc, files):
     assert "W612" in project(doc(block={"config": config() + " size=3"}), files)
     range_next = "source=range start=$100 stop=$120 type=next table=main"
     assert "W625" in project(doc(block={"config": range_next}), files)
+    # A header is a range's; on any other source it is ignored and dropped.
+    assert "W611" in project(doc(block={"config": config(header="2")}), files)
+    assert "E626" in project(doc(block={"config": RECORDS + " header=300"}), files)
+    # Skip ranges and a header both make the text non-contiguous, so the
+    # block is written slotted whatever mode= says.
+    headed = "source=range start=$8533 stop=$857B type=pascal:1 table=main header=2"
+    for line in (RECORDS + " mode=packed", headed + " mode=packed"):
+        assert "W627" in project(doc(block={"config": line}), files), line
 
 
 def test_config_lines_the_samples_use_are_clean(project, doc, files):

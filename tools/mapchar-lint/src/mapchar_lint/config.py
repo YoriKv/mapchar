@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from mapchar_lint.schema import (
     CONFIG_KEYS,
     ENDIANS,
+    MAX_HEADER,
     REQUIRED_SOURCE_KEYS,
     SOURCE_KEYS,
     SOURCES,
@@ -174,9 +175,12 @@ def _numbers(out: ConfigReading, fields: dict, source: str) -> None:
     ):
         if key in fields and (key in taken or key in ("spp", "lines", "header")):
             try:
-                int(fields[key])
+                number = int(fields[key])
             except ValueError:
                 out.drop("E606", f"{key}={fields[key]} is not a decimal number")
+                continue
+            if key == "header" and not 0 <= number <= MAX_HEADER:
+                out.drop("E626", f"header={number} is not 0 to {MAX_HEADER}")
     if source == "list":
         for item in fields["addresses"].split(","):
             if not item:
@@ -250,6 +254,20 @@ def _writing(out: ConfigReading, fields: dict) -> None:
     mode = fields.get("mode")
     if mode is not None and mode not in WRITE_MODES:
         out.drop("E608", f"mode={mode} is not a write mode ({', '.join(WRITE_MODES)})")
+    if mode == "packed":
+        breaks = []
+        if fields.get("skips"):
+            breaks.append("skip ranges")
+        if out.source == "range" and int(fields.get("header", "0")):
+            breaks.append("a record header")
+        if breaks:
+            out.add(
+                "W627",
+                "warning",
+                f"mode=packed on a block with {' and '.join(breaks)}",
+                "The block is written slotted: packing would lay the strings "
+                "over the bytes they step around.",
+            )
     fill = fields.get("fill")
     if fill is not None:
         text = fill.strip()

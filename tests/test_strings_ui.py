@@ -596,14 +596,25 @@ def _click(widget, point):
 
 
 def _shift_click(widget, point):
-    from PySide6.QtCore import Qt
-    from PySide6.QtTest import QTest
+    """A press with Shift held, sent to the widget itself.
 
-    QTest.mouseClick(
-        widget.viewport(),
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.ShiftModifier,
-        point.toPoint(),
+    Not ``QTest.mouseClick``: the modifiers it is given stay in the
+    application's keyboard state, and the next test to read them gets a Shift
+    nobody is holding.
+    """
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    local = QPointF(point)
+    widget.mousePressEvent(
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            local,
+            QPointF(widget.viewport().mapToGlobal(point.toPoint())),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.ShiftModifier,
+        )
     )
 
 
@@ -683,6 +694,52 @@ def test_a_selection_set_from_outside_is_whole_bytes(qtbot):
     _click(widget, widget._text_segments(tokens[1], 3)[0].center())
     widget.set_selection(0, 2)
     assert widget.selection_bits() is None
+
+
+def _hex_click(widget, rel, shift=False):
+    from PySide6.QtCore import QRectF
+
+    point = QRectF(widget._hex_cell(rel)).center()
+    (_shift_click if shift else _click)(widget, point)
+
+
+def test_a_selection_set_from_outside_is_what_a_shift_click_reaches_from(qtbot):
+    """A search hit, Go to String or a selection made in the Text tab moves the
+    anchor to where it starts, so the next Shift+click takes that selection out
+    rather than one the last click left somewhere else."""
+    widget = _raw_widget(qtbot, [], bytes(32))
+    _hex_click(widget, 1)
+    widget.set_selection(10, 12)
+    _hex_click(widget, 20, shift=True)
+    assert widget.selection() == (10, 21)
+
+
+def test_a_selection_cleared_from_outside_leaves_nothing_to_reach_from(qtbot):
+    widget = _raw_widget(qtbot, [], bytes(32))
+    _hex_click(widget, 1)
+    widget.set_selection(0, 0)
+    _hex_click(widget, 5, shift=True)
+    assert widget.selection() == (5, 6)
+
+
+def test_the_anchor_is_dropped_when_the_bytes_under_it_change(qtbot):
+    """What the view shows can change under the anchor — another entry, other
+    bounds, another payload — and then there is nowhere to reach from."""
+    widget = _raw_widget(qtbot, [], bytes(32))
+    _hex_click(widget, 1)
+    widget.clear_anchor()
+    _hex_click(widget, 5, shift=True)
+    assert widget.selection() == (5, 6)
+
+
+def test_a_shift_click_reaches_no_further_than_the_view(qtbot):
+    from mapchar.ui.raw_widget import RowModel
+
+    widget = _raw_widget(qtbot, [], bytes(32))
+    widget.set_model(RowModel(0, bytes(32), [], set(), 32, bounds=(0, 8)))
+    _hex_click(widget, 1)
+    _hex_click(widget, 20, shift=True)
+    assert widget.selection() == (1, 8)
 
 
 def _move_event(viewport, point):

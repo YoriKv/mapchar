@@ -108,9 +108,14 @@ SOURCES = ("range", "pointers", "list", "nested")
 STRING_TYPES = ("end", "fixed", "pascal", "next", "lines")
 WRITE_MODES = ("packed", "slotted")
 ENDIANS = ("little", "big")
+#: The largest record header ``parse_config`` reads, as the Header control sets
+#: it (``mapchar.core.block.MAX_RECORD_HEADER``).
+MAX_HEADER = 255
 #: The words each source reads. Anything else a source is handed is ignored.
 SOURCE_KEYS = {
-    "range": ("start", "stop"),
+    # `header` is a range's record header: a pointer reaches its string past
+    # any header, so no other source reads one.
+    "range": ("start", "stop", "header"),
     "pointers": (
         "start",
         "stop",
@@ -152,7 +157,6 @@ STRING_KEYS_CONFIG = (
     "spp",
     "realign",
     "skips",
-    "header",
     "lines",
     "bound",
     "mode",

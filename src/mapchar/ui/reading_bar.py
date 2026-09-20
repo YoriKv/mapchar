@@ -132,6 +132,16 @@ _TAILS = frozenset(
 )
 """The controls shown only where they apply; every other one is greyed."""
 
+_MODE_TIP = "How a write lays the strings out"
+_MODE_FORCED = (
+    "How a write lays the strings out; skip ranges and a record header break "
+    "the text up, so the block is written slotted"
+)
+_PACKED_TIP = "Strings laid end to end, every pointer rewritten"
+_PACKED_FORCED = "Unavailable: a write cannot lay end to end what it has to step around"
+"""What the Write picker says of itself, with and without something forcing
+slotted."""
+
 _WHERE = frozenset(
     {
         "source_kind",
@@ -290,11 +300,7 @@ class ReadingBar(WrapBar):
         self.write_mode = QComboBox()
         for label, mode, tip in (
             ("Automatic", None, "Packed with pointers, slotted without"),
-            (
-                "Packed",
-                WriteMode.PACKED,
-                "Strings laid end to end, every pointer rewritten",
-            ),
+            ("Packed", WriteMode.PACKED, _PACKED_TIP),
             ("Slotted", WriteMode.SLOTTED, "Every string stays in its own place"),
         ):
             self.write_mode.addItem(label, mode)
@@ -311,7 +317,7 @@ class ReadingBar(WrapBar):
         ):
             self.spare_room.setItemData(at, tip, Qt.ItemDataRole.ToolTipRole)
 
-        self.write_mode.setToolTip("How a write lays the strings out")
+        self.write_mode.setToolTip(_MODE_TIP)
         self.fill.setToolTip(
             "The bytes that pad unused room, in hex: FFFF pads with a word"
         )
@@ -625,13 +631,23 @@ class ReadingBar(WrapBar):
             self._loading = False
         self._sync()
 
+    def _header(self) -> int:
+        """The bytes in front of every string that are not text; only a range
+        has them."""
+        return self.header.value() if self.source_kind.currentData() == RANGE else 0
+
     def _show_count(self) -> None:
-        """Say how many fixed-length strings the range holds."""
+        """Say how many fixed-length strings the range holds.
+
+        As many as the reading extracts: a string takes its header and its
+        length, and one is read wherever its header still begins inside the
+        range, so a last string Stop cuts short is counted too.
+        """
         start, stop = self.start.value(), self.stop.value()
-        length = self.fixed_length.value()
+        length, header = self.fixed_length.value(), self._header()
         if start is None or stop is None or length < 1:
             return
-        self.count.setValue(max((stop - start) // length, 1))
+        self.count.setValue(max(-(-(stop - start - header) // (length + header)), 1))
 
     def _on_count(self) -> None:
         """A count typed in moves Stop to hold that many strings."""
@@ -639,7 +655,8 @@ class ReadingBar(WrapBar):
             return
         start = self.start.value()
         if start is not None:
-            self.stop.set_value(start + self.count.value() * self.fixed_length.value())
+            record = self.fixed_length.value() + self._header()
+            self.stop.set_value(start + self.count.value() * record)
         self._edited("count")
 
     def show_default(self) -> None:
@@ -677,7 +694,7 @@ class ReadingBar(WrapBar):
     def _edited(self, name: str) -> None:
         if self._loading:
             return
-        if name in ("start", "stop", "fixed_length"):
+        if name in ("start", "stop", "fixed_length", "header"):
             self._loading = True
             try:
                 self._show_count()
@@ -730,12 +747,30 @@ class ReadingBar(WrapBar):
                 group.setVisible(applying or (name == "spp" and st == NEXT))
             group.setEnabled(applying and not (self._string_view and name in _WHERE))
         self.pascal_endian.setVisible(self.pascal_width.value() > 1)
-        auto = default_write_mode(
-            self._pointers,
-            bool(self.skips.value()) or (kind == RANGE and bool(self.header.value())),
+        forced = bool(self.skips.value()) or (
+            kind == RANGE and bool(self.header.value())
         )
+        auto = default_write_mode(self._pointers, forced)
         self.write_mode.setItemText(0, f"Automatic ({auto.value})")
+        self._show_packed(forced)
         self._show_writing()
+
+    def _show_packed(self, forced: bool) -> None:
+        """Offer Packed, or, where skip ranges or a record header force slotted,
+        grey it and say what a block holding it is written as instead.
+
+        The block keeps the mode it holds, so taking the skips or the header
+        away writes it packed again.
+        """
+        at = self.write_mode.findData(WriteMode.PACKED)
+        self.write_mode.setItemText(at, "Packed (slotted)" if forced else "Packed")
+        self.write_mode.model().item(at).setEnabled(not forced)
+        self.write_mode.setItemData(
+            at,
+            _PACKED_FORCED if forced else _PACKED_TIP,
+            Qt.ItemDataRole.ToolTipRole,
+        )
+        self.write_mode.setToolTip(_MODE_FORCED if forced else _MODE_TIP)
 
     def _show_writing(self) -> None:
         """The write settings on one line: the mode, where the room ends, the

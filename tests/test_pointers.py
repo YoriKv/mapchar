@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from helpers import ABC_TABLE, pointer_rom, relayout, table_set, texts
 from mapchar.core.block import (
     BlockConfig,
@@ -181,6 +183,184 @@ def test_discovery_ranks_a_table_above_a_candidate_of_strays(registry):
     assert best.source() == PointerTableSource(0, 6, 2, 2, "little", "linear", 0)
 
 
+def test_discovery_keeps_a_field_of_fill_out_of_the_stride_and_the_run(registry):
+    """One string whose value is a common byte pair hits every other address of
+    a stretch of fill. Neither the stride nor the run is its to decide: the
+    stride is voted on by the strings that are not everywhere, and the run that
+    wins is the one reaching the most strings, not the one holding the most
+    addresses."""
+    rom = bytearray(b"\xff" * 0x107 + bytes(0x14000))
+    rom[0:6] = bytes.fromhex("00 00 03 00 05 00")  # the table, based at $100
+    rom[0x100:0x107] = bytes.fromhex("41 42 00 43 00 41 00")
+    mappings = {"linear": resolve_mapping(registry, "linear")}
+    starts = [0x100, 0x103, 0x105]
+    best = discover(bytes(rom), starts, mappings, sizes=(2,), offsets=(0x100,))[0]
+    assert len(best.hits[0x100]) > 0x10000  # the fill, plus the table's own
+    assert best.stride == 2
+    assert best.table_run() == [0, 2, 4]
+    assert best.run_explained() == 3
+    assert best.source() == PointerTableSource(0, 6, 2, 2, "little", "linear", 0x100, 0)
+
+
+def test_discovery_over_a_file_of_fill_is_quick(registry):
+    """A million hits is a million addresses to sort, join into runs and hand
+    to the dialog three times over: worked out once per candidate, not once per
+    question asked of it."""
+    rom = bytearray(b"\xff" * 0x107 + bytes((1 << 20) - 0x107))
+    rom[0:6] = bytes.fromhex("00 00 03 00 05 00")
+    rom[0x100:0x107] = bytes.fromhex("41 42 00 43 00 41 00")
+    mappings = {"linear": resolve_mapping(registry, "linear")}
+    starts = [0x100, 0x103, 0x105]
+    began = time.perf_counter()
+    cands = discover(bytes(rom), starts, mappings, sizes=(2,), offsets=(0x100,))
+    best = cands[0]
+    rows = [(c.bank(), c.table_run(), c.explained) for c in cands]
+    assert time.perf_counter() - began < 5
+    assert rows[0][1] == [0, 2, 4]
+    assert best.source() == PointerTableSource(0, 6, 2, 2, "little", "linear", 0x100, 0)
+
+
+BANK_ORDER = [0, 2, 1, 3, 6, 7, 4, 5]
+"""The bank table the example mapping is built around: bank numbers in the
+mapper's own order rather than the file's."""
+
+
+class TableBanked:
+    """The shipped example mapping: banked through a bank table, and with no
+    ``bank_of`` to say which bank an offset is reached in."""
+
+    sizes = (2, 3)
+    needs_bank = True
+
+    def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
+        address = value & 0xFFFF
+        if value > 0xFFFF:
+            bank = value >> 16
+        if not 0x8000 <= address < 0xC000 or bank >= len(BANK_ORDER):
+            return None
+        return BANK_ORDER[bank] * 0x4000 + (address - 0x8000)
+
+    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
+        return 0x8000 + (offset % 0x4000)
+
+
+class BrokenMapping:
+    """A mapping that raises, which a plugin is always free to do."""
+
+    sizes = (2,)
+    needs_bank = True
+
+    def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
+        raise RuntimeError("no")
+
+    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
+        raise RuntimeError("no")
+
+
+def test_discovery_finds_a_banked_table_a_mapping_cannot_place(registry):
+    """A mapping that needs a bank but cannot say which one an offset sits in
+    leaves the search with the bank it was given, which is a guess — so the
+    guess does not get to veto a pointer that was found."""
+    rom = bytearray(b"\xff" * 0x8020)
+    rom[0x100:0x104] = bytes.fromhex("10 80 13 80")
+    rom[0x8010:0x8015] = bytes.fromhex("41 42 00 43 00")
+    mappings = {"my_table_banked": TableBanked()}
+    best = discover(bytes(rom), [0x8010, 0x8013], mappings, sizes=(2,), offsets=(0,))[0]
+    assert best.explained == 2
+    assert best.table_run() == [0x100, 0x102]
+    assert best.banks == {0x8010: 0, 0x8013: 0}
+
+
+def test_a_mapping_that_raises_loses_only_its_own_combination(registry):
+    mappings = {
+        "broken": BrokenMapping(),
+        "linear": resolve_mapping(registry, "linear"),
+    }
+    cands = discover(ROM, [0x10, 0x13], mappings, sizes=(2,), offsets=(0,))
+    assert cands and all(c.mapping_id == "linear" for c in cands)
+
+
+def test_discovery_takes_the_table_s_bank_from_the_pointers_that_need_one(registry):
+    """A pointer into the Game Boy's fixed bank reads the same in every bank,
+    so it says nothing about which one the table is read in: the bank is voted
+    on by the pointers whose target moves with it."""
+    rom = bytearray(b"\xff" * 0x8020)
+    rom[0:6] = bytes.fromhex("00 01 50 01 10 40")  # $0100 $0150 $4010
+    rom[0x100:0x102] = bytes.fromhex("41 00")
+    rom[0x150:0x152] = bytes.fromhex("42 00")
+    rom[0x8010:0x8012] = bytes.fromhex("43 00")
+    mappings = {"gb": resolve_mapping(registry, "gb")}
+    starts = [0x100, 0x150, 0x8010]
+    best = discover(bytes(rom), starts, mappings, sizes=(2,), offsets=(0,))[0]
+    assert best.banks == {0x100: 0, 0x150: 0, 0x8010: 2}
+    assert best.bank() == 2
+    src = best.source()
+    assert src == PointerTableSource(0, 6, 2, 2, "little", "gb", 0, 2)
+    assert texts(
+        extract(bytes(rom), BlockConfig(src, EndToken(), "main"), TS, registry)
+    ) == [
+        "A[end]",
+        "B[end]",
+        "C[end]",
+    ]
+
+
+def test_discovery_keeps_a_second_table_s_pointers_and_drops_the_strays(registry):
+    """A file may hold the same table twice, and a packed write that rewrites
+    one and not the other leaves the second stale: a string keeps its hits
+    inside any run that reads as a table, and loses only the value that turns
+    up alone."""
+    rom = bytearray(b"\xff" * 0x100)
+    rom[0:6] = bytes.fromhex("10 00 13 00 15 00")
+    rom[0x40:0x46] = bytes.fromhex("10 00 13 00 15 00")
+    rom[0x80:0x82] = bytes.fromhex("13 00")  # the same value, alone, in code
+    rom[0x10:0x17] = bytes.fromhex("41 42 00 43 00 41 00")
+    mappings = {"linear": resolve_mapping(registry, "linear")}
+    starts = [0x10, 0x13, 0x15]
+    best = discover(bytes(rom), starts, mappings, sizes=(2,), offsets=(0,))[0]
+    assert best.table_run() == [0, 2, 4]
+    refs = best.refs()
+    assert [p.address for p in refs[0x10]] == [0, 0x40]
+    assert [p.address for p in refs[0x13]] == [2, 0x42]
+    assert [p.address for p in refs[0x15]] == [4, 0x44]
+
+
+def test_discovery_keeps_every_hit_of_a_string_the_run_does_not_reach(registry):
+    """Pointers scattered rather than tabulated are what **Attach** is for."""
+    rom = bytearray(b"\xff" * 0x100)
+    rom[0:6] = bytes.fromhex("10 00 13 00 15 00")
+    rom[0x10:0x19] = bytes.fromhex("41 42 00 43 00 41 00 42 00")
+    rom[0x80:0x82] = bytes.fromhex("17 00")
+    rom[0x90:0x92] = bytes.fromhex("17 00")
+    mappings = {"linear": resolve_mapping(registry, "linear")}
+    starts = [0x10, 0x13, 0x15, 0x17]
+    best = discover(bytes(rom), starts, mappings, sizes=(2,), offsets=(0,))[0]
+    assert best.table_run() == [0, 2, 4]
+    assert [p.address for p in best.refs()[0x17]] == [0x80, 0x90]
+
+
+def test_discovery_gives_a_shared_address_to_the_string_in_the_table_s_bank(registry):
+    """Two strings at the same address in different banks are reached by the
+    same pointer value, so they share every address it is found at. The table
+    is read in one bank — its own — and the addresses are that bank's."""
+    rom = bytearray(b"\xff" * 0x18000)
+    rom[0x8010:0x8015] = bytes.fromhex("41 42 00 43 00")
+    rom[0x10010:0x10015] = bytes.fromhex("41 42 00 43 00")
+    rom[0x10100:0x10104] = bytes.fromhex("10 80 13 80")
+    mappings = {"lorom": resolve_mapping(registry, "lorom")}
+    starts = [0x8010, 0x8013, 0x10010, 0x10013]
+    best = discover(bytes(rom), starts, mappings, sizes=(2,), offsets=(0,))[0]
+    assert best.addresses == [0x10100, 0x10102]
+    assert best.stride == 2
+    assert best.bank() == 2
+    assert sorted(best.refs()) == [0x10010, 0x10013]
+    src = best.source()
+    assert src == PointerTableSource(0x10100, 0x10104, 2, 2, "little", "lorom", 0, 2)
+    ex = extract(bytes(rom), BlockConfig(src, EndToken(), "main"), TS, registry)
+    assert texts(ex) == ["AB[end]", "C[end]"]
+    assert [s.start for s in ex.strings] == [0x10010, 0x10013]
+
+
 def test_range_source_still_slotted():
     cfg = BlockConfig(RangeSource(0x10, 0x19), EndToken(), "main")
     assert cfg.effective_write_mode is WriteMode.SLOTTED
@@ -289,7 +469,7 @@ def test_a_nested_edit_lays_out_only_its_own_group(registry):
 def test_a_nested_block_in_slotted_mode_keeps_every_string_in_place(registry):
     cfg = BlockConfig(NESTED, EndToken(), "main", write_mode=WriteMode.SLOTTED)
     ex = extract(NESTED_ROM, cfg, TS, registry)
-    ends = string_ends(NESTED_ROM, cfg, ex.strings, registry)
+    ends = string_ends(NESTED_ROM, cfg, ex.strings, registry, TS)
     assert ends == {0: 0x18, 1: 0x20, 2: 0x2C}
     res, out = relayout(NESTED_ROM, cfg, TS, {1: "CCCCC[end]"}, registry)
     assert res.ok and out[0x18:0x20] == bytes.fromhex("43 43 43 43 43 00 FF FF")
@@ -298,7 +478,7 @@ def test_a_nested_block_in_slotted_mode_keeps_every_string_in_place(registry):
     # two strings hold five bytes of the eleven up to $20, so each may grow by
     # six — and only one of them may, the spare being the same six bytes.
     packed = BlockConfig(NESTED, EndToken(), "main")
-    assert string_ends(NESTED_ROM, packed, ex.strings, registry) == {
+    assert string_ends(NESTED_ROM, packed, ex.strings, registry, TS) == {
         0: 0x1E,
         1: 0x20,
         2: 0x2C,
@@ -421,7 +601,7 @@ def test_a_packed_write_keeps_a_banked_short_pointer_short(registry):
     """A 16-bit Game Boy pointer holds the address and the block the bank: a
     write rewrites the address, and refuses a string moved out of that bank."""
     body = bytes.fromhex("41 42 43 00 43 00")
-    rom = bytearray(b"\\xff" * 0x8020)
+    rom = bytearray(b"\xff" * 0x8020)
     rom[0x8000:0x8004] = bytes.fromhex("10 40 14 40")
     rom[0x8010 : 0x8010 + len(body)] = body
     rom[0x8016] = 0x01
@@ -435,3 +615,36 @@ def test_a_packed_write_keeps_a_banked_short_pointer_short(registry):
     assert res.ok, res.problems
     assert out[0x8000:0x8004] == bytes.fromhex("10 40 12 40")
     assert texts(extract(out, cfg, TS, registry)) == ["A[end]", "C[end]"]
+
+
+FILL_IS_TEXT = table_set("@table main\n41=A\n42=B\n43=C\nFF=D\n/00=[end]\n", "main")
+"""The abc table with the fill byte mapped: ``FF`` reads as a letter here."""
+
+
+def test_a_nested_group_takes_its_fill_back_whatever_the_table_maps(registry):
+    """What bounds a group is its outer table, not its reading of the fill.
+
+    A block's own bound stops where the fill reads as text, since what lies
+    past its last string is anyone's; a group's stops at the next inner table
+    or base the outer table names, which says the stretch in front of it is
+    this group's — so the room a shortening gave up is the group's to take
+    back even in a script whose codes begin with the fill byte.
+    """
+    cfg = BlockConfig(NESTED, EndToken(), "main")
+    ex = extract(NESTED_ROM, cfg, FILL_IS_TEXT, registry)
+    assert texts(ex) == ["AB[end]", "C[end]", "A[end]"]
+    for tables in (FILL_IS_TEXT, TS):
+        assert string_ends(NESTED_ROM, cfg, ex.strings, registry, tables) == {
+            0: 0x1E,
+            1: 0x20,
+            2: 0x2C,
+        }
+    res, out = relayout(NESTED_ROM, cfg, FILL_IS_TEXT, {0: "[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0x14:0x20] == bytes.fromhex("FF 00 43 00 FF FF FF FF FF FF FF FF")
+    res, back = relayout(out, cfg, FILL_IS_TEXT, {0: "AB[end]"}, registry)
+    assert res.ok, res.problems
+    assert back == NESTED_ROM
+    # And no further: the next map's table is not the group's to write over.
+    res, _ = relayout(NESTED_ROM, cfg, FILL_IS_TEXT, {1: "CCCCCCCCC[end]"}, registry)
+    assert not res.ok and "bound" in res.problems[0].message

@@ -4,11 +4,15 @@ Text tab puts between strings the tokens do not end themselves."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from helpers import ABC_TABLE, table_set
 from mapchar.core.bits import Bits
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
     FixedLength,
+    Pascal,
     PointerListSource,
     PointerTableSource,
     RangeSource,
@@ -16,9 +20,11 @@ from mapchar.core.block import (
 )
 from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.tokens import render
+from mapchar.pipeline.extract import extract
 from mapchar.pipeline.text_view import TextDecode, text_model
 from mapchar.pipeline.view_read import (
     align_before,
+    cuts_at_end_tokens,
     decode_strings,
     pointer_cells,
     target_string,
@@ -71,6 +77,88 @@ def test_a_view_cuts_fixed_strings_in_step_with_the_block():
     run = decode_strings(data[1:], fixed, _ascii(), 1)
     assert run.starts == [0, 8, 24]
     assert render(run.tokens) == "BCDEF"
+
+
+def test_a_view_steps_over_a_record_header_as_the_block_does():
+    """The header bytes are no string's: the view passes over them and shows
+    them as the bytes they are, so its strings start where the block's do."""
+    abc = table_set(ABC_TABLE, "main")
+    data = bytes.fromhex("05 CB 02 41 42  06 CB 01 42  07 CB 02 42 41")
+    pascal = BlockConfig(RangeSource(0, len(data)), Pascal(1), "main", header=2)
+    run = decode_strings(data, pascal, abc)
+    assert render(run.tokens) == "[$05][$CB]AB[$06][$CB]B[$07][$CB]BA"
+    assert run.starts == [16, 56, 88]
+    # A pointer reaches its string past any header, so none is stepped over.
+    table = BlockConfig(PointerTableSource(0, 4, 2, 2), Pascal(1), "main", header=2)
+    # The 05 is the first string's count, not a header byte.
+    assert render(decode_strings(data, table, abc).tokens).startswith("[$CB][$02]AB")
+
+
+def test_a_view_passes_over_the_padding_between_strings_as_the_block_does():
+    """A string written shorter than its slot leaves the fill behind it, which
+    the block passes over: a view that read it as text — an FF read as a length
+    of 255 — would be out of step for the rest of its window."""
+    abc = table_set(ABC_TABLE, "main")
+    # "AB" written into a five-byte slot, then "B", then "BA".
+    data = bytes.fromhex("02 41 42 FF FF  01 42  02 42 41")
+    pascal = BlockConfig(RangeSource(0, len(data)), Pascal(1), "main")
+    block = extract(data, pascal, abc)
+    run = decode_strings(data, pascal, abc)
+    assert [s.start for s in block.strings] == [0, 5, 7]
+    assert run.starts == [s.start_bit for s in block.strings]
+    assert render(run.tokens) == "AB[$FF][$FF]BBA"
+    # A window may begin on the padding, which the block never does: it is
+    # passed over there too, so the window's first string is the block's.
+    run = decode_strings(data[4:], pascal, abc, 4)
+    assert run.starts == [8, 24] and render(run.tokens) == "[$FF]BBA"
+
+
+def test_a_view_passes_over_the_padding_in_front_of_a_record_header():
+    """The padding comes before the next record's header, as it does in the
+    block: the header is the string's, the padding the slot's."""
+    abc = table_set(ABC_TABLE, "main")
+    data = bytes.fromhex("05 CB 02 41 42  FF FF  06 CB 01 42  07 CB 02 42 41")
+    pascal = BlockConfig(RangeSource(0, len(data)), Pascal(1), "main", header=2)
+    block = extract(data, pascal, abc)
+    run = decode_strings(data, pascal, abc)
+    assert [s.start for s in block.strings] == [2, 9, 13]
+    assert run.starts == [s.start_bit for s in block.strings]
+    assert render(run.tokens) == "[$05][$CB]AB[$FF][$FF][$06][$CB]B[$07][$CB]BA"
+
+
+def test_a_view_cuts_an_end_token_block_only_to_step_over_its_header():
+    """End tokens say where a string ends, so a view reads them as the block
+    does — but a record header still stands in front of each string, and only
+    a cut steps over it. Without one the view keeps its resumable reading."""
+    abc = table_set(ABC_TABLE, "main")
+    # The header bytes are letters the table maps: read as text they would show
+    # as characters and put every string start on the wrong byte.
+    data = bytes.fromhex("41 42 43 00  41 43 42 00")
+    cfg = BlockConfig(RangeSource(0, len(data)), EndToken(), "main", header=2)
+    block = extract(data, cfg, abc)
+    run = decode_strings(data, cfg, abc)
+    assert run.starts == [s.start_bit for s in block.strings] == [16, 48]
+    assert render(run.tokens) == "[$41][$42]C[end][$41][$43]B[end]"
+    assert cuts_at_end_tokens(replace(cfg, header=0))
+    assert not cuts_at_end_tokens(cfg)
+
+
+def test_a_view_cuts_a_header_and_its_string_in_step_with_the_block():
+    abc = table_set(ABC_TABLE, "main")
+    data = bytes.fromhex("05 CB 41 42  06 CB 43 41")
+    fixed = BlockConfig(RangeSource(0, len(data)), FixedLength(2), "main", header=2)
+    run = decode_strings(data, fixed, abc)
+    assert render(run.tokens) == "[$05][$CB]AB[$06][$CB]CA"
+    assert run.starts == [16, 48]
+    # The grid is the header and the length together: a view that starts
+    # inside a string shows the rest of it, then whole records.
+    run = decode_strings(data[3:], fixed, abc, 3)
+    assert render(run.tokens) == "B[$06][$CB]CA"
+    assert run.starts == [0, 24]
+    # ...and one that starts inside a header shows the rest of the header.
+    run = decode_strings(data[5:], fixed, abc, 5)
+    assert render(run.tokens) == "[$CB]CA"
+    assert run.starts == [8]
 
 
 def test_pointer_cells_are_every_stride_from_the_table_s_start():
