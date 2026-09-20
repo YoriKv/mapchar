@@ -61,7 +61,6 @@ class MenuBarMixin:
         self.container_action = act(
             file_menu, "Edit File &Container…", self._edit_container, "Ctrl+E"
         )
-        self.dump_action = act(file_menu, "&Dump…", self._dump, "Ctrl+D")
         file_menu.addSeparator()
         self.write_action = act(file_menu, "&Write", self._write_current, "Ctrl+W")
         act(file_menu, "Write A&ll", self._write_all, "Ctrl+Shift+W")
@@ -78,7 +77,9 @@ class MenuBarMixin:
             self._import_cartographer_dialog,
         )
         act(import_menu, "&Atlas Script…", self._import_atlas_dialog)
-        export_menu = file_menu.addMenu("E&xport")
+        # Kept on the window: the Block bar's Export button shows this very
+        # menu, so neither surface can offer a format the other does not.
+        export_menu = self.export_menu = file_menu.addMenu("E&xport")
         self.export_action = export_menu.menuAction()
         act(export_menu, "&TSV…", lambda: self._export("tsv"))
         act(export_menu, "C&SV…", lambda: self._export("csv"))

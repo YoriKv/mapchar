@@ -74,24 +74,12 @@ class FilesMenuMixin:
             menu.addSeparator()
             menu.addAction("Edit File Cont&ainer…", lambda: self._edit_container(entry))
             menu.addAction("Container In&fo…", lambda: self._container_info(entry))
-            menu.addAction(
-                "&Dump All Blocks…",
-                lambda: (self._activate_entry(entry), self._dump(all_blocks=True)),
-            )
         if entry.is_child:
             # On a folder alone, a folder inside it; on rows, a folder holding them.
             new_folder = menu.addAction(
                 "New Fo&lder", lambda: self._new_folder(entry, acting)
             )
-        if entry.kind is EntryKind.FOLDER:
-            menu.addAction(
-                "&Dump All Blocks…",
-                lambda: self._dump(all_blocks=True, folder=entry),
-            )
         if entry.kind is EntryKind.BLOCK:
-            menu.addAction(
-                "&Dump…", lambda: (self._activate_entry(entry), self._dump())
-            )
             # On a string row, the source to jump to is that string, not the
             # block's place in the file.
             if string is None:

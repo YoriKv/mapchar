@@ -60,7 +60,7 @@ class Capability(Enum):
 
     # -- strings
     STRINGS = auto()  # the Strings tab, its rows and their edits
-    BLOCK_CONFIG = auto()  # the Block bar: its summary and Dump…
+    BLOCK_CONFIG = auto()  # the Block bar: what the block's reading came to
     FIND_REPLACE = auto()  # Find and Replace over translations
     WRAP = auto()  # wrapping a translation to the block's text box
     PREVIEW = auto()  # the Preview window's drawing of a string

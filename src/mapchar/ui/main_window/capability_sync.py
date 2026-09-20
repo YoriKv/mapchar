@@ -57,10 +57,10 @@ _GATES: dict[Capability, tuple[str, ...]] = {
     Capability.BLOCK_CREATE: ("new_block_action",),
     Capability.BOOKMARK: ("new_bookmark_action",),
     Capability.STRINGS: ("strings_tab_action", "string_actions"),
-    Capability.BLOCK_CONFIG: ("block_bar", "block_dump", "dump_action"),
+    Capability.BLOCK_CONFIG: ("block_bar",),
     Capability.FIND_REPLACE: ("find_replace_action",),
     Capability.PREVIEW: ("preview_action",),
-    Capability.IMPORT_EXPORT: ("import_action", "export_action"),
+    Capability.IMPORT_EXPORT: ("import_action", "export_action", "block_export"),
     Capability.WRITE: ("write_action",),
 }
 

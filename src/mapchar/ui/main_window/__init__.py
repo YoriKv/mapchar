@@ -4,7 +4,7 @@
 mixins, one per surface it drives — the active entry and the refresh cycle, the
 Text tab's viewport, capability gating, the Format and Reading bars, navigation
 and the visit trail, the entries list with its context menu and its clipboard,
-containers, writing and dumping, compression, the Tables dock and the Table
+containers, writing, compression, the Tables dock and the Table
 Editor, the raw view, blocks and bookmarks, the strings view and the edits made
 in it, wrapping,
 find and replace, search (bytes, relative, pointers), the exchange formats,

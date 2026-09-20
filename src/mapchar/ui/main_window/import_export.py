@@ -13,8 +13,18 @@ from mapchar.project.exchange.cartographer import (
     parse_command_file,
     write_command_file,
 )
-from mapchar.project.formats.script import apply_script, parse_script
+from mapchar.project.formats.script import (
+    ScriptImportReport,
+    apply_script,
+    parse_script,
+)
+from mapchar.project.formats.summary import (
+    ImportSummary,
+    summarise_records,
+    summarise_script,
+)
 from mapchar.project.formats.translator import (
+    ImportReport,
     apply_records,
     read_delimited,
     read_po,
@@ -23,6 +33,7 @@ from mapchar.project.formats.translator import (
     write_po,
 )
 from mapchar.project.workspace import Entry, EntryKind
+from mapchar.ui.dialogs import ImportDialog
 from mapchar.ui.undo_commands import StringFieldCommand
 
 
@@ -242,6 +253,31 @@ class ImportExportMixin:
             return
         self.import_file(path, kind)
 
+    def _plan_import(
+        self,
+        text: str,
+        path: str,
+        kind: str,
+        blocks: dict[str, list],
+        force: bool = False,
+    ) -> tuple[ScriptImportReport | ImportReport, ImportSummary]:
+        """What importing ``text`` would do, and the summary of it.
+
+        Nothing is changed: both importers return what each string is to say
+        and leave the saying of it to the caller. That is what lets the same
+        call draw the confirmation, re-draw it under **Force**, and then be the
+        thing that is applied.
+        """
+        if kind == "script":
+            script = parse_script(text, path)
+            report = apply_script(script, blocks)
+            return report, summarise_script(script, report)
+        records = read_po(text) if kind == "po" else read_delimited(text)
+        report = apply_records(records, blocks, force=force)
+        return report, summarise_records(
+            "PO file" if kind == "po" else "Translator table", report
+        )
+
     def _land_texts(
         self, texts: dict[str, dict[int, str]], label: str, notices: list[str]
     ) -> int:
@@ -281,42 +317,69 @@ class ImportExportMixin:
                 notices += [f"{name}/{p}" for p in problems]
         return landed
 
-    def import_file(self, path: str, kind: str, force: bool = False) -> None:
+    def import_file(
+        self, path: str, kind: str, force: bool = False, confirm: bool = True
+    ) -> None:
+        """Import ``path``, having shown what that will do and been told to.
+
+        Both importers plan without changing anything, so the plan is what the
+        dialog draws and **Force** re-plans rather than being decided in
+        advance. Only past the confirmation does any of it land.
+        """
         text, read_notices = self._read_text(path)
         if text is None:
             return
         file_entry = self._current_file()
         blocks = self._block_strings_by_name(file_entry)
-        review: dict[str, dict[int, bool]] = {}
-        done: dict[str, dict[int, bool]] = {}
-        notes: dict[str, dict[int, str]] = {}
         try:
-            if kind == "script":
-                report = apply_script(parse_script(text, path), blocks)
-                notices = list(report.notices)
-                for name, cfg in report.new_blocks:
-                    if file_entry is not None:
-                        entry = Entry(
-                            EntryKind.BLOCK,
-                            name,
-                            file_entry.path,
-                            parent=file_entry,
-                            config=cfg,
-                        )
-                        self._push_add(entry)
-                        notices.append(f"created block {name}")
-            else:
-                records = read_po(text) if kind == "po" else read_delimited(text)
-                report = apply_records(records, blocks, force=force)
-                notices, review, notes = report.skipped, report.review, report.notes
-                done = report.done
+            report = self._plan_import(text, path, kind, blocks, force)[0]
         except (MapcharError, ValueError) as exc:
             self._error(f"Cannot import {path}: {exc}")
             return
-        notices = read_notices + list(notices)
+        if confirm:
+            dialog = ImportDialog(
+                os.path.basename(path),
+                lambda forced: self._plan_import(text, path, kind, blocks, forced)[1],
+                self,
+            )
+            if dialog.exec() != ImportDialog.DialogCode.Accepted:
+                return
+            if dialog.forced() != force:
+                force = dialog.forced()
+                report = self._plan_import(text, path, kind, blocks, force)[0]
+        review: dict[str, dict[int, bool]] = {}
+        done: dict[str, dict[int, bool]] = {}
+        notes: dict[str, dict[int, str]] = {}
         label = f"Import {os.path.basename(path)}"
         current = self._entry
         with self._macro(label):
+            if kind == "script":
+                created = [
+                    Entry(
+                        EntryKind.BLOCK,
+                        name,
+                        file_entry.path,
+                        parent=file_entry,
+                        config=cfg,
+                    )
+                    for name, cfg in report.new_blocks
+                    if file_entry is not None
+                ]
+                for entry in created:
+                    self._push_add(entry)
+                if created:
+                    # Nothing was placed in those blocks, since they did not
+                    # exist when the script was planned. Now that they do, plan
+                    # again over them: the summary counted their strings on the
+                    # promise that this pass lands them.
+                    blocks = self._block_strings_by_name(file_entry)
+                    report = self._plan_import(text, path, kind, blocks)[0]
+                notices = [f"created block {e.name}" for e in created]
+                notices += report.notices
+            else:
+                notices = list(report.skipped)
+                review, notes, done = report.review, report.notes, report.done
+            notices = read_notices + notices
             applied = self._land_texts(report.texts, label, notices)
             for name, strs in blocks.items():
                 entry = next(

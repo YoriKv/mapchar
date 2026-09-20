@@ -20,6 +20,13 @@ three line kinds as a table file (`#` comment, `@` directive, content). Text is
 normalised to **NFC** on import, as table text is, so a translation composes
 however the translator's editor spelled it.
 
+The app **imports** scripts and does not write them. Where Cartographer's dump
+was the whole pipeline's working document — the translator's editing surface
+and Atlas's input in one file — a project holds that here, and what remains is
+reading in what another tool dumped, plus comparing mapchar's own extraction
+with abcde's over the verification fixtures. That comparison is what
+`tools/dump_script.py` is for ([../development.md](../development.md)).
+
 ```
 @mapchar script 1
 @rom "Dragon Warrior (U).nes"

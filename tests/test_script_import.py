@@ -11,6 +11,13 @@ from mapchar.project.formats.script import (
     parse_script,
     write_script,
 )
+from mapchar.project.formats.summary import (
+    EDIT,
+    NEW_BLOCK,
+    summarise_records,
+    summarise_script,
+)
+from mapchar.project.formats.translator import Record, apply_records
 
 TS = table_set(ABC_TABLE, "main")
 
@@ -61,3 +68,60 @@ def test_a_decomposed_script_is_composed_on_import():
     # The first string is its own original spelled decomposed: the same text.
     assert fresh[0].matches_original(report.texts["D"][0])
     assert unicodedata.normalize("NFC", report.texts["D"][1]) == "がが[end]"
+
+
+# -- the summary an import is confirmed by -------------------------------------
+
+
+def test_a_script_summary_counts_a_new_block_from_the_script():
+    """The block does not exist yet, so ``apply_script`` places nothing in it.
+    The summary still counts its strings: the import creates the block and
+    plans again, which is the pass that lands them."""
+    data = bytes.fromhex("41 00 42 00")
+    cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
+    strings, _ = translated(data, cfg, TS, {0: "B[end]"})
+    text = write_script([("D", cfg, strings)], DumpMode.TRANSLATIONS)
+    script = parse_script(text)
+
+    known = extract(data, cfg, TS).strings
+    summary = summarise_script(script, apply_script(script, {"D": known}))
+    assert summary.kind == "Native script"
+    assert [(b.name, b.strings, b.action) for b in summary.blocks] == [("D", 2, EDIT)]
+    assert not summary.skipped and not summary.forceable
+
+    fresh = summarise_script(script, apply_script(script, {}))
+    assert [(b.name, b.strings, b.action) for b in fresh.blocks] == [
+        ("D", 2, NEW_BLOCK)
+    ]
+    assert not fresh.nothing_to_do
+
+
+def test_a_record_summary_counts_every_string_the_records_reach():
+    """A record carrying nothing but a status or a note still lands on its
+    string, so the count is what the import touches, not what it rewrites."""
+    data = bytes.fromhex("41 00 42 00")
+    cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
+    fresh = extract(data, cfg, TS).strings
+    records = [
+        Record("D/0", 0, "A[end]", "B[end]", "edited", ""),
+        Record("D/1", 2, "B[end]", "", "done", "checked"),
+        Record("D/2", 4, "C[end]", "C[end]", "edited", ""),
+        Record("E/0", 0, "A[end]", "B[end]", "edited", ""),
+    ]
+    summary = summarise_records("PO file", apply_records(records, {"D": fresh}))
+    assert summary.kind == "PO file" and summary.forceable
+    assert [(b.name, b.strings) for b in summary.blocks] == [("D", 2)]
+    assert summary.skipped == ["D/2: no such string", "E/0: no such block"]
+
+
+def test_force_is_what_takes_a_drifted_record_back():
+    data = bytes.fromhex("41 00 42 00")
+    cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
+    fresh = extract(data, cfg, TS).strings
+    records = [Record("D/0", 0, "moved on[end]", "B[end]", "edited", "")]
+    plain = summarise_records("TSV", apply_records(records, {"D": fresh}))
+    assert plain.skipped == ["D/0: original changed"] and not plain.blocks
+    assert plain.nothing_to_do
+    forced = summarise_records("TSV", apply_records(records, {"D": fresh}, force=True))
+    assert not forced.skipped
+    assert [(b.name, b.strings) for b in forced.blocks] == [("D", 1)]

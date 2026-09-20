@@ -1,6 +1,8 @@
-"""Dialogs: the file container, dump, reports, pointers."""
+"""Dialogs: the file container, imports, reports, pointers."""
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -21,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.numbers import format_hex_offset
-from mapchar.project.formats.script import DumpMode
+from mapchar.project.formats.summary import ImportSummary
 from mapchar.ui.number_fields import OffsetEdit
 from mapchar.ui.widgets import ResultsTable, ok_cancel, show_elided_tooltips
 
@@ -122,23 +124,80 @@ class ContainerDialog(QDialog):
         return str(self.container.currentData())
 
 
-class DumpDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setWindowTitle("Dump")
-        form = QFormLayout(self)
-        self.mode = QComboBox()
-        self.mode.addItem("Originals", DumpMode.ORIGINALS)
-        self.mode.addItem("Translations", DumpMode.TRANSLATIONS)
-        self.mode.addItem("Both (original as comments)", DumpMode.BOTH)
-        form.addRow("Content", self.mode)
-        self.all_blocks = QCheckBox("Every block of the file")
-        form.addRow("", self.all_blocks)
-        buttons = ok_cancel(self)
-        form.addRow(buttons)
+class ImportDialog(QDialog):
+    """What an import will do, shown before it does it.
 
-    def dump_mode(self) -> DumpMode:
-        return self.mode.currentData()
+    An import reaches across blocks, lands as one undo step and is driven as
+    often by a drop — whose kind is a guess from a suffix — as by a menu, so it
+    says which blocks it touches, how many strings of each and what it cannot
+    place, and waits. **Force** re-plans rather than filtering the plan on
+    screen: what it takes back are records the first pass never matched, so
+    only the importer can say what they would do.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        summary_for: Callable[[bool], ImportSummary],
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(f"Import {name}")
+        self._summary_for = summary_for
+        layout = QVBoxLayout(self)
+        self.heading = QLabel()
+        layout.addWidget(self.heading)
+        self.blocks = ResultsTable(("Block", "Strings", "Action"))
+        # A report, not a list to pick from: nothing here is chosen, so the row
+        # numbers and the selection would both be furniture.
+        self.blocks.verticalHeader().setVisible(False)
+        self.blocks.setSelectionMode(ResultsTable.SelectionMode.NoSelection)
+        self.blocks.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        layout.addWidget(self.blocks)
+        self.skipped_label = QLabel("Not imported:")
+        layout.addWidget(self.skipped_label)
+        self.skipped = QPlainTextEdit()
+        self.skipped.setReadOnly(True)
+        self.skipped.setMaximumHeight(110)
+        layout.addWidget(self.skipped)
+        self.force = QCheckBox("Import the skipped records anyway")
+        self.force.setToolTip(
+            "Take a record whose original no longer matches the project's"
+        )
+        self.force.toggled.connect(self._refill)
+        layout.addWidget(self.force)
+        layout.addWidget(QLabel("The whole import lands as one undo step."))
+        self.buttons = ok_cancel(self)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Import")
+        layout.addWidget(self.buttons)
+        self.resize(520, 420)
+        self._refill()
+
+    def _refill(self) -> None:
+        summary = self._summary_for(self.force.isChecked())
+        self.heading.setText(
+            f"{summary.kind}: {summary.strings} string(s) "
+            f"in {len(summary.blocks)} block(s)."
+        )
+        self.blocks.fill((b.name, str(b.strings), b.action) for b in summary.blocks)
+        self.skipped.setPlainText("\n".join(summary.skipped))
+        # The box and its heading go together when there is nothing to put in
+        # them, rather than leaving an empty frame to be read as a failure.
+        for widget in (self.skipped_label, self.skipped):
+            widget.setVisible(bool(summary.skipped))
+        # Offered only where it would take something back, so its absence says
+        # the skipped lines are not a matter of the project having moved on —
+        # and it stays on screen once ticked, since what it took back is
+        # exactly what is no longer listed above it.
+        self.force.setVisible(
+            self.force.isChecked() or (summary.forceable and bool(summary.skipped))
+        )
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
+            not summary.nothing_to_do
+        )
+
+    def forced(self) -> bool:
+        return self.force.isChecked()
 
 
 class TextDialog(QDialog):

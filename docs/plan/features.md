@@ -18,7 +18,7 @@ the preview system in [preview.md](preview.md).
 9. [Pointers](#pointers)
 10. [Strings view](#strings-view)
 11. [Writing back to disk](#writing-back-to-disk)
-12. [Dump, export and import](#dump-export-and-import)
+12. [Export and import](#export-and-import)
 13. [Compression](#compression)
 14. [Preview](#preview)
 15. [Hex panel](#hex-panel)
@@ -35,7 +35,7 @@ the preview system in [preview.md](preview.md).
   - **file** — a whole ROM or binary, or several files joined end to end;
   - **block** — a region of a file read as a list of strings under one
     configuration (source, table set, string rules). The block is the unit of
-    dumping, editing and writing, and the equivalent of a celPix slice;
+    reading, editing and writing, and the equivalent of a celPix slice;
   - **bookmark** — a saved offset and settings snapshot in a file;
   - **folder** — a group of a file's blocks, bookmarks and folders in the
     Files panel; it changes nothing about the rows it holds;
@@ -72,7 +72,7 @@ the preview system in [preview.md](preview.md).
     in framed sections — **Source**, **Pointers**, **Strings**, **Writing**
     (see [Blocks](#blocks));
   - the **Block** bar, shown on a block: source, string type, table, a string
-    counter, and **Dump…**;
+    counter, and **Export ▸**;
   - the central view, three tabs: **Hex**, **Text** and **Strings**;
   - the navigation bar under Hex and Text; the string status bar under Strings.
 - **Hex** dock — optional, at the bottom, hidden by default.
@@ -116,12 +116,13 @@ the preview system in [preview.md](preview.md).
   bar.
 - **File ▸ Import ▸** takes a Cartographer command file, an Atlas script, a
   native script or a translator file (see
-  [Dump, export and import](#dump-export-and-import)).
+  [Export and import](#export-and-import)).
 - **Drag and drop** onto the window: `.mapchar` opens the project and claims
   the whole drop; `.tbl` registers a table; `.tsv`,
   `.csv` and `.po` import as translator files; a `.txt` carrying a native
   script or table header imports or registers as that; anything else opens as
-  a ROM. Hold **Ctrl** while dropping to be asked instead.
+  a ROM. Hold **Ctrl** while dropping to be asked instead. A drop that imports
+  is confirmed like any other import.
 
 ## The Files panel
 
@@ -202,8 +203,7 @@ the preview system in [preview.md](preview.md).
   one folder's, one file's top level, or one group's. By name and by type
   folders come first; by offset a folder sits where its earliest row does.
 - **Context menu**, by kind: New Block / from Selection, New Bookmark, New
-  Folder, Edit File Container…, Container Info…, Dump All Blocks… (on a
-  folder, the blocks inside it), Dump…, Jump to
+  Folder, Edit File Container…, Container Info…, Jump to
   Source, Jump to Bookmark, Edit…, Save As File…, New Table…, Write, Export ▸,
   Rename…, Cut / Copy / Paste / Duplicate, Move Up / Down, Sort By ▸, Show in
   File Manager, Remove. Empty space offers Open ROM…, Open Table…, New Table…
@@ -876,20 +876,31 @@ The editing surface, opened on a block.
   / Continue Without / Cancel**, as does changing a file's container, which
   reads the file from disk again.
 
-## Dump, export and import
+## Export and import
 
-- **Dump…** (block or file) writes a native script: one file per block or one
-  for all, with originals, translations or both (see
-  [script-format.md](script-format.md#native-script)).
-- **Import script** reads a native script back: strings are matched by block
-  and index and the text goes into the bytes as an edit. Unknown blocks are
-  created when the script carries their configuration.
+- **Export ▸** — the Block bar's **Export…** button and the File menu's
+  **Export ▸** show the same menu, so the two cannot offer different formats.
 - **Translator files** — **Export ▸ TSV / CSV** and **Export ▸ PO** write one
   row or entry per string; **Import** reads them back by id. Rows whose
-  original no longer matches are reported and skipped unless forced.
-- An import is one undo step. A block's texts land as one edit; a block whose
-  texts will not all fit is tried string by string, and what is refused is
-  listed and left as it was.
+  original no longer matches are skipped, and **Force** on the import dialog
+  is what takes them anyway.
+- **Import script** reads a native script: strings are matched by block and
+  index and the text goes into the bytes as an edit. A block the script
+  carries and the project lacks is created, and the script is planned again
+  over it so its strings land on the same pass.
+- **Every import is confirmed first.** Both importers plan without changing
+  anything, so the dialog shows what the file is, which blocks it reaches,
+  how many strings of each and what it cannot place, and nothing lands until
+  it is accepted. **Force** re-plans rather than filtering what is on screen.
+  Menu and drop take the same path: a drop's kind is a guess from a suffix,
+  which is the case that most needs saying.
+- An import is one undo step, the blocks it creates included. A block's texts
+  land as one edit; a block whose texts will not all fit is tried string by
+  string, and what is refused is listed and left as it was.
+- **Dumping a native script** is not in the app: the project file has replaced
+  the job the format did for the prior-art tools, and it stays reachable for
+  the fixture comparisons through `tools/dump_script.py`
+  ([script-format.md](script-format.md#native-script)).
 - **Cartographer** — **Import** reads a command file into blocks (one per
   `#BLOCK`) and its tables through the abcde dialect, then extracts. **Export**
   writes a command file for a block whose settings Cartographer can express,
@@ -1059,7 +1070,7 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 
 | Area | Keys |
 |---|---|
-| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Ctrl+D Dump · Shift+F5 Refresh Tables · F5 Refresh Plugins · Ctrl+Q Quit |
+| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Shift+F5 Refresh Tables · F5 Refresh Plugins · Ctrl+Q Quit |
 | Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Shift+L Glossary · Ctrl+Alt+D toggle done · F4 / Shift+F4 next / previous untranslated · F6 / Shift+F6 next / previous flagged |
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |

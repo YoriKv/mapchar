@@ -66,7 +66,6 @@ from mapchar.ui.main_window.blocks import BlocksMixin
 from mapchar.ui.main_window.capability_sync import CapabilitySyncMixin
 from mapchar.ui.main_window.compression import CompressionMixin
 from mapchar.ui.main_window.containers import ContainerMixin
-from mapchar.ui.main_window.dumping import DumpingMixin
 from mapchar.ui.main_window.entries import EntriesMixin
 from mapchar.ui.main_window.entry_clipboard import EntryClipboardMixin
 from mapchar.ui.main_window.files_menu import FilesMenuMixin
@@ -131,7 +130,6 @@ class MainWindow(
     EntryClipboardMixin,
     ContainerMixin,
     WritingMixin,
-    DumpingMixin,
     CompressionMixin,
     PluginsMixin,
     TableFilesMixin,
@@ -262,6 +260,11 @@ class MainWindow(
         self._init_history()
         self._build_widgets()
         self._build_menus()
+        # The File menu's own Export menu, so the Block bar's button and the
+        # menu bar can never drift apart: a QMenu is shown from wherever it
+        # is asked for rather than owned by one place on screen. After the
+        # menus, which the widgets are built before.
+        self.block_export.setMenu(self.export_menu)
         # Navigation keys and the back/forward mouse buttons are routed through
         # an application-wide filter rather than shortcuts, so they work wherever
         # the focus is (mapchar.ui.main_window.navigation).
@@ -346,10 +349,12 @@ class MainWindow(
         bl = QHBoxLayout(block_bar)
         bl.setContentsMargins(0, 0, 0, 0)
         self.block_label = ElidedLabel("")
-        self.block_dump = QPushButton("Dump…")
-        self.block_dump.setToolTip("Write the block's strings to a script file")
+        self.block_export = QPushButton("Export…")
+        self.block_export.setToolTip(
+            "Write the block's strings to a translator or command file"
+        )
         bl.addWidget(self.block_label, 1)
-        bl.addWidget(self.block_dump)
+        bl.addWidget(self.block_export)
         self.block_bar = block_bar
         layout.addWidget(block_bar)
 
@@ -510,7 +515,6 @@ class MainWindow(
         self.mode_toggle.chosen.connect(self._on_mode)
         self.resolve_pointers.toggled.connect(self._on_resolve_pointers)
         self.reading_bar.edited.connect(self._on_reading_edited)
-        self.block_dump.clicked.connect(self._dump)
         self.raw.offset_requested.connect(self._go_to)
         self.raw.rows_changed.connect(self._on_raw_rows_changed)
         self.text.selection_changed.connect(self._on_text_selection)

@@ -60,7 +60,7 @@ mapchar/
 ├── tests/               pytest, flat, one module per area
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
 ├── tools/               regen_fixtures.py, make_sample_projects.py,
-│                       mother3_sample.py, mk2_sample.py,
+│                       mother3_sample.py, mk2_sample.py, dump_script.py,
 │                       subset_icon_font.py, ui_screenshots.py, samples/,
 │                       mapchar-lint/ (the project-file linter, see lint.md)
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
@@ -108,6 +108,13 @@ mapchar/
   abcde itself; `tools/regen_fixtures.py` regenerates them, and
   `tests/fixtures/abcde/DIVERGENCES.md` lists where mapchar departs from the
   reference tools on purpose.
+- **Dumping a script**: `uv run python tools/dump_script.py <project.mapchar>
+  [-o out.txt] [-b BLOCK]… [-m originals|translations|both]` writes a project's
+  blocks as a native script. The app does not offer it — the format is prior
+  art the project file has replaced, and it stays here for comparing an
+  extraction with another tool's
+  ([plan/script-format.md](plan/script-format.md#native-script)). Headless,
+  driving an offscreen window, since reading a block is the whole pipeline.
 
 - **Only `mapchar.ui` and `mapchar.app` import Qt.**
 - **Theme.** `src/mapchar/ui/theme.py` puts a `QPalette` on the Fusion

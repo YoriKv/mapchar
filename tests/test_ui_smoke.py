@@ -52,7 +52,7 @@ def window(qtbot, tmp_path, monkeypatch):
     return w
 
 
-def test_open_rom_table_block_and_dump(window, tmp_path, monkeypatch):
+def test_open_rom_table_and_block(window, tmp_path, monkeypatch):
     data = bytes.fromhex("41 42 00 42 41 00") + b"\xff" * 20
     entry = open_rom_and_table(window, tmp_path, data, rom_name="game.bin")
     assert entry is not None and window._doc is not None and window._doc.size == 26
@@ -70,16 +70,6 @@ def test_open_rom_table_block_and_dump(window, tmp_path, monkeypatch):
     add_block(window, entry, "b", RangeSource(0, 6))
     assert texts(window._doc.strings) == ["AB[end]", "BA[end]"]
     assert window.strings.table.rowCount() == 2
-
-    out = tmp_path / "dump.txt"
-    monkeypatch.setattr(
-        "mapchar.ui.main_window.window.QFileDialog.getSaveFileName",
-        lambda *a, **k: (str(out), ""),
-    )
-    monkeypatch.setattr("mapchar.ui.dialogs.DumpDialog.exec", lambda self: 1)
-    window._dump()
-    text = out.read_text()
-    assert "@string 1 at $3-$6\nBA[end]\n" in text
 
     # Project round trip.
     proj = tmp_path / "p.mapchar"
@@ -229,7 +219,7 @@ def test_import_export_and_find_replace(window, tmp_path):
     window.export_file(str(po), "po")
     window._on_translation_edited(0, "")  # blank: the original again
     assert not block.doc.strings[0].edited
-    window.import_file(str(po), "po")
+    window.import_file(str(po), "po", confirm=False)
     assert block.doc.strings[0].current_text() == "B[end]"
     window.undo_stack.undo()
     assert not block.doc.strings[0].edited
@@ -242,7 +232,7 @@ def test_import_export_and_find_replace(window, tmp_path):
     script.write_text(
         write_script([("D", block.config, strings)], DumpMode.TRANSLATIONS)
     )
-    window.import_file(str(script), "script")
+    window.import_file(str(script), "script", confirm=False)
     assert block.doc.strings[1].current_text() == "A[end]"
     assert block.doc.strings[1].status is Status.EDITED
     # Replace all over the strings' text.
@@ -777,7 +767,7 @@ def test_a_block_gates_the_string_surfaces_on(window, tmp_path):
     assert window.preview_action.isEnabled()
     assert window.tabs.isTabEnabled(window.tabs.indexOf(window.strings))
     assert window.block_bar.isVisibleTo(window)
-    assert window.block_dump.isEnabled()
+    assert window.block_export.isEnabled()
     assert window.reading_bar.isEnabled()
     # A block reads its container through its parent, so the row is not its own.
     assert not window.container_action.isEnabled()
@@ -2125,3 +2115,149 @@ def test_refresh_tables_reads_every_file_and_only_refreshes_changes(
     assert refreshed == [True]
     assert "01000011" in changed.table.entries
     assert window.statusBar().currentMessage() == "Reloaded 1 table"
+
+
+# --- an import says what it will do, and waits -------------------------------
+
+
+def _tsv(path: Path, *rows: str) -> Path:
+    path.write_text(
+        "id\taddress\toriginal\ttranslation\tstatus\tnotes\n" + "".join(rows),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_an_import_is_confirmed_before_anything_lands(window, tmp_path, monkeypatch):
+    """The dialog is shown the plan, not the result: cancelling leaves the
+    strings as they were, and the same file imports once it is accepted."""
+    data = bytes.fromhex("41 42 00 42 41 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
+    tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n")
+
+    seen: list = []
+    monkeypatch.setattr(
+        "mapchar.ui.dialogs.ImportDialog.exec",
+        lambda self: seen.append(self._summary_for(False)) or 0,  # Rejected
+    )
+    window.import_file(str(tsv), "delimited")
+    assert not block.doc.strings[0].edited
+    summary = seen[0]
+    assert summary.kind == "Translator table"
+    assert [(b.name, b.strings) for b in summary.blocks] == [("D", 1)]
+
+    monkeypatch.setattr("mapchar.ui.dialogs.ImportDialog.exec", lambda self: 1)
+    window.import_file(str(tsv), "delimited")
+    assert block.doc.strings[0].current_text() == "BB[end]"
+
+
+def test_a_dropped_translator_file_is_confirmed_like_any_other_import(
+    window, tmp_path, monkeypatch
+):
+    """A drop's kind is a guess from a suffix, so the drop is the path that
+    most needs to say what it is about to do."""
+    data = bytes.fromhex("41 42 00 42 41 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
+    tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n")
+    shown: list[str] = []
+    monkeypatch.setattr(
+        "mapchar.ui.dialogs.ImportDialog.exec",
+        lambda self: shown.append(self.windowTitle()) or 1,
+    )
+    window._open_dropped(str(tsv), "delimited")
+    assert shown == ["Import d.tsv"]
+    assert block.doc.strings[0].current_text() == "BB[end]"
+
+
+def test_force_on_the_dialog_takes_back_what_drifted(window, tmp_path, monkeypatch):
+    """The only way to an original the project has moved past, and the reason
+    the dialog re-plans rather than filtering what it already drew."""
+    data = bytes.fromhex("41 42 00 42 41 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
+    tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tmoved on[end]\tBB[end]\tedited\t\n")
+
+    plans: list = []
+
+    def accept_forced(self):
+        plans.append(self._summary_for(False))
+        self.force.setChecked(True)
+        plans.append(self._summary_for(True))
+        return 1
+
+    monkeypatch.setattr("mapchar.ui.dialogs.ImportDialog.exec", accept_forced)
+    window.import_file(str(tsv), "delimited")
+    assert plans[0].skipped == ["D/0: original changed"] and not plans[0].blocks
+    assert not plans[1].skipped and plans[1].blocks
+    assert block.doc.strings[0].current_text() == "BB[end]"
+
+
+def test_a_script_import_creates_its_block_and_lands_its_strings(
+    window, tmp_path, monkeypatch
+):
+    """One pass, not two: the block the script carries is created and then the
+    script is planned again over it, which is what the summary promised."""
+    from helpers import translated
+    from mapchar.project.formats.script import DumpMode, write_script
+
+    data = bytes.fromhex("41 42 00 42 41 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
+    cfg = block.config
+    strings, _ = translated(data, cfg, window._table_set(), {0: "BB[end]"})
+    script = tmp_path / "s.txt"
+    script.write_text(write_script([("Fresh", cfg, strings)], DumpMode.TRANSLATIONS))
+
+    monkeypatch.setattr("mapchar.ui.dialogs.ImportDialog.exec", lambda self: 1)
+    window.import_file(str(script), "script")
+    made = next(e for e in window.workspace.entries if e.name == "Fresh")
+    assert made.doc.strings[0].current_text() == "BB[end]"
+    # And the whole of it undoes at once, block and text together.
+    window.undo_stack.undo()
+    assert not any(e.name == "Fresh" for e in window.workspace.entries)
+
+
+def test_the_dump_tool_writes_a_project_s_blocks_as_a_script(window, tmp_path):
+    """Dump is a development tool now, not a feature: it has no menu entry, and
+    this is what keeps it working for the fixture comparisons."""
+    import importlib.util
+
+    data = bytes.fromhex("41 42 00 42 41 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    add_block(window, file_entry, "b", RangeSource(0, 6))
+    project = tmp_path / "p.mapchar"
+    assert window._write_project(str(project))
+
+    spec = importlib.util.spec_from_file_location(
+        "dump_script",
+        Path(__file__).resolve().parent.parent / "tools" / "dump_script.py",
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    out = tmp_path / "dump.txt"
+    assert tool.main([str(project), "-o", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert "@mapchar script 1" in text
+    assert '@block "b"' in text
+    assert "@string 1 at $3-$6\nBA[end]\n" in text
+
+
+def test_the_block_bar_s_export_button_shows_the_file_menu_s_export_menu(
+    window, tmp_path
+):
+    """One QMenu, two places it is shown from, so neither can offer a format
+    the other does not."""
+    data = bytes.fromhex("41 42 00")
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    add_block(window, file_entry, "b", RangeSource(0, 3))
+    assert window.block_export.menu() is window.export_menu
+    rows = [a.text().replace("&", "") for a in window.export_menu.actions() if a.text()]
+    assert rows == [
+        "TSV…",
+        "CSV…",
+        "PO…",
+        "Cartographer Command File…",
+        "Atlas Script…",
+    ]

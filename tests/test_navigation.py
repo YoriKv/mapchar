@@ -248,7 +248,7 @@ def test_a_navigation_key_works_while_a_button_has_focus(window, tmp_path, monke
     navigation keys, because the window's own ``keyPressEvent`` never ran."""
     # More than the view holds: with the whole file in view the keys are off.
     window._activate_entry(open_rom_and_table(window, tmp_path, bytes(range(256)) * 4))
-    _focus(monkeypatch, window.block_dump)
+    _focus(monkeypatch, window.block_export)
     assert _press(window, Qt.Key.Key_Down)
     assert window._offset == BYTES_PER_ROW
     assert _press(window, Qt.Key.Key_Right)
@@ -273,14 +273,14 @@ def test_navigation_keys_yield_to_the_files_list(window, tmp_path, monkeypatch):
 
 def test_alt_arrows_are_left_to_the_history_shortcuts(window, tmp_path, monkeypatch):
     _opened(window, tmp_path)
-    _focus(monkeypatch, window.block_dump)
+    _focus(monkeypatch, window.block_export)
     assert not _press(window, Qt.Key.Key_Left, Qt.KeyboardModifier.AltModifier)
     assert window._offset == 0
 
 
 def test_a_running_scan_swallows_navigation_keys(window, tmp_path, monkeypatch):
     _opened(window, tmp_path)
-    _focus(monkeypatch, window.block_dump)
+    _focus(monkeypatch, window.block_export)
     window._scanning = True
     assert _press(window, Qt.Key.Key_Down)
     assert window._offset == 0

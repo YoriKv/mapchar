@@ -18,13 +18,13 @@ delivers; every phase is built.
 
 - [features.md](features.md): what the app does and how a user drives it:
   entries, tables, the raw and strings views, search, blocks, pointers,
-  writing, dump and import, compression, projects, plugins, undo, keys.
+  writing, export and import, compression, projects, plugins, undo, keys.
 - [architecture.md](architecture.md): how it is built: layers, the data model,
   the decode and encode engines, search engines, the plugin system, the
   `.mapchar` file, the Qt UI, tests and verification against abcde.
 - [table-format.md](table-format.md): the native table-file grammar, and how
   the romjuice, Cartographer, Atlas and abcde dialects import into it.
-- [script-format.md](script-format.md): the native script (dump) format,
+- [script-format.md](script-format.md): the native script format,
   translator hand-off files, and Cartographer/Atlas import and export.
 - [preview.md](preview.md): the layout and preview system: the preview font,
   text boxes, wrapping and overflow.

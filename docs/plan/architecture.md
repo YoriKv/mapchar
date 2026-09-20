@@ -213,7 +213,7 @@ font is `ui/preview_font.py`'s, so nothing here imports Qt.
 | `numbers.py` | Every way a number is written: `parse_num`/`format_num` for the `$hex` spelling tables, scripts and command files share, and the one hex scanner behind `parse_hex`, `parse_hex_offset`/`format_hex_offset` and `parse_flat_hex`, which the UI's always-hex fields and `address.py` read through |
 | `text.py` | The Unicode model: `nfc`/`nfd`, `is_mark`, `graphemes` and `char_units` (a base character plus its combining marks — one glyph slot), and `fold` for a case- and form-insensitive comparison |
 | `textmatch.py` | The one filter every list runs: `words_of` folds and splits what was typed, and `matches_words` says whether each of those words is in one of a row's fields — fields folded apart, so no word matches over the seam between two |
-| `capabilities.py` | `EntryKind → frozenset[Capability]` (raw view, strings view, write, dump, pointers, preview, …) and `supports()` |
+| `capabilities.py` | `EntryKind → frozenset[Capability]` (raw view, strings view, write, exchange, pointers, preview, …) and `supports()` |
 | `address.py` | Offset ↔ `bank:addr` display layouts for the navigation bar |
 
 ## 3. Engines
@@ -639,6 +639,7 @@ Blocks are to files what celPix slices are, with these differences:
 | `legacy/`        | romjuice, Cartographer, Atlas and abcde dialects, a module each, following their own tool's rules into the native model with conversion notices | the abcde dialect, which an Atlas export needs |
 | `script.py`      | native scripts, and `apply_script` walks one into a project's blocks | native scripts            |
 | `translator.py`  | TSV, CSV, PO                                      | TSV, CSV, PO              |
+| `summary.py`     | — | either importer's report as the one shape the confirmation dialog draws: which blocks, how many strings, what was skipped |
 | `textfile.py`    | how a text file is spelled, under all of them: `read_text_any` (the one `open()` of a text file, which the window's imports and drop sniffing use too), `not_utf8` (the one wording of its notice), `split_lines`, `BOM` | the backslash `escape`/`unescape` |
 
 `project/tables.py` wraps the readers for the one job every caller has:
@@ -787,7 +788,7 @@ through `_push_command`.
 | Active entry and refresh | `session.py`, `refresh.py`, `capability_sync.py` |
 | Text view | `text_view.py` (the Text tab's window, and moving it by lines) |
 | Interpretation and position | `format_bar.py` (the Format and Reading bars, the reading of the entry on screen, the encodings as tables), `navigation.py`, `history.py` |
-| Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `dumping.py`, `compression.py`, `plugins.py` |
+| Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `compression.py`, `plugins.py` |
 | Tables | `table_files.py`, `table_editor.py` |
 | Raw view | `raw_view.py` |
 | Blocks and strings | `blocks.py`, `strings_view.py`, `string_edit.py`, `wrap.py`, `find_replace.py`, `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary window and its undo steps) |

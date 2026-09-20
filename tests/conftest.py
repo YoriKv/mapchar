@@ -53,7 +53,7 @@ def unattended_dialogs(monkeypatch):
     collected instead of shown, and the list is what this fixture hands back.
 
     ``QDialog`` itself is answered too, not only the message boxes: the app's own
-    modals (the block, container and dump dialogs, the text report) each run a
+    modals (the block, container and import dialogs, the text report) each run a
     loop of their own, and one raised by a path a test did not expect to reach
     hangs the run exactly the same way. Rejected is the answer that takes no
     action. ``QMessageBox``'s patch is installed after and wins for boxes, since

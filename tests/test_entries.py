@@ -525,7 +525,7 @@ def test_a_string_rows_menu_greys_what_would_edit_its_block(window, tmp_path):
     dead = {"Rename…", "Cut", "Copy", "Duplicate", "Remove", "Move Up", "Move Down"}
     dead |= {"Sort By", "New Folder"}
     assert {row for row, live in state.items() if not live} >= dead
-    assert state["Dump…"] and state["Write"] and state["Export"]
+    assert state["Write"] and state["Export"]
     # The block's own row keeps every one of them.
     assert all(_menu_state(window._build_files_menu(block))[row] for row in dead)
 
@@ -757,26 +757,8 @@ def test_selecting_a_folder_leaves_the_view_where_it_was(window, tmp_path):
     assert window.workspace.current is block
     menu = window._build_files_menu(folder)
     rows = {a.text().replace("&", "") for a in menu.actions() if a.text()}
-    assert {"New Folder", "Dump All Blocks…", "Rename…", "Remove"} <= rows
+    assert {"New Folder", "Rename…", "Remove"} <= rows
     assert "Write" not in rows
-
-
-def test_dump_all_blocks_on_a_folder_dumps_the_blocks_inside(
-    window, tmp_path, monkeypatch
-):
-    file_entry = open_rom_and_table(window, tmp_path, DATA)
-    inside = add_block(window, file_entry, "inside", RangeSource(0, 3))
-    add_block(window, file_entry, "outside", RangeSource(3, 6))
-    folder = window._new_folder(inside, [inside])
-    out = tmp_path / "dump.txt"
-    monkeypatch.setattr(
-        "mapchar.ui.main_window.window.QFileDialog.getSaveFileName",
-        lambda *a, **k: (str(out), ""),
-    )
-    monkeypatch.setattr("mapchar.ui.dialogs.DumpDialog.exec", lambda self: 1)
-    window._dump(all_blocks=True, folder=folder)
-    text = out.read_text()
-    assert "inside" in text and "outside" not in text
 
 
 # -- dialogs -------------------------------------------------------------------
