@@ -63,7 +63,8 @@ Add the rest by hand — **New**, Key, Text, **Add**:
 Pick **@mk2** in the **Table** list.
 
 **Search ▸ Scan for Text…** (Ctrl+Shift+R) lists text-like regions and how
-their strings end. Selecting a row jumps to it.
+their strings end: an **End token**, or a **Length prefix** with the bytes of
+header in front of it. Selecting a row jumps to it.
 
 ![The Scan window](images/03-scan.png)
 
@@ -210,8 +211,10 @@ mapchar does not edit graphics. Until the font is redrawn, the game draws
 `ДОБИЙ ЙОГО!` as `DOSNJ JOGO!`.
 
 1. The font is not plain tiles in the ROM: the graphics are RNC-packed (29
-   `RNC` `02` streams). It is the stream at `$AC54` — 1,951 bytes packed,
-   3,056 unpacked: 191 Game Boy 2bpp tiles, a blank, `0`–`9`, then `A`–`Z`.
+   `RNC` `02` streams). **View ▸ Decompressed View…** (Ctrl+Shift+D), then
+   **Structures ▸ Find All**, lists them. It is the stream at `$AC54` — 1,951
+   bytes packed, 3,056 unpacked: 191 Game Boy 2bpp tiles, a blank, `0`–`9`,
+   then `A`–`Z`.
 2. Unpack that stream, edit it in a tile editor (celPix, YY-CHR), and repack
    it to 1,951 bytes or fewer.
 3. Finishes and Fighter names are drawn by different routines; check both on
@@ -226,8 +229,8 @@ Open **Finishes** and set **Table** to **@mk2-translated**.
 
 ![Finishes through the translated table](images/09-finishes-new-table.png)
 
-The bytes are unchanged; they now decode as Cyrillic, so every string reads
-as *edited*.
+The bytes are unchanged, so every string is still *untouched*; they only
+decode as Cyrillic now.
 
 Double-click a **Translation** cell and type. Enter commits and moves on.
 
