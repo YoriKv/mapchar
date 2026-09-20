@@ -180,9 +180,14 @@ smallest size — and every menu and context menu to `tmp/ui-shots/<theme>/`.
 
 ## The wiki
 
-`wiki/` is the GitHub wiki's pages, pushed to the repository's `.wiki.git`:
-`Home.md`, `_Sidebar.md`, a page per file, and their screenshots in
-`wiki/images/`, linked by relative path.
+`wiki/` is the GitHub wiki's pages: `Home.md`, `_Sidebar.md`, a page per file,
+and their screenshots in `wiki/images/`, linked by relative path.
+
+`.github/workflows/wiki.yml` publishes them: a push to `main` that touches
+`wiki/` mirrors the folder into the repository's `.wiki.git` and pushes, so
+the folder is the source of truth and a page edited in the wiki's web editor
+is overwritten. The wiki repository only exists once its first page has been
+created through the web UI; until then the workflow fails saying so.
 
 `uv run python tools/wiki_screenshots.py` walks the Getting Started tutorial
 on a scratch copy of the Mortal Kombat II sample ROM in `tmp/wiki-tutorial/`

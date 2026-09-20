@@ -1,0 +1,71 @@
+name: Wiki
+
+# Publish `wiki/` to the repository's GitHub wiki whenever a push to main
+# touches it. The wiki is a git repository of its own — `<repo>.wiki.git` —
+# with no branch protection and a flat page layout, so this workflow simply
+# mirrors the folder into a clone of it and pushes.
+#
+# `wiki/` is the source of truth: the mirror deletes anything the wiki has and
+# the folder does not, so a page edited in the wiki's web editor is overwritten
+# on the next push. Edit the files here, never there.
+#
+# The wiki repository only exists once its first page has been created through
+# the web UI (https://github.com/<owner>/<repo>/wiki). Until then the clone
+# fails with "Repository not found" and this workflow reports that.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'wiki/**'
+      - '.github/workflows/wiki.yml'
+  workflow_dispatch:
+
+# The built-in token pushes to the wiki with plain `contents: write`.
+permissions:
+  contents: write
+
+# A second push while one is publishing would race for the wiki's single
+# branch; queue them instead, dropping any run the newer one supersedes.
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Clone the wiki
+        run: |
+          if ! git clone \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" \
+            wiki.git
+          then
+            echo "::error::Could not clone ${{ github.repository }}.wiki.git — create the wiki's first page at https://github.com/${{ github.repository }}/wiki, then re-run."
+            exit 1
+          fi
+
+      # --delete makes the wiki match the folder exactly; the wiki's own .git
+      # is the one thing the mirror must leave alone.
+      - name: Mirror wiki/ into it
+        run: rsync -a --delete --exclude .git wiki/ wiki.git/
+
+      # The message reaches git through the environment, never the script's
+      # text: a commit subject is arbitrary user input and interpolating it
+      # into the shell would run whatever it happens to contain.
+      - name: Commit and push
+        working-directory: wiki.git
+        env:
+          MESSAGE: ${{ github.event.head_commit.message || format('Publish wiki/ from {0}', github.sha) }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already matches wiki/ — nothing to push."
+            exit 0
+          fi
+          git commit -m "$(printf '%s' "$MESSAGE" | head -n 1)"
+          git push
