@@ -491,8 +491,7 @@ def _raw_widget(qtbot, tokens, data):
 
 
 def _text_entry(key: str, text: str, kind=None):
-    from mapchar.core.table import Entry as TableEntry
-    from mapchar.core.table import TokenKind
+    from mapchar.core.table import TableEntry, TokenKind
 
     return TableEntry(key, kind or TokenKind.TEXT, text)
 
@@ -693,7 +692,7 @@ def test_a_byte_aligned_bit_span_covers_its_cells_exactly(qtbot):
 def test_a_selection_set_from_outside_is_whole_bytes(qtbot):
     tokens, widget = _six_bit_codes(qtbot)
     _click(widget, widget._text_segments(tokens[1], 3)[0].center())
-    widget.set_selection(0, 2)
+    widget.select_bytes(0, 2)
     assert widget.selection_bits() is None
 
 
@@ -710,7 +709,7 @@ def test_a_selection_set_from_outside_is_what_a_shift_click_reaches_from(qtbot):
     rather than one the last click left somewhere else."""
     widget = _raw_widget(qtbot, [], bytes(32))
     _hex_click(widget, 1)
-    widget.set_selection(10, 12)
+    widget.select_bytes(10, 12)
     _hex_click(widget, 20, shift=True)
     assert widget.selection() == (10, 21)
 
@@ -718,7 +717,7 @@ def test_a_selection_set_from_outside_is_what_a_shift_click_reaches_from(qtbot):
 def test_a_selection_cleared_from_outside_leaves_nothing_to_reach_from(qtbot):
     widget = _raw_widget(qtbot, [], bytes(32))
     _hex_click(widget, 1)
-    widget.set_selection(0, 0)
+    widget.select_bytes(0, 0)
     _hex_click(widget, 5, shift=True)
     assert widget.selection() == (5, 6)
 

@@ -19,7 +19,7 @@ import re
 from mapchar.core.bits import hex_to_bits
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Level, Notice
-from mapchar.core.table import Entry, Table
+from mapchar.core.table import Table, TableEntry
 from mapchar.project.formats.table_native import (
     TableFile,
     is_native,
@@ -68,7 +68,7 @@ def load_table_text(
     # Imported here rather than at the top: every reader reads the helpers above
     # out of this module, and `project.tables` reads `load_table_text` out of it.
     from mapchar.project.formats.legacy.abcde import read_abcde
-    from mapchar.project.formats.legacy.atlas import read_atlas
+    from mapchar.project.formats.legacy.atlas import read_atlas_table
     from mapchar.project.formats.legacy.cartographer import read_cartographer
     from mapchar.project.formats.legacy.romjuice import read_romjuice
     from mapchar.project.tables import table_id_for
@@ -83,7 +83,7 @@ def load_table_text(
     readers = {
         "abcde": read_abcde,
         "cartographer": read_cartographer,
-        "atlas": read_atlas,
+        "atlas": read_atlas_table,
         "romjuice": read_romjuice,
     }
     result = readers[dialect](text, path, default_id)
@@ -123,7 +123,9 @@ def _even_key(key: str, path: str | None, n: int) -> str:
     return hex_to_bits(key)
 
 
-def _add_or_note(table: Table, entry: Entry, n: int, notices: list[Notice]) -> None:
+def _add_or_note(
+    table: Table, entry: TableEntry, n: int, notices: list[Notice]
+) -> None:
     """Add ``entry``, or say in a notice why it could not be added.
 
     A legacy file is somebody else's output: one line the native model refuses

@@ -5,7 +5,14 @@ from __future__ import annotations
 import re
 
 from mapchar.core.notices import Level, Notice
-from mapchar.core.table import Entry, OperandSpec, Stop, SwitchParam, Table, TokenKind
+from mapchar.core.table import (
+    OperandSpec,
+    Stop,
+    SwitchParam,
+    Table,
+    TableEntry,
+    TokenKind,
+)
 from mapchar.project.formats.legacy import _add_or_note, legacy_text
 from mapchar.project.formats.table_native import TableFile
 from mapchar.project.formats.textfile import split_lines
@@ -62,7 +69,7 @@ def read_romjuice(
     notices: list[Notice] = []
     kanji: dict[str, list[tuple[str, int]]] = {}
     two_byte: dict[int, str] = {}
-    pending: list[tuple[int, Entry]] = []
+    pending: list[tuple[int, TableEntry]] = []
 
     def note(n: int, msg: str) -> None:
         notices.append(Notice(f"line {n}: {msg}", Level.INFO))
@@ -96,7 +103,7 @@ def read_romjuice(
                 continue
             tid = f"kanji_{base:X}"
             kanji.setdefault(tid, []).append((bits, base))
-            entry = Entry(
+            entry = TableEntry(
                 bits,
                 TokenKind.SWITCH,
                 f"[{tid}]",
@@ -115,7 +122,7 @@ def read_romjuice(
                 note(n, "linked entry with a zero count dropped")
                 continue
             label = f"raw_{int(bits, 2):0{width * 2}X}"
-            entry = Entry(
+            entry = TableEntry(
                 bits, TokenKind.CODE, label, operands=(OperandSpec("bytes", count * 8),)
             )
             pending.append((n, entry))
@@ -129,7 +136,7 @@ def read_romjuice(
         value = _rj_unescape(line[eq + 1 :])
         if width == 2:
             two_byte[int(bits, 2)] = value
-        pending.append((n, Entry(bits, TokenKind.TEXT, legacy_text(value))))
+        pending.append((n, TableEntry(bits, TokenKind.TEXT, legacy_text(value))))
 
     for n, entry in pending:
         _add_or_note(table, entry, n, notices)
@@ -141,7 +148,11 @@ def read_romjuice(
         for b in range(256):
             text_value = two_byte.get(base + b)
             if text_value is not None:
-                kt.add(Entry(format(b, "08b"), TokenKind.TEXT, legacy_text(text_value)))
+                kt.add(
+                    TableEntry(
+                        format(b, "08b"), TokenKind.TEXT, legacy_text(text_value)
+                    )
+                )
         if not kt.entries:
             notices.append(Notice(f"kanji table {tid} has no entries", Level.WARNING))
         extra.append(kt)

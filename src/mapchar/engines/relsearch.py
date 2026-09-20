@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from mapchar.core.bits import bytes_to_bits
-from mapchar.core.table import Entry, TokenKind
+from mapchar.core.table import TableEntry, TokenKind
 from mapchar.core.text import units
 from mapchar.core.tokens import escape_text
 
@@ -186,26 +186,28 @@ def _code_bits(code: int, bit_width: int, endian: str) -> str:
 
 def entries_from_base(
     base: int, bit_width: int, endian: str, chars: str
-) -> list[Entry]:
+) -> list[TableEntry]:
     """TEXT entries for ``chars`` over consecutive codes from ``base``.
 
     One entry per grapheme, so a decomposed dakuten kana takes one code and
     not two. The first code that does not fit ``bit_width`` bits ends the run.
     """
-    entries: list[Entry] = []
+    entries: list[TableEntry] = []
     for i, ch in enumerate(units(chars)):
         code = base + i
         if code >= 1 << bit_width:
             break
         entries.append(
-            Entry(_code_bits(code, bit_width, endian), TokenKind.TEXT, escape_text(ch))
+            TableEntry(
+                _code_bits(code, bit_width, endian), TokenKind.TEXT, escape_text(ch)
+            )
         )
     return entries
 
 
-def entries_from_hit(hit: Hit, runs: tuple[str, ...] = tuple(RUNS)) -> list[Entry]:
+def entries_from_hit(hit: Hit, runs: tuple[str, ...] = tuple(RUNS)) -> list[TableEntry]:
     """Table entries for every run the hit pinned down, as full alphabets."""
-    entries: list[Entry] = []
+    entries: list[TableEntry] = []
     for run in runs:
         base = hit.bases.get(run)
         if base is None:

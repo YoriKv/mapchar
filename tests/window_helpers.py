@@ -16,7 +16,7 @@ TABLE = f"{HEADER}\n@table main\n41=A\n42=B\n/00=[end]\n"
 ASCII_TABLE = f"{HEADER}\n{_ASCII_BODY}"
 """The same as a file, over the ASCII charset."""
 
-_ENTRY_FIELDS = ("compression_id", "slice_offset", "slice_length")
+_ENTRY_FIELDS = ("compression_id", "slot_offset", "slot_length")
 
 
 def open_rom_and_table(window, tmp_path, data, table=TABLE, rom_name="rom.bin"):

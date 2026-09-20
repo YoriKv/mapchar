@@ -272,7 +272,7 @@ def test_jump_to_source_of_a_compressed_block_uses_its_slot(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, bytes(0x100))
     block = add_block(window, file_entry, "packed", RangeSource(0, 8))
     block.compression_id = "rle1"
-    block.slice_offset = 0x50
+    block.slot_offset = 0x50
     assert window._block_file_offset(block) == 0x50
     window._jump_to_source(block)
     # The file shows the packed structure at that address, so the scheme that
@@ -956,22 +956,22 @@ def test_the_reading_bar_keeps_a_target_offset_it_cannot_read(window, tmp_path):
     assert block.config.source.offset == -0x10
 
 
-def test_a_slice_length_round_trips_and_a_falsy_one_means_unknown(window, tmp_path):
+def test_a_slot_length_round_trips_and_a_falsy_one_means_unknown(window, tmp_path):
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "packed", RangeSource(0, 6))
     block.compression_id = "rle1"
-    block.slice_offset = 0x10
+    block.slot_offset = 0x10
 
     def reread() -> Entry:
         return entries_from_payload(entries_payload([file_entry, block]))[1]
 
-    block.slice_length = 0x20
-    assert (reread().slice_offset, reread().slice_length) == (0x10, 0x20)
+    block.slot_length = 0x20
+    assert (reread().slot_offset, reread().slot_length) == (0x10, 0x20)
     # Both sides read a falsy length as "nobody measured it", so neither a
     # missing key nor a stored 0 comes back as a slot with no room in it.
     for length in (0, None):
-        block.slice_length = length
-        assert reread().slice_length is None
+        block.slot_length = length
+        assert reread().slot_length is None
 
 
 # -- dropping a document never drops the work ----------------------------------

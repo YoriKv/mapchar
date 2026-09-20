@@ -652,7 +652,7 @@ def test_find_structures_reads_the_edges_of_the_buffer(registry) -> None:
     streams with nothing between them: the first two are not structures, the
     walk still ends, and the third pair is found at both offsets.
     """
-    from mapchar.pipeline.scan import find_structures
+    from mapchar.pipeline.structures import find_structures
 
     rnc2 = registry.plugin(Stage.COMPRESSION, "rnc2")
     first = rnc.compress(b"HELLO HELLO HELLO\x00" * 6, method=2)
@@ -675,7 +675,7 @@ def test_find_next_structure_walks_the_schemes_it_is_given(registry) -> None:
     so the Decompressed View's Scan is the picked scheme on a pick and every
     scheme that announces itself on automatic.
     """
-    from mapchar.pipeline.scan import find_next_structure
+    from mapchar.pipeline.structures import find_next_structure
 
     rnc1 = registry.plugin(Stage.COMPRESSION, "rnc1")
     rnc2 = registry.plugin(Stage.COMPRESSION, "rnc2")
@@ -714,7 +714,7 @@ def test_find_next_structure_looks_where_a_signature_says_to(registry) -> None:
     """
     import time
 
-    from mapchar.pipeline.scan import find_next_structure
+    from mapchar.pipeline.structures import find_next_structure
 
     rnc2 = registry.plugin(Stage.COMPRESSION, "rnc2")
     stream = rnc.compress(b"HELLO HELLO HELLO\x00" * 8, method=2)
@@ -746,7 +746,7 @@ def test_find_next_structure_mixes_schemes_that_announce_themselves_and_not(
     registry,
 ) -> None:
     """A signature jumps, no signature walks, and the nearest structure wins."""
-    from mapchar.pipeline.scan import find_next_structure
+    from mapchar.pipeline.structures import find_next_structure
 
     gba = registry.plugin(Stage.COMPRESSION, "gba_lz77")
     rnc2 = registry.plugin(Stage.COMPRESSION, "rnc2")

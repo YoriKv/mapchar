@@ -11,12 +11,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from mapchar.core.errors import TableError
-from mapchar.core.table import Entry, Table, TokenKind
+from mapchar.core.table import Table, TableEntry, TokenKind
 
 
 def inherited(
     table: Table, available: Mapping[str, Table]
-) -> dict[str, tuple[Entry, str]]:
+) -> dict[str, tuple[TableEntry, str]]:
     """What ``table``'s includes give it before its own entries apply: per key,
     the entry and the id of the table whose own entry it is.
 
@@ -24,7 +24,7 @@ def inherited(
     ``available`` answers to and for tables that include each other; a label
     the merged table holds twice is :func:`resolve`'s to report.
     """
-    layers: dict[str, tuple[Entry, str]] = {}
+    layers: dict[str, tuple[TableEntry, str]] = {}
     for inc in table.includes:
         layers.update(_layers(_included(table, inc, available), available, (table.id,)))
     return layers
@@ -39,12 +39,12 @@ def _included(table: Table, inc: str, available: Mapping[str, Table]) -> Table:
 
 def _layers(
     table: Table, available: Mapping[str, Table], visiting: tuple[str, ...]
-) -> dict[str, tuple[Entry, str]]:
+) -> dict[str, tuple[TableEntry, str]]:
     """Every entry resolved ``table`` holds, with the table it is own to."""
     if table.id in visiting:
         cycle = " → ".join((*visiting[visiting.index(table.id) :], table.id))
         raise TableError(f"tables include each other: {cycle}")
-    below: dict[str, tuple[Entry, str]] = {
+    below: dict[str, tuple[TableEntry, str]] = {
         bits: (e, table.id) for bits, e in table.charset_entries.items()
     }
     for inc in table.includes:
@@ -54,8 +54,8 @@ def _layers(
 
 
 def _lay_own(
-    table: Table, below: dict[str, tuple[Entry, str]]
-) -> dict[str, tuple[Entry, str]]:
+    table: Table, below: dict[str, tuple[TableEntry, str]]
+) -> dict[str, tuple[TableEntry, str]]:
     """``table``'s own entries over ``below``: an entry with empty text over a
     key ``below`` gives removes that key, as it does a charset's code."""
     merged = dict(below)

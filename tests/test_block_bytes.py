@@ -47,8 +47,8 @@ def _compressed_block(window, tmp_path, name="z", stop=6, rom_name="rom.bin"):
         RangeSource(0, stop),
         fill=b"\xee",
         compression_id="gba_lz77",
-        slice_offset=16,
-        slice_length=slot,
+        slot_offset=16,
+        slot_length=slot,
     )
     return file_entry, block
 
@@ -179,7 +179,7 @@ def test_a_slot_that_cannot_be_read_is_reported_rather_than_skipped(window, tmp_
     file_entry, block = _compressed_block(window, tmp_path)
     window._on_translation_edited(0, "B[end]")
     block.doc = None
-    block.slice_offset = 4  # not where the compressed stream is
+    block.slot_offset = 4  # not where the compressed stream is
 
     assert not window._write_blocks([block])
     assert Path(file_entry.path).read_bytes()[:16] == b"\xff" * 16
@@ -197,8 +197,8 @@ def _two_over_one_slot(window, tmp_path):
         RangeSource(6, 9),
         fill=b"\xee",
         compression_id="gba_lz77",
-        slice_offset=16,
-        slice_length=first.slice_length,
+        slot_offset=16,
+        slot_length=first.slot_length,
     )
     return file_entry, first, second
 
@@ -266,8 +266,8 @@ def test_a_block_loaded_after_a_sibling_s_edit_inherits_its_unsaved_state(
         RangeSource(6, 9),
         fill=b"\xee",
         compression_id="gba_lz77",
-        slice_offset=16,
-        slice_length=first.slice_length,
+        slot_offset=16,
+        slot_length=first.slot_length,
     )
     assert later.doc.data[:3] == bytes.fromhex("42 00 EE")
     assert later.dirty

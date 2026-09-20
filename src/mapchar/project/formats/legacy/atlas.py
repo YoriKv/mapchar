@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Level, Notice
-from mapchar.core.table import Entry, Table, TokenKind
+from mapchar.core.table import Table, TableEntry, TokenKind
 from mapchar.project.formats.legacy import (
     _HEXKEY,
     _add_or_note,
@@ -15,7 +15,7 @@ from mapchar.project.formats.table_native import TableFile
 from mapchar.project.formats.textfile import split_lines
 
 
-def read_atlas(
+def read_atlas_table(
     text: str, path: str | None = None, default_id: str = "table"
 ) -> TableFile:
     table = Table(default_id)
@@ -39,7 +39,7 @@ def read_atlas(
             bits = _even_key(key, path, n)
             _add_or_note(
                 table,
-                Entry(bits, TokenKind.TEXT, legacy_text(value + "\n")),
+                TableEntry(bits, TokenKind.TEXT, legacy_text(value + "\n")),
                 n,
                 notices,
             )
@@ -57,12 +57,14 @@ def read_atlas(
                 continue
             bits = _even_key(key, path, n)
             _add_or_note(
-                table, Entry(bits, TokenKind.END, legacy_text(value)), n, notices
+                table, TableEntry(bits, TokenKind.END, legacy_text(value)), n, notices
             )
             continue
         key, eq, value = line.partition("=")
         if not eq or not _HEXKEY.match(key):
             raise TableError("not a table entry", path, n)
         bits = _even_key(key, path, n)
-        _add_or_note(table, Entry(bits, TokenKind.TEXT, legacy_text(value)), n, notices)
+        _add_or_note(
+            table, TableEntry(bits, TokenKind.TEXT, legacy_text(value)), n, notices
+        )
     return TableFile(table, notices, "atlas")

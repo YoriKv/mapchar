@@ -8,7 +8,7 @@ from typing import Any, NamedTuple
 from mapchar.core.notices import Level, Notice
 
 KEY_SOURCE_FILES = "source_files"
-"""The files that were joined to make the payload, as :class:`SourceSpan`s."""
+"""The files that were joined to make the payload, as :class:`FileSpan`s."""
 KEY_SOURCE_OFFSET = "source_offset"
 """Where the container's payload starts inside the file."""
 KEY_HEADER_SIZE = "header_size"
@@ -32,7 +32,7 @@ need, where a truncated stream is a failure.
 """
 
 
-class SourceSpan(NamedTuple):
+class FileSpan(NamedTuple):
     """One file's contribution to the buffer a container was handed.
 
     The host publishes these in order under :data:`KEY_SOURCE_FILES`, so a stage

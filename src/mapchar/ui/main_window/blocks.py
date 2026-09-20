@@ -232,10 +232,10 @@ class BlocksMixin:
             bool(scheme) and compression_id == scheme and entry.doc is not None
         )
         if compression_id != scheme:
-            entry.slice_length = None  # a new scheme finds its own end
+            entry.slot_length = None  # a new scheme finds its own end
             if scheme is None:
                 # Read from the file until now, so its slot is where it began.
-                entry.slice_offset = self._block_file_offset(entry)
+                entry.slot_offset = self._block_file_offset(entry)
         entry.config = config
         entry.compression_id = compression_id
         entry.spare_room = spare_room
@@ -326,7 +326,7 @@ class BlocksMixin:
         source answers in the file's own coordinates or the strings do.
         """
         if entry.compression_id:
-            return entry.slice_offset
+            return entry.slot_offset
         start = source_start(entry.config.source if entry.config is not None else None)
         if start is not None:
             return start
@@ -417,14 +417,14 @@ class BlocksMixin:
             return
         # The mode the string is opened over is what leaving it comes back to.
         if not self._in_one_string():
-            entry.session.string_view = self._in_strings_mode()
+            entry.session.strings_mode = self._in_strings_mode()
         self._record_visit(entry, index)
         self._string_bounds = (max(0, rec.start), min(rec.end, self._doc.size))
         self._set_bounds((rec.start, rec.end))
         self.strings.select_index(index)
         self._on_string_row(index)
         # The view is already that string alone, so nothing in it is selected.
-        self.raw.set_selection(0, 0)
+        self.raw.select_bytes(0, 0)
         self._on_selection(0, 0)
         self.files_panel.select_string(entry, index)
 
@@ -435,7 +435,7 @@ class BlocksMixin:
         on screen and so cannot be activated into place."""
         if entry is not self._entry or not self._in_one_string():
             return
-        if entry.session.string_view:
+        if entry.session.strings_mode:
             self._view_strings(entry)
         else:
             self._view_source(entry)
@@ -515,7 +515,7 @@ class BlocksMixin:
                     and bits not in start.entries
                     and "end" not in start.labels
                 ):
-                    from mapchar.core.table import Entry as TableEntry
+                    from mapchar.core.table import TableEntry
 
                     after = deepcopy(start)
                     after.add(TableEntry(bits, TokenKind.END, "[end]"))

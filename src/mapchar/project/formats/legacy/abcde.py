@@ -13,7 +13,7 @@ import re
 from mapchar.core.bits import format_key
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Level, Notice
-from mapchar.core.table import RETURN, Entry, SwitchParam, Table, TokenKind
+from mapchar.core.table import RETURN, SwitchParam, Table, TableEntry, TokenKind
 from mapchar.project.formats.legacy import legacy_text
 from mapchar.project.formats.table_native import (
     KEY_FIELD,
@@ -82,7 +82,7 @@ def read_abcde(
         is_end = "/" in prefixes
         if "!" not in prefixes:
             kind = TokenKind.END if is_end else TokenKind.TEXT
-            entry = Entry(bits, kind, legacy_text(rhs.replace("\\n", "\n")), w)
+            entry = TableEntry(bits, kind, legacy_text(rhs.replace("\\n", "\n")), w)
         else:
             entry = _abcde_switch(bits, w, rhs, is_end, n, path, note)
         if bits in current.entries:
@@ -102,7 +102,7 @@ def read_abcde(
 
 def _abcde_switch(
     bits: str, weight: int, rhs: str, is_end: bool, n: int, path: str | None, note
-) -> Entry:
+) -> TableEntry:
     label = ""
     rest = rhs
     if rhs.startswith("<"):
@@ -130,7 +130,7 @@ def _abcde_switch(
                     n,
                 )
             if not label and not params:
-                return Entry(bits, TokenKind.RETURN, "", weight)
+                return TableEntry(bits, TokenKind.RETURN, "", weight)
             params.append(SwitchParam(RETURN))
             break
         target = tid if tid is not None else ("bits" if binary else "raw")
@@ -142,7 +142,7 @@ def _abcde_switch(
         params.append(SwitchParam(target, stop, bool(plus)))
     if is_end:
         note(n, "'/' on a switch entry dropped: the string does not end on return")
-    return Entry(
+    return TableEntry(
         bits, TokenKind.SWITCH, _switch_text(label), weight, params=tuple(params)
     )
 

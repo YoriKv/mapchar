@@ -13,7 +13,7 @@ import os
 from mapchar.core.context import KEY_HEADER_SIZE
 from mapchar.core.errors import MapcharError
 from mapchar.project.exchange.addresses import shift_config
-from mapchar.project.exchange.atlas import read_atlas, write_atlas
+from mapchar.project.exchange.atlas import read_atlas_script, write_atlas
 from mapchar.project.exchange.cartographer import (
     parse_command_file,
     write_command_file,
@@ -113,7 +113,7 @@ class LegacyExchangeMixin:
         text, notices = self._read_text(path)
         if text is None:
             return 0
-        script = read_atlas(text)
+        script = read_atlas_script(text)
         notices += script.notices
         # The script addresses the file; the block's records address the payload.
         header = self._container_header(entry.parent)

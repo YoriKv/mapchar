@@ -160,7 +160,7 @@ def test_text_tab(window, tmp_path):
     window.text_tab_action.trigger()
     assert window.tabs.currentWidget() is window.text
     assert window.text.edit.toPlainText() == "AB[end]\nBA[end]\n[$FF][$FF][$FF][$FF]"
-    window.raw.set_selection(3, 5)
+    window.raw.select_bytes(3, 5)
     window._on_selection(3, 5)
     cursor = window.text.edit.textCursor()
     assert (cursor.selectionStart(), cursor.selectionEnd()) == (8, 10)
@@ -406,8 +406,8 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
         # shorter string leaves behind is padding and not text.
         fill=b"\xff",
         compression_id="gba_lz77",
-        slice_offset=16,
-        slice_length=slot,
+        slot_offset=16,
+        slot_length=slot,
     )
     assert block.doc.data == payload and len(block.doc.strings) == 6
     window._on_translation_edited(0, "HI HI HI[end]")
@@ -486,8 +486,8 @@ def test_a_block_states_its_own_scheme_and_cannot_be_repicked(window, tmp_path):
         "packed",
         RangeSource(0, len(RNC2_PAYLOAD)),
         compression_id="rnc2",
-        slice_offset=16,
-        slice_length=len(stream),
+        slot_offset=16,
+        slot_length=len(stream),
     )
     assert packed.doc.data == RNC2_PAYLOAD
     assert window.compression_pick.currentData() == "rnc2"
@@ -556,7 +556,7 @@ def test_to_block_under_automatic_arming_records_the_scheme_that_decoded(
     window.decompress_window.block.click()
     block = window.workspace.of_kind(EntryKind.BLOCK)[0]
     assert block.compression_id == "rnc2"
-    assert (block.slice_offset, block.slice_length) == (16, len(stream))
+    assert (block.slot_offset, block.slot_length) == (16, len(stream))
     assert block.doc.data == RNC2_PAYLOAD
 
 
@@ -780,8 +780,8 @@ def test_a_bookmark_and_jump_to_source_leave_a_pick_that_is_not_theirs(
         "packed",
         RangeSource(0, len(RNC2_PAYLOAD)),
         compression_id="rnc2",
-        slice_offset=16,
-        slice_length=len(stream),
+        slot_offset=16,
+        slot_length=len(stream),
     )
     window._jump_to_source(packed)
     assert file_entry.session.preview_scheme == "rnc2"
@@ -809,8 +809,8 @@ def test_a_pick_no_plugin_provides_says_so_and_is_still_the_files_own(window, tm
         "gone",
         RangeSource(0, 4),
         compression_id="other_gone",
-        slice_offset=0,
-        slice_length=4,
+        slot_offset=0,
+        slot_length=4,
     )
 
     def on_offer():
@@ -872,8 +872,8 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
         RangeSource(0, 30),
         fill=b"\xff",
         compression_id="gba_lz77",
-        slice_offset=16,
-        slice_length=slot,
+        slot_offset=16,
+        slot_length=slot,
     )
     second = add_block(
         window,
@@ -882,8 +882,8 @@ def test_two_blocks_over_one_slot_write_together(window, tmp_path):
         RangeSource(30, 60),
         fill=b"\xff",
         compression_id="gba_lz77",
-        slice_offset=16,
-        slice_length=slot,
+        slot_offset=16,
+        slot_length=slot,
     )
     window._activate_entry(first)
     window._on_translation_edited(0, "HI HI HI[end]")
@@ -910,7 +910,7 @@ def test_siblings_over_a_slot_share_its_payload_and_write_together(window, tmp_p
     data = b"\xff" * 16 + packed + b"\xff" * 16 + b"\xff" * 24
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     slice_fields = dict(
-        fill=b"\xff", compression_id="gba_lz77", slice_offset=16, slice_length=slot
+        fill=b"\xff", compression_id="gba_lz77", slot_offset=16, slot_length=slot
     )
     written = add_block(
         window, file_entry, "written", RangeSource(0, 30), **slice_fields
@@ -2106,8 +2106,8 @@ def test_switching_entries_keeps_the_block_s_document(window, tmp_path):
 def test_the_entry_form_spells_every_kind_both_ways(qtbot):
     from mapchar.core.table import TokenKind
     from mapchar.project.formats.table_native import parse_entry
-    from mapchar.ui.entry_rows import STOP_DATA
     from mapchar.ui.table_entry_form import TableEntryForm
+    from mapchar.ui.table_entry_rows import STOP_DATA
 
     form = TableEntryForm()
     qtbot.addWidget(form)
@@ -2427,7 +2427,7 @@ def test_adding_relative_search_entries_to_a_table_undoes(
 def test_a_block_from_a_scanned_region_undoes_with_its_end_token(window, tmp_path):
     """The guessed terminator and the block are one gesture, so one undo takes
     both back out — otherwise undoing the block leaves the entry behind."""
-    from mapchar.engines.scan import Region
+    from mapchar.engines.textscan import Region
     from mapchar.project.formats.table_native import HEADER
 
     # No end token of its own: the scan's guessed terminator becomes the block's.
@@ -2453,7 +2453,7 @@ def test_a_block_from_a_scanned_region_keeps_a_table_that_already_has_an_end(
 ):
     """A table that already labels [end] on other bits keeps it: the guessed
     terminator is not added, and the block still comes out."""
-    from mapchar.engines.scan import Region
+    from mapchar.engines.textscan import Region
     from mapchar.project.formats.table_native import HEADER
 
     open_rom_and_table(
@@ -2477,7 +2477,7 @@ def test_a_block_from_a_scanned_record_chain_reads_it_behind_its_header(
     block that reads it that way — the length prefix and the header in front of
     it — and no end token is guessed for a string that carries its own length."""
     from mapchar.core.block import Pascal
-    from mapchar.engines.scan import Records, Region
+    from mapchar.engines.textscan import Records, Region
     from mapchar.project.formats.table_native import HEADER
 
     data = b"\x90\xa1\x02AB\x90\xa1\x03ABC"
@@ -2501,7 +2501,7 @@ def test_a_block_from_a_scanned_region_reads_through_the_current_table(
     """The scan scored the region through the table the file is read through,
     so the block it becomes reads it through that one — a record chain as much
     as a terminated region, which keeps the whole of the current reading."""
-    from mapchar.engines.scan import Records, Region
+    from mapchar.engines.textscan import Records, Region
     from mapchar.project.formats.table_native import HEADER
 
     data = b"\x90\xa1\x02AB\x90\xa1\x03ABC"
@@ -2524,7 +2524,7 @@ def test_a_block_from_a_scanned_region_reads_through_the_current_table(
 
 def test_the_scan_window_says_how_each_region_cuts_its_strings():
     """The Strings column is the Block dialog's words, never a class name."""
-    from mapchar.engines.scan import Records, Region
+    from mapchar.engines.textscan import Records, Region
     from mapchar.ui.scan_window import _strings_of
 
     assert _strings_of(Region(0, 8, 1.0, records=Records(header=2))) == (

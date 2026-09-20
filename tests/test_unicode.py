@@ -14,7 +14,7 @@ from helpers import table_set
 from mapchar.core.bits import bytes_to_bits
 from mapchar.core.block import Status, StringRecord
 from mapchar.core.font import Font, TextBox
-from mapchar.core.table import ID_PATTERN, Entry, Table, TokenKind
+from mapchar.core.table import ID_PATTERN, Table, TableEntry, TokenKind
 from mapchar.core.text import fold, graphemes, nfc, nfd, units
 from mapchar.core.tokens import Token
 from mapchar.engines import scriptfind
@@ -45,8 +45,8 @@ def test_table_text_is_composed_however_the_file_spelled_it():
         table = parse_native(native(body)).tables[0]
         assert table.entries["01000001"].text == GA
     # Any entry, from any dialect or built by hand.
-    assert Entry("01000001", TokenKind.TEXT, GA_NFD).text == GA
-    assert Entry("01000001", TokenKind.CODE, nfd("é")).text == "é"
+    assert TableEntry("01000001", TokenKind.TEXT, GA_NFD).text == GA
+    assert TableEntry("01000001", TokenKind.CODE, nfd("é")).text == "é"
 
 
 def test_a_replacement_and_an_original_are_composed_on_commit():
@@ -60,7 +60,7 @@ def test_a_replacement_and_an_original_are_composed_on_commit():
 
 
 def test_matches_original_ignores_the_form():
-    entry = Entry("01000001", TokenKind.TEXT, GA)
+    entry = TableEntry("01000001", TokenKind.TEXT, GA)
     rec = StringRecord(0, 0, 8, [Token("01000001", 0, 8, entry)])
     rec.original = rec.current_text()
     assert rec.original_text() == GA

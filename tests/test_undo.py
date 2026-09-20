@@ -17,8 +17,7 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from mapchar.core.block import RangeSource, Status
-from mapchar.core.table import Entry as TableEntry
-from mapchar.core.table import TokenKind
+from mapchar.core.table import TableEntry, TokenKind
 from mapchar.ui.undo_commands import (
     BlockEditCommand,
     BoxCommand,

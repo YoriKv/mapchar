@@ -111,7 +111,7 @@ def test_a_table_effect_sets_the_newline_code(window, tmp_path):
 
 
 def test_the_form_edits_an_effect_and_a_frame_that_falls_through(window, tmp_path):
-    from mapchar.core.table import Entry as TableEntry
+    from mapchar.core.table import TableEntry
     from mapchar.project.formats.table_native import parse_entry
     from mapchar.ui.table_entry_form import describe
 

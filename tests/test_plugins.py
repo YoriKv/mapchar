@@ -58,10 +58,10 @@ def test_missing_plugin_degrades(registry):
 
 def test_charsets(registry):
     t = Table("t", "ascii")
-    from mapchar.core.table import Entry, TokenKind
+    from mapchar.core.table import TableEntry, TokenKind
 
-    t.add(Entry("01000001", TokenKind.TEXT, "a"))  # override A
-    t.add(Entry("01000010", TokenKind.TEXT, ""))  # remove B
+    t.add(TableEntry("01000001", TokenKind.TEXT, "a"))  # override A
+    t.add(TableEntry("01000010", TokenKind.TEXT, ""))  # remove B
     apply_charset(t, registry)
     assert t.entries["01000001"].text == "a"
     assert "01000010" not in t.entries

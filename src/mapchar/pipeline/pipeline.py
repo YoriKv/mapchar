@@ -30,8 +30,8 @@ from mapchar.core.context import (
     KEY_HEADER_SIZE,
     KEY_SOURCE_FILES,
     KEY_SUGGESTED_MAPPING,
+    FileSpan,
     PipelineContext,
-    SourceSpan,
 )
 from mapchar.core.errors import MapcharError, PipelineError, Stage
 from mapchar.pipeline.filechange import current_bytes
@@ -271,7 +271,7 @@ def _probe(
         return default
 
 
-def acquire(ref: FileRef) -> tuple[ReadSource, tuple[SourceSpan, ...], bytes]:
+def acquire(ref: FileRef) -> tuple[ReadSource, tuple[FileSpan, ...], bytes]:
     """Resolve a :class:`FileRef` into what a container is handed.
 
     The host's half of the container contract: the files are opened here, once,
@@ -287,12 +287,12 @@ def acquire(ref: FileRef) -> tuple[ReadSource, tuple[SourceSpan, ...], bytes]:
     """
     joined = ref.joined()
     if ref.data is not None:
-        spans = (SourceSpan(ref.path, 0, len(joined)),)
+        spans = (FileSpan(ref.path, 0, len(joined)),)
     else:
         spans, at = [], 0
         for path in ref.paths:
             size = os.path.getsize(path)
-            spans.append(SourceSpan(path, at, size))
+            spans.append(FileSpan(path, at, size))
             at += size
         spans = tuple(spans)
     return ReadSource(ref.window(joined), ref.paths), spans, joined

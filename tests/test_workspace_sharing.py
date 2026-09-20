@@ -62,7 +62,7 @@ def test_a_compressed_block_shares_its_slot_only(ws):
             "one",
             parent=f,
             compression_id="lz",
-            slice_offset=0x20,
+            slot_offset=0x20,
             doc=doc(),
         )
     )
@@ -72,7 +72,7 @@ def test_a_compressed_block_shares_its_slot_only(ws):
             "two",
             parent=f,
             compression_id="lz",
-            slice_offset=0x20,
+            slot_offset=0x20,
             doc=doc(),
         )
     )
@@ -83,7 +83,7 @@ def test_a_compressed_block_shares_its_slot_only(ws):
             "far",
             parent=f,
             compression_id="lz",
-            slice_offset=0x80,
+            slot_offset=0x80,
             doc=doc(),
         )
     )
@@ -93,7 +93,7 @@ def test_a_compressed_block_shares_its_slot_only(ws):
             "rle",
             parent=f,
             compression_id="rle",
-            slice_offset=0x20,
+            slot_offset=0x20,
             doc=doc(),
         )
     )
@@ -104,7 +104,7 @@ def test_a_compressed_block_shares_its_slot_only(ws):
             "twin",
             parent=g,
             compression_id="lz",
-            slice_offset=0x20,
+            slot_offset=0x20,
             doc=doc(),
         )
     )

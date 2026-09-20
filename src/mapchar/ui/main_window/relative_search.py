@@ -6,8 +6,7 @@ from copy import deepcopy
 
 from PySide6.QtWidgets import QInputDialog
 
-from mapchar.core.table import Entry as TableEntry
-from mapchar.core.table import Table
+from mapchar.core.table import Table, TableEntry
 from mapchar.engines.relsearch import Hit, entries_from_base, entries_from_hit
 from mapchar.ui.alphabets import RUN_NAMES
 from mapchar.ui.undo_commands import TableCommand

@@ -5,7 +5,7 @@ from __future__ import annotations
 from mapchar.core.capabilities import Capability
 from mapchar.core.context import KEY_DECOMPRESS_PARTIAL, PipelineContext
 from mapchar.core.document import Document
-from mapchar.pipeline.scan import (
+from mapchar.pipeline.structures import (
     decompress_at,
     scheme_at,
     signature_of,
@@ -175,7 +175,7 @@ class CompressionMixin:
         and hand back the structure it read there.
 
         Run wherever the view lands, so it compares a few bytes per scheme
-        before anything is decoded (:func:`~mapchar.pipeline.scan.scheme_at`),
+        before anything is decoded (:func:`~mapchar.pipeline.structures.scheme_at`),
         and only a complete structure counts — moving off one disarms, which is
         what hides a view that armed itself. The structure comes back because
         the probe decoded it whole: the preview shows that reading rather than

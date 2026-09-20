@@ -13,7 +13,7 @@ from mapchar.pipeline.extract import extract
 from mapchar.project.exchange.addresses import shift_config
 from mapchar.project.exchange.atlas import (
     atlas_text,
-    read_atlas,
+    read_atlas_script,
     write_abcde_table,
     write_atlas,
 )
@@ -63,13 +63,13 @@ def test_write_and_read_atlas_script(registry):
     assert '#SMA("LINEAR")' in s and "#JMP($10, $18)" in s
     assert "#W16($0)\nAB[color]<$03>C[end]" in s and "#W16($2)\nC[end]" in s
     assert "@main" in export.tables["main.tbl"]
-    back = read_atlas(s)
+    back = read_atlas_script(s)
     assert [(a.text, a.pointers) for a in back.strings] == [
         ("AB[color]<$03>C[end]".replace("<$03>", "[$03]"), (0,)),
         ("C[end]", (2,)),
     ]
     assert back.strings[0].insert_at == 0x10 and len(back.tables) == 2
-    stopped = read_atlas(s + "#AUTOCMD($1, #JMP($2))\nX\n")
+    stopped = read_atlas_script(s + "#AUTOCMD($1, #JMP($2))\nX\n")
     assert stopped.stopped_at is not None and len(stopped.strings) == 2
 
 
@@ -96,7 +96,7 @@ def test_atlas_addresses_are_file_offsets(registry):
     assert f"#JMP(${0x10 + header:X}, ${0x18 + header:X})" in s
     assert f"#HDR(${header:X})" in s
     assert f"#W16(${header:X})\n" in s and f"#W16(${header + 2:X})\n" in s
-    back = read_atlas(s)
+    back = read_atlas_script(s)
     assert back.strings[0].insert_at - header == 0x10
     assert [tuple(a - header for a in x.pointers) for x in back.strings] == [(0,), (2,)]
     assert [x.text for x in back.strings] == [r.current_text() for r in ex.strings]

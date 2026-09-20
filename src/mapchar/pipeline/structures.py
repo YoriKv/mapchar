@@ -25,9 +25,9 @@ from mapchar.pipeline.pipeline import bind_tables
 
 __all__ = [
     "FoundStructure",
-    "ScanResult",
     "Structure",
     "StructureSearch",
+    "WalkResult",
     "decompress_at",
     "find_next_structure",
     "find_structures",
@@ -99,7 +99,7 @@ class _Probe:
 
 
 @dataclass(frozen=True)
-class ScanResult:
+class WalkResult:
     """Where a forward structure scan ended (:func:`find_next_structure`).
 
     ``found`` is the hit offset or ``None``; ``end`` is where the scan stopped,
@@ -122,7 +122,7 @@ def find_next_structure(
     window: int = 0,
     progress_every: int = 256,
     on_tick: Callable[[int], bool] | None = None,
-) -> ScanResult:
+) -> WalkResult:
     """The first offset at or after ``start`` where one of ``plugins`` reads a
     structure.
 
@@ -176,15 +176,15 @@ def find_next_structure(
                 buffer, probe.plugin, pos, window=window, ctx=probe.ctx
             )
             if found is not None and found.complete and len(found.data) >= min_size:
-                return ScanResult(pos, pos, False)
+                return WalkResult(pos, pos, False)
         pos += 1
         if on_tick is not None and (jumped or pos >= next_tick):
             next_tick = pos + progress_every
             if on_tick(pos):
-                return ScanResult(None, pos, True)
+                return WalkResult(None, pos, True)
     if on_tick is not None:
         on_tick(pos)  # the end of the buffer is the end of the progress line
-    return ScanResult(None, pos, False)
+    return WalkResult(None, pos, False)
 
 
 def signature_of(plugin: Any) -> bytes:

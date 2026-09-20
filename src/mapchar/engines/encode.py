@@ -24,8 +24,8 @@ from mapchar.core.table import (
     BITS,
     RAW,
     RETURN,
-    Entry,
     SwitchParam,
+    TableEntry,
     TableSet,
     TokenKind,
 )
@@ -452,7 +452,7 @@ def _table_successors(
     return out
 
 
-def _with_longer(succ, idx: Index, entry: Entry):
+def _with_longer(succ, idx: Index, entry: TableEntry):
     npos, nstack, nf, bits, is_end = succ
     longer = idx.longer.get(entry.bits)
     if longer:

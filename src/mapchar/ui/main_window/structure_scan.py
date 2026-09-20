@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 
 from mapchar.core.block import with_region
-from mapchar.engines.scan import score_window
-from mapchar.pipeline.scan import find_next_structure, find_structures
+from mapchar.engines.textscan import score_window
+from mapchar.pipeline.structures import find_next_structure, find_structures
 from mapchar.project.workspace import Entry, EntryKind
 
 NOTHING_TO_WALK = "Pick a scheme, or one that announces itself."
@@ -50,7 +50,7 @@ class StructureScanMixin:
     def _scan_next_structure(self) -> None:
         """Walk forward to the next complete structure, cancellably.
 
-        The walk itself is :func:`~mapchar.pipeline.scan.find_next_structure`,
+        The walk itself is :func:`~mapchar.pipeline.structures.find_next_structure`,
         which is Qt-free; all that is left here is reporting through the
         Decompressed view's own run/stop/progress line, which pumps the event
         loop so Stop stays clickable — and so a click on a button that pumping
@@ -117,7 +117,7 @@ class StructureScanMixin:
     def _find_all_structures(self) -> None:
         """Find All: every structure in the file, listed, cancellably.
 
-        The walk is :func:`~mapchar.pipeline.scan.find_structures`, which is
+        The walk is :func:`~mapchar.pipeline.structures.find_structures`, which is
         Qt-free and looks for a scheme's signature where it has one; what is
         left here is the same run/stop/progress line the structure scan uses,
         and scoring each payload for how text-like it reads under the current
@@ -206,11 +206,11 @@ class StructureScanMixin:
             # Whatever actually decoded, which under automatic arming is the
             # scheme the bytes announced rather than anything anyone picked.
             compression_id=self._preview_scheme,
-            slice_offset=offset,
+            slot_offset=offset,
             # A decode that read nothing recorded nothing: the slot is left
             # unknown rather than claimed to be empty, and the write-back then
             # bounds it by the end of the parent's buffer.
-            slice_length=consumed or None,
+            slot_length=consumed or None,
         )
         self._push_add(entry)
         self._activate_entry(entry)

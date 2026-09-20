@@ -65,7 +65,7 @@ def entry_offset(
     if entry.kind is not EntryKind.BLOCK:
         return -1
     if entry.compression_id:
-        return entry.slice_offset
+        return entry.slot_offset
     start = source_start(entry.config.source if entry.config is not None else None)
     return 0 if start is None else start
 
@@ -270,8 +270,8 @@ def source_text(entry: Entry) -> str:
     forbids outright.
     """
     if entry.compression_id:
-        length = f"{entry.slice_length:X}" if entry.slice_length else "found on read"
-        return f"compressed at {entry.slice_offset:X}, length {length}"
+        length = f"{entry.slot_length:X}" if entry.slot_length else "found on read"
+        return f"compressed at {entry.slot_offset:X}, length {length}"
     source = entry.config.source
     named = SOURCE_NAMES.get(type(source), "source").lower()
     if isinstance(source, RangeSource):

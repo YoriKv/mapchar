@@ -15,8 +15,8 @@ from mapchar.core.table import (
     BITS,
     RAW,
     RETURN,
-    Entry,
     Table,
+    TableEntry,
     TableSet,
     TokenKind,
 )
@@ -28,12 +28,12 @@ from mapchar.core.tokens import CodeRef, TextRun, parse_text
 class Index:
     """Per-table lookups for encoding, built once per search."""
 
-    by_first: dict[str, list[tuple[tuple, Entry]]] = field(default_factory=dict)
+    by_first: dict[str, list[tuple[tuple, TableEntry]]] = field(default_factory=dict)
     """First atom (a character or ``[label]``) to ``(atoms, entry)`` matches."""
-    codes: dict[str, Entry] = field(default_factory=dict)
+    codes: dict[str, TableEntry] = field(default_factory=dict)
     """Label to CODE entry (operands come from the text)."""
-    silent: list[Entry] = field(default_factory=list)
-    returns: list[Entry] = field(default_factory=list)
+    silent: list[TableEntry] = field(default_factory=list)
+    returns: list[TableEntry] = field(default_factory=list)
     longer: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """Entry bits to the suffixes that would complete a longer entry."""
     keys: list[str] = field(default_factory=list)

@@ -6,7 +6,7 @@ from collections.abc import Iterable, Iterator, Mapping
 
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Level, Notice
-from mapchar.core.table import Entry, Table, TokenKind
+from mapchar.core.table import Table, TableEntry, TokenKind
 from mapchar.core.tokens import escape_text
 from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import Registry
@@ -66,7 +66,7 @@ def apply_charset(
     own = dict(table.entries)
     table.charset_entries = {}
     for bits, text in charset.entries():
-        entry = Entry(bits, TokenKind.TEXT, escape_text(text))
+        entry = TableEntry(bits, TokenKind.TEXT, escape_text(text))
         table.charset_entries[bits] = entry
         if bits in table.entries:
             continue
@@ -105,7 +105,7 @@ def charset_table(charset_id: str, registry: Registry) -> Table:
     table = Table(charset_id, charset_id)
     apply_charset(table, registry)
     charset = registry.plugin(Stage.CHARSET, charset_id)
-    table.add(Entry(end_bits(charset), TokenKind.END, "[end]"), replace=True)
+    table.add(TableEntry(end_bits(charset), TokenKind.END, "[end]"), replace=True)
     return table
 
 

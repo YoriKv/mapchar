@@ -30,7 +30,7 @@ from mapchar.project.workspace import free_name
 if TYPE_CHECKING:
     from mapchar.plugins.registry import Registry
     from mapchar.project.formats.table_native import TableFile
-    from mapchar.project.workspace import Entry as WorkspaceEntry
+    from mapchar.project.workspace import Entry
 
 
 def table_id_for(path: str | None) -> str:
@@ -136,7 +136,7 @@ def apply_overlay(table: Table, overlay: dict[str, str | None]) -> None:
 
 
 def adopt_table(
-    entry: WorkspaceEntry,
+    entry: Entry,
     table: Table,
     notices: Sequence[Notice] = (),
     *,
@@ -162,7 +162,7 @@ def adopt_table(
     apply_overlay(table, entry.table_overlay)
 
 
-def capture_overlay(entry: WorkspaceEntry) -> None:
+def capture_overlay(entry: Entry) -> None:
     """Re-measure ``entry``'s overlay after its table changed.
 
     Derived rather than accumulated, so an undo, a redo and a reload all leave
@@ -182,7 +182,7 @@ def capture_overlay(entry: WorkspaceEntry) -> None:
         )
 
 
-def fold_overlay(entry: WorkspaceEntry) -> None:
+def fold_overlay(entry: Entry) -> None:
     """The table is now what the file holds: the overlay is spent.
 
     What **Save As File** leaves behind — the native file it wrote is the

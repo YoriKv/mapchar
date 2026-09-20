@@ -34,8 +34,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.bits import format_key
 from mapchar.core.errors import TableError
-from mapchar.core.table import ID_PATTERN, Table, TokenKind
-from mapchar.core.table import Entry as TableEntry
+from mapchar.core.table import ID_PATTERN, Table, TableEntry, TokenKind
 from mapchar.core.text import nfc
 from mapchar.engines.relsearch import entries_from_base
 from mapchar.project.formats.table_native import format_entry, parse_entry

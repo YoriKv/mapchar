@@ -383,7 +383,7 @@ def test_new_block_from_selection_starts_from_the_bars(window, tmp_path):
 
 
 def test_a_preview_is_read_once_and_marked_where_it_was_cut():
-    from mapchar.core.table import Entry, TokenKind
+    from mapchar.core.table import TableEntry, TokenKind
     from mapchar.core.tokens import Token
     from mapchar.ui.pointer_tokens import preview_reader
 
@@ -391,7 +391,7 @@ def test_a_preview_is_read_once_and_marked_where_it_was_cut():
 
     def read(target: int):
         reads.append(target)
-        return [Token("", 0, 8, Entry("", TokenKind.TEXT, "Hi"))], target == 2
+        return [Token("", 0, 8, TableEntry("", TokenKind.TEXT, "Hi"))], target == 2
 
     seen: dict[int, str] = {}
     preview = preview_reader(read, seen)

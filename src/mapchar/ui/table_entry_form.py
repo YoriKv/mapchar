@@ -2,10 +2,10 @@
 
 Only text is typed — the key, the kind, the weight, a code's operands and a
 switch's parameters are pickers and sized fields, so what an entry can be is
-on show rather than remembered. The form reads back as an
-:class:`~mapchar.core.table.Entry` and writes out the line the native grammar
-spells it with; that line is a field too, and a line typed or pasted into it
-fills the form, so the grammar stays open to whoever knows it.
+on show rather than remembered. The form reads back as a
+:class:`~mapchar.core.table.TableEntry` and writes out the line the native
+grammar spells it with; that line is a field too, and a line typed or pasted
+into it fills the form, so the grammar stays open to whoever knows it.
 """
 
 from __future__ import annotations
@@ -31,18 +31,18 @@ from mapchar.core.font import Effect
 from mapchar.core.table import (
     LABEL_PATTERN,
     RETURN,
-    Entry,
     SwitchParam,
+    TableEntry,
     TokenKind,
 )
 from mapchar.project.formats.table_native import format_entry, parse_entry
 from mapchar.ui.bars import WrapBar
-from mapchar.ui.entry_rows import (
+from mapchar.ui.number_fields import HEX_NUMBER, number_spin
+from mapchar.ui.table_entry_rows import (
     OperandRow,
     ParamRow,
     RowList,
 )
-from mapchar.ui.number_fields import HEX_NUMBER, number_spin
 from mapchar.ui.widgets import (
     ElidedLabel,
     ModeToggle,
@@ -100,7 +100,7 @@ EFFECT_NAMES = {effect: name for effect, name, _ in EFFECTS}
 _BIN = QRegularExpression(r"[01]*")
 
 
-def describe(entry: Entry) -> str:
+def describe(entry: TableEntry) -> str:
     """What an entry does beyond its text, in words: the grid's Details."""
     words = _describe_kind(entry)
     if entry.effect is Effect.NONE:
@@ -109,7 +109,7 @@ def describe(entry: Entry) -> str:
     return f"{words} · {effect}" if words else effect
 
 
-def _describe_kind(entry: Entry) -> str:
+def _describe_kind(entry: TableEntry) -> str:
     if entry.kind is TokenKind.CODE:
         return "reads " + ", ".join(o.spec() for o in entry.operands)
     if entry.kind is TokenKind.SWITCH:
@@ -407,7 +407,7 @@ class TableEntryForm(QWidget):
 
     # -- reading and writing the entry ----------------------------------------
 
-    def entry(self) -> Entry:
+    def entry(self) -> TableEntry:
         """The entry the form spells; raises ValueError with what is missing."""
         bits = self.key_bits()
         if not bits:
@@ -428,25 +428,27 @@ class TableEntryForm(QWidget):
             operands = tuple(row.spec() for row in self.operands.rows())
             if not operands:
                 raise ValueError("A code needs at least one operand.")
-            entry = Entry(bits, kind, text, weight, operands=operands, comment=comment)
+            entry = TableEntry(
+                bits, kind, text, weight, operands=operands, comment=comment
+            )
         elif kind is TokenKind.SWITCH:
             params = tuple(row.param() for row in self.params.rows())
             if self.then_return.isChecked():
                 params += (SwitchParam(RETURN),)
             if not params:
                 raise ValueError("A switch needs at least one parameter.")
-            entry = Entry(bits, kind, text, weight, params=params, comment=comment)
+            entry = TableEntry(bits, kind, text, weight, params=params, comment=comment)
         elif kind is TokenKind.RETURN:
-            entry = Entry(bits, kind, "", weight, comment=comment)
+            entry = TableEntry(bits, kind, "", weight, comment=comment)
         else:
-            entry = Entry(bits, kind, text, weight, comment=comment)
+            entry = TableEntry(bits, kind, text, weight, comment=comment)
         entry = replace(entry, effect=effect)
         # The grammar is the judge of the text: an unclosed bracket, a stray
         # one, a label the line cannot carry.
         parse_entry(format_entry(entry))
         return entry
 
-    def set_entry(self, entry: Entry | None) -> None:
+    def set_entry(self, entry: TableEntry | None) -> None:
         """Show ``entry``, or a blank text entry for ``None``."""
         self._syncing = True
         try:
@@ -509,7 +511,7 @@ class TableEntryForm(QWidget):
         self.changed.emit()
 
     @staticmethod
-    def _hint(entry: Entry) -> str:
+    def _hint(entry: TableEntry) -> str:
         """A word on an entry that is valid but probably not what was meant."""
         text = entry.text
         if entry.kind is TokenKind.SWITCH and text and "[" not in text:

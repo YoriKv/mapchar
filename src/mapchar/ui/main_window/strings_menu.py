@@ -167,5 +167,5 @@ class StringsMenuMixin:
         # after the move, which would otherwise sync it before the selection is
         # on the window. ``select_index`` blocks its signals, so the row the
         # selection lands back on does not come round again.
-        self.raw.set_selection(rec.start, rec.end)
+        self.raw.select_bytes(rec.start, rec.end)
         self._on_selection(rec.start, rec.end)

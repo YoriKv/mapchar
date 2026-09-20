@@ -6,7 +6,7 @@ import re
 
 from mapchar.core.errors import TableError
 from mapchar.core.notices import Notice
-from mapchar.core.table import Entry, OperandSpec, Table, TokenKind
+from mapchar.core.table import OperandSpec, Table, TableEntry, TokenKind
 from mapchar.project.formats.legacy import (
     _HEXKEY,
     _add_or_note,
@@ -36,7 +36,7 @@ def read_cartographer(
                 raise TableError("bad linked entry", path, n)
             key, label, count = m.groups()
             bits = _even_key(key, path, n)
-            entry = Entry(
+            entry = TableEntry(
                 bits,
                 TokenKind.CODE,
                 sanitize_label(label),
@@ -45,13 +45,13 @@ def read_cartographer(
         elif first == "/":
             key, _, value = line[1:].partition("=")
             bits = _even_key(key, path, n)
-            entry = Entry(bits, TokenKind.END, _cart_text(value))
+            entry = TableEntry(bits, TokenKind.END, _cart_text(value))
         elif _HEXKEY.match(first):
             key, eq, value = line.partition("=")
             if not eq:
                 raise TableError("entry without '='", path, n)
             bits = _even_key(key, path, n)
-            entry = Entry(bits, TokenKind.TEXT, _cart_text(value))
+            entry = TableEntry(bits, TokenKind.TEXT, _cart_text(value))
         else:
             raise TableError("line must start with a hex digit, '/' or '$'", path, n)
         _add_or_note(table, entry, n, notices)

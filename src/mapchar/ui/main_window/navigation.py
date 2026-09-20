@@ -303,7 +303,7 @@ class NavigationMixin:
         if self._doc is None:
             return
         was = self._offset
-        self.raw.set_selection(offset, offset + length)
+        self.raw.select_bytes(offset, offset + length)
         self._on_selection(offset, offset + length, previewing=False)
         self._go_to(offset)
         if self._offset == was and self._doc is not None:

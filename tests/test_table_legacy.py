@@ -9,7 +9,7 @@ from mapchar.core.notices import Level
 from mapchar.core.table import TokenKind
 from mapchar.project.formats.legacy import detect_dialect, load_table_text
 from mapchar.project.formats.legacy.abcde import read_abcde
-from mapchar.project.formats.legacy.atlas import read_atlas
+from mapchar.project.formats.legacy.atlas import read_atlas_table
 from mapchar.project.formats.legacy.cartographer import read_cartographer
 from mapchar.project.formats.legacy.romjuice import read_romjuice
 from mapchar.project.formats.table_native import write_native
@@ -74,7 +74,9 @@ def test_cartographer():
 
 
 def test_atlas():
-    tf = read_atlas("41=A\n*FE\n*FD=x\n/FF=[END]\n/<END>\n!DE\n$F0=y\n(book)\n// c\n")
+    tf = read_atlas_table(
+        "41=A\n*FE\n*FD=x\n/FF=[END]\n/<END>\n!DE\n$F0=y\n(book)\n// c\n"
+    )
     t = tf.tables[0]
     assert t.entries["11111110"].text == "\\n"
     assert t.entries["11111101"].text == "x\\n"

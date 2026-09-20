@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from mapchar.core.block import BlockConfig, PointerSource, PointerTableSource
-from mapchar.core.table import Entry, TokenKind
+from mapchar.core.table import TableEntry, TokenKind
 from mapchar.core.tokens import Token, render
 from mapchar.pipeline.view_read import PointerCell
 from mapchar.ui.token_text import POINTER_TOKENS, compact_text, ellipsize
@@ -40,7 +40,7 @@ def _token(cell: PointerCell, offset: int, text: str) -> Token:
         "",
         start,
         start + cell.size * 8,
-        Entry("", TokenKind.TEXT, text),
+        TableEntry("", TokenKind.TEXT, text),
         table_id=POINTER_TOKENS,
     )
 

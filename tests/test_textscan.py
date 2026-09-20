@@ -8,7 +8,7 @@ from conftest import ROOT
 from helpers import ASCII_TABLE, table_set, texts
 from mapchar.core.block import BlockConfig, EndToken, Pascal, RangeSource
 from mapchar.core.table import TableSet
-from mapchar.engines.scan import Records, scan, score_window
+from mapchar.engines.textscan import Records, scan, score_window
 from mapchar.pipeline.extract import extract
 from mapchar.plugins.charsets import apply_charset
 from mapchar.project.formats.table_native import parse_native

@@ -25,7 +25,7 @@ from mapchar.ui.table_entry_form import KIND_NAMES, describe
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
 
-    from mapchar.core.table import Entry as TableEntry
+    from mapchar.core.table import TableEntry
 
 KEY, KIND, TEXT, DETAILS, WEIGHT, COMMENT = range(6)
 """The grid's columns."""

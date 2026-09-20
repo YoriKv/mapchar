@@ -14,10 +14,8 @@ from mapchar.core.notices import notice_lines
 from mapchar.core.table import (
     ID_PATTERN,
     Table,
+    TableEntry,
     TokenKind,
-)
-from mapchar.core.table import (
-    Entry as TableEntry,
 )
 from mapchar.core.table_layers import inherited, resolve
 from mapchar.project.formats.table_native import write_native

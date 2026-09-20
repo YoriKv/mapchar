@@ -21,11 +21,11 @@ from mapchar.core.table import (
     BITS,
     RAW,
     RETURN,
-    Entry,
     OperandSpec,
     Stop,
     SwitchParam,
     Table,
+    TableEntry,
     TableSet,
     TokenKind,
 )
@@ -293,7 +293,7 @@ def innermost_index(stack: Sequence[Any], match: Callable[[Any], bool]) -> int |
 
 def _match(
     stack: list[_Frame], window: Callable[[int], str]
-) -> tuple[Entry | None, Table | None]:
+) -> tuple[TableEntry | None, Table | None]:
     """The entry the top frame matches and the table holding it.
 
     A frame that falls through hands the bits its table does not match to the
@@ -410,7 +410,7 @@ def _realign(pos: int, realign: tuple[int, int]) -> int:
 
 
 def _read_operands(
-    bits: Bits, entry: Entry, pos: int, limit: int, skips: list[tuple[int, int]]
+    bits: Bits, entry: TableEntry, pos: int, limit: int, skips: list[tuple[int, int]]
 ) -> tuple[tuple[int, ...], int, bool]:
     """Read the entry's operands; ``short`` is set when the data ran out."""
     values: list[int] = []

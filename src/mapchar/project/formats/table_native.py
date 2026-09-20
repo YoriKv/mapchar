@@ -23,11 +23,11 @@ from mapchar.core.table import (
     LABEL_PATTERN,
     RETURN,
     TABLE_EFFECTS,
-    Entry,
     OperandSpec,
     Stop,
     SwitchParam,
     Table,
+    TableEntry,
     TokenKind,
 )
 from mapchar.core.text import nfc
@@ -126,7 +126,7 @@ class Comments:
         self.file.extend(self.pending)
         self.pending.clear()
 
-    def take(self, entry: Entry) -> Entry:
+    def take(self, entry: TableEntry) -> TableEntry:
         """``entry`` with the pending lines on it, which it consumes."""
         if not self.pending:
             return entry
@@ -247,7 +247,7 @@ def parse_key(key: str) -> str:
     return hex_to_bits(key)
 
 
-def parse_entry(line: str) -> Entry:
+def parse_entry(line: str) -> TableEntry:
     """Parse one entry line of the native grammar. Raises ValueError."""
     m = _ENTRY.match(line)
     if not m:
@@ -272,13 +272,13 @@ def parse_effect(word: str) -> Effect:
     raise ValueError(f"unknown effect {{{word}}}: an entry's effect is one of {names}")
 
 
-def _parse_entry(prefix: str, bits: str, w: int, rhs: str) -> Entry:
+def _parse_entry(prefix: str, bits: str, w: int, rhs: str) -> TableEntry:
     if prefix == "":
         _check_text(rhs)
-        return Entry(bits, TokenKind.TEXT, rhs, w)
+        return TableEntry(bits, TokenKind.TEXT, rhs, w)
     if prefix == "/":
         _check_text(rhs)
-        return Entry(bits, TokenKind.END, rhs, w)
+        return TableEntry(bits, TokenKind.END, rhs, w)
     if prefix == "$":
         label, rest = _take_label(rhs, "$")
         if not rest.startswith(","):
@@ -287,10 +287,10 @@ def _parse_entry(prefix: str, bits: str, w: int, rhs: str) -> Entry:
         if not specs or any(not s for s in specs):
             raise ValueError("empty operand spec")
         operands = tuple(OperandSpec.parse(s) for s in specs)
-        return Entry(bits, TokenKind.CODE, label, w, operands=operands)
+        return TableEntry(bits, TokenKind.CODE, label, w, operands=operands)
     # prefix == "!"
     if rhs.strip() == "return":
-        return Entry(bits, TokenKind.RETURN, "", w)
+        return TableEntry(bits, TokenKind.RETURN, "", w)
     if rhs.strip().startswith("return"):
         raise ValueError("'return' takes no label or parameters")
     text, params = _split_switch(rhs)
@@ -299,7 +299,7 @@ def _parse_entry(prefix: str, bits: str, w: int, rhs: str) -> Entry:
     if RETURN in params[:-1]:
         raise ValueError("'return' must be the last parameter")
     _check_text(text)
-    return Entry(
+    return TableEntry(
         bits, TokenKind.SWITCH, text, w, params=tuple(map(parse_param, params))
     )
 
@@ -356,7 +356,7 @@ def parse_param(word: str) -> SwitchParam:
     return SwitchParam(table, parse_stop(stop), bool(shared), bool(through))
 
 
-def parse_entry_lines(text: str) -> Entry:
+def parse_entry_lines(text: str) -> TableEntry:
     """An entry with its comment lines above it, as :func:`format_entry_lines`
     writes them. Raises ValueError."""
     lines = text.split("\n")
@@ -367,12 +367,12 @@ def parse_entry_lines(text: str) -> Entry:
     return replace(entry, comment="\n".join(comment)) if comment else entry
 
 
-def format_entry_lines(entry: Entry) -> list[str]:
+def format_entry_lines(entry: TableEntry) -> list[str]:
     """The entry's line, under its comment lines."""
     return [*comment_lines(entry.comment), format_entry(entry)]
 
 
-def format_entry(entry: Entry) -> str:
+def format_entry(entry: TableEntry) -> str:
     """The entry's own line, without its comment."""
     key = format_key(entry.bits)
     if entry.weight != 1:

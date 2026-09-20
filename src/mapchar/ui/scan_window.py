@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from mapchar.core.block import EndToken, Pascal
 from mapchar.core.table import TableSet
-from mapchar.engines.scan import Region, scan
+from mapchar.engines.textscan import Region, scan
 from mapchar.ui.kind_names import STRING_TYPE_NAMES
 from mapchar.ui.number_fields import decimal_spin, number_spin
 from mapchar.ui.tool_window import ResultsRunWindow

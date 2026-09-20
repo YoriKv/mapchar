@@ -13,8 +13,7 @@ from mapchar.core.block import (
 from mapchar.core.context import PipelineContext
 from mapchar.core.document import Document
 from mapchar.core.font import TextBox
-from mapchar.core.table import Entry as TableEntry
-from mapchar.core.table import Table, TokenKind
+from mapchar.core.table import Table, TableEntry, TokenKind
 from mapchar.pipeline.extract import extract
 from mapchar.project.glossary import GlossaryTerm, matching_terms
 from mapchar.project.projectfile import (

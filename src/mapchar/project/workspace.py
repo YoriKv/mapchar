@@ -77,7 +77,7 @@ class EntrySession:
     for automatic, which arms whichever registered scheme's signature the view
     has landed on. A file's, like :attr:`config`; a block reads through its own
     :attr:`Entry.compression_id` and previews nothing."""
-    string_view: bool = False
+    strings_mode: bool = False
     """A block left in its Strings mode — all its strings as text rather than
     its source — which coming back to it takes up again. One string opened
     from the Files panel is a visit laid over the mode, not the mode. Not
@@ -107,9 +107,9 @@ class Entry:
     it holds, and moving a row between folders changes nothing else about it.
     """
     bookmark_offset: int = 0
-    slice_offset: int = 0
+    slot_offset: int = 0
     """Blocks with their own compression: where the compressed data starts."""
-    slice_length: int | None = None
+    slot_length: int | None = None
     """Its compressed length; ``None`` when nobody recorded one.
 
     Distinct from zero, which is a slot with no room in it. Unknown means the
@@ -474,13 +474,13 @@ class Workspace:
         list exactly when it is loaded.
         """
         if entry.kind is EntryKind.BLOCK and entry.compression_id:
-            slot = (entry.compression_id, entry.slice_offset)
+            slot = (entry.compression_id, entry.slot_offset)
             return [
                 e
                 for e in self.of_kind(EntryKind.BLOCK)
                 if e.doc is not None
                 and e.parent is entry.parent
-                and (e.compression_id, e.slice_offset) == slot
+                and (e.compression_id, e.slot_offset) == slot
             ]
         file_entry = entry.parent if entry.parent is not None else entry
         shared = [file_entry] if file_entry.doc is not None else []

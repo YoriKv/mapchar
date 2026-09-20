@@ -27,7 +27,7 @@ from mapchar.core.block import (
 )
 from mapchar.core.fill import fill_bits, is_fill
 from mapchar.core.notices import Notice
-from mapchar.core.table import Entry, TableSet, TokenKind
+from mapchar.core.table import TableEntry, TableSet, TokenKind
 from mapchar.core.tokens import (
     CodeRef,
     TextRun,
@@ -54,7 +54,7 @@ def artificial(label: str, bit: int) -> Token:
     fixed strings read line by line.
     """
     text = f"[{label}]\\n" if label else "\\n"
-    return Token("", bit, bit, Entry("", TokenKind.TEXT, text))
+    return Token("", bit, bit, TableEntry("", TokenKind.TEXT, text))
 
 
 def strip_artificial(text: str, config: BlockConfig) -> list[str]:

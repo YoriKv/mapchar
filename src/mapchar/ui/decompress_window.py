@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.tokens import Token
-from mapchar.pipeline.scan import FoundStructure
+from mapchar.pipeline.structures import FoundStructure
 from mapchar.pipeline.text_view import text_model
 from mapchar.ui import setting_int, settings
 from mapchar.ui.progress import CancellableRun

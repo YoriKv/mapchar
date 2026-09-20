@@ -281,7 +281,7 @@ class RefreshMixin:
             self._sync_steps()  # what fits is the open tab's to say
 
     def _on_text_selection(self, start: int, end: int) -> None:
-        self.raw.set_selection(start, end)
+        self.raw.select_bytes(start, end)
         self._on_selection(start, end, from_text=True)
 
     def _update_nav_status(self) -> None:

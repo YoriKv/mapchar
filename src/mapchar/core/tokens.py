@@ -12,7 +12,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from mapchar.core.table import Entry, OperandSpec, TokenKind
+from mapchar.core.table import OperandSpec, TableEntry, TokenKind
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class Token:
     bit_start: int
     bit_end: int
     """Exclusive; covers operands, and skips crossed while reading them."""
-    entry: Entry | None = None
+    entry: TableEntry | None = None
     operands: tuple[int, ...] = ()
     table_id: str | None = None
     """The table the entry was matched in; ``raw``/``bits`` for raw frames."""
@@ -65,7 +65,7 @@ class Token:
         return render_token(self)
 
 
-def bits_for(entry: Entry, values: Iterable[int]) -> str:
+def bits_for(entry: TableEntry, values: Iterable[int]) -> str:
     """An entry's bits with its operand ``values`` packed after them."""
     return entry.bits + "".join(
         spec.bits_of(value) for spec, value in zip(entry.operands, values, strict=False)
@@ -238,7 +238,7 @@ def piece_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def operand_values(entry: Entry, words: tuple[str, ...]) -> tuple[int, ...]:
+def operand_values(entry: TableEntry, words: tuple[str, ...]) -> tuple[int, ...]:
     """Parse the rendered operand words of a code back to values."""
     values: list[int] = []
     pos = 0

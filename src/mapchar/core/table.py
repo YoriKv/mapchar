@@ -189,7 +189,7 @@ class SwitchParam:
 
 
 @dataclass(frozen=True)
-class Entry:
+class TableEntry:
     bits: str
     kind: TokenKind
     text: str = ""
@@ -273,11 +273,11 @@ class Table:
         self.charset = charset
         self.comment = ""
         """The file's own comment lines: every one not directly above an entry."""
-        self.entries: dict[str, Entry] = {}
-        self.charset_entries: dict[str, Entry] = {}
+        self.entries: dict[str, TableEntry] = {}
+        self.charset_entries: dict[str, TableEntry] = {}
         """Every code the charset contributes, whether or not the file overrides
         it, so a write can leave out what the charset already says."""
-        self.labels: dict[str, Entry] = {}
+        self.labels: dict[str, TableEntry] = {}
         self.aliases: dict[str, str] = {}
         """Extra script-form text the encoder accepts for an entry's bits.
 
@@ -295,7 +295,7 @@ class Table:
         """Bumped by every change of entries, aliases or includes: what the
         lookups derived from the table are cached against."""
         self._includes: tuple[str, ...] = ()
-        self._by_length: dict[int, dict[str, Entry]] = {}
+        self._by_length: dict[int, dict[str, TableEntry]] = {}
         self._lengths: tuple[int, ...] = ()
         self._cache: dict[str, tuple[Any, Any]] = {}
 
@@ -312,7 +312,7 @@ class Table:
     def __deepcopy__(self, memo: dict) -> Table:
         """A copy that shares its entries and copies the lookups over them.
 
-        An :class:`Entry` is frozen and is never edited in place — a change
+        A :class:`TableEntry` is frozen and is never edited in place — a change
         makes another one — so a snapshot need not copy tens of thousands of
         them to be independent of the table it was taken from. The dicts that
         hold them are copied, which is what tells the two tables apart.
@@ -358,7 +358,7 @@ class Table:
         self._cache[name] = (key, value)
         return value
 
-    def add(self, entry: Entry, *, replace: bool = False) -> None:
+    def add(self, entry: TableEntry, *, replace: bool = False) -> None:
         """Add an entry. Duplicate bits or labels are an error unless ``replace``."""
         if entry.bits in self.entries and not replace:
             raise TableError(f"duplicate key {entry.bits!r} in table {self.id!r}")
@@ -382,7 +382,7 @@ class Table:
         if entry is not None:
             self._remove(entry)
 
-    def _remove(self, entry: Entry) -> None:
+    def _remove(self, entry: TableEntry) -> None:
         del self.entries[entry.bits]
         if entry.label is not None and self.labels.get(entry.label) is entry:
             del self.labels[entry.label]
@@ -397,7 +397,7 @@ class Table:
     def max_bits(self) -> int:
         return self._lengths[0] if self._lengths else 0
 
-    def match(self, window: str) -> Entry | None:
+    def match(self, window: str) -> TableEntry | None:
         """The longest entry that prefixes ``window``."""
         for length in self._lengths:
             if length > len(window):
@@ -458,10 +458,10 @@ class Table:
             },
         )
 
-    def sorted_entries(self) -> list[Entry]:
+    def sorted_entries(self) -> list[TableEntry]:
         return sorted(self.entries.values(), key=lambda e: (len(e.bits), e.bits))
 
-    def own_entries(self) -> list[Entry]:
+    def own_entries(self) -> list[TableEntry]:
         """What a file has to say beyond the charset: every entry the charset
         does not already give, plus an empty-text entry for each charset code
         the table has dropped, so the file reads back to this table."""
@@ -469,7 +469,7 @@ class Table:
             e for e in self.sorted_entries() if self.charset_entries.get(e.bits) != e
         ]
         dropped = [
-            Entry(bits, TokenKind.TEXT, "")
+            TableEntry(bits, TokenKind.TEXT, "")
             for bits in self.charset_entries
             if bits not in self.entries
         ]
@@ -530,5 +530,5 @@ class TableSet:
     def table(self, id: str) -> Table:
         return self.tables[id]
 
-    def entry_for_label(self, label: str) -> list[tuple[Table, Entry]]:
+    def entry_for_label(self, label: str) -> list[tuple[Table, TableEntry]]:
         return [(t, t.labels[label]) for t in self.tables.values() if label in t.labels]

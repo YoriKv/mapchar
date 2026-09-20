@@ -223,7 +223,7 @@ SUPPORTED = {
 _CMD = re.compile(r"^\s*#([A-Z0-9]+)\((.*)\)\s*(//.*)?$")
 
 
-def read_atlas(text: str) -> AtlasScript:
+def read_atlas_script(text: str) -> AtlasScript:
     """The strings of an Atlas script with where they go, for matching."""
     script = AtlasScript()
     insert: int | None = None

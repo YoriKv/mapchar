@@ -221,12 +221,15 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
     if entry.kind is EntryKind.BLOCK:
         if entry.compression_id:
             d["compression_id"] = entry.compression_id
-            d["slice_offset"] = entry.slice_offset
+            # The slot is spelled ``slice_*`` on disk: the key the format has
+            # always had, kept so written projects stay readable by anything
+            # that knows the schema.
+            d["slice_offset"] = entry.slot_offset
             # Written on the same test the reader applies, so a length round
             # trips to itself: an absent key and a zero both mean "nobody
             # measured it", and only one of the two is worth writing down.
-            if entry.slice_length:
-                d["slice_length"] = entry.slice_length
+            if entry.slot_length:
+                d["slice_length"] = entry.slot_length
             if entry.spare_room != "fill":
                 d["spare_room"] = entry.spare_room
         if entry.config is not None:
@@ -553,11 +556,11 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
     if entry.config is not None:
         entry.config = current_config_ids(entry.config)
     if kind is EntryKind.BLOCK:
-        entry.slice_offset = int(raw.get("slice_offset", 0))
+        entry.slot_offset = int(raw.get("slice_offset", 0))
         # A slot with no room in it is not a thing anyone means: a stored 0
         # reads as unknown.
         stored = raw.get("slice_length")
-        entry.slice_length = int(stored) if stored else None
+        entry.slot_length = int(stored) if stored else None
         entry.spare_room = str(raw.get("spare_room", "fill"))
         # Remembered room, and nothing a build cannot read as an address: a
         # block with none simply has its text's end for a bound.

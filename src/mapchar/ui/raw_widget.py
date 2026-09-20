@@ -153,12 +153,12 @@ class RawWidget(QAbstractScrollArea):
     def char_width(self) -> int:
         return self._geom.char_width
 
-    @property
-    def visible_rows(self) -> int:
+    def lines_in_view(self) -> int:
+        """How many rows of bytes the viewport has room for, at least one."""
         return max(1, self.viewport().height() // self.row_height)
 
     def visible_bytes(self) -> int:
-        return self.visible_rows * BYTES_PER_ROW
+        return self.lines_in_view() * BYTES_PER_ROW
 
     def content_width(self) -> int:
         """How wide the rows are drawn: address, hex, text and a margin."""
@@ -212,14 +212,14 @@ class RawWidget(QAbstractScrollArea):
             total_rows = -(-(end - self._base) // BYTES_PER_ROW)
             self._syncing = True
             sb = self.verticalScrollBar()
-            sb.setRange(0, max(0, total_rows - self.visible_rows))
-            sb.setPageStep(self.visible_rows)
+            sb.setRange(0, max(0, total_rows - self.lines_in_view()))
+            sb.setPageStep(self.lines_in_view())
             sb.setValue((model.offset - self._base) // BYTES_PER_ROW)
             self._syncing = False
         self._sync_horizontal()
         self.viewport().update()
 
-    def set_selection(self, start: int, end: int) -> None:
+    def select_bytes(self, start: int, end: int) -> None:
         """Select bytes on somebody else's behalf — a search hit, a string the
         Files panel opened, the Text tab's own selection.
 
@@ -269,8 +269,8 @@ class RawWidget(QAbstractScrollArea):
             self.set_model(self._model)
         else:
             self._sync_horizontal()
-        if self.visible_rows != self._rows_shown:
-            self._rows_shown = self.visible_rows
+        if self.lines_in_view() != self._rows_shown:
+            self._rows_shown = self.lines_in_view()
             self.rows_changed.emit()
 
     # --- painting ------------------------------------------------------
@@ -285,7 +285,7 @@ class RawWidget(QAbstractScrollArea):
             return
         hex_x, text_x, text_w = self._geom.columns()
         cw, rh = self.char_width, self.row_height
-        rows = min(self.visible_rows + 1, -(-len(model.data) // BYTES_PER_ROW))
+        rows = min(self.lines_in_view() + 1, -(-len(model.data) // BYTES_PER_ROW))
         shown = rows * BYTES_PER_ROW
         limit = min(shown, len(model.data))
         ink = pal.text().color()

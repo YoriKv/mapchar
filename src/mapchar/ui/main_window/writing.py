@@ -176,7 +176,7 @@ class WritingMixin:
                 compressed.append(block)
         slots: dict[tuple, list[Entry]] = {}
         for block in compressed:
-            slot = (block.compression_id, block.slice_offset)
+            slot = (block.compression_id, block.slot_offset)
             if slot not in slots:
                 slots[slot] = self.workspace.entries_sharing(block)
         written: list[tuple[Entry, bytes | None]] = [(b, None) for b in plain]

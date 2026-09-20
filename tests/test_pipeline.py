@@ -31,7 +31,7 @@ from mapchar.pipeline.pipeline import (
     load,
     save,
 )
-from mapchar.pipeline.scan import (
+from mapchar.pipeline.structures import (
     find_next_structure,
     find_structures,
     scheme_at,

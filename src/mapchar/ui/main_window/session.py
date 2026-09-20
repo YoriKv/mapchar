@@ -80,7 +80,7 @@ class SessionMixin:
         # own bytes keeps both: they are the same offsets.
         if before is None or self._doc is None or self._doc.data is not before.data:
             self._selection = None
-            self.raw.set_selection(0, 0)
+            self.raw.select_bytes(0, 0)
         self._restore_session()
         self._refresh_view()
 
@@ -133,7 +133,7 @@ class SessionMixin:
 
         The parent's *buffer* is the source, not its file, so a block reads the
         unsaved edits made through the file's own view rather than the stale
-        bytes on disk. A ``slice_length`` nobody recorded leaves the slot
+        bytes on disk. A ``slot_length`` nobody recorded leaves the slot
         unbounded, which the pipeline reads as running to the end of that buffer.
         """
         # A compressed slot's tail takes the fill pattern's first byte.
@@ -142,8 +142,8 @@ class SessionMixin:
             FileRef(
                 entry.paths or ((entry.parent.path,) if entry.parent else ()),
                 data=parent_doc.data,
-                offset=entry.slice_offset,
-                length=entry.slice_length,
+                offset=entry.slot_offset,
+                length=entry.slot_length,
             ),
             compression_id=entry.compression_id,
             slot_fill=SlotFill.parse(entry.spare_room),
@@ -210,7 +210,7 @@ class SessionMixin:
                 start = source_start(entry.config.source)
                 # A block left reading its strings comes back on them, not on
                 # the source it was made over.
-                span = self._string_span(entry) if entry.session.string_view else None
+                span = self._string_span(entry) if entry.session.strings_mode else None
                 if span is not None:
                     self._string_bounds = self._bounds = span
                     start = span[0]
@@ -237,4 +237,4 @@ class SessionMixin:
         # One string opened over the block is a visit, not its mode: what the
         # block is left reading is whichever mode lies under it.
         if not self._in_one_string():
-            entry.session.string_view = self._in_strings_mode()
+            entry.session.strings_mode = self._in_strings_mode()
