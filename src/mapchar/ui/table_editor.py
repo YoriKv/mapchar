@@ -98,8 +98,6 @@ class TableEditor(EscapeCloses, QWidget):
     """Save, or Save As File… (``True``) asking for the path."""
     table_requested = Signal(object)
     """The Table picker chose another table entry to edit."""
-    charset_chosen = Signal(object, str)
-    """The Charset picker put the table entry's table on a charset."""
     rename_requested = Signal(object)
     """Rename Table… on the table entry being edited."""
     includes_chosen = Signal(object, tuple)
@@ -145,12 +143,6 @@ class TableEditor(EscapeCloses, QWidget):
         self.table_pick = CompactComboBox(220)
         self.table_pick.setToolTip("The loaded table to edit")
         head.add_group("Table", self.table_pick)
-        self.charset_pick = CompactComboBox(150)
-        self.charset_pick.setToolTip(
-            "The built-in encoding the table sits on; its own entries override "
-            "the encoding's code for code"
-        )
-        head.add_group("Charset", self.charset_pick)
         self.includes = hint_field(
             QLineEdit(),
             "table ids",
@@ -269,7 +261,6 @@ class TableEditor(EscapeCloses, QWidget):
         layout.addWidget(self.status)
 
         self.table_pick.currentIndexChanged.connect(self._on_table_pick)
-        self.charset_pick.currentIndexChanged.connect(self._on_charset_pick)
         self.includes.editingFinished.connect(self._on_includes_edited)
         self.filter.textChanged.connect(self._apply_filter)
         QShortcut(
@@ -298,7 +289,6 @@ class TableEditor(EscapeCloses, QWidget):
         self.save_as.clicked.connect(
             lambda: self.save_requested.emit(self._entry, True)
         )
-        self.set_charsets([])
 
     @property
     def new_line(self) -> QLineEdit:
@@ -320,36 +310,12 @@ class TableEditor(EscapeCloses, QWidget):
             select_data(self.table_pick, id(self._entry))
         self.form.set_tables([e.table.id for e in loaded])
 
-    def set_charsets(self, names: list[tuple[str, str]]) -> None:
-        """``(id, name)`` of every charset a table can sit on."""
-        was = self.charset_pick.blockSignals(True)
-        fill_pick(
-            self.charset_pick, [("none", "none"), *((n, cid) for cid, n in names)]
-        )
-        if self._table is not None:
-            self._show_charset()
-        self.charset_pick.blockSignals(was)
-
-    def _show_charset(self) -> None:
-        charset = self._table.charset if self._table is not None else "none"
-        if not select_data(self.charset_pick, charset):
-            # A charset no plugin provides is still the table's; it is named.
-            self.charset_pick.addItem(charset, charset)
-            self.charset_pick.setCurrentIndex(self.charset_pick.count() - 1)
-
     def _on_table_pick(self, index: int) -> None:
         if self._filling:
             return
         entry = self._tables.get(self.table_pick.itemData(index))
         if entry is not None and entry is not self._entry:
             self.table_requested.emit(entry)
-
-    def _on_charset_pick(self, index: int) -> None:
-        if self._filling or self._entry is None or self._table is None:
-            return
-        charset = self.charset_pick.itemData(index)
-        if charset and charset != self._table.charset:
-            self.charset_chosen.emit(self._entry, charset)
 
     def _on_includes_edited(self) -> None:
         if self._filling or self._entry is None or self._table is None:
@@ -487,7 +453,6 @@ class TableEditor(EscapeCloses, QWidget):
         self.form.set_weights_used(weights_used)
         if self._entry is not None:
             select_data(self.table_pick, id(self._entry))
-        self._show_charset()
         self.includes.setText(
             " ".join(self._table.includes) if self._table is not None else ""
         )

@@ -116,7 +116,7 @@ class RelocateMixin:
         if entry.kind is EntryKind.TABLE and entry.path:
             try:
                 tf = read_table_file(entry.path, entry.dialect, self.registry)
-                adopt_table(entry, tf.table, tf.notices, registry=self.registry)
+                adopt_table(entry, tf.table, tf.notices)
                 entry.dialect = tf.dialect
             except (OSError, MapcharError) as exc:
                 entry.missing = True

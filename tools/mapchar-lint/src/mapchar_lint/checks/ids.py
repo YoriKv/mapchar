@@ -149,15 +149,3 @@ def _table(ctx: Context, view: EntryView) -> None:
             detail="The table file does not load, and every block reading through it "
             "reads nothing.",
         )
-    charset = view.raw.get("charset")
-    if charset and not ctx.ids.has("charsets", str(charset)):
-        ctx.unknown_id(
-            "charsets",
-            str(charset),
-            "charset",
-            code="405",
-            pointer=view.at("charset"),
-            entry=view,
-            consequence="The table does not load (an unknown charset is an error to "
-            "the table reader), and every block reading through it reads nothing.",
-        )

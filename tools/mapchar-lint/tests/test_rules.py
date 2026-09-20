@@ -317,7 +317,6 @@ def test_unknown_ids(project, doc, files):
     assert "E402" in project(doc(block={"compression_id": "lz9"}), files)
     assert "E403" in project(doc(block={"config": config(mapping="lorom2")}), files)
     assert "E404" in project(doc(table={"dialect": "thingy"}), files)
-    assert "E405" in project(doc(table={"charset": "ebcdic"}), files)
 
 
 def test_an_id_that_is_another_stages_says_so(project, doc, files):

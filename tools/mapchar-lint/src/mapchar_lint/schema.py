@@ -70,7 +70,7 @@ KEYS_BY_KIND = {
     ),
     "bookmark": COMMON_KEYS + ("parent", "folder", "offset"),
     "folder": COMMON_KEYS + ("parent", "folder"),
-    "table": COMMON_KEYS + ("dialect", "charset", "includes", "table", "overlay"),
+    "table": COMMON_KEYS + ("dialect", "includes", "table", "overlay"),
 }
 #: Every key some kind reads: one outside this is a typo, not a misplaced key.
 ALL_ENTRY_KEYS = frozenset(key for keys in KEYS_BY_KIND.values() for key in keys)

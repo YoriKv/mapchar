@@ -270,9 +270,7 @@ the preview system in [preview.md](preview.md).
   a live view of the bytes. Only text is typed; everything else an entry can
   be is a picker, so the grammar need not be known to use it:
   - a header with the **Table** picker (every loaded table, to switch between
-    them without the dock), the **Charset** picker (`none` or any registered
-    charset; choosing one moves the table onto it keeping its own entries and
-    edits, as one undo step), **Includes** (the ids of the tables it starts
+    them without the dock), **Includes** (the ids of the tables it starts
     from, in order; a change is one undo step, carried by the project until
     Save As File writes it), **Rename Table…** (a new `@id`; every switch
     parameter, include, block and reading that named the old one follows, as
@@ -336,7 +334,8 @@ the preview system in [preview.md](preview.md).
     `ア-ン`, or a typed string, laid over consecutive keys from a first key,
     the dialog saying how many keys the run covers and how many already have
     entries, which are left alone unless **Overwrite** is ticked (a whole
-    standard encoding is a **charset** on the table, not a fill);
+    standard encoding is an **include** of that encoding's table, not a
+    fill);
   - every change is one undo step and re-decodes every view using the table;
   - **Save** writes a native table back to its file, and only that: a
     converted table or one with no file needs **Save As File…**, which asks
@@ -346,8 +345,8 @@ the preview system in [preview.md](preview.md).
     fuller detail in its tooltip.
 - **Where the edits live** — in the project, as an overlay of the entries
   added, changed and removed over the file, so the table file on disk keeps
-  saying what it said for every other tool that reads it; a charset or
-  includes chosen in the app in place of the file's are carried the same way.
+  saying what it said for every other tool that reads it; includes chosen in
+  the app in place of the file's are carried the same way.
   **Save As File** writes them out and spends the overlay. A table with no file of its own —
   from a relative search, or from **Add from selection** — is carried whole by
   the project the same way.

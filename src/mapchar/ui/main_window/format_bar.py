@@ -45,9 +45,6 @@ class FormatBarMixin:
 
         self.workspace.builtin_tables = CharsetTables(self.registry)
         self.workspace.invalidate_extractions()
-        # Built before the editor at start-up, which then asks on its own.
-        if hasattr(self, "table_editor"):
-            self.table_editor.set_charsets(self.workspace.builtin_tables.names())
 
     def _table_items(self) -> list[tuple[str, str]]:
         """Every table a reading can pick: the loaded ones with their entry

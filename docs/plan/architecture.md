@@ -662,8 +662,7 @@ tools; **Save As File** folds the overlay into a native file.
 two halves of one thing. The live table is the entry's `table`; what the file
 gave is kept as `file_table`, the edits as `table_overlay` (per entry key: the
 entry's lines in the native grammar — its comment lines, then its own — or
-`null` for one removed), a charset chosen in place of the file's as
-`table_charset`, an id given in place of the file's as `table_id`, and
+`null` for one removed), an id given in place of the file's as `table_id`, and
 includes given in place of the file's as `table_includes`. Both tables hold
 only what their file says; includes are resolved when a table set is built,
 so the overlay never measures what an included table gives:
@@ -673,7 +672,6 @@ so the overlay never measures what an included table gives:
 | `adopt_table`     | a read: the file's table becomes the baseline, and the overlay goes straight back over it — so a **Reload** picks up what changed on disk without discarding the user's edits |
 | `capture_overlay` | an edit: the overlay is re-measured from the table, never accumulated, so an undo and a redo leave the project holding exactly what it now says |
 | `fold_overlay`    | **Save As File**: the file now says it, so the overlay is spent |
-| `set_charset`     | the Table Editor's Charset pick: the baseline is rebuilt from the file on the new charset (`rebase_charset`), the live table becomes that baseline with the edits laid back over it, and the overlay is re-measured; an undo across the change rebases the same way before putting the old contents back |
 
 A table entry with no file — one made from a relative search or from Add from
 Selection, or split from a legacy file — has no baseline, so its every entry is
@@ -719,7 +717,6 @@ and aliases for renamed plugin ids.
     { "kind": "folder", "name": "Battle", "path": "rom.nes", "parent": 0 },
     { "kind": "table", "name": "main.tbl", "path": "tables/main.tbl",
       "dialect": "native",                           // opt
-      "charset": "shift-jis",                        // opt, in place of the file's
       "table": "font",                               // opt, an id in place of the file's
       "includes": ["script"],                        // opt, includes in place of the file's
       "overlay": {"01000011": "# the letter C\n43=C", // opt, the in-app edits

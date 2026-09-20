@@ -209,14 +209,11 @@ class ProjectMixin:
             if e.kind is not EntryKind.TABLE:
                 continue
             if not e.path:
-                # A table with no file was completed by the load: nothing to
-                # read, unless the project puts a charset on it.
-                if e.table_charset and e.table is not None:
-                    adopt_table(e, e.table, from_file=False, registry=self.registry)
+                # A table with no file was completed by the load: nothing to read.
                 continue
             try:
                 tf = read_table_file(e.path, e.dialect, self.registry)
-                adopt_table(e, tf.table, tf.notices, registry=self.registry)
+                adopt_table(e, tf.table, tf.notices)
                 e.dialect = tf.dialect
             except (OSError, MapcharError) as exc:
                 e.missing = True

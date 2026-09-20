@@ -480,7 +480,6 @@ class MainWindow(
         self.decompress_window = DecompressWindow(self)
         self.preview_window = PreviewWindow(self)
         self.table_editor = TableEditor(self)
-        self.table_editor.set_charsets(self.workspace.builtin_tables.names())
         self.find_replace = FindReplaceDialog(self)
         self.project_strings = ProjectStringsWindow(self)
         self.glossary_window = GlossaryWindow(self)
@@ -557,7 +556,6 @@ class MainWindow(
             lambda entry, ask: self._save_table_entry(entry, ask=ask)
         )
         self.table_editor.table_requested.connect(self._edit_table_entry)
-        self.table_editor.charset_chosen.connect(self._on_charset_chosen)
         self.table_editor.rename_requested.connect(self._rename_table)
         self.table_editor.includes_chosen.connect(self._on_includes_chosen)
         self.table_editor.inheritance = self._table_inheritance

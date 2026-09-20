@@ -1708,45 +1708,12 @@ def test_the_table_editor_edits_in_the_grid_and_the_form(window, tmp_path):
     assert grid_keys(editor) == ["42"]
 
 
-def test_a_charset_picked_in_the_editor_is_one_undo_step_the_project_carries(
-    window, tmp_path
-):
-    open_rom_and_table(window, tmp_path, b"AB\x00")
-    table_entry = window.workspace.table_entries()[0]
-    window._edit_table_entry(table_entry)
-    editor = window.table_editor
-    table = table_entry.table
-    assert editor.charset_pick.currentData() == "none"
-    editor.charset_pick.setCurrentIndex(editor.charset_pick.findData("ascii"))
-    assert table.charset == "ascii" and table.entries["01000011"].text == "C"
-    # The file's own entries stay on top of the charset's, and only they are
-    # the overlay: the charset itself is carried as one word.
-    assert table.entries["01000001"].text == "A"
-    assert table_entry.table_charset == "ascii"
-    assert "01000011" not in table_entry.table_overlay
-    window.undo_stack.undo()
-    assert table.charset == "none" and "01000011" not in table.entries
-    assert table_entry.table_charset is None
-    window.undo_stack.redo()
-    assert table.charset == "ascii" and editor.charset_pick.currentData() == "ascii"
-    proj = tmp_path / "p.mapchar"
-    assert window._write_project(str(proj))
-    window._new_project()
-    assert window.open_project(str(proj))
-    back = window.workspace.table_entries()[0]
-    assert back.table.charset == "ascii" and back.table.entries["01000011"].text == "C"
-    # Saved as a file, the charset is one line and the charset's codes none.
-    window._save_table_entry(back)
-    text = Path(str(back.path)).read_text()
-    assert "@charset ascii" in text and "43=C" not in text
-
-
 def test_the_grid_spells_a_row_when_it_is_looked_at_and_the_filter_drops_rows(
     window, tmp_path
 ):
-    """A table on a charset is tens of thousands of entries: the grid holds
-    them as rows of a model, spelled as they are drawn, and the filter leaves
-    out what does not match rather than the view hiding it."""
+    """A table including an encoding is tens of thousands of entries: the grid
+    holds them as rows of a model, spelled as they are drawn, and the filter
+    leaves out what does not match rather than the view hiding it."""
     from mapchar.ui.table_editor import TEXT
 
     open_rom_and_table(window, tmp_path, b"AB\x00")
@@ -1754,9 +1721,10 @@ def test_the_grid_spells_a_row_when_it_is_looked_at_and_the_filter_drops_rows(
     window._edit_table_entry(table_entry)
     editor = window.table_editor
     table = table_entry.table
-    editor.charset_pick.setCurrentIndex(editor.charset_pick.findData("shift-jis"))
+    editor.includes.setText("shift-jis")
+    editor.includes.editingFinished.emit()
     model = editor.entry_model
-    assert model.rowCount() == len(table.entries) > 7000
+    assert model.rowCount() > 7000
     # Filling it spells only the sample the column widths are measured from;
     # every other row waits for the view to draw it.
     spelled = sum(row.cells is not None for row in model._rows)
@@ -1764,7 +1732,8 @@ def test_the_grid_spells_a_row_when_it_is_looked_at_and_the_filter_drops_rows(
     assert model.index(model.row_of("01000001"), TEXT).data() == "A"
 
     # The filter leaves the rows that match, and Select All reaches those alone.
-    editor.charset_pick.setCurrentIndex(editor.charset_pick.findData("none"))
+    editor.includes.setText("")
+    editor.includes.editingFinished.emit()
     editor.filter.setText("A")
     assert grid_keys(editor) == ["41"]
     editor.grid.selectAll()

@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- Putting a table on a charset no longer pauses the window: the Table Editor's
-  grid draws its rows from a model, and a snapshot shares the entries it holds.
+- The Table Editor's Charset picker is gone: Includes does the same, since
+  every encoding is offered as a table of its own.
+- A table of tens of thousands of entries no longer pauses the window: the
+  Table Editor's grid draws its rows from a model, and a snapshot shares the
+  entries it holds.
 - A refused translation says why: the character no table has an entry for, the
   table that does have it and the code that switches there, the code or the
   operands no table knows, or what the text encodes to against its room.

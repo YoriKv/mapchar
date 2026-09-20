@@ -105,7 +105,7 @@ class TableFilesMixin:
             return False
         tf = read_table_file(entry.path, entry.dialect, self.registry)
         before, dialect = entry.table, entry.dialect
-        adopt_table(entry, tf.table, tf.notices, registry=self.registry)
+        adopt_table(entry, tf.table, tf.notices)
         entry.dialect = tf.dialect
         if not entry.table_overlay:
             self.workspace.mark_saved(entry)
