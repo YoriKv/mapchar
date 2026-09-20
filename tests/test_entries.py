@@ -236,6 +236,23 @@ def test_jump_to_source_of_a_pointer_table_uses_the_table_address(window, tmp_pa
     assert window._block_file_offset(block) == 0x40
     window._jump_to_source(block)
     assert window._entry is file_entry and window._offset == 0x40
+    # The file is read the way the block reads it: as a pointer table.
+    assert window.reading_bar.source_kind.currentData() == "table"
+
+
+def test_jump_to_source_of_a_string_row_opens_that_string(window, tmp_path):
+    """A string's source is the string, wherever the pointer reaching it put
+    it — the Strings view on it, not the table the block's own row jumps to."""
+    rom = pointer_rom((0x10, 0x13), "41 00 42 41 00")
+    file_entry = open_rom_and_table(window, tmp_path, rom)
+    block = add_block(window, file_entry, "ptab", PointerTableSource(0, 4, 2, 2))
+    window._jump_to_source(block)
+    assert window._entry is file_entry
+    menu = window._build_files_menu(block, 1)
+    next(a for a in menu.actions() if a.text() == "&Jump to Source").trigger()
+    assert window._entry is block and window._current_view() == "strings"
+    assert window.strings.selected_indices() == [1]
+    assert window._offset == block.doc.strings[1].start
 
 
 def test_jump_to_source_of_a_compressed_block_uses_its_slot(window, tmp_path):
@@ -504,7 +521,7 @@ def test_a_string_rows_menu_greys_what_would_edit_its_block(window, tmp_path):
     the block rather than the string clicked, so they go dead."""
     file_entry = open_rom_and_table(window, tmp_path, DATA)
     block = add_block(window, file_entry, "b", RangeSource(0, 6))
-    state = _menu_state(window._build_files_menu(block, True))
+    state = _menu_state(window._build_files_menu(block, 0))
     dead = {"Rename…", "Cut", "Copy", "Duplicate", "Remove", "Move Up", "Move Down"}
     dead |= {"Sort By", "New Folder"}
     assert {row for row, live in state.items() if not live} >= dead

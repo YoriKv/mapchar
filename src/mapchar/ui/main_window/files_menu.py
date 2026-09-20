@@ -19,10 +19,12 @@ class FilesMenuMixin:
     rest of the window only through ``self``.
     """
 
-    def _files_menu(self, entry: Entry | None, pos: QPoint, on_string: bool) -> None:
-        self._build_files_menu(entry, on_string).exec(pos)
+    def _files_menu(self, entry: Entry | None, pos: QPoint, string: int | None) -> None:
+        self._build_files_menu(entry, string).exec(pos)
 
-    def _build_files_menu(self, entry: Entry | None, on_string: bool = False) -> QMenu:
+    def _build_files_menu(
+        self, entry: Entry | None, string: int | None = None
+    ) -> QMenu:
         """The Files panel's context menu, by kind.
 
         A row that cannot do a thing is greyed rather than dropped, so the menu
@@ -35,11 +37,14 @@ class FilesMenuMixin:
         * a right-click inside a multi-row selection, which keeps it and makes
           the menu about the set: Remove, the two moves and, on a file's rows,
           New Folder act on all of it and every other row goes dead;
-        * ``on_string`` — a string row's menu is its block's, so everything
+        * ``string`` — the index of the string the row stands for, when it
+          stands for one. A string row's menu is its block's, so everything
           that edits the *row* names the block rather than the string under the
-          pointer, and goes dead too.
+          pointer, and goes dead too. Jump to Source alone is the string's own:
+          it takes the view to that string rather than to the block's bytes.
         """
         menu = QMenu(self)
+        on_string = string is not None
         if entry is None:
             menu.addAction("Open RO&M…", self._open_rom_dialog)
             menu.addAction("Open &Table…", self._open_table_dialog)
@@ -87,7 +92,15 @@ class FilesMenuMixin:
             menu.addAction(
                 "&Dump…", lambda: (self._activate_entry(entry), self._dump())
             )
-            menu.addAction("&Jump to Source", lambda: self._jump_to_source(entry))
+            # On a string row, the source to jump to is that string, not the
+            # block's place in the file.
+            if string is None:
+                menu.addAction("&Jump to Source", lambda: self._jump_to_source(entry))
+            else:
+                menu.addAction(
+                    "&Jump to Source",
+                    lambda: self._jump_to_string_source(entry, string),
+                )
         if entry.kind is EntryKind.BOOKMARK:
             menu.addAction("&Jump to Bookmark", lambda: self._jump_to_bookmark(entry))
         if entry.kind is EntryKind.TABLE:

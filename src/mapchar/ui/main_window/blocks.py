@@ -412,6 +412,17 @@ class BlocksMixin:
         self._preview_scheme = entry.compression_id
         self._go_to(offset)
 
+    def _jump_to_string_source(self, entry: Entry, index: int) -> None:
+        """Files panel ▸ Jump to Source on one of a block's strings: that string
+        on screen, in the Strings view.
+
+        A string's source is the string, wherever the pointer that reaches it
+        put it — not the block's own place in the file, which is what the
+        block's row jumps to. It is opened the way a click on the row opens it,
+        with the Strings grid brought up on it."""
+        self._show_string(entry, index)
+        self._show_view("strings")
+
     def _block_from_region(self, region) -> None:
         """A block over a scanned region, with its guessed terminator as end
         token — the two together, so undoing the block takes the token with it."""

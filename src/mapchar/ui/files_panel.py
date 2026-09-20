@@ -86,9 +86,10 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
     strings_requested = Signal(object)
     """A block the session has not read was opened: read it, so its strings
     can be listed."""
-    context_menu_requested = Signal(object, QPoint, bool)
-    """A row right-clicked: the entry it names, where to open the menu, and
-    whether the row under the pointer was one of a block's strings."""
+    context_menu_requested = Signal(object, QPoint, object)
+    """A row right-clicked: the entry it names, where to open the menu, and the
+    index of the string under the pointer when the row was one of a block's,
+    else ``None``."""
     remove_requested = Signal(list)
     rename_committed = Signal(object, str)
     """An inline rename was committed: entry, new name."""
@@ -779,19 +780,19 @@ class FilesPanel(ThemedIcons, WorkspaceTreePanel):
     def _on_menu(self, pos: QPoint) -> None:
         item = self.tree.itemAt(pos)
         entry = self.entry_of(item)
-        on_string = False
+        index: int | None = None
         if entry is None:
             # A string row's menu is its block's, less the rows that would edit
             # the block rather than the string clicked. A group row stands for
             # a place in the block, so it gets the block's menu whole.
             string = self.string_of(item)
-            entry = string[0] if string is not None else None
-            on_string = entry is not None
-            if entry is None:
+            if string is not None:
+                entry, index = string
+            else:
                 group = self.group_of(item)
                 entry = group[0] if group is not None else None
         self.context_menu_requested.emit(
-            entry, self.tree.viewport().mapToGlobal(pos), on_string
+            entry, self.tree.viewport().mapToGlobal(pos), index
         )
 
     def _on_current(self, entry: Entry | None) -> None:

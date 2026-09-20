@@ -674,7 +674,9 @@ as a **Range** of end-token strings — rather than every control at once.
 - **Jump to Source** shows the parent file at the block's own offset in the
   raw view — its compressed slot for a decompressed block, its first pointer
   for a pointer list — read the way the block reads and, where it has one,
-  with its compression armed in the Decompressed View.
+  with its compression armed in the Decompressed View. On one of the block's
+  string rows it shows that string instead, in the Strings view: a string's
+  source is the string, wherever the pointer reaching it put it.
 
 ## Pointers
 
