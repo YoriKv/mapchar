@@ -59,13 +59,13 @@ class ProjectStringsWindow(ToolWindow):
         self.filter = hint_field(
             QLineEdit(),
             "words in any order",
-            "Filter over block name, original, translation and notes",
+            "Matches block name, original, translation and notes",
         )
         self.filter.setClearButtonEnabled(True)
         self.status_filter = QComboBox()
         self.status_filter.addItems(STATUS_FILTERS)
         self.refresh = QPushButton("Refresh")
-        self.refresh.setToolTip("Read every block's strings again")
+        self.refresh.setToolTip("Re-read every block's strings")
         row.addWidget(self.filter, 1)
         row.addWidget(self.status_filter)
         row.addWidget(self.refresh)

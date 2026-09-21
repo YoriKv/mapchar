@@ -109,7 +109,7 @@ class WidgetsMixin:
         self.format_pick = CommandComboBox("New Table…")
         # Only a loaded table can be edited, so a charset leaves it disabled.
         self.table_edit = QPushButton("Edit…")
-        self.table_edit.setToolTip("Open the picked table in the Table Editor")
+        self.table_edit.setToolTip("Open the selected table in the Table Editor")
         # Always on the bar, so nothing shifts when an entry that cannot arm a
         # preview is on screen; what it may hold is then the question.
         self.compression_pick = CompactComboBox()
@@ -125,12 +125,12 @@ class WidgetsMixin:
             "Table",
             self.format_pick,
             self.table_edit,
-            tip="The table or encoding the text is read through",
+            tip="Table or encoding the text is read through",
         )
         format_bar.add_group(
             "Compression",
             self.compression_pick,
-            tip="The scheme the Decompressed View reads the bytes through",
+            tip="Scheme the Decompressed View reads the bytes through",
         )
         format_bar.add_group("Show as", self.mode_toggle)
         self.resolve_group = format_bar.add_group(
@@ -152,7 +152,7 @@ class WidgetsMixin:
         self.block_label = ElidedLabel("")
         self.block_export = QPushButton("Export…")
         self.block_export.setToolTip(
-            "Write the block's strings to a translator or command file"
+            "Export the block's strings to a translator or command file"
         )
         bl.addWidget(self.block_label, 1)
         bl.addWidget(self.block_export)
@@ -174,7 +174,7 @@ class WidgetsMixin:
         nl.setContentsMargins(0, 0, 0, 0)
         self.offset_box = AddressEdit(self.address_spelling)
         self.offset_box.setPlaceholderText("address")
-        self.offset_box.setToolTip("The view's address; Enter goes there")
+        self.offset_box.setToolTip("View address; Enter goes there")
         # How a position is spelled: a flat file offset, one of the console
         # mapping presets, or the three numbers beside the picker
         # (mapchar.core.address).

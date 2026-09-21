@@ -142,13 +142,13 @@ class TableEditor(EscapeCloses, QWidget):
         # -- which table, on what ---------------------------------------------
         head = WrapBar()
         self.table_pick = CompactComboBox(220)
-        self.table_pick.setToolTip("The loaded table to edit")
+        self.table_pick.setToolTip("Loaded table to edit")
         head.add_group("Table", self.table_pick)
         self.includes = hint_field(
             QLineEdit(),
             "table ids",
-            "The tables this one starts from (@include), in order: their entries "
-            "show dimmed, and an entry of this table's own overrides one key for key",
+            "Tables this one includes (@include), in order; their entries show dimmed, "
+            "and this table's own override them key for key",
         )
         fit_chars(self.includes, 14)
         head.add_group("Includes", self.includes)
@@ -160,7 +160,7 @@ class TableEditor(EscapeCloses, QWidget):
         self.filter = hint_field(
             QLineEdit(),
             "Filter…",
-            "Show only entries whose key, text or comment has this (Ctrl+F)",
+            "Show only entries whose key, text or comment contains this (Ctrl+F)",
         )
         self.filter.setClearButtonEnabled(True)
         fit_chars(self.filter, 12)
@@ -181,7 +181,7 @@ class TableEditor(EscapeCloses, QWidget):
         # A column is sized from a sample of the rows rather than all of them:
         # a charset is tens of thousands, and the widest key is as wide as any.
         header.setResizeContentsPrecision(200)
-        header.setToolTip("Click a column to sort by it; right-click to choose columns")
+        header.setToolTip("Click to sort; right-click to choose columns")
         self.column_menu = install_column_menu(
             self.grid, HEADERS, KEY, self._choose_column
         )
@@ -201,7 +201,7 @@ class TableEditor(EscapeCloses, QWidget):
 
         # -- the entry ----------------------------------------------------------
         self.sample = ElidedLabel("")
-        self.sample.setToolTip("Where in the file the key's bytes were taken from")
+        self.sample.setToolTip("File address the key's bytes were taken from")
         self.form = TableEntryForm()
         lower = QWidget()
         lower_box = QVBoxLayout(lower)
@@ -239,7 +239,7 @@ class TableEditor(EscapeCloses, QWidget):
         layout.addWidget(self.splitter, 1)
         row = QHBoxLayout()
         self.add = QPushButton("Add")
-        self.add.setToolTip("Put the entry in the table (Enter)")
+        self.add.setToolTip("Add the entry to the table (Enter)")
         self.new = QPushButton("New")
         self.new.setToolTip("Clear the form for a new entry")
         self.remove = QPushButton("Remove")
@@ -247,11 +247,11 @@ class TableEditor(EscapeCloses, QWidget):
         self.shift = QPushButton("Shift Keys…")
         self.shift.setToolTip("Move the selected entries' keys by a constant")
         self.fill = QPushButton("Fill…")
-        self.fill.setToolTip("Lay a run of characters over consecutive keys")
+        self.fill.setToolTip("Assign a run of characters to consecutive keys")
         self.save = QPushButton("Save")
-        self.save.setToolTip("Write the table back to its file")
+        self.save.setToolTip("Save the table to its file")
         self.save_as = QPushButton("Save As File…")
-        self.save_as.setToolTip("Write the table to a new file")
+        self.save_as.setToolTip("Save the table to a new file")
         for button in (self.add, self.new, self.remove):
             row.addWidget(button)
         row.addStretch(1)
@@ -564,7 +564,7 @@ class TableEditor(EscapeCloses, QWidget):
             if several
             else "Apply the form to the selected entry (Enter)"
             if editing
-            else "Put the entry in the table (Enter)"
+            else "Add the entry to the table (Enter)"
         )
         self.form.setEnabled(not several)
         self.remove.setEnabled(bool(self._selected_bits()))

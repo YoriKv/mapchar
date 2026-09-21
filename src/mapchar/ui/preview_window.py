@@ -84,13 +84,13 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         self.grid = QPushButton("Grid")
         self.grid.setCheckable(True)
         self.grid.setToolTip("Draw a pixel grid (zoom 3 or more)")
-        self.zoom.setToolTip("Pixels on screen per pixel of the box")
+        self.zoom.setToolTip("Screen pixels per box pixel")
         self.wrap = QPushButton("Wrap Translation")
         self.wrap.setToolTip(
             "Re-break the selected translations to fit the box (needs a newline code)"
         )
         self.copy = QPushButton("Copy Image")
-        self.copy.setToolTip("Put the page as drawn on the clipboard")
+        self.copy.setToolTip("Copy the page as drawn")
         row.addWidget(self.prev)
         row.addWidget(self.next)
         row.addWidget(QLabel("Zoom"))
@@ -101,7 +101,7 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         row.addWidget(self.copy)
         pv.addLayout(row)
         self.readout = ElidedLabel("")
-        self.readout.setToolTip("Bytes the draft encodes to, of the room it has")
+        self.readout.setToolTip("Bytes the draft encodes to, of its room")
         pv.addWidget(self.readout)
         self.tabs.addTab(preview, "Preview")
 
@@ -120,8 +120,8 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         self.lines = number_spin(0, 64, 2, special="fit")
         self.chars = number_spin(0, 999, 3, special="off")
         self.chars.setToolTip(
-            "Characters a line holds: overflows box and Wrap then count "
-            "characters instead of measuring them"
+            "Characters per line; when set, overflows box and Wrap count characters "
+            "instead of measuring them"
         )
         self.origin_x = number_spin(0, 1024, 3)
         self.origin_y = number_spin(0, 1024, 3)
@@ -218,9 +218,9 @@ class PreviewWindow(ThemedIcons, ToolWindow):
                 combo.setCurrentText(effect.effect.value)
                 if label in self._defaults:
                     combo.setToolTip(
-                        f"Left to its table or the line code, it is "
+                        f"Default from its table or the line code: "
                         f"{self._defaults[label].effect.value}; a pick here "
-                        "overrides that for this block"
+                        "overrides it for this block"
                     )
                 combo.currentIndexChanged.connect(lambda _: self._emit_box())
                 self.codes.setCellWidget(r, 1, combo)
@@ -263,7 +263,7 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         if missing:
             parts.append(f"{len(missing)} not in font: " + ", ".join(missing[:8]))
         self.status.setToolTip(
-            "The font has no glyph for: " + ", ".join(missing) if missing else ""
+            "No glyph in the font for: " + ", ".join(missing) if missing else ""
         )
         self.status.setText("  ·  ".join(parts))
         self.prev.setEnabled(self._page > 0)

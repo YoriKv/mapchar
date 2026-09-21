@@ -54,12 +54,12 @@ from mapchar.ui.widgets import (
 )
 
 KINDS = (
-    (TokenKind.TEXT, "Text", "The bits decode to the text"),
-    (TokenKind.END, "End", "As text, and the string ends after it"),
+    (TokenKind.TEXT, "Text", "Decodes to its text"),
+    (TokenKind.END, "End", "Decodes to its text, then ends the string"),
     (
         TokenKind.CODE,
         "Code",
-        "A control code with operands read from the bytes after it",
+        "Control code; operands are read from the bytes after it",
     ),
     (
         TokenKind.SWITCH,
@@ -77,19 +77,19 @@ KINDS = (
 KIND_NAMES = {kind: name for kind, name, _ in KINDS}
 
 EFFECTS = (
-    (Effect.NONE, "none", "The code does nothing to the text box"),
+    (Effect.NONE, "none", "No effect on the text box"),
     (
         Effect.NEWLINE,
         "newline",
-        "A line break: the text goes on at the start of the next line",
+        "Line break: the text continues on the next line",
     ),
     (
         Effect.PAGE,
         "page",
-        "The text box ends and the next starts: a line break wherever the text "
-        "is shown, a new box in the Preview",
+        "Ends the text box and starts the next: a line break in text, a new box in the "
+        "Preview",
     ),
-    (Effect.PAUSE, "pause", "The text waits; nothing moves"),
+    (Effect.PAUSE, "pause", "Text waits; nothing moves"),
 )
 """Every effect an entry can declare (none, then
 :data:`~mapchar.core.table.TABLE_EFFECTS`): its datum, its name and what it does."""
@@ -162,9 +162,9 @@ class TableEntryForm(QWidget):
         self.key = QLineEdit()
         fit_chars(self.key, 10)
         self.key_mode = ModeToggle((("Hex", "hex"), ("Bits", "bits")))
-        self.key_mode.button("hex").setToolTip("The key as hex digits, four bits each")
+        self.key_mode.button("hex").setToolTip("Key as hex digits, four bits each")
         self.key_mode.button("bits").setToolTip(
-            "The key as bits, for a width that is not whole digits"
+            "Key as bits, for a width that is not whole hex digits"
         )
         self.key_width = QLabel("")
         head.add_group(
@@ -172,7 +172,7 @@ class TableEntryForm(QWidget):
             self.key,
             self.key_mode,
             self.key_width,
-            tip="The bits the entry matches; leading zeros count",
+            tip="Bits the entry matches; leading zeros count",
         )
         self.kind = QComboBox()
         for kind, name, tip in KINDS:
@@ -248,8 +248,7 @@ class TableEntryForm(QWidget):
         self.line = hint_field(
             QLineEdit(),
             "41=A   /FF=[end]   $F0=[color],u8   !F1=[item] @items:1",
-            "The entry as its line in the table file. "
-            "Typing or pasting a line here fills the form",
+            "Entry as its table-file line; typing or pasting a line fills the form",
         )
         self.line.setFont(mono_font())
         # The line is for whoever knows the grammar: folded away until asked.
@@ -383,12 +382,12 @@ class TableEntryForm(QWidget):
             TokenKind.END: ("[end]", "What the end token shows; usually [end]"),
             TokenKind.CODE: (
                 "color",
-                "The code's name, shown as [name] with its operands",
+                "Code name, shown as [name] with its operands",
             ),
             TokenKind.SWITCH: (
                 "[item], text, or nothing",
-                "Printed before the switch runs; nothing makes a silent switch "
-                "the encoder inserts itself",
+                "Printed before the switch runs; empty makes a silent switch the "
+                "encoder inserts itself",
             ),
             TokenKind.RETURN: ("", ""),
         }

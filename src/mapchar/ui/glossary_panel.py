@@ -79,8 +79,8 @@ class GlossaryPanel(QWidget):
         self.hits = ResultsTable(HEADERS[:2])
         self.insert = QPushButton("Insert")
         self.insert.setToolTip(
-            "Type the term's translation into the translation being edited; "
-            "double-clicking a row does the same"
+            "Insert the term's translation into the translation being edited "
+            "(double-click a row)"
         )
         self.insert.setEnabled(False)
         row = QHBoxLayout()
@@ -96,7 +96,7 @@ class GlossaryPanel(QWidget):
         self.filter = hint_field(
             QLineEdit(),
             "filter terms",
-            "Words in any order over term, translation and notes",
+            "Words in any order; matches term, translation and notes",
         )
         self.filter.setClearButtonEnabled(True)
         self.add = QPushButton("Add")
@@ -124,19 +124,17 @@ class GlossaryPanel(QWidget):
         self.table.verticalHeader().hide()
         self.table.setWordWrap(False)
         header = self.table.horizontalHeaderItem(COL_MATCH)
-        header.setToolTip("Aa: only in the term's own case · W: only as a whole word")
+        header.setToolTip("Aa: match case · W: whole word")
         header = self.table.horizontalHeaderItem(COL_USES)
-        header.setToolTip("How many of the project's strings hold the term")
+        header.setToolTip("Project strings holding the term")
         show_elided_tooltips(self.table)
         bl.addWidget(self.table, 1)
         self.replace_all = QPushButton("Replace…")
         self.replace_all.setToolTip(
-            "Step through the strings, putting each term's translation in its place"
+            "Step through the strings, replacing each term with its translation"
         )
         self.count = QPushButton("Count Uses")
-        self.count.setToolTip(
-            "Read every block and count the strings holding each term"
-        )
+        self.count.setToolTip("Count the strings holding each term, across every block")
         self.import_button = QPushButton("Import…")
         self.import_button.setToolTip("Lay a TSV or CSV of terms over these")
         self.export_button = QPushButton("Export…")
@@ -229,7 +227,7 @@ class GlossaryPanel(QWidget):
         if why:
             cell = self.table.item(r, COL_TRANSLATION)
             cell.setForeground(theme.ERROR_INK)
-            cell.setToolTip(f"The block's table cannot spell this: {why}")
+            cell.setToolTip(f"Not encodable by the block's table: {why}")
 
     def set_context(self, text: str) -> None:
         """The original of the string on screen: what the hits are found in."""

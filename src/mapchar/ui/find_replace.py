@@ -73,15 +73,15 @@ class FindReplaceDialog(QDialog):
         self.setModal(False)
         form = QFormLayout(self)
         self.mode = ModeToggle((("Text", False), ("Glossary", True)))
-        self.mode.button(False).setToolTip("Find what is typed below")
+        self.mode.button(False).setToolTip("Find the typed text")
         self.mode.button(True).setToolTip(
-            "Find the glossary's terms, and put their translations in their place"
+            "Replace glossary terms with their translations"
         )
         self.find = hint_field(QLineEdit(), "text, or a [code] matched whole")
         fit_chars(self.find, 28)
         self.replace = QLineEdit()
         self.term = CompactComboBox()
-        self.term.setToolTip("The term looked for: one, or every term translated")
+        self.term.setToolTip("Term to find: one, or every translated term")
         self.hit = ElidedLabel("")
         self.case = QCheckBox("Match case")
         self.skip_done = QCheckBox("Skip strings marked done")

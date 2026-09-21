@@ -51,19 +51,21 @@ class FillDialog(QDialog):
         self.template = QComboBox()
         for name in (*ALPHABETS, CUSTOM):
             self.template.addItem(name, name)
-        self.template.setToolTip("The characters, in key order")
+        self.template.setToolTip("Characters, in key order")
         form.addRow("Characters", self.template)
         self.custom = hint_field(
             QLineEdit(),
             "typed in key order",
-            "The characters, one per key, in key order",
+            "Characters, one per key, in key order",
         )
         form.addRow("", self.custom)
         # The digit count is the key width, so what is typed keeps its own
         # rather than being padded to the field's.
         self.first = HexEdit(6, pad=False)
         hint_field(
-            self.first, "00", "The first key, in hex; its digits set every key's width"
+            self.first,
+            "00",
+            "First key, in hex; its digit count sets every key's width",
         )
         self.first.setText("00")
         form.addRow("First key", self.first)

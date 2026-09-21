@@ -1280,9 +1280,11 @@ lays out in the game. It is described in [preview.md](preview.md).
 
 **Help ▸ Shortcuts… (F1)** shows the live list in two balanced columns, one
 section per menu, built from the menu bar plus the keys and mouse gestures no
-menu row can carry (the Hex and Text views, the Strings view, the Files panel, the
-Find bar, the Table Editor, the Hex panel, the tool windows). **Help ▸ Legend…** explains every colour and mark the Hex and
-Text views, the Hex panel and the Strings view draw, each beside a swatch.
+menu row can carry (the main window, the Hex and Text views, the Strings view, the
+Files panel, the Glossary panel, the Find bar, the Table Editor, the Hex panel, the
+tool windows). **Help ▸ Legend…** explains every colour and mark the Hex and Text
+views, the Hex panel, the Strings view, the Files panel, the Table Editor, the
+Glossary and the Preview draw, each beside a swatch.
 **Help ▸ About** gives the version, author, homepage and licenses.
 
 | Area | Keys |
@@ -1293,8 +1295,10 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
 | Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers · Ctrl+Shift+G Project Strings |
 | Find bar | Enter next · Shift+Enter previous · Esc closes Find and Replace |
-| Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code · Esc cancel · the same keys in the pane under the grid |
-| Files panel | Up/Down or double-click open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename · right-click menu |
+| Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code, Enter or Tab accept it · Esc cancel · the same keys in the pane under the grid · right-click in the pane adds the marked text to the glossary · right-click a header to choose columns, drag one to reorder |
+| Files panel | click or Up/Down open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 or double-click rename · right-click menu |
+| Glossary panel | double-click or Enter under In this string inserts the term's translation · F2, double-click or typing edit a term · right-click menu |
+| Main window | drop files to open them · Ctrl+drop asks what each opens as |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
-| Tool windows | Esc close · Enter run the Search window's query · double-click a result to jump · Ctrl+Z / Ctrl+Shift+Z in one that edits the project (Table Editor, Find and Replace, a floated Glossary panel) |
-| Table Editor | Enter put the entry in the table · Del remove the selected entries · Ctrl+F filter · F2 or double-click edit a Text or Comment cell, double-click opens any other in the form · click a header to sort, right-click to choose columns |
+| Tool windows | Esc close · Enter run the Search window's query · select a result's row to jump · double-click or Enter opens a Project Strings row in its block · Ctrl+Z / Ctrl+Shift+Z in one that edits the project (Table Editor, Find and Replace, a floated Glossary panel) |
+| Table Editor | Enter in Key, Text or the line adds the entry, or applies it to the selected row · Del remove the selected entries · Ctrl+F filter · F2 or double-click edit a Text or Comment cell, double-click opens any other in the form · click a header to sort, right-click to choose columns |

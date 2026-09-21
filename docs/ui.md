@@ -188,8 +188,8 @@ Editor's grid is a `QTableView` over a model of the entries themselves
   key handled outside a menu is added there. An action whose label changes at
   runtime sets a `guideLabel` property.
 - **Help ▸ Legend…** is `help_dialogs.LEGEND`: every colour and mark the Hex
-  and Text views, the Hex panel and the Strings view draw, each beside a
-  swatch painted from the same `theme` colour the view uses. A new tint or
+  and Text views, the Hex panel, the Strings view, the Files panel, the Table
+  Editor, the Glossary and the Preview draw, each beside a swatch painted from the same `theme` colour the view uses. A new tint or
   mark in a view is added there; the test suite holds that every `theme`
   tint and ink appears in it. The `PREVIEW_` colours are the exception: they
   are a stand-in screen's paper, ink and grid, not marks put on the text.

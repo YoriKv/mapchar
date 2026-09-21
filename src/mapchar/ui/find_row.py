@@ -27,8 +27,8 @@ class FindRow(ThemedIcons, QWidget):
         self.field = hint_field(
             QLineEdit(),
             'hex bytes or "text"',
-            'Hex bytes, or "quoted text" through the start table; Enter finds '
-            "the next match, Shift+Enter the previous",
+            'Hex bytes, or "quoted text" through the start table '
+            "(Enter: next, Shift+Enter: previous)",
         )
         fit_chars(self.field, chars)
         # The same arrow marks the navigation bar and the Preview's pages wear.

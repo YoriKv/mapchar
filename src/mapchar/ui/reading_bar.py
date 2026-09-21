@@ -240,21 +240,20 @@ class ReadingBar(WrapBar):
         self.lines = number_spin(1, 1000, 2)
         self.fixed_length = number_spin(1, 1_000_000, 3)
         self.stop_at_end = QCheckBox("Stop at end token")
-        self.stop_at_end.setToolTip("End earlier at an end token")
+        self.stop_at_end.setToolTip("End a string early at an end token")
         self.pascal_width = number_spin(1, 4, 1)
         self.pascal_endian = _endian_combo("The prefix's byte order")
         self.pascal_tokens = QCheckBox("Counts tokens")
-        self.pascal_tokens.setToolTip("The prefix counts tokens by weight, not bytes")
+        self.pascal_tokens.setToolTip("Prefix counts tokens by weight, not bytes")
         self.spp = number_spin(1, 1000, 2)
         self.run_to_next = QCheckBox("To next pointer")
         self.run_to_next.setToolTip(
-            "A pointer's strings run to where the next pointer lands; the "
-            "count is then the last pointer's"
+            "Each pointer's strings run to the next pointer's target; the count "
+            "applies to the last pointer only"
         )
         self.end_is_fill = QCheckBox("End token is fill")
         self.end_is_fill.setToolTip(
-            "A fill that is the end token reads as padding between strings, "
-            "not as empty strings"
+            "Fill equal to the end token reads as padding, not as empty strings"
         )
         self.realign_m = number_spin(0, 65536, 2, off=True)
         self.realign_o = number_spin(0, 65536, 2)
@@ -269,8 +268,8 @@ class ReadingBar(WrapBar):
         groups = {}
         for name, label, widgets, tip in (
             ("source_kind", "", (self.source_kind,), "Where the strings are"),
-            ("start", "Start", (self.start,), "The first byte"),
-            ("stop", "Stop", (self.stop,), "The first byte past the region"),
+            ("start", "Start", (self.start,), "First byte"),
+            ("stop", "Stop", (self.stop,), "First byte past the region"),
             ("ptr_size", "Size", (self.ptr_size,), "Bytes in a pointer"),
             (
                 "ptr_stride",
@@ -278,7 +277,7 @@ class ReadingBar(WrapBar):
                 (self.ptr_stride,),
                 "Bytes from one pointer to the next",
             ),
-            ("ptr_endian", "Endian", (self.ptr_endian,), "The pointers' byte order"),
+            ("ptr_endian", "Endian", (self.ptr_endian,), "Pointer byte order"),
             (
                 "ptr_mapping",
                 "Mapping",
@@ -289,37 +288,37 @@ class ReadingBar(WrapBar):
                 "ptr_offset",
                 "Offset",
                 (self.ptr_offset,),
-                "Added to every pointer value, in hex, with a leading - to subtract",
+                "Added to every pointer value, in hex; a leading - subtracts",
             ),
             (
                 "ptr_bank",
                 "Bank",
                 (self.ptr_bank,),
-                "The bank a banked mapping reads in, in hex",
+                "Bank a banked mapping reads in, in hex",
             ),
             ("ptr_addresses", "Addresses", (self.ptr_addresses,), None),
             (
                 "ptr_null",
                 "Null",
                 (self.ptr_null,),
-                "A pointer value that means no string, in hex",
+                "Pointer value meaning no string, in hex",
             ),
             (
                 "inner",
                 "Inner",
                 (self.inner_size, self.inner_endian),
-                "Bytes in an inner pointer, and their order: a record's first "
-                "pointer is its inner table, its second the base those count from",
+                "Inner pointer size and byte order; a record's first pointer is its "
+                "inner table, its second the base those count from",
             ),
             (
                 "inner_null",
                 "Inner null",
                 (self.inner_null,),
-                "An inner pointer value that means no string, in hex",
+                "Inner pointer value meaning no string, in hex",
             ),
             ("string_type", "Ends at", (self.string_type,), "How a string ends"),
-            ("fixed_length", "Length", (self.fixed_length,), "Bytes in every string"),
-            ("count", "Count", (self.count,), "How many strings; sets Stop"),
+            ("fixed_length", "Length", (self.fixed_length,), "Bytes per string"),
+            ("count", "Count", (self.count,), "Number of strings; sets Stop"),
             ("stop_at_end", "", (self.stop_at_end,), None),
             (
                 "pascal",
@@ -334,7 +333,7 @@ class ReadingBar(WrapBar):
                 "Strings a pointer reaches: it lands on the first, and each "
                 "end token begins the next",
             ),
-            ("lines", "Lines", (self.lines,), "Line codes one string holds"),
+            ("lines", "Lines", (self.lines,), "Line codes per string"),
             ("end_is_fill", "", (self.end_is_fill,), None),
             (
                 "realign",
@@ -347,15 +346,14 @@ class ReadingBar(WrapBar):
                 "line_length",
                 "Lines",
                 (self.line_length,),
-                "Split fixed strings into lines this many bytes long",
+                "Split fixed strings into lines of this many bytes",
             ),
             ("show_end", "", (self.show_end,), None),
             (
                 "header",
                 "Header",
                 (self.header,),
-                "Bytes in front of every string that are not text: a record's "
-                "position, id or flags",
+                "Non-text bytes before every string: a record's position, id or flags",
             ),
             ("skips", "Skips", (self.skips,), None),
             ("writing", "Writing", (self.writing,), None),

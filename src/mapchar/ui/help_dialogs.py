@@ -17,8 +17,9 @@ command they would undo — sets a ``guideLabel`` property to pin what the guide
 calls it.
 
 The legend (:data:`LEGEND`) is the other kind of thing a menu cannot hold: every
-colour and mark the Hex and Text views, the Hex panel and the Strings view draw,
-each beside a swatch painted the way the view paints it, from the same
+colour and mark the Hex and Text views, the Hex panel, the Strings view, the
+Files panel, the Table Editor, the Glossary and the Preview draw, each beside a
+swatch painted the way the view paints it, from the same
 :mod:`~mapchar.ui.theme` colours — so a tint that changes changes here too.
 
 :func:`shortcut_sections` is separated from the dialog so the mapping can be
@@ -57,16 +58,24 @@ HOMEPAGE = "https://github.com/YoriKv/mapchar"
 
 DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
+        "Main Window",
+        (
+            ("Open files", "Drop them on the window"),
+            ("Choose what a dropped file opens as", "Ctrl+drop"),
+        ),
+    ),
+    (
         "Hex and Text Views",
         (
             ("Page up / down", "PgUp / PgDn"),
             ("Row up / down, or a line in Text", "Up / Down"),
-            ("Byte back / forward", "Left / Right, or − / +"),
-            ("Start / end of file", "Home / End"),
+            ("Byte back / forward", "Left / Right, or - / +"),
+            ("Start / end of the file or block", "Home / End"),
+            ("Go to the typed address", "Enter in the address box"),
             ("Back / forward through visited entries", "Mouse 4 / Mouse 5"),
             ("Select bytes", "Drag over hex or text"),
             ("Extend the selection", "Shift+click"),
-            ("Zoom the Text view", "Ctrl+Wheel"),
+            ("Zoom the Text view, Hex panel or Original", "Ctrl+Wheel"),
             ("The Hex view's own menu", "Right-click"),
         ),
     ),
@@ -77,25 +86,34 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Edit the selected string whole", "The pane under the grid"),
             ("Commit and move to the next row", "Enter"),
             ("Commit and stay", "Ctrl+Enter"),
-            ("Write the block's newline code", "Shift+Return"),
-            ("Complete a code", "["),
+            ("Write the block's newline code", "Shift+Enter"),
+            ("Complete a code", "[, then Enter or Tab"),
             ("Cancel the edit", "Esc"),
+            ("Add the marked text to the glossary", "Right-click in the pane"),
             ("Show or hide columns", "Right-click a header"),
+            ("Reorder columns", "Drag a header"),
             ("The rows' own menu", "Right-click"),
         ),
     ),
     (
         "Files Panel (while focused)",
         (
-            ("Open the row", "Up / Down, or double-click"),
+            ("Open the row", "Click, or Up / Down"),
             ("Extend the selection", "Shift+click / Ctrl+click"),
             ("Reorder the selected rows", "Alt+Up / Alt+Down, or drag"),
-            ("Cut / copy / paste entries", "Ctrl+X / C / V"),
             ("Duplicate entries", "Ctrl+D"),
             ("Remove the selected entries", "Del"),
             ("Filter the list", "Ctrl+F"),
-            ("Rename the row", "F2"),
+            ("Rename the row", "F2, or double-click"),
             ("The rows' own menu", "Right-click"),
+        ),
+    ),
+    (
+        "Glossary Panel",
+        (
+            ("Insert a term's translation", "Double-click or Enter, In this string"),
+            ("Edit a term in place", "F2, double-click, or start typing"),
+            ("The terms' own menu", "Right-click"),
         ),
     ),
     (
@@ -109,7 +127,7 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Table Editor",
         (
-            ("Put the entry in the table", "Enter in the form"),
+            ("Add the entry, or apply it to the row", "Enter in Key, Text or the line"),
             ("Edit a Text or Comment cell in place", "F2, or double-click"),
             ("Open any other cell's control in the form", "Double-click"),
             ("Sort by a column", "Click its header"),
@@ -131,7 +149,8 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("Close the window", "Esc"),
             ("Run the search", "Enter in the Search window's query"),
-            ("Jump to a search result", "Double-click"),
+            ("Jump to a result", "Select its row"),
+            ("Open a Project Strings row in its block", "Double-click, or Enter"),
         ),
     ),
 )
@@ -145,7 +164,8 @@ class Swatch:
     ``tint`` is a chip behind ``text``; ``ink`` colours the text (the palette's
     text colour when ``None``); ``mark`` is one of the marks that are not a
     chip — ``"tick"`` for a token that prints nothing, ``"rule"`` for a string
-    boundary, ``"notch"`` for text cut short; ``small`` draws the text in the
+    boundary, ``"notch"`` for text cut short, ``"box"`` for a missing glyph;
+    ``small`` draws the text in the
     label face and its ink, and ``dim`` in the dimmed ink.
     """
 
@@ -162,18 +182,13 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
         "Hex View",
         (
             (Swatch("A"), "Text a table entry matched"),
-            (
-                Swatch("line", tint=theme.TINT_CODE, small=True),
-                "A control code, shown by its label",
-            ),
+            (Swatch("tile60", small=True), "Text a table writes as a [name]"),
+            (Swatch("line", tint=theme.TINT_CODE, small=True), "A control code"),
             (Swatch("end", tint=theme.TINT_END, small=True), "An end token"),
-            (
-                Swatch("kanji", tint=theme.TINT_SWITCH, small=True),
-                "A table switch or return",
-            ),
+            (Swatch("kanji", tint=theme.TINT_SWITCH, small=True), "A table switch"),
             (
                 Swatch(tint=theme.TINT_SWITCH, mark="tick"),
-                "A token that prints nothing: a silent switch or return, "
+                "A token that prints nothing: a silent switch, a return, "
                 "or bits read by a table's fallback",
             ),
             (
@@ -182,31 +197,32 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
             ),
             (
                 Swatch("1F", tint=theme.TINT_POINTER),
-                "A pointer to one of the block's strings; its text is →address, "
-                "or the string with Follow Pointers on",
+                "A pointer; shown as Pointers, its text is →address, "
+                "or the string with Follow pointers on",
             ),
             (Swatch("A", tint=theme.TINT_SELECTION), "The selected bytes"),
             (
                 Swatch("52", tint=theme.TINT_STRUCTURE),
                 "The compressed structure the Decompressed View is reading",
             ),
-            (Swatch("A", mark="rule"), "Where the block starts a string"),
+            (Swatch("A", mark="rule"), "The start of a string"),
             (Swatch("s↵"), "A line break inside a run of text"),
             (Swatch("s▪"), "A code inside a run of text"),
-            (
-                Swatch("Abc", mark="notch"),
-                "Text cut short to fit; hover for the whole",
-            ),
-            (Swatch("0100", dim=True), "The row's address"),
+            (Swatch("Abc", mark="notch"), "Text cut short; hover for the whole"),
+            (Swatch("000100", dim=True), "The row's address"),
         ),
     ),
     (
         "Text View",
         (
-            (Swatch("[line]"), "A code, by its label; a newline code ends the line"),
+            (
+                Swatch("[line]"),
+                "A code, with Show codes on; a newline code ends the line",
+            ),
             (
                 Swatch("[$FF]"),
-                "A byte no table matches; [%bits] for a tail shorter than a byte",
+                "A byte no table matches, with Show unknown on; "
+                "[%bits] for a tail shorter than a byte",
             ),
         ),
     ),
@@ -228,16 +244,56 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
             ),
             (
                 Swatch("done", ink=theme.DONE_INK),
-                "Marked done by hand: finished, whatever the text",
+                "Marked done, by hand or by an import",
             ),
             (
                 Swatch("overflows box", ink=theme.ERROR_INK),
-                "The text does not fit the entry's box",
+                "The text does not fit the block's Preview box",
+            ),
+            (
+                Swatch("unwritten", ink=theme.ERROR_INK),
+                "A translation the bytes refused, kept unwritten",
+            ),
+            (
+                Swatch("Abc", ink=theme.ERROR_INK),
+                "An unwritten translation; hover for why",
+            ),
+            (
+                Swatch("Abc", ink=theme.WARNING_INK),
+                "A translation that differs from the glossary; hover for the terms",
             ),
             (Swatch("12 / 16"), "Bytes the string takes, and the room it has"),
-            (Swatch("×3"), "How many strings of the block share this original"),
+            (Swatch("×3"), "Strings of the block sharing this original"),
             (Swatch("↵"), "A line break in the Original or Translation"),
-            (Swatch("1F"), "The addresses of the pointers to the string"),
+            (Swatch("1F40 1F42"), "The addresses of the pointers to the string"),
+        ),
+    ),
+    (
+        "Files Panel",
+        (
+            (Swatch("?", tint=theme.NOTICE_WASH), "The file is missing"),
+            (
+                Swatch("!", tint=theme.NOTICE_WASH),
+                "A read gave something up; hover for what",
+            ),
+            (Swatch("●"), "Unsaved edits"),
+        ),
+    ),
+    (
+        "Table Editor and Glossary",
+        (
+            (Swatch("41=A", dim=True), "An entry from an included table"),
+            (
+                Swatch("Abc", ink=theme.ERROR_INK),
+                "A glossary translation the block's table cannot encode",
+            ),
+        ),
+    ),
+    (
+        "Preview",
+        (
+            (Swatch("A", tint=theme.TINT_END), "Text past the box's edge"),
+            (Swatch(mark="box"), "A character the font has no glyph for"),
         ),
     ),
 )
@@ -359,7 +415,7 @@ class SwatchWidget(QWidget):
         self._label_font = mono_font()
         self._label_font.setPointSize(8)
         metrics = self.fontMetrics()
-        self.setFixedSize(metrics.horizontalAdvance("0") * 11, metrics.height() + 6)
+        self.setFixedSize(metrics.horizontalAdvance("0") * 14, metrics.height() + 6)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         swatch = self.swatch
@@ -378,6 +434,12 @@ class SwatchWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         if swatch.mark == "rule":
             marks.rule(painter, cell.adjusted(3, 0, 0, 0))
+        if swatch.mark == "box":  # as the Preview outlines a missing glyph
+            painter.setPen(QPen(theme.ERROR_INK, 1))
+            side = cell.height() - 8
+            painter.drawRect(
+                QRectF(cell.center().x() - side / 2, cell.top() + 4, side, side)
+            )
         if swatch.text:
             painter.setFont(self._label_font if swatch.small else self._font)
             colour = swatch.ink if swatch.ink is not None else ink

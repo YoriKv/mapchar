@@ -127,7 +127,7 @@ class HexPanel(QWidget):
         self.goto = hint_field(
             AddressEdit(spelling),
             "address",
-            "Move the view to this address (Enter)",
+            "Go to this address (Enter)",
         )
         # The same field and arrows as the window's Find bar; a search from
         # here is the window's current search too.
@@ -146,7 +146,7 @@ class HexPanel(QWidget):
         bottom = QHBoxLayout()
         self.at_label = QLabel("At")
         self.at = hint_field(
-            AddressEdit(self.goto.spelling), "address", "The address to overtype at"
+            AddressEdit(self.goto.spelling), "address", "Address to overtype at"
         )
         self.bytes = hint_field(
             QLineEdit(),

@@ -129,8 +129,8 @@ class RowData:
         """The row's account of an unwritten translation, for a tooltip."""
         if self.unwritten is None:
             return ""
-        why = self.problem or "it can be written now: Write Unwritten Translation"
-        return f"Not written — {why}\nThe bytes say: {self.translation}"
+        why = self.problem or "writable now (Write Unwritten Translations)"
+        return f"Not written: {why}\nThe bytes say: {self.translation}"
 
 
 class TranslationDelegate(QStyledItemDelegate):
@@ -473,7 +473,7 @@ class StringsView(QWidget):
             tr.setToolTip(data.unwritten_note)
         elif data.misses:
             tr.setForeground(theme.WARNING_INK)
-            tr.setToolTip(f"Not as the glossary has it: {data.misses}")
+            tr.setToolTip(f"Differs from the glossary: {data.misses}")
         self.table.setItem(r, COL_TRANSLATION, tr)
         bytes_item = item(f"{data.used} / {data.room}")
         if data.room_note:
@@ -489,7 +489,7 @@ class StringsView(QWidget):
         same = item(f"×{data.same + 1}" if data.same else "")
         if data.same:
             same.setToolTip(
-                f"{data.same} other string(s) of this block have the same original"
+                f"{data.same} other string(s) in this block share this original"
             )
         self.table.setItem(r, COL_SAME, same)
         self.table.setItem(r, COL_NOTES, item(data.notes, True))

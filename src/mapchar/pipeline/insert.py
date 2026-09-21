@@ -695,16 +695,15 @@ def room_note(used: int, room: int, config: BlockConfig | None) -> str:
     if config is None:
         return ""
     if config.fixed_length is not None:
-        return f"{used} byte(s) now, of the block's fixed length of {room}"
+        return f"{used} of {room} byte(s): the block's fixed length"
     if config.effective_write_mode is WriteMode.PACKED:
         return (
-            f"{used} byte(s) now, of {room}: its own bytes and the "
-            f"{room - used} byte(s) the block has spare, which every string "
-            f"of the block shares — whichever takes them leaves the rest none"
+            f"{used} of {room} byte(s): its own plus the block's "
+            f"{room - used} spare, shared by every string of the block"
         )
     return (
-        f"{used} byte(s) now, of {room}: its own bytes and the fill after "
-        f"them, which it keeps whether it uses them or not"
+        f"{used} of {room} byte(s): its own plus the fill after them, "
+        f"kept for this string whether used or not"
     )
 
 

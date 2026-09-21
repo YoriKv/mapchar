@@ -105,7 +105,7 @@ class WritingPicker(PopupPicker):
         self.write_mode.setToolTip(_MODE_TIP)
         self.fill = FillEdit()
         self.fill.setToolTip(
-            "The bytes that pad unused room, in hex: FFFF pads with a word"
+            "Bytes that pad unused room, in hex; FFFF pads with a word"
         )
         self.spare_room = QComboBox()
         self.spare_room.addItem("Fill", "fill")

@@ -42,8 +42,8 @@ class SearchWindow(ResultsRunWindow):
         self.query = hint_field(
             QLineEdit(),
             "letters, digits, kana, ? wildcard",
-            "A relative search: the letters, digits or kana of a word the game\n"
-            "shows, with ? for any character; Enter searches",
+            "Relative search: letters, digits or kana of a word the game shows; ? "
+            "matches any character (Enter)",
         )
         fit_chars(self.query, 16)
         self.widths = QComboBox()
@@ -53,10 +53,10 @@ class SearchWindow(ResultsRunWindow):
         self.widths.setToolTip("Bytes per character code")
         self.case_gap = QCheckBox("Case gap")
         self.case_gap.setChecked(True)
-        self.case_gap.setToolTip("Upper and lower case may sit at any distance apart")
+        self.case_gap.setToolTip("Allow any distance between upper and lower case")
         self.limit = number_spin(1, 1_000_000, 5, value=500)
         self.limit.setSingleStep(500)
-        self.limit.setToolTip("How many hits to keep before stopping")
+        self.limit.setToolTip("Stop after this many hits")
         row.addWidget(self.query, 1)
         row.addWidget(self.widths)
         row.addWidget(self.case_gap)

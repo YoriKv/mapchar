@@ -72,7 +72,7 @@ class AddressesPopup(PopupFrame):
         self._loading = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.addWidget(QLabel("Where each pointer to a string sits"))
+        layout.addWidget(QLabel("Address of each string pointer"))
         self.table = QTableWidget(0, 1)
         self.table.setHorizontalHeaderLabels(["Address"])
         self.table.horizontalHeader().setSectionResizeMode(
@@ -203,7 +203,7 @@ class AddressesPicker(PopupPicker):
         super().__init__(
             fit_chars(QLineEdit(), PICKER_CHARS).minimumWidth(), "none", parent
         )
-        self.setToolTip("Where each pointer to a string sits")
+        self.setToolTip("Address of each string pointer")
         self.spelling = spelling if spelling is not None else AddressSpelling(self)
         self.popup = AddressesPopup(self.spelling, self)
         self.popup.changed.connect(self._on_changed)

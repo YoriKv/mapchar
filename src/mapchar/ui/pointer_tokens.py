@@ -1,5 +1,5 @@
-"""Pointers as tokens: what the Hex and Text tabs show while the Table list says
-**Pointer**.
+"""Pointers as tokens: what the Hex and Text tabs show while the Format bar's
+Show as is on **Pointers**.
 
 The views place, tint, select and hover tokens, so each pointer in view is made
 one — covering its own bytes, carrying its text — and nothing else in them has

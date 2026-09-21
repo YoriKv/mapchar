@@ -162,7 +162,7 @@ class ImportDialog(QDialog):
         layout.addWidget(self.skipped)
         self.force = QCheckBox("Import the skipped records anyway")
         self.force.setToolTip(
-            "Take a record whose original no longer matches the project's"
+            "Import records whose original no longer matches the project's"
         )
         self.force.toggled.connect(self._refill)
         layout.addWidget(self.force)
