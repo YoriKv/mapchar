@@ -247,6 +247,22 @@ def test_esc_closes_every_tool_window(window, qtbot):
         assert not tool.isVisible(), tool
 
 
+def test_enter_in_find_and_replace_finds_next_once(window, qtbot):
+    """The default button answers Enter; a second answer from the field's own
+    ``returnPressed`` would step over a match."""
+    from PySide6.QtCore import Qt
+
+    dialog = window.find_replace
+    dialog.show()
+    asked = []
+    dialog.find_next.connect(asked.append)
+    for field in (dialog.find, dialog.replace):
+        asked.clear()
+        field.setFocus()
+        qtbot.keyClick(field, Qt.Key.Key_Return)
+        assert len(asked) == 1, field
+
+
 def test_ctrl_z_undoes_in_a_tool_window_that_edits_the_project(window, tmp_path, qtbot):
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication

@@ -224,6 +224,17 @@ def test_shift_return_in_the_find_field_searches_backwards(window, tmp_path, qtb
     assert window._selection == (64, 67)  # forward from there, wrapped again
 
 
+def test_return_in_the_at_field_overtypes_as_the_bytes_field_does(
+    window, tmp_path, qtbot
+):
+    entry = _dock(window, tmp_path)
+    panel = window.hex_panel
+    panel.at.set_value(2)
+    panel.bytes.setText("FA")
+    qtbot.keyClick(panel.at, Qt.Key.Key_Return)
+    assert entry.doc.data[2] == 0xFA
+
+
 def test_an_empty_needle_finds_nothing(window, tmp_path):
     _dock(window, tmp_path)
     window.hex_panel.find.setText("   ")

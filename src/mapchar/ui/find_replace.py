@@ -121,7 +121,8 @@ class FindReplaceDialog(QDialog):
         b_next.clicked.connect(lambda: self.find_next.emit(self.search()))
         b_one.clicked.connect(lambda: self.replace_one.emit(self.search()))
         b_all.clicked.connect(lambda: self.replace_all.emit(self.search()))
-        self.find.returnPressed.connect(b_next.click)
+        # Enter in a field is the default button's, Find Next; a returnPressed
+        # of the field's own would answer it a second time.
         self.mode.chosen.connect(lambda _on: self._sync_mode())
         self.set_terms([])
         self._sync_mode()

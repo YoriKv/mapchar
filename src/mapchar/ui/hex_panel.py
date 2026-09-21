@@ -146,7 +146,7 @@ class HexPanel(QWidget):
         bottom = QHBoxLayout()
         self.at_label = QLabel("At")
         self.at = hint_field(
-            AddressEdit(self.goto.spelling), "address", "Address to overtype at"
+            AddressEdit(self.goto.spelling), "address", "Address to overtype at (Enter)"
         )
         self.bytes = hint_field(
             QLineEdit(),
@@ -166,6 +166,7 @@ class HexPanel(QWidget):
         layout.addLayout(bottom)
         self.goto.returnPressed.connect(self._on_goto)
         self.find_row.find_requested.connect(self.find_requested)
+        self.at.returnPressed.connect(self._on_apply)
         self.bytes.returnPressed.connect(self._on_apply)
         self.apply.clicked.connect(self._on_apply)
         self.follow.toggled.connect(
