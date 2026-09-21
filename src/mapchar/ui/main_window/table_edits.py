@@ -161,6 +161,7 @@ class TableEditorMixin:
         before, so the command is a plain before/after pair.
         """
         self._push_command(TableCommand(self, entry, before, deepcopy(entry.table)))
+        self._retry_unwritten()
 
     def apply_table(self, entry: Entry, snapshot: Table, revision: int) -> None:
         """Put ``snapshot`` back on the entry, its ``Table`` keeping its identity.

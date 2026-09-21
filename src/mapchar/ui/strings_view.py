@@ -4,8 +4,9 @@ Presentation only: the window hands it rows and takes back edits. The
 Translation cell is a multi-line editor with code completion on ``[``;
 Return commits and moves to the next row, Ctrl+Return commits and stays,
 Shift+Return inserts the block's newline code, Esc cancels. Leaving the cell
-commits too, and a commit the window refuses — either one — keeps the editor
-open on its row with the draft and the reason under it. Columns hide
+commits too. A text the bytes refuse is kept by the window as the string's
+unwritten translation, which the row shows in place of what the bytes say:
+Return leaves the editor open on it with the reason. Columns hide
 and reorder from the header's context menu. Under the grid, the pane
 (:mod:`mapchar.ui.string_pane`) shows the selected string whole, on the same
 editor.
@@ -16,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QFocusEvent, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -67,17 +68,25 @@ OVERFLOWS = "overflows box"
 """The one status a row has that :class:`~mapchar.core.block.Status` does not:
 the string is finished but does not fit, which is the bytes' answer rather than
 anything the record holds."""
-STATUS_FILTERS = ["all", *(s.value for s in Status), OVERFLOWS]
+UNWRITTEN = "unwritten"
+"""The other one: the string keeps a translation its bytes refused, and the row
+shows that text rather than what the bytes say."""
+MISSES = "misses glossary"
+"""Not a status but a filter beside them: the rows whose translation has a
+glossary term some other way than the glossary does."""
+STATUS_FILTERS = ["all", *(s.value for s in Status), OVERFLOWS, UNWRITTEN, MISSES]
 """What the Status picker offers, in the order it offers it."""
-FLAGGED = (Status.REVIEW.value, OVERFLOWS)
+FLAGGED = (Status.REVIEW.value, OVERFLOWS, UNWRITTEN)
 """The statuses Next Flagged steps through: what needs a second look."""
 SPLITTER_KEY = "view/strings_splitter"
 """Where the grid and the pane under it are split, remembered per machine."""
 
 
-def status_matches(wanted: str, status: str) -> bool:
+def status_matches(wanted: str, status: str, misses: str = "") -> bool:
     """Whether a row of this status passes the Status picker set to ``wanted``;
-    ``"all"`` passes everything."""
+    ``"all"`` passes everything, and :data:`MISSES` the rows with ``misses``."""
+    if wanted == MISSES:
+        return bool(misses)
     return wanted == "all" or status == wanted
 
 
@@ -91,7 +100,8 @@ class RowData:
     used: int
     room: int
     status: str
-    """A :class:`~mapchar.core.block.Status` value, or :data:`OVERFLOWS`."""
+    """A :class:`~mapchar.core.block.Status` value, :data:`OVERFLOWS` or
+    :data:`UNWRITTEN`."""
     notes: str
     pointers: str = ""
     same: int = 0
@@ -100,6 +110,27 @@ class RowData:
     """What the room is made of, shown on the Bytes cell: a packed block's
     spare is every string's and no two strings' at once, which the two numbers
     alone do not say."""
+    unwritten: str | None = None
+    """A translation the bytes refused, which the string keeps."""
+    problem: str = ""
+    """Why they refuse it; nothing once it would go in."""
+    misses: str = ""
+    """The glossary terms the original holds that the translation has some
+    other way than the glossary does; nothing for a string not translated."""
+
+    @property
+    def shown(self) -> str:
+        """What the Translation cell and the pane's editor open on: the
+        unwritten translation where one is kept, else what the bytes say."""
+        return self.translation if self.unwritten is None else self.unwritten
+
+    @property
+    def unwritten_note(self) -> str:
+        """The row's account of an unwritten translation, for a tooltip."""
+        if self.unwritten is None:
+            return ""
+        why = self.problem or "it can be written now: Write Unwritten Translation"
+        return f"Not written — {why}\nThe bytes say: {self.translation}"
 
 
 class TranslationDelegate(QStyledItemDelegate):
@@ -107,10 +138,9 @@ class TranslationDelegate(QStyledItemDelegate):
 
     Return hands the text to :attr:`StringsView.commit_handler` here, and
     leaving the cell hands it to the same handler through Qt's own
-    ``commitData``, which lands in :meth:`setModelData`. Either way a refusal
-    keeps what was typed: Return leaves the editor open on it, and a
-    focus-out — which Qt closes the editor on before the refusal is known —
-    opens it again on its row with the draft back in it.
+    ``commitData``, which lands in :meth:`setModelData`. A text the bytes
+    refuse is kept by the window either way: Return leaves the editor open on
+    it with the reason shown, and leaving the cell leaves the row showing it.
     """
 
     def __init__(self, view: StringsView):
@@ -120,13 +150,6 @@ class TranslationDelegate(QStyledItemDelegate):
         self.newline_code = "[line]"
         self._editor: CodeEditor | None = None
         self._index = None
-        self._draft: tuple[int, str] | None = None
-        """A refused focus-out commit: the string's index and what was typed,
-        put back when the editor opens on that string again."""
-        self._reopen = QTimer(self)
-        """Opening the cell again, once Qt has finished closing it."""
-        self._reopen.setSingleShot(True)
-        self._reopen.timeout.connect(self._reopen_refused)
 
     def createEditor(self, parent, option, index):
         editor = CodeEditor(self.codes, self.newline_code, parent)
@@ -142,10 +165,10 @@ class TranslationDelegate(QStyledItemDelegate):
     def _finish(self, editor: CodeEditor, commit: bool, advance: bool = False) -> None:
         """Return or Esc in the editor.
 
-        A commit goes to the window first: an edit it refuses — too long, a
-        code that does not encode — keeps the editor open with the reason shown,
-        rather than closing on text that went nowhere. Leaving the cell commits
-        through :meth:`setModelData` instead, on the same handler.
+        A commit goes to the window first: a text the bytes refuse — too long,
+        a code that does not encode — keeps the editor open with the reason
+        shown, for another try at it. Leaving the cell commits through
+        :meth:`setModelData` instead, on the same handler.
         """
         if commit:
             handler = self.view.commit_handler
@@ -168,23 +191,16 @@ class TranslationDelegate(QStyledItemDelegate):
         self._editor = None
 
     def setEditorData(self, editor, index) -> None:
-        """What the bytes say, or the draft a refused commit kept."""
-        text = index.data(Qt.ItemDataRole.EditRole) or ""
-        if self._draft is not None:
-            data = self.view._row_data(index.row())
-            if data is not None and data.index == self._draft[0]:
-                text = self._draft[1]
-            self._draft = None
-        editor.setPlainText(text)
+        """What the bytes say, or the translation the string keeps unwritten."""
+        editor.setPlainText(index.data(Qt.ItemDataRole.EditRole) or "")
         editor.moveCursor(QTextCursor.MoveOperation.End)
 
     def setModelData(self, editor, model, index) -> None:
         """Leaving the cell: the same commit Return makes.
 
         The window takes the text and says why it would not go in; refused,
-        the bytes keep what they say and the draft comes back with the editor,
-        which Qt closes on its way here. A cell left as the bytes have it is
-        not a commit at all.
+        the bytes keep what they say and the row shows the text as unwritten.
+        A cell left as it was is not a commit at all.
         """
         text = editor.toPlainText()
         handler = self.view.commit_handler
@@ -192,13 +208,11 @@ class TranslationDelegate(QStyledItemDelegate):
         if handler is None or data is None:
             model.setData(index, text, Qt.ItemDataRole.EditRole)
             return
-        if text == data.translation:
+        if text == data.shown:
             return
         problem = handler(data.index, text)
         if problem:
             self.view.problem_shown.emit(problem)
-            self._draft = (data.index, text)
-            self._reopen.start(0)
 
     def eventFilter(self, editor, event) -> bool:  # noqa: N802 - Qt override
         """Qt's commit-on-focus-out, minus the focus-outs that are not leaving.
@@ -219,11 +233,6 @@ class TranslationDelegate(QStyledItemDelegate):
         ):
             return False
         return super().eventFilter(editor, event)
-
-    def _reopen_refused(self) -> None:
-        """Open the cell whose commit was refused again, on what was typed."""
-        if self._draft is not None:
-            self.view.edit_index(self._draft[0])
 
     def destroyEditor(self, editor, index) -> None:
         if editor is self._editor:
@@ -249,6 +258,8 @@ class StringsView(QWidget):
     revert_requested = Signal(list)
     review_toggled = Signal(list)
     context_menu_requested = Signal(list, QPoint)
+    glossary_add_requested = Signal(str, str)
+    """Add a term: what is marked in the pane's original, and in its editor."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -321,6 +332,7 @@ class StringsView(QWidget):
         self.pane.problem_shown.connect(self.problem_shown)
         self.pane.notes_edited.connect(self.notes_edited)
         self.pane.advance_requested.connect(lambda: self.step_row(1))
+        self.pane.glossary_add_requested.connect(self.glossary_add_requested)
 
     # --- rows ------------------------------------------------------------
 
@@ -360,6 +372,19 @@ class StringsView(QWidget):
             editor.setFocus()
         if editor is not None:
             editor.insert_code(text)
+
+    def select_span(self, start: int, stop: int) -> None:
+        """Mark characters ``start``–``stop`` of the selected string's text in
+        the pane's editor: the hit a search stands on."""
+        self.pane.select_span(start, stop)
+
+    def selected_text(self) -> tuple[str, str]:
+        """What is marked in the pane: in the original, and in the editor."""
+        return self.pane.selected_text()
+
+    def set_terms(self, terms) -> None:
+        """The glossary's terms, underlined in the pane's original."""
+        self.pane.set_terms(terms)
 
     def set_readout(self, text: str, problem: bool = False) -> None:
         """The pane's byte readout: the draft's budget, or why a commit was
@@ -441,8 +466,14 @@ class StringsView(QWidget):
         self.table.setItem(r, COL_ADDRESS, item(f"{data.address:X}"))
         self.table.setItem(r, COL_POINTERS, item(data.pointers))
         self.table.setItem(r, COL_ORIGINAL, item(data.original.replace("\n", "↵")))
-        tr = item(data.translation.replace("\n", "↵"), True)
-        tr.setData(Qt.ItemDataRole.EditRole, data.translation)
+        tr = item(data.shown.replace("\n", "↵"), True)
+        tr.setData(Qt.ItemDataRole.EditRole, data.shown)
+        if data.unwritten is not None:
+            tr.setForeground(theme.ERROR_INK)
+            tr.setToolTip(data.unwritten_note)
+        elif data.misses:
+            tr.setForeground(theme.WARNING_INK)
+            tr.setToolTip(f"Not as the glossary has it: {data.misses}")
         self.table.setItem(r, COL_TRANSLATION, tr)
         bytes_item = item(f"{data.used} / {data.room}")
         if data.room_note:
@@ -451,6 +482,8 @@ class StringsView(QWidget):
         colour = self._status_colour(data.status)
         if colour is not None:
             status.setForeground(colour)
+        if data.unwritten is not None:
+            status.setToolTip(data.unwritten_note)
         self.table.setItem(r, COL_BYTES, bytes_item)
         self.table.setItem(r, COL_STATUS, status)
         same = item(f"×{data.same + 1}" if data.same else "")
@@ -464,7 +497,7 @@ class StringsView(QWidget):
 
     @staticmethod
     def _status_colour(status: str) -> QColor | None:
-        if status == OVERFLOWS:
+        if status in (OVERFLOWS, UNWRITTEN):
             return theme.ERROR_INK
         if status == Status.REVIEW.value:
             return theme.WARNING_INK
@@ -571,8 +604,8 @@ class StringsView(QWidget):
             if d is None:
                 continue
             hidden = not matches_words(
-                words, d.original, d.translation, d.notes
-            ) or not status_matches(status, d.status)
+                words, d.original, d.translation, d.unwritten or "", d.notes
+            ) or not status_matches(status, d.status, d.misses)
             self.table.setRowHidden(r, hidden)
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
@@ -588,13 +621,11 @@ class StringsView(QWidget):
             self.notes_edited.emit(d.index, item.text())
 
     def _on_select(self) -> None:
-        """The selection moved. A draft in the pane lands first; one refused
-        keeps the selection on its row, with the reason shown, rather than
-        losing what was typed."""
+        """The selection moved. A draft in the pane lands first, or is kept
+        unwritten: either way nothing typed is lost by moving on."""
         idx = self.selected_indices()
-        if idx and idx[0] != self.pane.index and not self.pane.flush():
-            self.select_index(self.pane.index)
-            return
+        if idx and idx[0] != self.pane.index:
+            self.pane.flush()
         self._show_in_pane()
         if idx:
             self.row_selected.emit(idx[0])
@@ -605,4 +636,12 @@ class StringsView(QWidget):
         )
 
 
-__all__ = ["FLAGGED", "OVERFLOWS", "RowData", "StringsView", "status_matches"]
+__all__ = [
+    "FLAGGED",
+    "MISSES",
+    "OVERFLOWS",
+    "UNWRITTEN",
+    "RowData",
+    "StringsView",
+    "status_matches",
+]

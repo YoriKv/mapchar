@@ -30,7 +30,7 @@ def records_for(block_name: str, strings: list[StringRecord]) -> list[Record]:
             f"{block_name}/{s.index}",
             s.start,
             s.original,
-            s.current_text() if s.edited else "",
+            s.shown_text() if s.edited or s.unwritten is not None else "",
             s.status.value,
             s.notes,
         )

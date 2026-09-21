@@ -14,7 +14,7 @@ from mapchar.engines.layout import layout as layout_glyphs
 from mapchar.pipeline.insert import room_for, room_note, string_ends
 from mapchar.project.entry import Entry
 from mapchar.ui.code_editor import CodeInfo
-from mapchar.ui.strings_view import OVERFLOWS, RowData
+from mapchar.ui.strings_view import OVERFLOWS, UNWRITTEN, RowData
 
 _CODE_IN_TEXT = re.compile(r"(?<!\\)\[([^\]\s]+)")
 """A ``[label`` in script text, for counting which codes a block uses."""
@@ -196,7 +196,9 @@ class StringRowsMixin:
         used = rec.byte_length(cfg.skips) if cfg is not None else rec.length
         room = room_for(rec, cfg, ends)
         status = rec.status.value
-        if self._entry is not None and self._overflow_status(rec, self._entry):
+        if rec.unwritten is not None:
+            status = UNWRITTEN
+        elif self._entry is not None and self._overflow_status(rec, self._entry):
             status = OVERFLOWS
         return RowData(
             rec.index,
@@ -210,6 +212,9 @@ class StringRowsMixin:
             " ".join(f"{p.address:X}" for p in rec.pointers),
             (same[same_key(rec.original)] - 1) if same is not None else 0,
             room_note(used, room, cfg),
+            rec.unwritten,
+            self._why_unwritten(self._entry, rec) if self._entry is not None else "",
+            self._missing_terms(rec),
         )
 
     def _refresh_string_row(self, entry, index: int) -> None:

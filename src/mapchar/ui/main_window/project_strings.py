@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mapchar.project.entry import Entry
 from mapchar.ui.project_strings_window import ProjectString
-from mapchar.ui.strings_view import OVERFLOWS
+from mapchar.ui.strings_view import OVERFLOWS, UNWRITTEN
 
 
 class ProjectStringsMixin:
@@ -38,7 +38,9 @@ class ProjectStringsMixin:
         rows = []
         for block, rec in self._all_block_strings():
             status = rec.status.value
-            if self._overflow_status(rec, block):
+            if rec.unwritten is not None:
+                status = UNWRITTEN
+            elif self._overflow_status(rec, block):
                 status = OVERFLOWS
             rows.append(
                 ProjectString(
@@ -46,9 +48,10 @@ class ProjectStringsMixin:
                     block.name,
                     rec.index,
                     rec.original,
-                    rec.current_text(),
+                    rec.shown_text(),
                     status,
                     rec.notes,
+                    self._missing_terms(rec),
                 )
             )
         self.project_strings.set_strings(rows)

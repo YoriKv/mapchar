@@ -334,7 +334,7 @@ def test_an_older_project_s_translation_that_would_re_cut_the_block_is_refused(
     rom = window.workspace.files()[0]
     assert [r.current_text() for r in back.doc.strings] == ["AB[end]", "BA[end]"]
     assert not rom.dirty
-    assert "unplaced: A[end]" in back.doc.strings[0].notes
+    assert back.doc.strings[0].unwritten == "A[end]"
     assert any("3 strings instead of 2" in n for n in window._load_notices)
 
 

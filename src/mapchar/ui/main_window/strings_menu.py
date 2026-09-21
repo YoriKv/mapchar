@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QMenu
 
 from mapchar.core.block import Status
 from mapchar.project.entry import Entry
+from mapchar.ui.find_replace import BLOCK, PROJECT
 from mapchar.ui.main_window.string_rows import same_key
 from mapchar.ui.strings_view import FLAGGED
 from mapchar.ui.undo_commands import StringFieldCommand
@@ -20,16 +21,22 @@ class StringsMenuMixin:
     """
 
     def _revert_selected(self) -> None:
-        """Put the original text back into the bytes of the selected strings."""
+        """Put the original text back into the bytes of the selected strings,
+        and let go of any translation they keep unwritten."""
         entry = self._entry
+        selected = self.strings.selected_indices()
         edits = {}
-        for index in self.strings.selected_indices():
+        for index in selected:
             rec = self._string(entry, index)
             if rec is not None and rec.edited:
                 edits[index] = rec.original
-        if not edits:
-            return
-        problems = self._edit_strings(entry, edits, "Revert to original")
+        with self._macro("Revert to original"):
+            problems = (
+                self._edit_strings(entry, edits, "Revert to original") if edits else []
+            )
+            if not problems:
+                for index in selected:
+                    self._keep_unwritten(entry, index, None)
         if problems:
             self._refuse_edit(problems)
 
@@ -81,7 +88,7 @@ class StringsMenuMixin:
         rec = self._string(entry, index)
         if rec is None:
             return
-        text = rec.current_text()
+        text = rec.shown_text()
         found = self._identical_originals(rec, entry, project)
 
         def planned():
@@ -92,7 +99,7 @@ class StringsMenuMixin:
                         i: text
                         for i in indices
                         if (r := self._string(block, i)) is not None
-                        and r.current_text() != text
+                        and r.shown_text() != text
                     },
                 )
 
@@ -107,6 +114,15 @@ class StringsMenuMixin:
         menu.addAction("Re&vert to Original", self._revert_selected)
         menu.addAction("Toggle Revie&w", self._toggle_review_selected)
         menu.addAction("Toggle &Done", self._toggle_done_selected)
+        kept = [
+            i
+            for i in indices
+            if (r := self._string(self._entry, i)) is not None
+            and r.unwritten is not None
+        ]
+        menu.addAction(
+            "Write &Unwritten Translation", self._write_unwritten_selected
+        ).setEnabled(bool(kept))
         if indices:
             rec = self._string(self._entry, indices[0])
             if rec is not None:
@@ -127,6 +143,20 @@ class StringsMenuMixin:
                     "Apply to Identical Originals in &Project",
                     lambda: self._apply_to_identical(index, True),
                 )
+        menu.addSeparator()
+        terms = any(t.translation for t in self.workspace.glossary)
+        for text, slot in (
+            ("Replace &Glossary Terms…", self._replace_terms_in_selection),
+            (
+                "Replace Glossary Terms in &Block…",
+                lambda: self._replace_glossary_terms(scope=BLOCK),
+            ),
+            (
+                "Replace Glossary Terms in Pro&ject…",
+                lambda: self._replace_glossary_terms(scope=PROJECT),
+            ),
+        ):
+            menu.addAction(text, slot).setEnabled(terms)
         menu.exec(pos)
 
     def _step_strings(self, what: str, backwards: bool = False) -> None:
@@ -140,7 +170,7 @@ class StringsMenuMixin:
             # whatever its box says about it.
             wanted = lambda d: self._is_untouched(d.index)  # noqa: E731
         else:
-            wanted = lambda d: d.status in FLAGGED  # noqa: E731
+            wanted = lambda d: d.status in FLAGGED or bool(d.misses)  # noqa: E731
         self._show_view("strings")
         if not self.strings.step_to(wanted, backwards):
             self.statusBar().showMessage(f"No {what} string", 3000)

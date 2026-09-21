@@ -28,7 +28,7 @@ from mapchar.ui.decompress_window import DecompressWindow
 from mapchar.ui.files_panel import FilesPanel
 from mapchar.ui.find_replace import FindReplaceDialog
 from mapchar.ui.find_row import FindRow
-from mapchar.ui.glossary_window import GlossaryWindow
+from mapchar.ui.glossary_panel import GlossaryPanel
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.hex_panel import HexPanel
 from mapchar.ui.main_window.navigation import CUSTOM_ID
@@ -68,6 +68,24 @@ class WidgetsMixin:
         files_dock.setWidget(self.files_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, files_dock)
         self.files_dock = files_dock
+
+        # Under the Files panel: both are lists the strings are worked from.
+        self.glossary_panel = GlossaryPanel()
+        glossary_dock = QDockWidget("Glossary", self)
+        glossary_dock.setObjectName("glossary_dock")
+        glossary_dock.setWidget(self.glossary_panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, glossary_dock)
+        self.splitDockWidget(files_dock, glossary_dock, Qt.Orientation.Vertical)
+        # The tree is what the column is mostly for; a drag says otherwise.
+        # The column keeps the width the tree asks for, which sharing it out
+        # by height would otherwise let go of.
+        self.resizeDocks([files_dock, glossary_dock], [3, 2], Qt.Orientation.Vertical)
+        self.resizeDocks(
+            [files_dock],
+            [self.files_panel.sizeHint().width()],
+            Qt.Orientation.Horizontal,
+        )
+        self.glossary_dock = glossary_dock
 
         # How every address field spells a position; the address format sets it.
         self.address_spelling = AddressSpelling(self)
@@ -263,7 +281,6 @@ class WidgetsMixin:
         self.table_editor = TableEditor(self)
         self.find_replace = FindReplaceDialog(self)
         self.project_strings = ProjectStringsWindow(self)
-        self.glossary_window = GlossaryWindow(self)
 
         self._connect_signals()
         self._start_autosave()
@@ -351,13 +368,22 @@ class WidgetsMixin:
             lambda _text, backwards: self._find_bytes(again=True, backwards=backwards)
         )
         self.hex_dock.visibilityChanged.connect(lambda v: v and self._sync_hex_panel())
-        self.find_replace.find_next.connect(self._fr_find_next)
-        self.find_replace.replace_one.connect(self._fr_replace_one)
-        self.find_replace.replace_all.connect(self._fr_replace_all)
+        self.find_replace.find_next.connect(self._search_next)
+        self.find_replace.replace_one.connect(self._search_replace)
+        self.find_replace.replace_all.connect(self._search_replace_all)
         self.project_strings.go_to.connect(self._jump_to_string)
         self.project_strings.refresh_requested.connect(self._refresh_project_strings)
-        self.glossary_window.changed.connect(self._on_glossary_changed)
-        self.glossary_window.insert_requested.connect(self._insert_glossary)
+        self.glossary_panel.changed.connect(self._on_glossary_changed)
+        self.glossary_panel.insert_requested.connect(self._insert_glossary)
+        self.glossary_panel.replace_requested.connect(self._replace_glossary_terms)
+        self.glossary_panel.strings_requested.connect(self._show_term_strings)
+        self.glossary_panel.uses_requested.connect(self._count_glossary_uses)
+        self.glossary_panel.import_requested.connect(self._import_glossary)
+        self.glossary_panel.export_requested.connect(self._export_glossary)
+        self.glossary_dock.visibilityChanged.connect(
+            lambda shown: shown and self._sync_glossary()
+        )
+        self.strings.glossary_add_requested.connect(self._add_to_glossary)
         self.workspace.on_current_changed.append(self._record_visit)
         self.workspace.on_current_changed.append(lambda e: self._update_title())
         # A closed entry cannot be returned to. The whole trail going is a

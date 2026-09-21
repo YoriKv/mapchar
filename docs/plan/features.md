@@ -63,7 +63,8 @@ the preview system in [preview.md](preview.md).
 
 ## Window layout
 
-- **Left column:** the **Files** dock, which lists the tables too.
+- **Left column:** the **Files** dock, which lists the tables too, and under
+  it the **Glossary** dock.
 - **Right column:** the editing surface, top to bottom:
   - the **Format** bar: **Table** with **Edit…**, **Compression** (see
     [Compression](#compression)), the **Show as**
@@ -86,7 +87,7 @@ the preview system in [preview.md](preview.md).
   back where a fresh install has them, leaving the window's own size alone.
 - **Tool windows** — separate top-level windows that remember their
   placement and close on Esc: Search, Scan, Table Editor, Preview, Decompressed
-  View, Find and Replace, Project Strings, Glossary.
+  View, Find and Replace, Project Strings.
 - **Long operations** — the text scan, the relative search, the structure scan
   and its Find All, and pointer discovery all run with a Stop button and a
   progress reading, and hand back whatever they found when stopped.
@@ -832,10 +833,11 @@ The editing surface, opened on a block.
   untouched, while text typed back as it was is untouched however the encoder
   spells it — **review** and **done** (set by hand
   — **Edit ▸ Toggle Review / Toggle Done on Selected**, Ctrl+Alt+D for done —
-  or by import, and kept whatever the text does), and **overflows box** when
-  the block has a text box (see [preview.md](preview.md#text-boxes)). Nothing is ever *too long* or
-  *invalid*: the bytes cannot hold such a text, so an edit that would need
-  them is refused instead.
+  or by import, and kept whatever the text does), **overflows box** when
+  the block has a text box (see [preview.md](preview.md#text-boxes)), and
+  **unwritten** when the string keeps a translation its bytes refused. Nothing
+  in the bytes is ever *too long* or *invalid*: they cannot hold such a text,
+  so an edit that would need them is refused, and kept unwritten instead.
 - **Editing** — the Translation cell is a multi-line editor, opened on the
   text the bytes hold:
   - typing edits text; `[` opens code completion listing the table set's
@@ -853,10 +855,12 @@ The editing surface, opened on a block.
   - leaving the cell — for another row, or another widget — commits the same
     way Return does; a cell left as the bytes have it commits nothing, and
     the window going inactive leaves the draft where it is;
-  - a commit is **refused** — the editor stays open on its row with the draft
-    and the reason under it — when the text does not encode, does not fit its
+  - a commit is **refused** when the text does not encode, does not fit its
     room, would not read back as typed, or would change how the bytes after
-    it are cut into strings. The reason says why, in the text's own terms: the
+    it are cut into strings. Return leaves the editor open on its row with the
+    reason under it; leaving the cell leaves it. Either way the text is not
+    lost — the string keeps it as its **unwritten translation** (below). The
+    reason says why, in the text's own terms: the
     character no table has an entry for and its code point, the table that
     does have it and the code that switches there, the code no table knows or
     the operands one takes, and for a text that does not fit, what it encodes
@@ -879,6 +883,26 @@ The editing surface, opened on a block.
     string with no room for it does not hold the others back: the block takes
     them together where they all fit and one at a time where they do not, and
     what is refused is listed with why.
+- **Unwritten translations** — a text the bytes refuse is kept by the
+  project, as an undo step, until they can take it:
+  - the row shows it in place of what the bytes say, in the error colour, with
+    the status **unwritten**; hovering it reads why it is refused and what the
+    bytes still say. The cell, the pane and the Preview open on it, Find and
+    Replace, the glossary and **Apply to Identical Originals** work on it, and
+    a TSV, CSV or PO export carries it as the translation;
+  - the Status filter offers **unwritten**, and **Next / Previous Flagged**
+    stops on it;
+  - a text that lands on the string takes its place, **Revert to Original**
+    lets go of it, and both are one undo step with what they did to the bytes;
+  - every text edit keeps what it cannot land: a cell, the pane, a Replace, a
+    Replace All, Apply to Identical Originals, an import, and a translation an
+    older project was still holding;
+  - it is written when it can be: a table edit or a table file re-read tries
+    the unwritten translations of every block that is read, and what now goes
+    in lands as an undo step of its own after the change that let it.
+    **Write Unwritten Translation**, on the grid's context menu, tries the
+    selected strings' again, and **Edit ▸ Write Unwritten Translations**
+    every block's; what still does not go in is listed with why.
 - **Editing pane** — under the grid, on the selected string, read whole:
   the original with its line breaks, codes dimmed and, with **Show codes**
   off, left out as the Text tab leaves them; beside it the same editor the
@@ -886,8 +910,11 @@ The editing surface, opened on a block.
   wraps both boxes. Return, Ctrl+Return, Shift+Return, `[` and Esc do what
   they do in the cell; a commit from the pane moves the selection on and
   keeps typing in the pane. Leaving the editor lands its draft as leaving a
-  cell does; a refused draft stays, with the reason in the readout, and the
-  selection stays on its row. A code button types into the cell being
+  cell does; a refused draft is kept unwritten, with the reason in the
+  readout. The glossary's terms are underlined in the original, each reading
+  its translation and notes on hover, and **Add to Glossary…** on either
+  box's context menu makes a term of what is marked — the original's marked
+  text as the term, the editor's as its translation. A code button types into the cell being
   edited, else into the pane. The split between grid and pane is remembered
   per machine.
 - **Project Strings** — **Search ▸ Project Strings…** (Ctrl+Shift+G) lists
@@ -895,13 +922,36 @@ The editing surface, opened on a block.
   translation, status and notes, under a word filter and a status filter.
   Double-click or Enter opens the block on that string. The list follows
   edits while it is open; **Refresh** reads every block again.
-- **Glossary** — **Edit ▸ Glossary…** (Ctrl+Shift+L) opens the project's
-  terms: a term, its translation and notes, edited in place, added and
-  removed, filtered by words; every change is an undo step and the project
-  reads unsaved. Above them, **In this string** lists the terms the selected
-  string's original holds, case and form folded, longest first;
-  **Insert Translation** (or a double-click) types the term's translation
-  into the cell being edited, else into the pane.
+- **Glossary** — the **Glossary** panel, docked under the Files panel
+  (**Edit ▸ Glossary**, Ctrl+Shift+L, or **Panels ▸ Glossary**), holds the
+  project's terms: a term, its translation and notes, edited in place, added
+  and removed, filtered by words; every change is an undo step and the
+  project reads unsaved.
+  - **Matching** is code-aware — a term never matches inside a `[code]` — case
+    and form folded, the longest term first, and no term inside another's
+    match: `Fire` is not found in `Fire Sword`. A term's context menu sets
+    **Match Case** and **Whole Word** for it (the **Match** column's `Aa` and
+    `W`), the second for a script that spaces its words.
+  - **In this string** lists the terms the selected string's original holds;
+    **Insert** (or a double-click) types the term's translation into the cell
+    being edited, else into the pane.
+  - **Replacing** — **Replace…**, a term's **Replace in Strings…**, **Edit ▸
+    Replace Glossary Terms…** and the Strings grid's **Replace Glossary
+    Terms…**, **… in Block…** and **… in Project…** open Find and Replace on
+    the glossary (below), over every translated term or the one.
+  - A translation the block on screen **cannot spell** is shown in the error
+    colour, with the character its table lacks.
+  - A row whose original holds a term, and whose translation has it some other
+    way than the glossary does, shows its translation in the warning colour,
+    naming the terms; the Status filter's **misses glossary** lists them, in
+    the Strings grid and in Project Strings, and Next / Previous Flagged stops
+    on them. A string nobody has translated misses nothing.
+  - **Count Uses** reads every block and fills the **Uses** column with how
+    many strings hold each term; a term's **Show in Project Strings** lists
+    them.
+  - **Import…** lays a TSV or CSV — term, translation, notes, match case, whole
+    word; the term alone is enough — over the terms already here, as one undo
+    step; **Export…** writes one.
 - **Stepping** — **Edit ▸ Next / Previous Untranslated** (F4 / Shift+F4) and
   **Next / Previous Flagged** (F6 / Shift+F6: review or overflows box) move
   among the rows the filter shows, wrapping round.
@@ -912,10 +962,18 @@ The editing surface, opened on a block.
 - **Selection sync** — selecting a string highlights its bytes in the raw
   view and the Hex panel; selecting bytes there selects the string. A hex
   overtype inside a string reads as an edit of it.
-- **Bulk edit** — Find and Replace across the block or the project, with
-  code-aware matching (`[line]` matches only the code). A block's
-  replacements land as one edit; one that will not fit is tried string by
-  string and the refusals listed.
+- **Bulk edit** — **Edit ▸ Find and Replace…** (Ctrl+H) over the strings
+  selected when it opened, the block or the project, with code-aware matching
+  (`[line]` matches only the code). **Look for** is **Text** — what is typed —
+  or **Glossary** — the glossary's terms, all of them or the one picked, each
+  becoming its translation. **Find Next** stands on a hit: its string
+  selected, its span marked in the pane, and for a term what it becomes shown
+  beside **Found**; **Replace** replaces the hit stood on and stands on the
+  next, so every one is seen on the way through, and Find Next passes one by.
+  **Replace All** lands a block's replacements as one edit; one that will not
+  fit is tried string by string, and the refusals are listed and kept
+  unwritten. **Skip strings marked done** leaves what has been read through
+  alone.
 - **Undo** — a run of commits on one cell is one undo step.
 
 ## Writing back to disk
@@ -1009,7 +1067,7 @@ The editing surface, opened on a block.
   which is the case that most needs saying.
 - An import is one undo step, the blocks it creates included. A block's texts
   land as one edit; a block whose texts will not all fit is tried string by
-  string, and what is refused is listed and left as it was.
+  string, and what is refused is listed and kept unwritten.
 - **Dumping a native script** is not in the app: the project file has replaced
   the job the format did for the prior-art tools, and it stays reachable for
   the fixture comparisons through `tools/dump_script.py`
@@ -1136,9 +1194,10 @@ lays out in the game. It is described in [preview.md](preview.md).
 - A `.mapchar` project stores **references and settings, never bytes**:
   every entry with its chain, block configuration, a file's reading; the
   folders and which rows each holds; per
-  string its **original**, status and notes; table edits made in-app; text
-  boxes; the glossary; the view position per entry.
-  Translations are not in it: they are the ROM's bytes.
+  string its **original**, status, notes and unwritten translation; table
+  edits made in-app; text boxes; the glossary; the view position per entry.
+  Translations are not in it: they are the ROM's bytes — but for the ones the
+  bytes refused.
 - Not saved: zoom, theme, the preview font, window layout, undo history.
 - **New / Open / Open Recent / Save / Save As** as in celPix; paths are stored
   relative to the project file; older versions are upgraded on load, which the
@@ -1237,5 +1296,5 @@ Text views, the Hex panel and the Strings view draw, each beside a swatch.
 | Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code · Esc cancel · the same keys in the pane under the grid |
 | Files panel | Up/Down or double-click open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 rename · right-click menu |
 | Hex panel | 0-9 / A-F overtype · Enter go to, find or overtype · Shift+Enter find previous |
-| Tool windows | Esc close · Enter run the Search window's query · double-click a result to jump · Ctrl+Z / Ctrl+Shift+Z in one that edits the project (Table Editor, Find and Replace, Glossary) |
+| Tool windows | Esc close · Enter run the Search window's query · double-click a result to jump · Ctrl+Z / Ctrl+Shift+Z in one that edits the project (Table Editor, Find and Replace, a floated Glossary panel) |
 | Table Editor | Enter put the entry in the table · Del remove the selected entries · Ctrl+F filter · F2 or double-click edit a Text or Comment cell, double-click opens any other in the form · click a header to sort, right-click to choose columns |

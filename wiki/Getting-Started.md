@@ -243,8 +243,10 @@ save it and move to the next string.
 | FATALITY | ФАТАЛІТІ |
 | BABALITY!! | БАБАЛІТІ!! |
 
-A translation that is longer than its slot is refused. For example, `НІЧИЯ`
-does not fit in the slot of `DRAW`:
+A translation that is longer than its slot is refused: the bytes stay as they
+are, and the row keeps what you typed as **unwritten**, in red, until it is
+shortened or the slot has room. For example, `НІЧИЯ` does not fit in the slot
+of `DRAW`:
 
 ![A refused edit](images/08-finishes-refused.png)
 

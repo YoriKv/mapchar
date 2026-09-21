@@ -8,8 +8,8 @@ them. The editor is the grid's own :class:`~mapchar.ui.code_editor.CodeEditor`:
 the same completion, the same keys.
 
 Presentation only: the pane holds the text it was given and the text typed,
-and hands a commit to whoever owns it (:attr:`StringPane.committer`), keeping
-the draft when it is refused.
+and hands a commit to whoever owns it (:attr:`StringPane.committer`), which
+keeps a text the bytes refuse.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import (
     QPalette,
     QSyntaxHighlighter,
@@ -30,10 +30,13 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QSplitter,
+    QTextEdit,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
+from mapchar.project.glossary import GlossaryTerm, TermHit, term_hits
 from mapchar.ui import theme
 from mapchar.ui.code_editor import CodeEditor, CodeInfo
 from mapchar.ui.token_text import code_spans, hide_codes
@@ -44,6 +47,12 @@ if TYPE_CHECKING:
 
 SHOW_CODES_KEY = "view/strings_show_codes"
 WRAP_KEY = "view/strings_wrap"
+
+
+def u16(text: str, index: int) -> int:
+    """Character ``index`` of ``text`` as a position in a text document, which
+    counts a character outside the basic plane as two."""
+    return len(text[:index].encode("utf-16-le")) // 2
 
 
 class CodeHighlighter(QSyntaxHighlighter):
@@ -69,14 +78,21 @@ class StringPane(QWidget):
     """Return committed: move on to the next row, keeping the editor's focus."""
     problem_shown = Signal(str)
     """A commit was refused, with why."""
+    glossary_add_requested = Signal(str, str)
+    """Add a term to the glossary: what is marked in the original, and what is
+    marked in the translation."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.index: int | None = None
         """The string shown, or none."""
         self._text = ""
-        """What the bytes say, as last loaded: what the editor is dirty against."""
+        """What the string says, as last loaded — its bytes, or the translation
+        it keeps unwritten: what the editor is dirty against."""
         self._original = ""
+        self._terms: list[GlossaryTerm] = []
+        self._term_hits: list[TermHit] = []
+        """The glossary's terms in the original as it is shown, underlined."""
         self.committer: Callable[[int, str], str | None] | None = None
         """What a commit hands the text to: ``None`` when it landed, else why
         it did not, which keeps the draft."""
@@ -136,6 +152,12 @@ class StringPane(QWidget):
         layout.addWidget(self.splitter)
 
         self._apply_wrap(self.wrap.isChecked())
+        for box in (self.original, self.editor):
+            box.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            box.customContextMenuRequested.connect(
+                lambda pos, box=box: self._on_menu(box, pos)
+            )
+        self.original.viewport().installEventFilter(self)
         self.editor.textChanged.connect(self._on_typed)
         self.editor.commit.connect(self._commit)
         self.editor.cancel.connect(self.cancel)
@@ -170,10 +192,13 @@ class StringPane(QWidget):
         self._original = data.original
         self.heading.setText(f"#{data.index} · {data.address:X} · {data.status}")
         self._render_original()
-        self._text = data.translation
+        self._text = data.shown
         if not keep:
-            self._load(data.translation)
-            self._set_readout(f"{data.used} / {data.room} byte(s)", problem=False)
+            self._load(data.shown)
+            if data.unwritten is not None and data.problem:
+                self._set_readout(f"Not written — {data.problem}", problem=True)
+            else:
+                self._set_readout(f"{data.used} / {data.room} byte(s)", problem=False)
         self.notes.setText(data.notes)
 
     def _render_original(self) -> None:
@@ -181,6 +206,74 @@ class StringPane(QWidget):
         if not self.show_codes.isChecked():
             text = hide_codes(text)
         self.original.setPlainText(text)
+        self._mark_terms()
+
+    def set_terms(self, terms: list[GlossaryTerm]) -> None:
+        """The glossary's terms: underlined where the original holds one, with
+        its translation on hover."""
+        self._terms = list(terms)
+        self._mark_terms()
+
+    def _mark_terms(self) -> None:
+        text = self.original.toPlainText()
+        self._term_hits = term_hits(self._terms, text)
+        fmt = QTextCharFormat()
+        fmt.setFontUnderline(True)
+        fmt.setUnderlineColor(theme.DONE_INK)
+        marks = []
+        for hit in self._term_hits:
+            mark = QTextEdit.ExtraSelection()
+            mark.format = fmt
+            mark.cursor = QTextCursor(self.original.document())
+            mark.cursor.setPosition(u16(text, hit.start))
+            mark.cursor.setPosition(
+                u16(text, hit.stop), QTextCursor.MoveMode.KeepAnchor
+            )
+            marks.append(mark)
+        self.original.setExtraSelections(marks)
+
+    def _term_tip(self, pos: QPoint) -> str:
+        """What hovering the original at ``pos`` says: the term there, what it
+        becomes and its notes."""
+        text = self.original.toPlainText()
+        at = self.original.cursorForPosition(pos).position()
+        for hit in self._term_hits:
+            if u16(text, hit.start) <= at < u16(text, hit.stop):
+                term = hit.term
+                tip = f"{term.term} → {term.translation or '(no translation yet)'}"
+                return f"{tip}\n{term.notes}" if term.notes else tip
+        return ""
+
+    def select_span(self, start: int, stop: int) -> None:
+        """Mark characters ``start``–``stop`` of the editor's text: the hit a
+        search stands on."""
+        text = self.editor.toPlainText()
+        cursor = self.editor.textCursor()
+        cursor.setPosition(u16(text, start))
+        cursor.setPosition(u16(text, stop), QTextCursor.MoveMode.KeepAnchor)
+        self.editor.setTextCursor(cursor)
+        self.editor.ensureCursorVisible()
+
+    def selected_text(self) -> tuple[str, str]:
+        """What is marked in the original, and in the editor."""
+
+        def marked(box: QPlainTextEdit) -> str:
+            return box.textCursor().selectedText().replace("\u2029", "\n").strip()
+
+        return marked(self.original), marked(self.editor)
+
+    def _on_menu(self, box: QPlainTextEdit, pos: QPoint) -> None:
+        """The box's own menu, and the way into the glossary under it."""
+        menu = box.createStandardContextMenu()
+        menu.addSeparator()
+        term, translation = self.selected_text()
+        add = menu.addAction(
+            "Add to &Glossary…",
+            lambda: self.glossary_add_requested.emit(term, translation),
+        )
+        add.setEnabled(bool(term or translation))
+        menu.exec(box.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
     def _load(self, text: str) -> None:
         was = self.editor.blockSignals(True)
@@ -232,20 +325,21 @@ class StringPane(QWidget):
 
     def flush(self) -> bool:
         """Land the draft, if there is one: ``True`` when the editor and the
-        bytes agree afterwards, ``False`` when the commit was refused and the
-        draft stays."""
+        bytes agree afterwards, ``False`` when the bytes refused it — the
+        string then keeps it unwritten, so it is no draft any more either."""
         if not self.dirty():
             return True
         if self.committer is None:
             return True
         text = self.editor.toPlainText()
         problem = self.committer(self.index, text)
+        # Landed or kept: the string says this now, whether or not a row
+        # refresh follows.
+        self._text = text
         if problem:
             self._set_readout(problem, problem=True)
             self.problem_shown.emit(problem)
             return False
-        # Landed: the bytes say this now, whether or not a row refresh follows.
-        self._text = text
         return True
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override
@@ -257,6 +351,11 @@ class StringPane(QWidget):
             and event.reason() != Qt.FocusReason.PopupFocusReason
         ):
             self.flush()
+        if watched is self.original.viewport() and event.type() == QEvent.Type.ToolTip:
+            tip = self._term_tip(event.pos())
+            if tip:
+                QToolTip.showText(event.globalPos(), tip, self.original)
+                return True
         return super().eventFilter(watched, event)
 
     def _on_notes(self) -> None:

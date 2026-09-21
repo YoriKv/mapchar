@@ -161,7 +161,7 @@ def _strings(ctx: Context, view: EntryView) -> None:
             if key not in STRING_KEYS:
                 ctx.error(
                     "E646",
-                    f"`{key}` is not a string-record key (i, o, h, t, s, n)",
+                    f"`{key}` is not a string-record key (i, o, h, t, s, n, u)",
                     pointer=f"{pointer}/{key}",
                     entry=view,
                     detail="Ignored, and dropped by the next save.",

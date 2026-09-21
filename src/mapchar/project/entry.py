@@ -18,9 +18,10 @@ from mapchar.pipeline.extract import split_run_text
 class StringState:
     """One string's saved state, apart from any document.
 
-    What the project file stores per string — its original, its status and its
-    notes — and what an entry carries while no document of its own exists to
-    hold it (:attr:`Entry.pending_strings`).
+    What the project file stores per string — its original, its status, its
+    notes and a translation its bytes refused — and what an entry carries
+    while no document of its own exists to hold it
+    (:attr:`Entry.pending_strings`).
     """
 
     original: str | None = None
@@ -41,6 +42,9 @@ class StringState:
     other bits is not the same string, so its original is taken afresh from
     the bytes rather than kept.
     """
+    unwritten: str | None = None
+    """A translation the bytes refused, kept until they can take it
+    (:attr:`~mapchar.core.block.StringRecord.unwritten`)."""
 
 
 def string_state(rec, extent: bool = False) -> StringState:
@@ -51,6 +55,7 @@ def string_state(rec, extent: bool = False) -> StringState:
         rec.notes,
         digest=rec.original_digest,
         extent=(rec.start_bit, rec.end_bit) if extent else None,
+        unwritten=rec.unwritten,
     )
 
 

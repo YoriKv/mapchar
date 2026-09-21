@@ -58,9 +58,9 @@ def test_room_is_the_slot_the_layout_will_take(window, tmp_path):
 
     # And the number is the layout's: a translation over it is refused, and one
     # that fits the fill after the second string lands.
-    steps = window.undo_stack.count()
+    data = block.doc.data
     window._on_translation_edited(0, "ABBB[end]")
-    assert window.undo_stack.count() == steps
+    assert block.doc.data == data
     assert block.doc.strings[0].current_text() == "AB[end]"
     window._on_translation_edited(1, "BAAB[end]")
     assert block.doc.strings[1].current_text() == "BAAB[end]"
@@ -109,9 +109,9 @@ def test_packed_room_is_the_string_s_own_bytes_and_the_block_s_spare(window, tmp
     assert block.doc.strings[0].current_text() == "ABABAB[end]"
     rows = window._row_data(block, block.doc)
     assert [(r.used, r.room) for r in rows] == [(7, 7), (3, 3)]
-    steps = window.undo_stack.count()
+    data = block.doc.data
     window._on_translation_edited(1, "BAC[end]")
-    assert window.undo_stack.count() == steps
+    assert block.doc.data == data
     assert block.doc.strings[1].current_text() == "BA[end]"
 
 

@@ -59,7 +59,7 @@ _GATES: dict[Capability, tuple[str, ...]] = {
     Capability.BOOKMARK: ("new_bookmark_action",),
     Capability.STRINGS: ("strings_tab_action", "string_actions"),
     Capability.BLOCK_CONFIG: ("block_bar",),
-    Capability.FIND_REPLACE: ("find_replace_action",),
+    Capability.FIND_REPLACE: ("find_replace_action", "glossary_replace_action"),
     Capability.PREVIEW: ("preview_action",),
     Capability.COMPRESSION_SCAN: ("decompress_action",),
     Capability.IMPORT_EXPORT: ("import_action", "export_action", "block_export"),

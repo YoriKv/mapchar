@@ -1,5 +1,5 @@
 """Editing strings: their text, which lives in the ROM's bytes, and their
-notes and status, which live in the project."""
+notes, status and unwritten translation, which live in the project."""
 
 from __future__ import annotations
 
@@ -31,23 +31,28 @@ from mapchar.ui.undo_commands import StringFieldCommand, StringsEditCommand
 
 class StringEditMixin:
     """Editing strings: their text, which lives in the ROM's bytes, and their
-    notes and status, which live in the project.
+    notes, status and unwritten translation, which live in the project.
+
+    A text the bytes refuse is not lost: the string keeps it as its
+    **unwritten translation** (:attr:`~mapchar.core.block.StringRecord.unwritten`),
+    shown in place of what the bytes say and flagged with why, until a table
+    that spells it or room that holds it lets it be written.
 
     A slice of :class:`~mapchar.ui.main_window.window.MainWindow`, reaching the
     rest of the window only through ``self``.
     """
 
     def _on_translation_edited(self, index: int, text: str) -> None:
-        """The Translation cell committed: the edit lands, or its refusal is
-        reported and the cell goes back to what the bytes say."""
+        """The Translation cell committed: the edit lands, or it is kept
+        unwritten and its refusal reported."""
         problems = self._commit_cell(index, text)
         if problems:
             self._refuse_edit(problems)
-            self._refresh_string_row(self._entry, index)
 
     def _commit_translation(self, index: int, text: str) -> str | None:
-        """The editor's Return: the edit lands, or why it did not comes back
-        and the editor stays open on the text."""
+        """The editor's commit: the edit lands, or why it did not comes back —
+        with the text kept as the string's unwritten translation, so the
+        editor may be left without losing it."""
         problems = self._commit_cell(index, text)
         return "; ".join(problems) if problems else None
 
@@ -59,7 +64,7 @@ class StringEditMixin:
             return []
         if not text.strip():
             text = rec.original
-        return self._edit_strings(self._entry, {index: text}, run=self._edit_run)
+        return self._land_or_keep(self._entry, index, text, run=self._edit_run)
 
     def _on_edit_problem(self, message: str) -> None:
         self.statusBar().showMessage(message, 8000)
@@ -70,8 +75,160 @@ class StringEditMixin:
         self._on_edit_problem("; ".join(problems))
 
     def _set_translation(self, entry, index: int, text: str) -> list[str]:
-        """One string's text, as an undo step; the reasons when it is refused."""
-        return self._edit_strings(entry, {index: text})
+        """One string's text, as an undo step; refused, it is kept unwritten
+        and the reasons come back."""
+        return self._land_or_keep(entry, index, text)
+
+    def _land_or_keep(
+        self,
+        entry: Entry | None,
+        index: int,
+        text: str,
+        label: str | None = None,
+        *,
+        run: int | None = None,
+    ) -> list[str]:
+        """One string's text into the bytes, or — refused — kept as the
+        string's unwritten translation, the reasons coming back either way.
+
+        A text that lands takes the place of whatever was kept before it, in
+        the same undo step.
+        """
+        rec = self._string(entry, index)
+        if rec is None:
+            return []
+        if rec.unwritten is None:
+            problems = self._edit_strings(entry, {index: text}, label, run=run)
+            if problems:
+                self._keep_unwritten(entry, index, text, run=run)
+            return problems
+        # Asked before it is landed, so that a text refused again is one more
+        # edit of what is kept — merging into the run — and only one that lands
+        # needs the step that lets go of it as well.
+        laid = self._checked_layout(entry, {index: text})
+        if isinstance(laid, list) and laid:
+            self._keep_unwritten(entry, index, text, run=run)
+            return laid
+        with self._macro(label or "Edit translation"):
+            problems = self._edit_strings(entry, {index: text}, label, run=run)
+            self._keep_unwritten(entry, index, text if problems else None, run=run)
+        return problems
+
+    def _keep_unwritten(
+        self, entry: Entry, index: int, text: str | None, *, run: int | None = None
+    ) -> None:
+        """Keep ``text`` as the string's unwritten translation — ``None`` for
+        none — as an undo step; nothing when that is what it has already, but
+        why it is refused is then asked again."""
+        rec = self._string(entry, index)
+        if rec is None:
+            return
+        if rec.unwritten == text:
+            if text is None:
+                return
+            rec.unwritten_why = None
+            self._refresh_string_row(entry, index)
+            return
+        self._push_command(
+            StringFieldCommand(
+                self, entry, index, "unwritten", rec.unwritten, text, run=run or 0
+            )
+        )
+
+    def _why_unwritten(self, entry: Entry, rec) -> str:
+        """Why the string's unwritten translation is refused, or ``""`` when it
+        would now go in: asked of the layout once per reading of the block."""
+        if rec.unwritten is None:
+            return ""
+        if rec.unwritten_why is None:
+            laid = self._checked_layout(entry, {rec.index: rec.unwritten})
+            rec.unwritten_why = "; ".join(laid) if isinstance(laid, list) else ""
+        return rec.unwritten_why
+
+    def _unwritten_in(self, blocks: Iterable[Entry]) -> dict[Entry, list[int]]:
+        """The strings of ``blocks`` that keep an unwritten translation."""
+        found = {}
+        for block in blocks:
+            if block.doc is None:
+                continue
+            kept = [r.index for r in block.doc.strings if r.unwritten is not None]
+            if kept:
+                found[block] = kept
+        return found
+
+    def _write_unwritten(
+        self, found: dict[Entry, list[int]], *, quiet: bool = False
+    ) -> None:
+        """Try the unwritten translations of ``found`` — ``{block: indices}`` —
+        against the bytes again, as one undo step: what lands is unwritten no
+        longer, what does not stays kept."""
+
+        def planned():
+            for block, indices in found.items():
+                yield (
+                    block,
+                    {
+                        i: r.unwritten
+                        for i in indices
+                        if (r := self._string(block, i)) is not None
+                        and r.unwritten is not None
+                    },
+                )
+
+        n, problems = self._edit_blocks(planned(), "Write unwritten translations")
+        if quiet and not n:
+            return
+        message = f"Wrote {n} unwritten translation(s)"
+        if problems:
+            message += f"; {len(problems)} still cannot be written"
+        self.statusBar().showMessage(message, 6000)
+        if problems and not quiet:
+            self._report(
+                "Still Unwritten", f"{len(problems)} string(s) refused", problems
+            )
+
+    def _write_unwritten_selected(self) -> None:
+        entry = self._entry
+        if entry is None:
+            return
+        kept = [
+            i
+            for i in self.strings.selected_indices()
+            if (r := self._string(entry, i)) is not None and r.unwritten is not None
+        ]
+        if kept:
+            self._write_unwritten({entry: kept})
+
+    def _write_unwritten_project(self) -> None:
+        found = self._unwritten_in([b for b, _ in self._readable_blocks()])
+        if not found:
+            self.statusBar().showMessage("No unwritten translations", 3000)
+            return
+        self._write_unwritten(found)
+
+    def _retry_unwritten(self) -> None:
+        """A table changed: the unwritten translations of the blocks that are
+        read which would now go in are written, as an undo step of their own
+        after the change that let them."""
+        if self._applying_undo:
+            return
+        ready: dict[Entry, list[int]] = {}
+        for block, indices in self._unwritten_in(
+            self.workspace.of_kind(EntryKind.BLOCK)
+        ).items():
+            tables = self._table_set_of(block)
+            if tables is None:
+                continue
+            self._extract_current(block, block.doc, tables)
+            for index in indices:
+                rec = self._string(block, index)
+                if rec is None or rec.unwritten is None:
+                    continue
+                rec.unwritten_why = None
+                if not self._why_unwritten(block, rec):
+                    ready.setdefault(block, []).append(index)
+        if ready:
+            self._write_unwritten(ready, quiet=True)
 
     def _bytes_owner(self, entry: Entry) -> Entry:
         """Whose buffer a block's strings sit in, and so who reads unsaved: the
@@ -127,20 +284,12 @@ class StringEditMixin:
         ``run`` is the editing run a cell commit belongs to: consecutive
         commits in one run on one string merge into one step.
         """
-        if entry is None or entry.doc is None or entry.config is None:
-            return ["no block to edit"]
-        doc, cfg = entry.doc, entry.config
-        tables = self._table_set_of(entry)
-        if tables is None:
-            return [f"table @{cfg.table_id} is not loaded"]
-        laid = self._lay_out_edit(entry, doc, cfg, tables, edits)
+        laid = self._checked_layout(entry, edits)
         if isinstance(laid, list):
             return laid
+        doc, cfg = entry.doc, entry.config
+        tables = self._table_set_of(entry)
         edits, new_data, lo, hi, back = laid
-        if back.block is not None:
-            return [back.block]
-        if back.string is not None:
-            return [back.string]
         first = min(edits)
         label = text or ("Edit translation" if len(edits) == 1 else "Edit translations")
         self._remember_extraction(new_data, cfg, tables, back.extraction)
@@ -157,6 +306,28 @@ class StringEditMixin:
             )
         )
         return []
+
+    def _checked_layout(
+        self, entry: Entry | None, edits: dict[int, str]
+    ) -> tuple[dict[int, str], bytes, int, int, ReadBack] | list[str]:
+        """The layout of :meth:`_lay_out_edit` with its reading checked: what
+        is to land, or — as a list — why nothing may. Changes nothing, so it
+        is also how a text is asked about without being landed."""
+        if entry is None or entry.doc is None or entry.config is None:
+            return ["no block to edit"]
+        cfg = entry.config
+        tables = self._table_set_of(entry)
+        if tables is None:
+            return [f"table @{cfg.table_id} is not loaded"]
+        laid = self._lay_out_edit(entry, entry.doc, cfg, tables, edits)
+        if isinstance(laid, list):
+            return laid
+        back = laid[4]
+        if back.block is not None:
+            return [back.block]
+        if back.string is not None:
+            return [back.string]
+        return laid
 
     def _lay_out_edit(
         self,
@@ -279,12 +450,18 @@ class StringEditMixin:
         strings landed comes back with the refusals.
 
         ``land`` is what puts one batch in — :meth:`_edit_strings`, which makes
-        an undo step, unless the caller has a landing of its own.
+        an undo step, unless the caller has a landing of its own. Under the
+        first a text refused is kept as its string's unwritten translation, and
+        one that lands takes the place of what was kept.
         """
         if not edits:
             return 0, []
+        keeping = land is None
         land = land or self._edit_strings
         if len(edits) > 1 and not land(entry, edits, text):
+            if keeping:
+                for index in edits:
+                    self._keep_unwritten(entry, index, None)
             return len(edits), []
         landed, problems = 0, []
         for index, one in edits.items():
@@ -293,6 +470,8 @@ class StringEditMixin:
                 problems += refused
             else:
                 landed += 1
+            if keeping:
+                self._keep_unwritten(entry, index, one if refused else None)
         return landed, problems
 
     def _edit_blocks(
@@ -463,13 +642,17 @@ class StringEditMixin:
     def apply_string_field(
         self, entry, index: int, field: str, value, revision: int
     ) -> None:
-        """Land one field of one string — its notes or its status — at the
-        revision that half of the step leaves the entry at."""
+        """Land one field of one string — its notes, its status or its unwritten
+        translation — at the revision that half of the step leaves the entry
+        at."""
         rec = self._string(entry, index)
         if rec is None:
             return
         if field == "notes":
             rec.notes = value
+        elif field == "unwritten":
+            rec.unwritten = value
+            rec.unwritten_why = None
         elif field == "status":
             rec.status = Status(value)
             rec.refresh_status()

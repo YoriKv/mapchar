@@ -247,7 +247,8 @@ class OffsetCommand(_MergingCommand, _CurrentEntryCommand):
 
 
 class StringFieldCommand(_MergingCommand, _EditContextCommand):
-    """One field of one string: its notes or its status.
+    """One field of one string: its notes, its status or the translation it
+    keeps unwritten.
 
     State is the value paired with the revision token it leaves the entry at, so
     an undo hands back the exact unsaved-state the entry had before it.
@@ -272,7 +273,7 @@ class StringFieldCommand(_MergingCommand, _EditContextCommand):
         super().__init__(
             window,
             entry,
-            f"Edit {field}",
+            "Keep unwritten translation" if field == "unwritten" else f"Edit {field}",
             *_stamped(window, entry, before, after, fresh_when_same=False),
             "strings",
             index,

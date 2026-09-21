@@ -112,7 +112,10 @@ def test_project_roundtrip(tmp_path):
 def test_matching_terms_are_found_folded_and_longest_first():
     terms = [GlossaryTerm("HP"), GlossaryTerm("slime"), GlossaryTerm("King Slime")]
     found = matching_terms(terms, "The KING SLIME has 20 hp[end]")
-    assert [t.term for t in found] == ["King Slime", "slime", "HP"]
+    # A term inside a longer one's match is the longer one's.
+    assert [t.term for t in found] == ["King Slime", "HP"]
+    found = matching_terms(terms, "A slime and a King Slime")
+    assert [t.term for t in found] == ["King Slime", "slime"]
     assert matching_terms(terms, "nothing here") == []
 
 

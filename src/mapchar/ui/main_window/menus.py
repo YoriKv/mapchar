@@ -109,7 +109,7 @@ class MenuBarMixin:
         # two actions itself, so Ctrl+Z means the same thing wherever the focus
         # is — including inside its fields, which is what `carry_undo` settles.
         # Everything else on this bar is reached from the main window.
-        for window in (self.table_editor, self.find_replace, self.glossary_window):
+        for window in (self.table_editor, self.find_replace, self.glossary_dock):
             carry_undo(window, undo, redo)
         edit_menu.addSeparator()
         # Entry Cut/Copy/Paste are scoped to the Files panel rather than to the
@@ -133,7 +133,10 @@ class MenuBarMixin:
         self.find_replace_action = act(
             edit_menu, "&Find and Replace…", self._show_find_replace, "Ctrl+H"
         )
-        act(edit_menu, "&Glossary…", self._show_glossary, "Ctrl+Shift+L")
+        act(edit_menu, "&Glossary", self._show_glossary, "Ctrl+Shift+L")
+        self.glossary_replace_action = act(
+            edit_menu, "Replace Glossary Ter&ms…", self._replace_glossary_terms
+        )
         edit_menu.addSeparator()
         self.string_actions = tuple(
             act(edit_menu, text, slot, key)
@@ -141,6 +144,11 @@ class MenuBarMixin:
                 ("Re&vert Selected Strings", self._revert_selected, None),
                 ("Toggle Revie&w on Selected", self._toggle_review_selected, None),
                 ("Toggle Don&e on Selected", self._toggle_done_selected, "Ctrl+Alt+D"),
+                (
+                    "Write Unwritten Translat&ions",
+                    self._write_unwritten_project,
+                    None,
+                ),
                 (
                     "&Next Untranslated",
                     lambda: self._step_strings("untranslated"),
@@ -238,6 +246,7 @@ class MenuBarMixin:
         panels_menu = bar.addMenu("&Panels")
         for dock, text in (
             (self.files_dock, "&Files"),
+            (self.glossary_dock, "&Glossary"),
             (self.hex_dock, "&Hex"),
         ):
             toggle = dock.toggleViewAction()

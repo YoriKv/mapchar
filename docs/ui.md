@@ -173,7 +173,8 @@ Editor's grid is a `QTableView` over a model of the entries themselves
 - **A tool window that edits the project carries Undo and Redo itself.** A
   window shortcut reaches only the active top-level window, and a tool window
   is one of its own, so `widgets.carry_undo` puts the Edit menu's two actions
-  on the Table Editor, Find and Replace and the Glossary as well: Ctrl+Z means
+  on the Table Editor, Find and Replace and the Glossary dock — a top-level
+  window once it is floated — as well: Ctrl+Z means
   the same thing wherever the focus is. It means it inside their fields too —
   a text field, a text box and a spin box each claim the key for their own
   typing history, which in a window whose fields are typed and then applied is

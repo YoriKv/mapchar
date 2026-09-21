@@ -60,6 +60,7 @@ class TableFilesMixin:
             return
         if changed:
             self._tables_changed()
+            self._retry_unwritten()
         self.statusBar().showMessage(f"Reloaded {entry.name}", 4000)
 
     def refresh_tables(self) -> None:
@@ -81,6 +82,7 @@ class TableFilesMixin:
                 failed.append(f"{entry.name}: {exc}")
         if reloaded:
             self._tables_changed()
+            self._retry_unwritten()
         # A file that was replaced leaves the watcher holding a path that is
         # gone: this is where it takes the new one up.
         self._rewatch_tables()

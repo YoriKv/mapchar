@@ -6,7 +6,12 @@ from __future__ import annotations
 import difflib
 
 from mapchar_lint.context import Context
-from mapchar_lint.schema import GLOSSARY_KEYS, KINDS_WITH_VIEW, TOP_KEYS
+from mapchar_lint.schema import (
+    GLOSSARY_FLAGS,
+    GLOSSARY_KEYS,
+    KINDS_WITH_VIEW,
+    TOP_KEYS,
+)
 
 
 def check(ctx: Context) -> None:
@@ -132,10 +137,18 @@ def _glossary(ctx: Context, glossary: object) -> None:
             if key not in GLOSSARY_KEYS:
                 ctx.error(
                     "E123",
-                    f"`{key}` is not a glossary key (t, r, n)",
+                    f"`{key}` is not a glossary key (t, r, n, c, w)",
                     pointer=f"{pointer}/{key}",
                     detail="Ignored, and dropped by the next save.",
                 )
+            elif key in GLOSSARY_FLAGS:
+                if not isinstance(value, bool):
+                    ctx.warn(
+                        "W125",
+                        f"`{key}` is {value!r}, not true or false",
+                        pointer=f"{pointer}/{key}",
+                        detail=f"It reads as {bool(value)!r}.".lower(),
+                    )
             elif key != "t" and value is not None and not isinstance(value, str):
                 ctx.warn(
                     "W124",

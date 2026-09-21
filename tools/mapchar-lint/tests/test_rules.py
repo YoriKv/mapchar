@@ -114,6 +114,9 @@ def test_glossary(project, doc, files):
     codes = project(doc(glossary=[{"t": "Herb", "r": 1, "x": ""}, {"r": "?"}]), files)
     assert {"W124", "E123", "E122"} <= set(codes)
     assert project(doc(glossary=[{"t": "Herb", "r": "Kräuter", "n": ""}]), files) == []
+    # The matching options are flags, and read as ones whatever they hold.
+    assert project(doc(glossary=[{"t": "Ann", "c": True, "w": True}]), files) == []
+    assert "W125" in project(doc(glossary=[{"t": "Ann", "w": "yes"}]), files)
 
 
 # -- what drops an entry -------------------------------------------------------
@@ -458,7 +461,7 @@ def test_string_records(project, doc, files):
     ]
     codes = project(doc(block={"strings": records}), files)
     assert {"E641", "E642", "W643", "E646", "I644"} <= set(codes)
-    clean = [{"i": 0, "o": "Hi[end]", "s": "done", "n": "checked"}]
+    clean = [{"i": 0, "o": "Hi[end]", "s": "done", "n": "checked", "u": "Hé[end]"}]
     assert project(doc(block={"strings": clean}), files) == []
     assert "I645" in project(doc(block={"fixed_ends_shown": True}), files)
 

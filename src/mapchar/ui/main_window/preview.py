@@ -44,7 +44,7 @@ class PreviewMixin:
             rec = entry.doc.strings[0]
         if rec is not None:
             self.preview_window.show_string(
-                rec.current_text(), f"{entry.name} #{rec.index}"
+                rec.shown_text(), f"{entry.name} #{rec.index}"
             )
 
     def _on_box_changed(self, box: TextBox) -> None:

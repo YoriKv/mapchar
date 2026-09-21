@@ -384,6 +384,13 @@ class StringRecord:
     """*review* when set by hand or by an import; else *edited* or *untouched*
     as the bytes differ from the original's or not (:meth:`refresh_status`)."""
     notes: str = ""
+    unwritten: str | None = None
+    """A translation the bytes refused — it does not encode, it does not fit —
+    which the project keeps until they can take it; ``None`` when the bytes
+    say what the translator meant."""
+    unwritten_why: str | None = None
+    """Why :attr:`unwritten` is refused, ``""`` once it would go in, ``None``
+    until it is asked. Transient: a new reading asks again."""
     notices: list[Notice] = field(default_factory=list)
     lines: tuple[int, ...] = ()
     """Token indices where fixed-line pieces start (fixed-line layout only)."""
@@ -397,7 +404,7 @@ class StringRecord:
         # Text is NFC however it arrived — typed, imported from a script, a
         # translator file or a PO — so it compares and encodes against NFC
         # table text.
-        if name in ("replacement", "original") and isinstance(value, str):
+        if name in ("replacement", "original", "unwritten") and isinstance(value, str):
             value = nfc(value)
         object.__setattr__(self, name, value)
 
@@ -443,6 +450,11 @@ class StringRecord:
         if self._text is None or self._text[0] != key:
             self._text = (key, render(self.tokens))
         return self._text[1]
+
+    def shown_text(self) -> str:
+        """What the translator has the string say: the translation kept
+        :attr:`unwritten` where there is one, else what the bytes say."""
+        return self.current_text() if self.unwritten is None else self.unwritten
 
     def original_text(self) -> str:
         """The snapshot the project keeps (:attr:`original`)."""

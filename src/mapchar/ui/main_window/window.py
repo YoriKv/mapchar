@@ -222,6 +222,16 @@ class MainWindow(
         """Where each string's slot ends, with the records and the bytes it was
         worked out from (:meth:`~mapchar.ui.main_window.string_rows.
         StringRowsMixin._string_slots`)."""
+        self._unspelled_cache: tuple | None = None
+        """The glossary translations the block on screen cannot encode, with
+        the tables and terms they were tried against (:meth:`~mapchar.ui.
+        main_window.glossary.GlossaryMixin._unspelled_terms`)."""
+        self._fr_selection: tuple = (None, frozenset())
+        """The block and the strings that were selected when Find and Replace
+        was opened: what its *Selected strings* scope runs over."""
+        self._fr_at: tuple | None = None
+        """The hit Find and Replace stands on — block, string index and where
+        in its text — which Replace replaces and Find Next goes on from."""
         self._same_counts: tuple | None = None
         """How many of the current block's strings share each original, with the
         records counted (:meth:`~mapchar.ui.main_window.string_rows.

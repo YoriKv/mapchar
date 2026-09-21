@@ -228,15 +228,21 @@ def test_a_file_changed_since_the_write_is_left_alone(window, tmp_path):
     assert not file_entry.dirty and block.doc.strings[0].current_text() == "B[end]"
 
 
-def test_a_refused_edit_leaves_no_step_and_no_bytes(window, tmp_path):
+def test_a_refused_edit_leaves_no_bytes_and_is_kept_as_one_step(window, tmp_path):
     file_entry, block = _block(window, tmp_path)
     steps = window.undo_stack.count()
     window._on_translation_edited(0, "BBB[end]")  # too long for its room
-    assert window.undo_stack.count() == steps
     assert not file_entry.dirty and file_entry.doc.data == DATA
     assert "do not fit" in window.statusBar().currentMessage()
+    assert block.doc.strings[0].unwritten == "BBB[end]" and block.dirty
     window._on_translation_edited(0, "Z[end]")  # nothing encodes a Z
-    assert window.undo_stack.count() == steps and file_entry.doc.data == DATA
+    assert file_entry.doc.data == DATA
+    # The project keeps the text the bytes refused, one step for the run of
+    # them, and undoing it lets go of it.
+    assert block.doc.strings[0].unwritten == "Z[end]"
+    assert window.undo_stack.count() == steps + 1
+    window.undo_stack.undo()
+    assert block.doc.strings[0].unwritten is None and not block.dirty
 
 
 # --- reach -----------------------------------------------------------------
@@ -438,7 +444,7 @@ def test_one_filter_carries_every_windows_undo(window):
     keys = app.findChildren(_UndoKeys, options=direct)[0]
 
     carried = [held() for held, _ in keys._carried]
-    for tool in (window.table_editor, window.find_replace, window.glossary_window):
+    for tool in (window.table_editor, window.find_replace, window.glossary_dock):
         assert any(seen is tool for seen in carried), tool
     count = len(keys._carried)
 
@@ -457,7 +463,7 @@ def test_one_filter_carries_every_windows_undo(window):
     assert len(keys._carried) == count
     assert all(held is not dead for held, _ in keys._carried)
     carried = [held() for held, _ in keys._carried]
-    for tool in (window.table_editor, window.find_replace, window.glossary_window):
+    for tool in (window.table_editor, window.find_replace, window.glossary_dock):
         assert any(seen is tool for seen in carried), tool
     # The filter still runs, with nothing left of the window it forgot.
     assert _claims_key(QLineEdit(window), Qt.Key.Key_Z, ctrl)

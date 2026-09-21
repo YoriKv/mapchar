@@ -46,7 +46,7 @@ def click_row(view, row: int) -> None:
     )
 
 
-def test_leaving_a_cell_commits_and_a_refusal_keeps_the_draft(view, qtbot):
+def test_leaving_a_cell_commits_and_a_refusal_lets_it_go(view, qtbot):
     refused: list[str] = []
     problems: list[str] = []
     landed: list[tuple[int, str]] = []
@@ -56,25 +56,22 @@ def test_leaving_a_cell_commits_and_a_refusal_keeps_the_draft(view, qtbot):
     view.problem_shown.connect(problems.append)
 
     # Refused, with the cell left by a click on another row: the reason is
-    # shown, the bytes keep what they say, and the editor comes back on its
-    # own row with the draft still in it.
+    # shown and the cell is left all the same — the window keeps the text as
+    # the string's unwritten translation, so there is no draft to hold on to.
     refused.append("too long")
     view.edit_row(0)
     view.delegate.current_editor().setPlainText("AAAAAAAA[end]")
     click_row(view, 1)
     qtbot.wait(10)
     assert landed == [(0, "AAAAAAAA[end]")] and problems == ["too long"]
-    editor = view.delegate.current_editor()
-    assert editor is not None and editor.toPlainText() == "AAAAAAAA[end]"
-    assert view.selected_indices() == [0]
-    assert (
-        view.table.item(0, COL_TRANSLATION).data(Qt.ItemDataRole.EditRole) == "A[end]"
-    )
+    assert view.delegate.current_editor() is None
+    assert view.table.currentRow() == 1
 
     # Accepted, the edit lands once and the cell closes on the row clicked.
     refused.clear()
     landed.clear()
-    editor.setPlainText("BB[end]")
+    view.edit_row(0)
+    view.delegate.current_editor().setPlainText("BB[end]")
     click_row(view, 1)
     qtbot.wait(10)
     assert landed == [(0, "BB[end]")]

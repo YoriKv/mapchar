@@ -171,13 +171,17 @@ in bytes, which is the unit their results are reported and selected in.
   string holds now, and of the bits `original` was taken from, which the
   project keeps beside it — `bits_digest`), `pointers: tuple[PointerRef]`,
   `replacement: str | None` (text to encode in place of the bytes on the next
-  layout; transient), `status`, `notes`, the `notices` reading it raised, and
-  `lines` — the token indices a fixed-line piece starts at. *Edited* and
+  layout; transient), `status`, `notes`, `unwritten: str | None` (a
+  translation the bytes refused, which the project keeps until they can take
+  it; `shown_text()` is it, else `current_text()` — what the translator has the
+  string say) with `unwritten_why` (why it is refused, `""` once it would go
+  in, asked of the layout once per reading; transient), the `notices` reading
+  it raised, and `lines` — the token indices a fixed-line piece starts at. *Edited* and
   *untouched* are settled from the bits' checksum (`refresh_status`), with the
   text as the fallback for an original saved before digests and as the
   tie-break when a re-encode reaches the same text through other codes;
-  *review* and *done* are set by hand and stay (`HELD`); *overflows box* is
-  computed on demand, never stored.
+  *review* and *done* are set by hand and stay (`HELD`); *overflows box* and
+  *unwritten* are a row's to say, never stored as a status.
 - **`PointerRef`** — `address`, `size`, `endian`, `mapping_id`, `offset`, and
   the `value` read from disk. A nested source's inner pointer is `linear`, its
   `offset` the base of its group.
@@ -455,7 +459,15 @@ as whole pieces. The needle is composed to NFC, and a
 case-insensitive match folds each piece on its own, never the whole string,
 because folding changes lengths and the spans are the original text's. `[line]` in a needle matches the code
 and nothing inside it, and a needle of letters never matches part of a code.
-Find and Replace over translations runs through it.
+Find and Replace over translations runs through it, and so does the glossary
+(`project/glossary.py`): `term_hits` places each term's matches — by the
+term's own *match case* and *whole word* — longest term first and never
+overlapping, a folded substring test sparing most strings the walk;
+`replace_terms` and `replace_hit` put translations in their place,
+`missing_terms` names the terms an original holds whose translation the
+translation lacks, `term_uses` counts the strings holding each, and
+`glossary_text` / `glossary_from_text` / `merged_terms` are the TSV and CSV a
+glossary is shared as.
 
 ## 4. The pipeline
 
@@ -954,7 +966,7 @@ through `_push_command`.
 | Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `compression.py` (the Decompressed view's preview and the Compression picker), `structure_scan.py` (the cancellable walk over a whole file, and making a block of what it finds), `plugins.py` |
 | Tables | `table_files.py`, `table_edits.py` |
 | Raw view | `raw_view.py` |
-| Blocks and strings | `blocks.py`, `block_reading.py` (reading one block, or every block a project-wide surface goes over), `extraction.py` (cutting a block's bytes into strings, and the caches that spare it), `string_rows.py` (the Strings grid's rows), `strings_menu.py` (the grid's context menu, marks and steps), `string_edit.py`, `wrap.py`, `replacing.py` (Find and Replace over the strings' text), `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary window and its undo steps) |
+| Blocks and strings | `blocks.py`, `block_reading.py` (reading one block, or every block a project-wide surface goes over), `extraction.py` (cutting a block's bytes into strings, and the caches that spare it), `string_rows.py` (the Strings grid's rows), `strings_menu.py` (the grid's context menu, marks and steps), `string_edit.py`, `wrap.py`, `replacing.py` (Find and Replace over the strings' text: what is typed or the glossary's terms, one hit at a time or all), `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary panel, its undo steps, and what is asked of a term) |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
 | Exchange | `import_export.py` (mapChar's own script, translator tables and PO files), `legacy_exchange.py` (Cartographer command files and Atlas scripts, which address the file) |
 | Projects | `projects.py`, `relocate.py`, `autosave.py` |
@@ -968,7 +980,7 @@ plain-text display), `strings_view.py` (the string grid),
 `string_pane.py` (the pane under it, on the selected string), `code_editor.py`
 (the translation editor both open, with its code completion), `table_entry_form.py` (the Table Editor's entry form:
 one entry as pickers and fields, and as the line that spells it), the panels (`files_panel.py`,
-`hex_panel.py`), the tool windows, and the dialogs.
+`glossary_panel.py`, `hex_panel.py`), the tool windows, and the dialogs.
 
 What more than one of them needs lives in small modules: `ui/widgets.py`
 (`ResultsTable`, `fill_pick` and `select_data` for combos,

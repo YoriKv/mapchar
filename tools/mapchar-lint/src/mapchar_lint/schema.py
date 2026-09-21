@@ -91,9 +91,11 @@ SESSION_KEYS_NOT_FOR = {"config": ("block",)}
 TOP_KEYS = ("version", "current", "entries", "glossary")
 #: A string record (``_string_records``): index, original, translation, status,
 #: notes.
-STRING_KEYS = ("i", "o", "h", "t", "s", "n")
+STRING_KEYS = ("i", "o", "h", "t", "s", "n", "u")
 #: A glossary term (``glossary_dicts``).
-GLOSSARY_KEYS = ("t", "r", "n")
+GLOSSARY_KEYS = ("t", "r", "n", "c", "w")
+#: The glossary keys that are flags rather than text.
+GLOSSARY_FLAGS = ("c", "w")
 #: ``TextBox`` as the file stores it, with the reader's defaults.
 BOX_DEFAULTS = {
     "width": 128,

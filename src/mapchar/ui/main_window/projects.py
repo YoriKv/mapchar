@@ -169,7 +169,7 @@ class ProjectMixin:
         self._forget_all_visits()  # nothing the trail named survives the swap
         self.workspace.replace([], None)
         self.workspace.glossary = []
-        self._sync_glossary()
+        self._glossary_changed(refresh=False)
         self.undo_stack.clear()
         self.project_path = None
         self._saved_snapshot = None
@@ -224,7 +224,7 @@ class ProjectMixin:
         self._forget_all_visits()
         self.workspace.replace(loaded.entries, loaded.current)
         self.workspace.glossary = loaded.glossary
-        self._sync_glossary()
+        self._glossary_changed(refresh=False)
         self.undo_stack.clear()
         self.project_path = recovered_from if recovered else path
         if not recovered:

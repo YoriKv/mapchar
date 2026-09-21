@@ -35,11 +35,13 @@ def test_edit_and_write(window, tmp_path):
     assert file_entry.doc.data == bytes.fromhex("41 00 EE 42 41 00") + b"\xff" * 4
     rows = window._row_data(block, block.doc)
     assert (rows[0].used, rows[0].room, rows[0].status) == (2, 3, "edited")
-    # An edit that does not fit never lands: the bytes cannot hold it.
-    steps = window.undo_stack.count()
+    # An edit that does not fit never lands: the bytes cannot hold it, and the
+    # string keeps it unwritten until they can.
     window._on_translation_edited(1, "BBB[end]")
-    assert window.undo_stack.count() == steps
     assert block.doc.strings[1].current_text() == "BA[end]"
+    assert block.doc.strings[1].unwritten == "BBB[end]"
+    window.undo_stack.undo()
+    assert block.doc.strings[1].unwritten is None
     assert window._write_blocks([block])
     assert (
         Path(file_entry.path).read_bytes()

@@ -37,6 +37,9 @@ class ProjectString:
     translation: str
     status: str
     notes: str
+    misses: str = ""
+    """The glossary terms the translation has some other way
+    (:attr:`~mapchar.ui.strings_view.RowData.misses`)."""
 
 
 class ProjectStringsWindow(ToolWindow):
@@ -91,7 +94,7 @@ class ProjectStringsWindow(ToolWindow):
         status = self.status_filter.currentText()
         shown = []
         for s in self._all:
-            if not status_matches(status, s.status):
+            if not status_matches(status, s.status, s.misses):
                 continue
             if not matches_words(words, s.block, s.original, s.translation, s.notes):
                 continue

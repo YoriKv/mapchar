@@ -173,7 +173,7 @@ def _recover_case(path: str) -> str:
 
 def _string_records(entry: Entry) -> list[dict[str, Any]]:
     """A block's strings as the file stores them: every one with its original,
-    plus a status and notes where they are not the defaults.
+    plus a status, notes and an unwritten translation where there are any.
 
     Read from the extracted document when there is one, and otherwise from
     :attr:`~mapchar.project.entry.Entry.pending_strings` — the state a block
@@ -184,12 +184,28 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
     """
     if entry.doc is not None and entry.doc.strings:
         states = [
-            (rec.index, rec.original, rec.status, rec.notes, None, rec.original_digest)
+            (
+                rec.index,
+                rec.original,
+                rec.status,
+                rec.notes,
+                None,
+                rec.original_digest,
+                rec.unwritten,
+            )
             for rec in entry.doc.strings
         ]
     elif entry.pending_strings:
         states = [
-            (i, st.original, st.status, st.notes, st.translation, st.digest)
+            (
+                i,
+                st.original,
+                st.status,
+                st.notes,
+                st.translation,
+                st.digest,
+                st.unwritten,
+            )
             for i, st in sorted(entry.pending_strings.items())
         ]
     else:
@@ -202,7 +218,7 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
         # (:attr:`~mapchar.project.entry.Entry.strings_cache`).
         return kept[1]
     records: list[dict[str, Any]] = []
-    for index, original, status, notes, translation, digest in states:
+    for index, original, status, notes, translation, digest, unwritten in states:
         s: dict[str, Any] = {"i": index}
         if original is not None:
             s["o"] = original
@@ -214,6 +230,8 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
             s["s"] = status.value
         if notes:
             s["n"] = notes
+        if unwritten is not None:
+            s["u"] = unwritten
         records.append(s)
     entry.strings_cache = (states, records)
     return records
@@ -648,6 +666,7 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
                 str(s.get("n", "")),
                 s.get("t"),
                 _digest(s.get("h")),
+                unwritten=s["u"] if isinstance(s.get("u"), str) else None,
             )
         except (KeyError, ValueError):
             continue

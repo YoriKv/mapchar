@@ -47,7 +47,7 @@ ALWAYS_ON = frozenset(
         "Paste Entry",
         "Duplicate Entry",
         "Table Editor…",
-        "Glossary…",
+        "Glossary",
         "Project Strings…",
         "Light Theme",
         "Dark Theme",

@@ -93,6 +93,7 @@ class ExtractionMixin:
                     prev.status,
                     prev.notes,
                 )
+                rec.unwritten = prev.unwritten
         saved = entry.pending_strings
         legacy: dict[int, str] = {}
         if saved and entry.runs_joined:
@@ -118,6 +119,7 @@ class ExtractionMixin:
                         rec.original = spelled(st.original, rec)
                         rec.original_digest = st.digest
                     rec.status, rec.notes = st.status, st.notes
+                    rec.unwritten = st.unwritten
                 if st.translation is not None:
                     legacy[rec.index] = spelled(st.translation, rec)
             entry.pending_strings = None
@@ -182,8 +184,8 @@ class ExtractionMixin:
         bytes, as the edits they were: the file reads unsaved until written.
 
         Not an undo step — the project is being read, and the history is
-        cleared with it. What will not fit is reported and stays as the
-        original, in the notes so it is not lost.
+        cleared with it. What will not fit is reported and kept as the
+        string's unwritten translation, so it is not lost.
         """
         problems = self._edit_strings_now(entry, doc, texts)
         if not problems:
@@ -191,12 +193,10 @@ class ExtractionMixin:
         for index, text in texts.items():
             rec = doc.string_by_index(index)
             if rec is not None and rec.matches_original(rec.current_text()):
-                rec.notes = (
-                    rec.notes + "\n" if rec.notes else ""
-                ) + f"unplaced: {text}"
+                rec.unwritten = text
         message = (
             f"{entry.name}: {len(problems)} translation(s) from the older project "
-            "would not fit and were kept in the notes"
+            "would not fit and are kept unwritten"
         )
         self._note_load_problem(message + ":\n  " + "\n  ".join(problems))
         self.statusBar().showMessage(message, 8000)

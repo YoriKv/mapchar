@@ -153,10 +153,13 @@ def test_replace_all_is_code_aware_over_block_or_project(window, tmp_path):
     assert not first.doc.strings[0].edited
 
     # A [line] turned into an [end] cuts the string in two: the block would
-    # read differently, so the edit is refused and nothing lands.
-    steps = window.undo_stack.count()
+    # read differently, so the edit is refused and nothing lands: the text is
+    # kept unwritten, and undoing the replace lets go of it.
     window._fr_replace_all("[line]", "[end]", True, False)
-    assert not first.doc.strings[0].edited and window.undo_stack.count() == steps
+    assert not first.doc.strings[0].edited
+    assert first.doc.strings[0].unwritten == "A[end]\nB[end]"
+    window.undo_stack.undo()
+    assert first.doc.strings[0].unwritten is None
 
     # Project scope reaches the block that was never opened.
     window._fr_replace_all("A", "C", True, True)
@@ -285,19 +288,23 @@ def test_the_pane_commits_on_return_and_moves_on(qtbot):
     assert landed == [(0, "B[end]")] and problems == []
     # Moved on to the next row, on the pane.
     assert view.selected_indices() == [1] and pane.index == 1
-    # A refused commit keeps the draft and the row, with the reason shown.
+    # A refused commit stays on the row, with the reason shown; the window
+    # keeps the text unwritten, so it is a draft no longer.
     view.commit_handler = lambda i, t: "too long"
     pane.editor.setPlainText("AAA[end]")
     key(pane.editor, Qt.Key.Key_Return)
     assert problems == ["too long"] and pane.readout.text() == "too long"
     assert view.selected_indices() == [1] and pane.editor.toPlainText() == "AAA[end]"
-    # Selecting another row lands the draft first; refused, the row stays.
-    view.table.selectRow(0)
-    assert view.selected_indices() == [1] and pane.editor.toPlainText() == "AAA[end]"
-    # Esc puts the bytes' text back.
+    assert not pane.dirty()
+    # Esc puts back what a draft started from.
+    pane.editor.setPlainText("AAAB[end]")
     key(pane.editor, Qt.Key.Key_Escape)
-    assert not pane.dirty() and pane.editor.toPlainText() == "A[end]"
+    assert not pane.dirty() and pane.editor.toPlainText() == "AAA[end]"
+    # Selecting another row lands a draft first, and moves on even when the
+    # bytes refuse it.
+    pane.editor.setPlainText("AAAA[end]")
     view.table.selectRow(0)
+    assert problems == ["too long", "too long"]
     assert view.selected_indices() == [0]
     # The notes field lands on the string it was edited on.
     notes: list[tuple[int, str]] = []
@@ -555,8 +562,8 @@ def test_glossary_terms_are_kept_undone_and_typed_in(window, tmp_path):
     window._show_view("strings")
     window.strings.select_index(0)
     window._show_glossary()
-    glossary = window.glossary_window
-    glossary._add()
+    glossary = window.glossary_panel
+    glossary.add_term()
     glossary.table.closePersistentEditor(glossary.table.item(0, 0))
     glossary.table.setItem(0, 0, QTableWidgetItem("AB"))
     glossary.table.setItem(0, 1, QTableWidgetItem("BA"))
