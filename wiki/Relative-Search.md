@@ -1,85 +1,95 @@
 # Relative Search
 
-A relative search finds text in a ROM before you have a table. You type a word
-the game shows; mapchar finds the places where the bytes step the way the
-letters do — `B` one more than `A`, `C` one more than `B` — and tells you what
-byte `A` is.
+A relative search finds text in a ROM when you do not have a table yet.
 
-**Search ▸ Search Window…** (Ctrl+Shift+F). It searches the whole of the file
-open in the window.
+You type a word that the game shows. In most fonts the letters are stored in
+order, so `B` is one more than `A` and `C` is one more than `B`. mapchar looks
+for bytes that differ from each other by the same amounts as the letters of
+your word. For each match, it reports which byte is `A`.
+
+Open **Search ▸ Search Window…** (Ctrl+Shift+F). The search covers the whole
+file that is open in the window.
 
 ## 1. Type a word
 
-Type a word you are sure the game shows, and press Enter.
+Type a word that you know the game shows, and press Enter.
 
-Pick a long one, with no repeated letter: `KITANA` says more than `OK`. A word
-of two or three letters matches almost everywhere.
+Use a long word with no repeated letters. `KITANA` is a good word. `OK` is not:
+a word of two or three letters matches in too many places.
 
-The word may hold:
+The word can contain:
 
 - letters, `A-Z` or `a-z`
 - digits, `0-9`
-- kana, あ-ん or ア-ン, in gojūon order and without dakuten — type `ハ` where
-  the game shows `バ`
+- kana, あ-ん or ア-ン, in gojūon order and without dakuten. For example, type
+  `ハ` where the game shows `バ`.
 - `?`, which matches any one character
 
-Nothing else. A space, a comma or an accent is refused, and the search says so.
-Leave them out: for `ROUND 1`, search `ROUND` or `1`.
+No other characters are allowed. If the word contains a space, a comma or an
+accented letter, the search is refused with a message. Leave these characters
+out. For example, for `ROUND 1`, search for `ROUND` or for `1`.
 
-Upper and lower case are different runs, so `Hello` is fine.
+Upper case and lower case letters are separate sequences, so a word such as
+`Hello` is allowed.
 
 ## 2. The settings
 
-**Width** — how many bytes one character takes. Start with **8-bit**. If
-nothing is found, try **8 and 16-bit**, which is slower.
+**Width** is the number of bytes in one character. Start with **8-bit**. If
+nothing is found, try **8 and 16-bit**. This setting is slower.
 
-**Case gap** — on, upper and lower case may sit anywhere apart from each
-other; off, `a` must be exactly 26 after `A`. Leave it on.
+**Case gap** controls how upper case and lower case relate. When it is on, the
+two sequences can be any distance apart. When it is off, `a` must be exactly 26
+more than `A`. Leave it on.
 
-**Limit** — how many hits to keep. At the limit the search stops and says so.
-A common word reaches it; a better word is worth more than a higher limit.
+**Limit** is the maximum number of results to keep. When the search reaches the
+limit, it stops and shows a message. A common word reaches the limit quickly.
+In that case, choose a better word instead of raising the limit.
 
-**Stop** stops a long search and keeps what it found.
+**Stop** ends a long search and keeps the results found so far.
 
 ## 3. Read the results
 
 ![Relative search for KITANA](images/02-relative-search.png)
 
-| Column | What it says |
+| Column | Meaning |
 | --- | --- |
-| **Offset** | where the match starts, in hex |
-| **Width** | bytes per character, and for 16-bit which end comes first |
-| **Bytes** | the bytes that matched |
-| **Bases** | the byte of the first character of each run: `upper` is `A`, `lower` is `a`, `digit` is `0`, `hiragana` is `あ`, `katakana` is `ア` |
+| **Offset** | The address where the match starts, in hex. |
+| **Width** | The number of bytes per character. For 16-bit, also the byte order. |
+| **Bytes** | The bytes that matched. |
+| **Bases** | The byte of the first character of each sequence: `upper` is `A`, `lower` is `a`, `digit` is `0`, `hiragana` is `あ`, `katakana` is `ア`. |
 
-**Bases** is the answer you came for. `upper=41` means `A` is `41`, `B` is
+**Bases** is the result you need. `upper=41` means that `A` is `41`, `B` is
 `42`, and so on.
 
-Click a row to see those bytes in the raw view.
+Click a row to see its bytes in the raw view.
 
-Most hits are wrong — any bytes that happen to step the right way. The right
-one is the one whose **Bases** repeat across several hits, and whose
-neighbours look like text too. `upper=41` found four times over is a font;
-`upper=9C` found once is a coincidence.
+Most results are false matches: bytes that are not text but differ by the same
+amounts. To find the correct result, check two things:
+
+- The same **Bases** value appears in several results.
+- The bytes around the match also look like text.
+
+For example, `upper=41` in four results is the font. `upper=9C` in one result
+is a false match.
 
 ## 4. Build a table from a hit
 
-Select the right hit and press **Build Table from Hit**.
+Select the correct result and click **Build Table from Hit**.
 
-It asks which alphabets to lay out — the runs your word pinned down, or
-**Custom…** to type the characters in the order the ROM has them. Each
-character becomes an entry, counting up from the base.
+A dialog asks which alphabets to add. Choose the sequences that your word
+identified, or choose **Custom…** and type the characters in the order the ROM
+stores them. Each character becomes a table entry, numbered upward from the
+base.
 
-If a table is already open it offers to add the entries to it. **No** makes a
-new table instead.
+If a table is already open, mapchar offers to add the entries to it. Click
+**No** to create a new table instead.
 
-That is a start, not a finished table. Punctuation, the space, and the byte
-that ends a string are not in any run, so you add them yourself in the Table
-Editor.
+The new table is not complete. Punctuation, the space, and the byte that ends a
+string are not part of any sequence. Add them in the Table Editor.
 
 ## Nothing found
 
-- Try another word. The game may draw that one as a picture, or compress it.
+- Try another word. The game may draw that word as a picture, or compress it.
 - Try **8 and 16-bit**.
-- If the text is compressed, no relative search will find it. Try
+- A relative search cannot find compressed text. Use
   **Search ▸ Scan for Text…** instead.
