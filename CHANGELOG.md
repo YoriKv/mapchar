@@ -1,10 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.1.5 - unreleased
 
-- Strings per pointer replaces Ends per string: each string of a pointer's
-  run is its own row, optionally read to the next pointer.
-- End token is fill option.
+- Additional strings options for dealing with edge cases
 
 ## v0.1.4 - 2026-09-20
 
