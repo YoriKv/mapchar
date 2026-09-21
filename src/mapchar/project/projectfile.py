@@ -27,7 +27,7 @@ from mapchar.project.formats.table_native import sanitize_id
 from mapchar.project.glossary import GlossaryTerm, glossary_dicts, glossary_from
 from mapchar.project.tables import adopt_table
 
-PROJECT_VERSION = 2
+PROJECT_VERSION = 3
 
 
 class ProjectError(MapcharError):
@@ -83,8 +83,33 @@ def _stops_at_end(spec: Any) -> bool:
     return isinstance(st, FixedLength) and st.stop_at_end
 
 
+def _mark_joined_runs(data: dict[str, Any]) -> dict[str, Any]:
+    """2 → 3: a pointer's run of strings is no longer one string, so the
+    strings version 2 saved for a block that reads several to a pointer are
+    each a whole run. Cutting them apart takes the block's tables, so the
+    block is marked and its first reading does it."""
+    for raw in data.get("entries") or []:
+        if (
+            isinstance(raw, dict)
+            and raw.get("kind") == "block"
+            and raw.get("strings")
+            and _reads_several(raw.get("config"))
+        ):
+            raw["runs_joined"] = True
+    return data
+
+
+def _reads_several(spec: Any) -> bool:
+    try:
+        config = parse_config(spec) if isinstance(spec, str) else None
+    except (ValueError, KeyError):
+        return False
+    return config is not None and config.strings_per_pointer > 1
+
+
 _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
-    1: _mark_fixed_ends
+    1: _mark_fixed_ends,
+    2: _mark_joined_runs,
 }
 
 
@@ -243,6 +268,8 @@ def entry_dict(entry: Entry, entries: list[Entry], base: str | None) -> dict[str
             d["strings"] = strings
             if entry.fixed_ends_shown:
                 d["fixed_ends_shown"] = True
+            if entry.runs_joined:
+                d["runs_joined"] = True
     if entry.kind is EntryKind.BLOCK and entry.box is not None:
         b = entry.box
         d["box"] = {
@@ -629,5 +656,6 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
     # (:func:`_string_records`).
     entry.pending_strings = saved or None
     entry.fixed_ends_shown = bool(saved) and bool(raw.get("fixed_ends_shown"))
+    entry.runs_joined = bool(saved) and bool(raw.get("runs_joined"))
     parent = raw.get("parent")
     return entry, (int(parent) if isinstance(parent, int) else None)

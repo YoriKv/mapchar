@@ -109,6 +109,7 @@ SECTIONS = {
         "pascal",
         "spp",
         "lines",
+        "end_is_fill",
     ),
 }
 """The bar's sections, in order, and the controls each gathers.
@@ -132,6 +133,7 @@ _TAILS = frozenset(
         "pascal",
         "spp",
         "lines",
+        "end_is_fill",
     }
 )
 """The controls shown only where they apply; every other one is greyed."""
@@ -243,7 +245,17 @@ class ReadingBar(WrapBar):
         self.pascal_endian = _endian_combo("The prefix's byte order")
         self.pascal_tokens = QCheckBox("Counts tokens")
         self.pascal_tokens.setToolTip("The prefix counts tokens by weight, not bytes")
-        self.spp = number_spin(1, 64, 2)
+        self.spp = number_spin(1, 1000, 2)
+        self.run_to_next = QCheckBox("To next pointer")
+        self.run_to_next.setToolTip(
+            "A pointer's strings run to where the next pointer lands; the "
+            "count is then the last pointer's"
+        )
+        self.end_is_fill = QCheckBox("End token is fill")
+        self.end_is_fill.setToolTip(
+            "A fill that is the end token reads as padding between strings, "
+            "not as empty strings"
+        )
         self.realign_m = number_spin(0, 65536, 2, off=True)
         self.realign_o = number_spin(0, 65536, 2)
         self.line_length = number_spin(0, 1_000_000, 3, off=True)
@@ -317,11 +329,13 @@ class ReadingBar(WrapBar):
             ),
             (
                 "spp",
-                "Ends per string",
-                (self.spp,),
-                "End tokens one string runs through before it ends",
+                "Strings per pointer",
+                (self.spp, self.run_to_next),
+                "Strings a pointer reaches: it lands on the first, and each "
+                "end token begins the next",
             ),
             ("lines", "Lines", (self.lines,), "Line codes one string holds"),
+            ("end_is_fill", "", (self.end_is_fill,), None),
             (
                 "realign",
                 "Realign",
@@ -393,6 +407,8 @@ class ReadingBar(WrapBar):
             ("stop_at_end", self.stop_at_end),
             ("pascal_tokens", self.pascal_tokens),
             ("show_end", self.show_end),
+            ("run_to_next", self.run_to_next),
+            ("end_is_fill", self.end_is_fill),
         ):
             box.toggled.connect(lambda _=False, n=name: self._edited(n))
         for name, field in (
@@ -515,6 +531,8 @@ class ReadingBar(WrapBar):
                 self.lines.setValue(st.count)
             self.string_type.setCurrentIndex(self.string_type.findData(kind))
             self.spp.setValue(config.strings_per_pointer)
+            self.run_to_next.setChecked(config.run_to_next)
+            self.end_is_fill.setChecked(config.end_is_fill)
             self.realign_m.setValue(config.realign[0])
             self.realign_o.setValue(config.realign[1])
             self.line_length.setValue(config.line_length)
@@ -608,6 +626,11 @@ class ReadingBar(WrapBar):
         was = self.string_type.blockSignals(True)
         self.string_type.model().item(3).setEnabled(pointers)
         self.string_type.blockSignals(was)
+        runs = (
+            pointers
+            and st == END
+            and (self.run_to_next.isChecked() or self.spp.value() > 1)
+        )
         applies = {
             # Text has one kind of source, so there is nothing to pick.
             "source_kind": pointers,
@@ -634,15 +657,20 @@ class ReadingBar(WrapBar):
             "line_length": st == FIXED_LENGTH,
             "show_end": st == FIXED_LENGTH,
             "pascal": st == PASCAL,
-            "spp": st == END,
+            "spp": pointers and st == END,
             "lines": st == LINES,
+            "end_is_fill": block and st in (END, NEXT) and not runs,
         }
         for name, applying in applies.items():
             group = self._groups[name]
             if name in _TAILS:
                 # A string that ends at the next pointer has no field of its
                 # own; the row keeps one, greyed, rather than closing up.
-                group.setVisible(applying or (name == "spp" and st == NEXT))
+                group.setVisible(
+                    applying
+                    or (name == "spp" and pointers and st == NEXT)
+                    or (name == "end_is_fill" and block and st == END)
+                )
             group.setEnabled(applying and not (self._string_view and name in _WHERE))
         self.pascal_endian.setVisible(self.pascal_width.value() > 1)
         forced = bool(self.skips.value()) or (
@@ -708,6 +736,7 @@ class ReadingBar(WrapBar):
             "string_type": self._string_type(),
             "table_id": table_id,
             "strings_per_pointer": self.spp.value(),
+            "run_to_next": self.run_to_next.isChecked(),
             "realign": (self.realign_m.value(), self.realign_o.value()),
             "line_length": self.line_length.value(),
             "show_end": self.show_end.isChecked(),
@@ -717,6 +746,7 @@ class ReadingBar(WrapBar):
             changes |= {
                 "header": self.header.value(),
                 "skips": self.skips.value(),
+                "end_is_fill": self.end_is_fill.isChecked(),
                 "bound": bound,
                 "write_mode": write_mode,
                 "fill": base.fill if fill is None else fill,

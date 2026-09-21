@@ -101,14 +101,15 @@ def _session_config(ctx: Context, view: EntryView) -> None:
 def _strings(ctx: Context, view: EntryView) -> None:
     strings = view.raw.get("strings")
     if not isinstance(strings, list):
-        if view.raw.get("fixed_ends_shown"):
-            ctx.info(
-                "I645",
-                "fixed_ends_shown is set on a block with no saved strings",
-                pointer=view.at("fixed_ends_shown"),
-                entry=view,
-                detail="Ignored: the mark is about respelling saved strings.",
-            )
+        for mark in ("fixed_ends_shown", "runs_joined"):
+            if view.raw.get(mark):
+                ctx.info(
+                    "I645",
+                    f"{mark} is set on a block with no saved strings",
+                    pointer=view.at(mark),
+                    entry=view,
+                    detail="Ignored: the mark is about respelling saved strings.",
+                )
         return
     seen: dict[int, int] = {}
     for at, record in enumerate(strings):

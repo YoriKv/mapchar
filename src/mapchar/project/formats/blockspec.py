@@ -97,7 +97,10 @@ def format_config(config: BlockConfig) -> str:
     elif isinstance(st, Lines):
         parts.append(f"type=lines:{st.count}")
     parts.append(f"table={config.table_id}")
-    if config.strings_per_pointer != 1:
+    if config.run_to_next:
+        last = config.strings_per_pointer
+        parts.append("spp=next" + (f":{last}" if last != 1 else ""))
+    elif config.strings_per_pointer != 1:
         parts.append(f"spp={config.strings_per_pointer}")
     if config.realign[0]:
         parts.append(f"realign={config.realign[0]}:{config.realign[1]}")
@@ -120,6 +123,8 @@ def format_config(config: BlockConfig) -> str:
         parts.append(f"mode={config.write_mode.value}")
     if config.fill != DEFAULT_FILL:
         parts.append(f"fill={format_fill(config.fill)}")
+    if config.end_is_fill:
+        parts.append("end_is_fill=1")
     return " ".join(parts)
 
 
@@ -205,11 +210,18 @@ def parse_config(spec: str) -> BlockConfig:
             (parse_num(a), parse_num(b))
             for a, b in (pair.split(">") for pair in fields["skips"].split(","))
         )
+    # ``spp=N`` strings a pointer, or ``spp=next[:N]``: each run to the next
+    # pointer's target, the last of them N strings.
+    spp = fields.get("spp", "1").split(":")
+    run_to_next = spp[0] == "next"
+    if run_to_next:
+        spp = spp[1:] or ["1"]
     return BlockConfig(
         source=source,
         string_type=string_type,
         table_id=fields.get("table", ""),
-        strings_per_pointer=int(fields.get("spp", "1")),
+        strings_per_pointer=int(spp[0]),
+        run_to_next=run_to_next,
         realign=realign,
         skips=skips,
         header=header,
@@ -217,6 +229,7 @@ def parse_config(spec: str) -> BlockConfig:
         bound=parse_num(fields["bound"]) if "bound" in fields else None,
         write_mode=WriteMode(fields["mode"]) if "mode" in fields else None,
         fill=parse_fill(fields["fill"]) if "fill" in fields else DEFAULT_FILL,
+        end_is_fill=fields.get("end_is_fill", "0") == "1",
         show_end="show_end" in fields,
         end_label=fields.get("show_end", "end"),
         line_label=fields.get("line_label", "line"),

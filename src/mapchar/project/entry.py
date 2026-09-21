@@ -5,12 +5,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from mapchar.core.block import BlockConfig, Status
+from mapchar.core.block import BlockConfig, Status, StringRecord
 from mapchar.core.capabilities import EntryKind
 from mapchar.core.document import Document
 from mapchar.core.font import TextBox
 from mapchar.core.notices import Notice
-from mapchar.core.table import Table
+from mapchar.core.table import Table, TableSet
+from mapchar.pipeline.extract import split_run_text
 
 
 @dataclass
@@ -51,6 +52,48 @@ def string_state(rec, extent: bool = False) -> StringState:
         digest=rec.original_digest,
         extent=(rec.start_bit, rec.end_bit) if extent else None,
     )
+
+
+def unjoined_states(
+    saved: dict[int, StringState],
+    strings: list[StringRecord],
+    config: BlockConfig,
+    tables: TableSet,
+) -> dict[int, StringState]:
+    """``saved`` — the state of a block whose pointers reach runs, kept by a
+    project from before version 3 with each run as one string — as the state
+    of the ``strings`` the block reads as now, one to each end token.
+
+    The old strings are found again by counting: a pointer block's began where
+    a string with pointers does, and a range's held
+    :attr:`~mapchar.core.block.BlockConfig.strings_per_pointer` of today's
+    each. A run's text is cut at its end codes
+    (:func:`~mapchar.pipeline.extract.split_run_text`), its mark goes to every
+    string of it and its notes to the first. The digest was of the whole run,
+    so each original goes by its text until its bytes are seen to say it.
+    """
+    runs: list[list[StringRecord]] = []
+    per = max(config.strings_per_pointer, 1)
+    for n, rec in enumerate(strings):
+        begins = bool(rec.pointers) if config.has_pointers else n % per == 0
+        if begins or not runs:
+            runs.append([])
+        runs[-1].append(rec)
+    out: dict[int, StringState] = {}
+    for old, run in enumerate(runs):
+        st = saved.get(old)
+        if st is None:
+            continue
+        originals = split_run_text(st.original, tables) if st.original else []
+        translations = split_run_text(st.translation, tables) if st.translation else []
+        for k, rec in enumerate(run):
+            out[rec.index] = StringState(
+                originals[k] if k < len(originals) else None,
+                st.status,
+                st.notes if k == 0 else "",
+                translations[k] if k < len(translations) else None,
+            )
+    return out
 
 
 @dataclass
@@ -171,6 +214,10 @@ class Entry:
     """Blocks: :attr:`pending_strings` spell a fixed string's end token, as a
     project from before version 2 does; the next extraction respells them
     (:func:`~mapchar.pipeline.extract.respell_fixed_end`)."""
+    runs_joined: bool = False
+    """Blocks: :attr:`pending_strings` hold each pointer's run as one string,
+    as a project from before version 3 does; the next extraction gives every
+    string of the run its own (:func:`unjoined_states`)."""
     live_revision: int = 0
     saved_revision: int = 0
     missing: bool = False

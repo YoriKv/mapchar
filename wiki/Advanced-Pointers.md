@@ -78,14 +78,16 @@ Make a block over the pointer at `$310`–`$311` as in step 1, and rename it
 `OPTIONS` outside the block and `START GAME` with no room to grow: the block's
 room ends at `$814C`, where `OPTIONS` begins.
 
-Set **Ends per string** to 2. The string now runs through two end tokens.
+Set **Strings per pointer** to 2. The pointer now reaches a run of two
+strings, a row each, and only the first has the pointer.
 
-| Ends per string 1 | Ends per string 2 |
+| Strings per pointer 1 | Strings per pointer 2 |
 |:-:|:-:|
-| [![One end per string](images/adv-2-one-end.png)](images/adv-2-one-end.png) | [![Two ends per string](images/adv-2-two-ends.png)](images/adv-2-two-ends.png) |
+| [![One string per pointer](images/adv-2-one-end.png)](images/adv-2-one-end.png) | [![Two strings per pointer](images/adv-2-two-ends.png)](images/adv-2-two-ends.png) |
 
-Translate it as one string and keep both `[end]` codes. The two texts share
-the room, so one may grow by what the other gives up.
+Translate each on its own. The two share the room, so one may grow by what the
+other gives up, and `OPTIONS` stays right behind `START GAME` wherever that
+ends.
 
 The options menu is the same with three: the pointer at `$367` reaches
 `OPTIONS[end]CREDITS[end]DIFFICULTY[end]`.

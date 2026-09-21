@@ -6,7 +6,7 @@ from mapchar.core.block import BlockConfig
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.pipeline.extract import extract, respell_fixed_end
-from mapchar.project.entry import Entry
+from mapchar.project.entry import Entry, unjoined_states
 
 
 class ExtractionMixin:
@@ -95,6 +95,8 @@ class ExtractionMixin:
                 )
         saved = entry.pending_strings
         legacy: dict[int, str] = {}
+        if saved and entry.runs_joined:
+            saved = unjoined_states(saved, ex.strings, cfg, tables)
         if saved:
 
             def spelled(text: str, rec) -> str:
@@ -120,6 +122,7 @@ class ExtractionMixin:
                     legacy[rec.index] = spelled(st.translation, rec)
             entry.pending_strings = None
             entry.fixed_ends_shown = False
+            entry.runs_joined = False
         for rec in ex.strings:
             rec.refresh_status()
         doc.strings = ex.strings

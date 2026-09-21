@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Strings per pointer replaces Ends per string: each string of a pointer's
+  run is its own row, optionally read to the next pointer.
+- End token is fill option.
+
 ## v0.1.4 - 2026-09-20
 
 - Remove charset picker in table editor

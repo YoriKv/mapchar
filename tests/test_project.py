@@ -310,10 +310,10 @@ def test_missing_paths_and_relocate_follow_every_reference(tmp_path):
 
 def test_load_tolerates_a_missing_entry_list_and_a_boolean_current(tmp_path):
     proj = tmp_path / "p.mapchar"
-    proj.write_text('{"version": 2, "current": true}')
+    proj.write_text('{"version": 3, "current": true}')
     loaded = load_project(str(proj))
     assert loaded.entries == [] and loaded.current is None
-    assert loaded.migrated_from is None and loaded.version == 2
+    assert loaded.migrated_from is None and loaded.version == 3
 
 
 def test_load_walks_migrations_forward(tmp_path, monkeypatch):
@@ -791,12 +791,12 @@ def test_a_version_1_block_whose_fixed_strings_stop_at_an_end_is_marked(tmp_path
         )
     )
     loaded = load_project(str(proj))
-    assert loaded.migrated_from == 1 and loaded.version == 2
+    assert loaded.migrated_from == 1 and loaded.version == 3
     names, text = loaded.entries[1:]
     assert names.fixed_ends_shown and not text.fixed_ends_shown
     saved = project_dict(loaded.entries, None, str(tmp_path))["entries"]
     assert saved[1]["fixed_ends_shown"] and "fixed_ends_shown" not in saved[2]
-    proj.write_text(json.dumps(saved and {"version": 2, "entries": saved}))
+    proj.write_text(json.dumps(saved and {"version": 3, "entries": saved}))
     assert load_project(str(proj)).entries[1].fixed_ends_shown
 
 
@@ -906,3 +906,70 @@ def test_a_block_s_room_that_does_not_read_as_an_address_loads_as_none(tmp_path)
         '"room": "nonsense"}]}'
     )
     assert load_project(str(proj)).entries[1].room is None
+
+
+def test_a_version_2_block_that_reads_several_strings_a_pointer_is_marked(
+    tmp_path, registry
+):
+    """Version 3 gives every string of a pointer's run a row, so the strings
+    version 2 saved for such a block are whole runs: marked on load, and cut
+    apart over the strings the block reads as now."""
+    import json
+
+    from mapchar.core.block import Status
+    from mapchar.project.entry import unjoined_states
+    from mapchar.project.formats.blockspec import parse_config
+
+    spec = "source=list addresses=$0,$2 size=2 type=end table=main spp=2"
+    proj = tmp_path / "p.mapchar"
+    proj.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "entries": [
+                    {"kind": "file", "name": "r"},
+                    {
+                        "kind": "block",
+                        "name": "menu",
+                        "parent": 0,
+                        "config": spec,
+                        "strings": [
+                            {"i": 0, "o": "A[end]B[end]"},
+                            {"i": 1, "o": "AA[end]\nB[end]", "s": "done", "n": "hm"},
+                        ],
+                    },
+                    {
+                        "kind": "block",
+                        "name": "text",
+                        "parent": 0,
+                        "config": spec.replace(" spp=2", ""),
+                        "strings": [{"i": 0, "o": "A[end]"}],
+                    },
+                ],
+            }
+        )
+    )
+    loaded = load_project(str(proj))
+    assert loaded.migrated_from == 2 and loaded.version == 3
+    menu, text = loaded.entries[1:]
+    assert menu.runs_joined and not text.runs_joined
+    saved = project_dict(loaded.entries, None, str(tmp_path))["entries"]
+    assert saved[1]["runs_joined"] and "runs_joined" not in saved[2]
+
+    ts = table_set(ABC_TABLE, "main")
+    data = bytes.fromhex("04 00 08 00 41 00 42 00 43 00 42 00")
+    config = parse_config(spec)
+    strings = extract(data, config, ts, registry).strings
+    states = unjoined_states(menu.pending_strings, strings, config, ts)
+    assert [states[i].original for i in range(4)] == [
+        "A[end]",
+        "B[end]",
+        "AA[end]\n",
+        "B[end]",
+    ]
+    assert [states[i].status for i in (1, 2, 3)] == [
+        Status.UNTOUCHED,
+        Status.DONE,
+        Status.DONE,
+    ]
+    assert [states[i].notes for i in (2, 3)] == ["hm", ""]

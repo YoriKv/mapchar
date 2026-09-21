@@ -8,7 +8,7 @@ from enum import Enum
 
 from mapchar.core.fill import DEFAULT_FILL, fill_bits
 from mapchar.core.notices import Notice
-from mapchar.core.table import TableSet
+from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.text import nfc, same_text
 from mapchar.core.tokens import Token
 
@@ -176,6 +176,12 @@ class BlockConfig:
     string_type: StringType = EndToken()
     table_id: str = ""
     strings_per_pointer: int = 1
+    """How many end-token strings the **run** a pointer reaches holds: the
+    pointer lands on the first and the game counts end tokens to the rest, so
+    each is a string of its own and only the first carries the pointer."""
+    run_to_next: bool = False
+    """A run ends where the next pointer lands, and only the last pointer's
+    holds :attr:`strings_per_pointer` strings."""
     realign: tuple[int, int] = (0, 0)
     """``(multiple, offset)`` in bytes; a multiple of 0 disables."""
     skips: tuple[tuple[int, int], ...] = ()
@@ -194,6 +200,9 @@ class BlockConfig:
     fill: bytes = DEFAULT_FILL
     """The pattern that pads unused room, repeated from the start of the room
     it fills (:func:`~mapchar.core.fill.fill_run`)."""
+    end_is_fill: bool = False
+    """A fill that is the table's end token still reads as padding between
+    strings (:func:`fill_reads_as_padding`)."""
     show_end: bool = False
     """Append an artificial ``[end]`` code to every fixed string."""
     end_label: str = "end"
@@ -204,6 +213,17 @@ class BlockConfig:
     @property
     def has_pointers(self) -> bool:
         return isinstance(self.source, PointerSource)
+
+    @property
+    def reads_runs(self) -> bool:
+        """Whether a pointer reaches a run of end-token strings rather than
+        one: the game then counts end tokens, so every one of them is a
+        string's and none is padding."""
+        return (
+            self.has_pointers
+            and isinstance(self.string_type, EndToken)
+            and (self.run_to_next or self.strings_per_pointer > 1)
+        )
 
     @property
     def fixed_length(self) -> int | None:
@@ -242,6 +262,8 @@ READING_FIELDS = (
     "source",
     "string_type",
     "strings_per_pointer",
+    "run_to_next",
+    "end_is_fill",
     "realign",
     "skips",
     "header",
@@ -300,13 +322,27 @@ def fill_reads_as_padding(config: BlockConfig, tables: TableSet) -> bool:
     is read like any other bytes, which is why a block's fill should be one no
     string begins with. The reading spells the same rule in bits
     (:func:`~mapchar.pipeline.extract.padding_bits`).
+
+    The one fill the table maps that may still be padding is its end token,
+    where the block says so (:attr:`BlockConfig.end_is_fill`): slots padded
+    with the byte that ends their strings. Never in a block whose pointers
+    reach runs (:attr:`BlockConfig.reads_runs`), where an end token straight
+    after another is an empty string the game counts.
     """
     pad = fill_bits(config.fill)
     if not pad:
         return False
+    if config.end_is_fill and not config.reads_runs and _is_end_token(pad, tables):
+        return True
     return not any(
         key.startswith(pad) or pad.startswith(key) for key in tables.start.entries
     )
+
+
+def _is_end_token(pad: str, tables: TableSet) -> bool:
+    """Whether the bits ``pad`` are one of the start table's end tokens."""
+    entry = tables.start.entries.get(pad)
+    return entry is not None and entry.kind is TokenKind.END
 
 
 class Status(Enum):
@@ -460,13 +496,16 @@ def grouped_strings(
     records each reach strings of their own through their inner table: those
     are a group, told by the base the string's first pointer counts from, since
     what lies between one group's text and the next is not the block's to write
-    over.
+    over. Where pointers reach runs (:attr:`BlockConfig.reads_runs`), a string
+    with no pointer is the rest of one, in the group of the string before it.
     """
     if not isinstance(config.source, NestedPointerSource):
         return [(None, strings)] if strings else []
     groups: dict[int | None, list[StringRecord]] = {}
+    key = None
     for rec in strings:
-        key = rec.pointers[0].offset if rec.pointers else None
+        if rec.pointers or not config.reads_runs:
+            key = rec.pointers[0].offset if rec.pointers else None
         groups.setdefault(key, []).append(rec)
     return list(groups.items())
 

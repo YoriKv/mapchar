@@ -315,3 +315,16 @@ def test_an_unedited_block_is_re_read_without_a_question(window, tmp_path, monke
     monkeypatch.setattr(type(window), "_ask", lambda *a: pytest.fail("asked"))
     window.reading_bar.spp.setValue(2)
     assert block.config.strings_per_pointer == 2
+    # The first run stops at the second pointer's string; the second reads on
+    # into a row of its own, which no pointer reaches.
+    assert [bool(rec.pointers) for rec in block.doc.strings] == [True, True, False]
+    bar = window.reading_bar
+    bar.run_to_next.setChecked(True)
+    assert block.config.run_to_next and len(block.doc.strings) == 3
+    # A fill that is the end token is no padding where ends are counted.
+    assert not bar._groups["end_is_fill"].isEnabled()
+    bar.run_to_next.setChecked(False)
+    bar.spp.setValue(1)
+    assert bar._groups["end_is_fill"].isEnabled()
+    bar.end_is_fill.setChecked(True)
+    assert block.config.end_is_fill

@@ -138,7 +138,8 @@ in bytes, which is the unit their results are reported and selected in.
 - **`BlockConfig`** — frozen: `source` (`RangeSource`, `PointerTableSource`,
   `PointerListSource`, `NestedPointerSource`), `string_type` (`EndToken`,
   `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens, endian)`,
-  `NextPointer`, `Lines(count)`), `table_id`, `strings_per_pointer`,
+  `NextPointer`, `Lines(count)`), `table_id`, `strings_per_pointer` and
+  `run_to_next` (the run a pointer reaches; `reads_runs`), `end_is_fill`,
   `realign`, `skips`, `header` (bytes before each string of a range that are
   not text, at most `MAX_RECORD_HEADER`), `line_length`, `bound`, `write_mode`
   (`PACKED`, `SLOTTED`; `effective_write_mode` is slotted whatever it holds
@@ -261,8 +262,9 @@ replication notes rather than to abcde's behaviour:
 - **Return** — pop the innermost frame whose table holds the entry; at the
   root, end the string.
 - **End** — an end token ends the string in end-terminated rules, after
-  which realignment applies. `strings_per_pointer` runs the machine that
-  many times, restarting in the start table.
+  which realignment applies. A pointer's run of strings is the machine run
+  again from where it stopped, restarting in the start table, a
+  `StringRecord` to each run of it (`_read_run`).
 - **Falling through** — with no match in the top frame's table, a frame with
   `through` set hands the window to the frame beneath, passing a pending
   return and stopping at a `raw` or `bits` frame; the match counts in the top
@@ -833,7 +835,7 @@ and aliases for renamed plugin ids.
 
 ```jsonc
 {
-  "version": 2,
+  "version": 3,
   "current": 1,                                      // opt, an index into entries
   "entries": [
     { "kind": "file", "name": "rom.nes", "path": "rom.nes",
@@ -906,6 +908,13 @@ block whose strings stop at one with `"fixed_ends_shown": true`
 (`Entry.fixed_ends_shown`), since respelling the saved originals and
 translations takes the block's tables: its first extraction does it
 (`respell_fixed_end`), and a save before then writes the mark again.
+
+Version 3 reads a pointer's run as a string to each end token, where version 2
+kept the run as one. Its migration marks each block that reads several strings
+a pointer with `"runs_joined": true` (`Entry.runs_joined`), and the first
+extraction cuts each saved run at its end codes over the strings the block
+reads as now (`unjoined_states`, `split_run_text`): the mark goes to every
+string of the run, the notes to its first.
 
 ### 6.4 Exchange
 

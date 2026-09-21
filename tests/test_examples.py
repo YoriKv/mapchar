@@ -51,19 +51,19 @@ def test_super_mario_world(registry):
 
     config, ts, ex = blocks["Message boxes"]
     originals = texts(ex)
-    assert len(originals) == 22
-    assert originals[0].startswith(
-        "Welcome!   This is[line]\nDinosaur Land.  In[line]\n"
-    )
-    assert all(t.count("[line]") == 8 for t in originals)
-    assert len(ex.strings[1].pointers) == 4  # the four switch palaces
+    # Cartographer's eight strings a pointer: a message is a run of its lines.
+    assert len(originals) == 22 * 8
+    assert originals[:2] == ["Welcome!   This is[line]\n", "Dinosaur Land.  In[line]\n"]
+    assert all(t.count("[line]") == 1 for t in originals)
+    assert [bool(s.pointers) for s in ex.strings] == ([True] + [False] * 7) * 22
+    assert len(ex.strings[8].pointers) == 4  # the four switch palaces
     assert "[$" not in "".join(originals)
     # An edit shorter than the original re-inserts and reads back.
     shorter = originals[0].replace("Welcome!   ", "Hi!   ", 1)
     res, out = relayout(data, config, ts, {0: shorter}, registry)
     assert res.ok, res.problems
     again = extract(out, config, ts, registry)
-    assert again.strings[0].original_text().startswith("Hi!   This is[line]\n")
+    assert again.strings[0].original_text() == "Hi!   This is[line]\n"
     assert texts(again)[1:] == originals[1:]
 
     config, ts, ex = blocks["Level names"]
@@ -229,9 +229,9 @@ def test_mortal_kombat_ii(registry):
         assert res.ok and out == data, (block.name, res.problems)
         blocks[block.name] = (config, ts, ex)
     assert len(blocks) == 19
-    assert sum(len(ex.strings) for _, _, ex in blocks.values()) == 84
+    assert sum(len(ex.strings) for _, _, ex in blocks.values()) == 89
 
-    assert texts(blocks["Main menu"][2]) == ["START GAME[end]OPTIONS[end]"]
+    assert texts(blocks["Main menu"][2]) == ["START GAME[end]", "OPTIONS[end]"]
     assert texts(blocks["Fighter names"][2])[:2] == ["KANG[end]", "ZERO[end]"]
     assert texts(blocks["Press start"][2]) == ["PRESS START"]
 

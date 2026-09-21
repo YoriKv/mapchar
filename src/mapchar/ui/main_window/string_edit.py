@@ -500,7 +500,6 @@ class StringEditMixin:
                 text,
                 tables,
                 end_terminated=isinstance(entry.config.string_type, EndToken),
-                ends=entry.config.strings_per_pointer,
             )
         except MapcharError as exc:
             self.statusBar().showMessage(str(exc))

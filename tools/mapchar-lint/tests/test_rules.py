@@ -71,7 +71,7 @@ def test_the_document_must_be_an_object_with_an_entries_array(tmp_path, ids):
     path = tmp_path / "bad.mapchar"
     path.write_text("[]", encoding="utf-8")
     assert [d.code for d in lint(str(path), ids).diagnostics] == ["F003"]
-    path.write_text('{"version": 2, "entries": {}}', encoding="utf-8")
+    path.write_text('{"version": 3, "entries": {}}', encoding="utf-8")
     assert [d.code for d in lint(str(path), ids).diagnostics] == ["F004"]
 
 
@@ -218,6 +218,7 @@ def test_config_words_that_are_ignored_or_misread(project, doc, files):
         "W619": config(start="$120", stop="$100"),
         "E620": config(table=None),
         "W621": config(spp="0"),
+        "E606": config(spp="nxt"),
         "W622": config(skips="$110>$110"),
         "W623": config(type="fixed:0"),
         "E624": config(type="fixed:4:stpo"),
@@ -243,6 +244,8 @@ def test_config_lines_the_samples_use_are_clean(project, doc, files):
     rom = {**files, "rom.nes": 0x40000}
     for line in (
         LIST_BLOCK,
+        LIST_BLOCK.replace("spp=2", "spp=next"),
+        LIST_BLOCK.replace("spp=2", "spp=next:3") + " fill=$00 end_is_fill=1",
         RECORDS,
         "source=range start=$811B stop=$8126 type=fixed:11 table=main",
         "source=nested start=$1000 stop=$1010 size=4 stride=8 endian=little "

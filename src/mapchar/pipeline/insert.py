@@ -110,9 +110,7 @@ def encode_string(
         elif isinstance(st, Lines):
             body = _encode_lines(text, config, tables, st)
         else:
-            result = encode(
-                text, tables, end_terminated=True, ends=config.strings_per_pointer
-            )
+            result = encode(text, tables, end_terminated=True)
             if not result.ends_with_end and isinstance(st, EndToken):
                 raise EncodeError("the text must end with an end token")
             body = result.data

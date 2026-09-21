@@ -34,7 +34,7 @@ def ids() -> KnownIds:
         mapping_sizes={"linear": [1, 2, 3, 4], "gb": [2, 3], "lorom": [2, 3]},
         renamed={"old-lz": "lz2"},
         dialects=("native", "abcde", "cartographer", "atlas", "romjuice"),
-        project_version=2,
+        project_version=3,
         source="test registry",
         authoritative=True,
     )
@@ -93,7 +93,7 @@ def doc():
         for record in entries:
             for key in [k for k, v in record.items() if v is None]:
                 del record[key]
-        return {"version": 2, "current": 1, "entries": entries + list(extra), **top}
+        return {"version": 3, "current": 1, "entries": entries + list(extra), **top}
 
     return build
 

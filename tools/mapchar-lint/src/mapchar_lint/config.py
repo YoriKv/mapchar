@@ -175,7 +175,7 @@ def _numbers(out: ConfigReading, fields: dict, source: str) -> None:
     ):
         if key in fields and (key in taken or key in ("spp", "lines", "header")):
             try:
-                number = int(fields[key])
+                number = int(_run_count(fields[key]) if key == "spp" else fields[key])
             except ValueError:
                 out.drop("E606", f"{key}={fields[key]} is not a decimal number")
                 continue
@@ -282,8 +282,14 @@ def _writing(out: ConfigReading, fields: dict) -> None:
         except ValueError:
             out.drop("E609", f"fill={fill} is not $hex bytes or a decimal byte")
     spp = fields.get("spp")
-    if spp is not None and int(spp) < 1:
+    if spp is not None and int(_run_count(spp)) < 1:
         out.add("W621", "warning", f"spp={spp} reads as 1")
+
+
+def _run_count(spp: str) -> str:
+    """The count in ``spp=N``, ``spp=next`` or ``spp=next:N``."""
+    head, _, last = spp.partition(":")
+    return (last or "1") if head == "next" else spp
 
 
 def _pointers(out: ConfigReading, fields: dict, source: str) -> None:

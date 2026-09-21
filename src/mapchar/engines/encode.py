@@ -37,7 +37,7 @@ from mapchar.core.tokens import (
     operand_values,
     render,
 )
-from mapchar.engines.decode import DecodeRules, EndedBy, decode_run, innermost_index
+from mapchar.engines.decode import DecodeRules, EndedBy, decode, innermost_index
 from mapchar.engines.encode_index import (
     Index,
     atom_key,
@@ -138,15 +138,12 @@ def encode(
     tables: TableSet,
     *,
     end_terminated: bool = True,
-    ends: int = 1,
     verify: bool = True,
 ) -> EncodeResult:
     """Encode script ``text``; raises ``EncodeError`` when it cannot.
 
-    ``ends`` is how many end tokens an end-terminated string holds (a block's
-    strings per pointer): an end token may be emitted before the end of the
-    text ``ends - 1`` times, each starting the decoder's frame stack afresh,
-    and with ``ends`` above one the text must hold exactly that many.
+    An end-terminated string holds one end token, its last: one earlier in the
+    text would end the string there.
     """
     try:
         atoms = atoms_of(text)
@@ -156,7 +153,7 @@ def encode(
     heuristic = min((i.min_bits_per_atom for i in indexes.values()), default=1.0)
     n = len(atoms)
     root: _Frame = (tables.start.id, None, False, None, None, False)
-    start_state = (0, (root,), (), 0, 0)
+    start_state = (0, (root,), (), 0)
     max_chain = len(tables.tables)
     tie = count()
     heap: list[tuple[float, int, int, tuple, str, bool]] = []
@@ -172,7 +169,7 @@ def encode(
         if state in closed:
             continue
         closed.add(state)
-        pos, stack, forbidden, chain, used = state
+        pos, stack, forbidden, chain = state
         if pos > farthest:
             farthest, far_stack = pos, stack
         if (
@@ -180,16 +177,9 @@ def encode(
             and not any(f[3] is not None or f[4] is not None for f in stack)
             and not forbidden
         ):
-            if end_terminated and ends > 1 and used != ends:
-                raise EncodeError(
-                    f"the string holds {used} end token(s); the block reads "
-                    f"{ends} per pointer",
-                    None,
-                    text[:40],
-                )
             result = EncodeResult(bits, last_end)
             if verify:
-                _verify(result, atoms, text, tables, end_terminated, ends)
+                _verify(result, atoms, text, tables, end_terminated)
             return result
         for succ in _successors(
             atoms,
@@ -199,15 +189,13 @@ def encode(
             tables,
             indexes,
             end_terminated,
-            ends,
-            used,
             chain,
             max_chain,
             len(bits),
         ):
             npos, nstack, nforbidden, emitted, is_end, *patch = succ
             nchain = 0 if npos > pos else chain + 1
-            nstate = (npos, tuple(nstack), nforbidden, nchain, used + is_end)
+            nstate = (npos, tuple(nstack), nforbidden, nchain)
             if nstate in closed:
                 continue
             nbits = bits
@@ -244,8 +232,6 @@ def _successors(
     tables: TableSet,
     indexes,
     end_terminated,
-    ends,
-    used,
     chain,
     max_chain,
     bit_len,
@@ -342,8 +328,6 @@ def _successors(
             tables,
             indexes,
             end_terminated,
-            ends,
-            used,
             chain,
             max_chain,
             emit,
@@ -359,8 +343,6 @@ def _table_successors(
     tables: TableSet,
     indexes,
     end_terminated,
-    ends,
-    used,
     chain,
     max_chain,
     emit,
@@ -420,7 +402,7 @@ def _table_successors(
             ):
                 continue
             interior_end = entry.kind is TokenKind.END and pos + k != n
-            if interior_end and end_terminated and used + 1 >= ends:
+            if interior_end and end_terminated:
                 continue
             push = (
                 _frames_for(entry.params, tid) if entry.kind is TokenKind.SWITCH else ()
@@ -428,8 +410,6 @@ def _table_successors(
             s = emit(
                 entry.bits,
                 entry.weight,
-                # The decoder starts the next run from the root frame.
-                new_stack=[stack[0]] if interior_end and end_terminated else None,
                 push=push,
                 is_end=entry.kind is TokenKind.END,
                 advance=k,
@@ -466,11 +446,10 @@ def _verify(
     text: str,
     tables: TableSet,
     end_terminated: bool,
-    ends: int = 1,
 ) -> None:
     data = Bits(result.data)
     rules = DecodeRules(end_terminated=end_terminated, limit_bit=len(result.bits))
-    run = decode_run(data, tables, 0, rules, runs=max(ends, 1) if end_terminated else 1)
+    run = decode(data, tables, 0, rules)
     got = render(run.tokens).replace("\n", "")
     want = "".join(a if isinstance(a, str) else ref_text(a) for a in atoms)
     want_cmp = "".join(

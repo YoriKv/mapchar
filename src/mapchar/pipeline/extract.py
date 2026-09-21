@@ -24,6 +24,7 @@ from mapchar.core.block import (
     StringRecord,
     bits_digest,
     fill_reads_as_padding,
+    grouped_strings,
 )
 from mapchar.core.fill import fill_bits, is_fill
 from mapchar.core.notices import Notice
@@ -167,16 +168,10 @@ def reextract(
         end = marks[at] if at < len(marks) else len(data)
         if lo < end and r.table < hi:
             bases.add(r.base)
-    old: dict[int, list[StringRecord]] = {}
-    for rec in strings:
-        if not rec.pointers:
-            return None
-        old.setdefault(rec.pointers[0].offset, []).append(rec)
+    old = dict(grouped_strings(config, strings))
     bits = Bits(data)
     part = _extract_pointers(bits, config, tables, source, registry, bases)
-    new: dict[int, list[StringRecord]] = {}
-    for rec in part.strings:
-        new.setdefault(rec.pointers[0].offset, []).append(rec)
+    new = dict(grouped_strings(config, part.strings))
     placed: dict[int, StringRecord] = {}
     for base in bases | set(new):
         before, after = old.get(base, []), new.get(base, [])
@@ -257,11 +252,33 @@ def _extract_pointers(
     strings: list[StringRecord] = []
     st = config.string_type
     pad = padding_bits(config, tables) if isinstance(st, NextPointer) else None
+    nested = isinstance(source, NestedPointerSource)
+    stops: dict[int | None, list[int]] = {}
+    """The targets a run may stop at, in address order: the block's, or for a
+    nested source those of the run's own group."""
+    if config.reads_runs:
+        for target in ordered:
+            key = by_target[target][0].offset if nested else None
+            stops.setdefault(key, []).append(target)
     for i, target in enumerate(ordered):
         start = target * 8
         if start >= bits.length:
             continue
         limit = stop_bit if stop_bit > start else bits.length
+        if stops:
+            key = by_target[target][0].offset if nested else None
+            _read_run(
+                bits,
+                config,
+                tables,
+                start,
+                limit,
+                stops[key],
+                by_target,
+                strings,
+                notices,
+            )
+            continue
         nxt = ordered[i + 1] * 8 if i + 1 < len(ordered) else None
         if (
             nxt is not None
@@ -294,6 +311,80 @@ def _extract_pointers(
             )
         )
     return Extraction(strings, notices, inner_tables)
+
+
+def _read_run(
+    bits: Bits,
+    config: BlockConfig,
+    tables: TableSet,
+    start: int,
+    stop_bit: int,
+    targets: list[int],
+    by_target: dict[int, list[PointerRef]],
+    strings: list[StringRecord],
+    notices: list[Notice],
+) -> None:
+    """The run of end-token strings the pointer to bit ``start`` reaches, added
+    to ``strings``: the first carries the pointers, the rest none.
+
+    A run ends at the string another of ``targets`` reaches, which is that
+    pointer's; else after :attr:`~BlockConfig.strings_per_pointer` strings, or
+    with :attr:`~BlockConfig.run_to_next` only once no target lies ahead — the
+    last pointer's run. The next target is the first past where the string
+    began, looked up string by string, since a skip range may have carried the
+    reading anywhere. A target the run does not meet at the start of a string
+    is a notice: the run was read some other way than the game reads it.
+    """
+    pos = start
+    count = 0
+    while pos < stop_bit:
+        at = bisect_right(targets, pos // 8)
+        nxt = targets[at] * 8 if at < len(targets) else None
+        limit = stop_bit
+        if config.run_to_next and nxt is not None:
+            limit = min(limit, nxt)
+        r = decode(bits, tables, pos, _rules(config, limit, True))
+        if count and not r.tokens:
+            break
+        rec = StringRecord(
+            len(strings),
+            pos,
+            r.end_bit,
+            r.tokens,
+            tuple(by_target[pos // 8]) if pos == start else (),
+            notices=r.notices,
+        )
+        strings.append(rec)
+        count += 1
+        began, pos = pos, r.end_bit
+        if r.ended_by is not EndedBy.END_TOKEN:
+            if nxt is not None and pos == nxt == limit:
+                notices.append(
+                    Notice(
+                        f"string #{rec.index} runs into the next pointer's "
+                        f"target (${nxt // 8:X}) without an end token",
+                        offset=began // 8,
+                    )
+                )
+            break
+        # Text packed in bits ends mid-byte and a pointer lands on a whole
+        # one, so the bits up to the next byte are not a string's.
+        reached = -(-pos // 8) * 8
+        if nxt is not None and began < nxt <= reached:
+            if pos > nxt:
+                notices.append(
+                    Notice(
+                        f"the pointer target ${nxt // 8:X} lies inside string "
+                        f"#{rec.index}, not at the start of one",
+                        offset=began // 8,
+                    )
+                )
+            break
+        if pos % 8 == 0 and pos // 8 in by_target:
+            break
+        if not (config.run_to_next and nxt is not None):
+            if count >= max(config.strings_per_pointer, 1):
+                break
 
 
 def string_at(
@@ -419,28 +510,8 @@ def decode_one(
     if isinstance(st, Lines):
         r = decode(bits, tables, start, _rules(config, stop_bit, True))
         return r.tokens, r.end_bit, r.notices
-    return _decode_terminated(bits, config, tables, start, stop_bit)
-
-
-def _decode_terminated(
-    bits: Bits, config: BlockConfig, tables: TableSet, start: int, stop_bit: int
-) -> tuple[list[Token], int, list[Notice]]:
-    """One string of ``strings_per_pointer`` end-token runs.
-
-    Not :func:`~mapchar.engines.decode.decode_run`: a backwards skip range
-    moves a run's end behind its start, which stops that function early.
-    """
-    tokens: list[Token] = []
-    notices: list[Notice] = []
-    pos = start
-    for _ in range(max(config.strings_per_pointer, 1)):
-        r = decode(bits, tables, pos, _rules(config, stop_bit, True))
-        tokens.extend(r.tokens)
-        notices.extend(r.notices)
-        pos = r.end_bit
-        if r.ended_by is not EndedBy.END_TOKEN:
-            break
-    return tokens, pos, notices
+    r = decode(bits, tables, start, _rules(config, stop_bit, True))
+    return r.tokens, r.end_bit, r.notices
 
 
 def _decode_fixed(
@@ -576,3 +647,37 @@ def respell_fixed_end(
         if e.kind is TokenKind.END and e.label
     }
     return _split_end_code(body, labels)[0] + after
+
+
+def split_run_text(text: str, tables: TableSet) -> list[str]:
+    """``text`` cut after each bare end code of ``tables`` in it: the strings
+    of a run that a project from before version 3 kept as one, which read all
+    of a pointer's run as a single string."""
+    labels = {
+        e.label
+        for table in tables.tables.values()
+        for e in table.entries.values()
+        if e.kind is TokenKind.END and e.label
+    }
+    pieces: list[str] = []
+    at = i = 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        close = text.find("]", i) if c == "[" else -1
+        if close < 0:
+            i += 1
+            continue
+        words = text[i + 1 : close].split()
+        i = close + 1
+        if len(words) == 1 and words[0] in labels:
+            # The line break an end code renders with goes with its string.
+            while text[i : i + 1] == "\n":
+                i += 1
+            pieces.append(text[at:i])
+            at = i
+    if at < len(text):
+        pieces.append(text[at:])
+    return pieces

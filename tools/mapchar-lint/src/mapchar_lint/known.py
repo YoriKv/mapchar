@@ -41,7 +41,7 @@ class KnownIds:
     renamed: dict[str, str] = field(default_factory=dict)
     #: The table-file dialects (``legacy.DIALECTS``).
     dialects: tuple = ()
-    project_version: int = 2
+    project_version: int = 3
     #: ``"shipped snapshot"`` or ``"live registry"`` — quoted in the report so a
     #: reader knows how much an "unknown id" finding is worth.
     source: str = "snapshot"
@@ -109,7 +109,7 @@ def load_snapshot(path: str = _SNAPSHOT) -> KnownIds:
         mapping_sizes=dict(body.get("mapping_sizes", {})),
         renamed=dict(body.get("renamed", {})),
         dialects=tuple(body.get("dialects", ())),
-        project_version=body.get("project_version", 2),
+        project_version=body.get("project_version", 3),
         source="shipped snapshot",
     )
 

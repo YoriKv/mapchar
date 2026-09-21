@@ -67,6 +67,7 @@ KEYS_BY_KIND = {
         "room",
         "strings",
         "fixed_ends_shown",
+        "runs_joined",
         "box",
     ),
     "bookmark": COMMON_KEYS + ("parent", "folder", "offset"),
@@ -166,6 +167,7 @@ STRING_KEYS_CONFIG = (
     "bound",
     "mode",
     "fill",
+    "end_is_fill",
     "show_end",
     "line_label",
 )

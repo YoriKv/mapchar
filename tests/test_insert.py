@@ -153,14 +153,14 @@ def test_a_string_read_across_a_backwards_skip_keeps_both_pieces(registry):
         skips=((9, 4),),
     )
     ex = extract(data, cfg, ts, registry)
-    plain, wrapped = ex.strings
-    assert plain.pieces(cfg.skips) == [(4, 8)]
-    assert wrapped.pieces(cfg.skips) == [(8, 9), (4, 8)]
-    assert wrapped.byte_length(cfg.skips) == 5
-    assert encode_string(wrapped, cfg, ts, data).data == data[8:9] + data[4:8]
+    plain, _, wrapped, _ = ex.strings
+    assert plain.pieces(cfg.skips) == [(4, 6)]
+    assert wrapped.pieces(cfg.skips) == [(8, 9), (4, 6)]
+    assert wrapped.byte_length(cfg.skips) == 3
+    assert encode_string(wrapped, cfg, ts, data).data == data[8:9] + data[4:6]
     res, out = relayout(data, cfg, ts, {}, registry)
     assert res.ok and out == data
-    res, _ = relayout(data, cfg, ts, {1: "X[end]A[end]"}, registry)
+    res, _ = relayout(data, cfg, ts, {2: "A[end]"}, registry)
     assert not res.ok and "skip range" in res.problems[0].message
 
 

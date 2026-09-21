@@ -13,6 +13,7 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
     WriteMode,
+    fill_reads_as_padding,
 )
 from mapchar.pipeline.extract import (
     extract,
@@ -37,14 +38,80 @@ def test_range_stop_cuts_reading():
     assert texts(ex) == ["AB"]
 
 
-def test_strings_per_pointer():
-    data = bytes.fromhex("41 00 42 00 43 00")
-    ex = extract(
-        data,
-        BlockConfig(RangeSource(0, 6), EndToken(), "main", strings_per_pointer=2),
-        TS,
+RUNS = PointerListSource((0, 2), 2, "little", "linear")
+"""Pointers to $4 and $8, over ``A[end] B[end]`` and ``C[end] [end] A[end]``."""
+RUN_DATA = bytes.fromhex("04 00 08 00 41 00 42 00 43 00 00 41 00")
+
+
+def test_a_pointer_reaches_a_run_of_strings(registry):
+    """Every end token of a run ends a string of its own — an empty one too,
+    since the game counts them — and only the first carries the pointer."""
+    cfg = BlockConfig(RUNS, EndToken(), "main", strings_per_pointer=3)
+    ex = extract(RUN_DATA, cfg, TS, registry)
+    # The first run stops at the string the second pointer reaches.
+    assert texts(ex) == ["A[end]", "B[end]", "C[end]", "[end]", "A[end]"]
+    assert [len(s.pointers) for s in ex.strings] == [1, 0, 1, 0, 0]
+    assert [s.index for s in ex.strings] == [0, 1, 2, 3, 4]
+    assert not ex.notices
+    res, out = relayout(RUN_DATA, cfg, TS, {}, registry)
+    assert res.ok and out == RUN_DATA
+    # A string of the run grows and the pointer behind it follows.
+    res, out = relayout(RUN_DATA, replace(cfg, bound=14), TS, {1: "BB[end]"}, registry)
+    assert res.ok and out == bytes.fromhex("04 00 09 00 41 00 42 42 00 43 00 00 41 00")
+    # A range has no pointer to count from: each end token is a string anyway.
+    ranged = BlockConfig(RangeSource(4, 8), EndToken(), "main", strings_per_pointer=2)
+    assert texts(extract(RUN_DATA, ranged, TS)) == ["A[end]", "B[end]"]
+
+
+def test_a_run_reads_to_the_next_pointer(registry):
+    """``run_to_next``: a run is as long as the next pointer says, and the
+    count is the last pointer's."""
+    cfg = BlockConfig(RUNS, EndToken(), "main", run_to_next=True)
+    ex = extract(RUN_DATA, cfg, TS, registry)
+    assert texts(ex) == ["A[end]", "B[end]", "C[end]"]
+    ex = extract(RUN_DATA, replace(cfg, strings_per_pointer=3), TS, registry)
+    assert texts(ex) == ["A[end]", "B[end]", "C[end]", "[end]", "A[end]"]
+    assert not ex.notices
+    spec = format_config(replace(cfg, strings_per_pointer=3))
+    assert "spp=next:3" in spec and parse_config(spec).run_to_next
+    assert "spp=next " in format_config(cfg) + " "
+
+
+def test_a_run_that_misses_the_next_target_says_so(registry):
+    """A pointer landing inside a string of the run before it: the reading is
+    not the game's, and nothing else would show it."""
+    # $4 A B [end] C [end], with the second pointer at the B.
+    data = bytes.fromhex("04 00 05 00 41 42 00 43 00")
+    cfg = BlockConfig(RUNS, EndToken(), "main", strings_per_pointer=2)
+    ex = extract(data, cfg, TS, registry)
+    assert texts(ex) == ["AB[end]", "B[end]", "C[end]"]
+    assert [n.message for n in ex.notices] == [
+        "the pointer target $5 lies inside string #0, not at the start of one"
+    ]
+    ex = extract(data, replace(cfg, run_to_next=True), TS, registry)
+    assert texts(ex)[0] == "A"
+    assert "without an end token" in ex.notices[0].message
+    # One string a pointer is the reading that shares a tail, and says nothing.
+    assert not extract(data, replace(cfg, strings_per_pointer=1), TS, registry).notices
+
+
+def test_a_fill_that_is_the_end_token_reads_as_padding_when_told_to():
+    data = bytes.fromhex("41 00 00 00 42 00")
+    cfg = BlockConfig(RangeSource(0, 6), EndToken(), "main", fill=b"\x00")
+    assert texts(extract(data, cfg, TS)) == ["A[end]", "[end]", "[end]", "B[end]"]
+    told = replace(cfg, end_is_fill=True)
+    assert texts(extract(data, told, TS)) == ["A[end]", "B[end]"]
+    assert parse_config(format_config(told)) == told
+    # Slotted, the shortened string's padding is the next reading's padding.
+    res, out = relayout(data, told, TS, {0: "[end]"})
+    assert res.ok and out == bytes.fromhex("00 00 00 00 42 00")
+    assert texts(extract(out, told, TS)) == ["[end]", "B[end]"]
+    # Never where pointers reach runs: there an empty string is one counted.
+    runs = BlockConfig(
+        RUNS, EndToken(), "main", strings_per_pointer=3, fill=b"\x00", end_is_fill=True
     )
-    assert texts(ex) == ["A[end]B[end]", "C[end]"]
+    assert not fill_reads_as_padding(runs, TS)
+    assert fill_reads_as_padding(told, TS) and not fill_reads_as_padding(cfg, TS)
 
 
 def test_lines():
@@ -132,8 +199,8 @@ def test_backwards_skip_reads_every_string(registry):
         skips=((9, 4),),
     )
     ex = extract(data, cfg, ts, registry)
-    assert texts(ex) == ["A[end]B[end]", "X[end]B[end]"]
-    assert [(s.start, s.end) for s in ex.strings] == [(4, 8), (8, 8)]
+    assert texts(ex) == ["A[end]", "B[end]", "X[end]", "B[end]"]
+    assert [(s.start, s.end) for s in ex.strings] == [(4, 6), (6, 8), (8, 6), (6, 8)]
 
 
 def test_padding_between_strings_is_passed_over():

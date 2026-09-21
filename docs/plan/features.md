@@ -622,7 +622,7 @@ Source and Writing are; a range reads no pointers, so its Pointers section is
 goes, at a section's end where nothing stands after it: a pointer list's
 addresses, a nested source's inner size, endian and null, and on a row of
 their own under Strings the string type's own fields (length, count and lines;
-the prefix; ends per string; line codes). **Writing** is one line — the write
+the prefix; strings per pointer; line codes). **Writing** is one line — the write
 mode, where the room ends, the fill — that opens a popup of bound, write mode,
 fill and spare room, since they are set once for a block. With nothing open
 the bars are disabled and show the default reading, a file read as a **Range**
@@ -671,8 +671,21 @@ of end-token strings.
   - **Lines** — after `N` line codes, or earlier at an end token: a message
     the game reads as a fixed number of terminated lines, with no end of its
     own. Edited text must hold exactly `N`.
-- **Ends per string** — how many end tokens one string runs through before
-  it ends (Cartographer's strings per pointer).
+- **Strings per pointer** — on a pointer source whose strings end at an end
+  token, how many strings the **run** a pointer reaches holds (Cartographer's
+  strings per pointer): the pointer lands on the first and the game counts end
+  tokens to the rest — a menu printed by calling the print routine again, a
+  list of names found by number. Every string of a run is a string of its
+  own, an empty one too, and only the first carries the pointer; packed, the
+  run stays end to end behind it, so one string grows by what another gives
+  up. A run stops early at a string another pointer reaches, which is that
+  pointer's. **To next pointer** reads each run to where the next pointer
+  lands instead, and the count is then the last pointer's run alone. Text
+  packed in bits ends mid-byte, and the bits up to the next byte are not a
+  string. A pointer that lands inside a string of a run, or a run that
+  reaches the next pointer's target without an end token, is a notice on the
+  block: the table or the count reads the run some other way than the game
+  does.
 - **Line code** — `[line]`, or the block's own label (`line_label=` in the
   config line). A token that is this code, or whose table text ends in it,
   renders with a line break after it everywhere text is shown, so table text
@@ -711,7 +724,8 @@ of end-token strings.
   claimed. The field's placeholder shows which. A nested source's groups each
   have their own ([Writing](#writing-back-to-disk)), which the bound caps.
 - **Changing how an edited block is read asks first** — the source, string
-  type, ends per string, realign, skip ranges, header and line length cut the
+  type, strings per pointer, end token is fill, realign, skip ranges, header
+  and line length cut the
   strings out of the bytes, so changing one of them on a block with edited
   strings reads the region afresh and forgets the room its shortened strings
   gave up. It is asked once per block, and again after the next string edit.
@@ -726,6 +740,12 @@ of end-token strings.
   several (`FFFF` is a word), repeated from the start of the space it fills —
   a slot's tail, a packed block's tail, a fixed string's padding. A run of
   whole patterns is what reads as padding.
+- **End token is fill** — a fill that is the table's end token reads as
+  padding between strings all the same, for slots padded with the byte that
+  ends their strings: `NAME[end][end][end]` is one string and its padding,
+  not three with two of them empty. A Strings setting, since it cuts the
+  strings, and off wherever pointers reach runs, whose empty strings the game
+  counts.
 - **Compression** — a block inherits its parent file's container and
   compression and may override the compression — **To Block** in the
   Decompressed View makes such a block, in which
@@ -937,7 +957,8 @@ The editing surface, opened on a block.
     block's table maps nothing beginning with the fill, so the fill should be
     one no string begins with: one the table maps is read like any other
     bytes, and a shortened string's padding is then text in front of the next
-    string.
+    string — except the end token itself, where the block says **End token is
+    fill**.
 - **In place only** — a string that does not fit is refused at the edit, with
   the bytes over. Nothing is relocated; making room is the user's job.
 - **Encoding is verified** — every encoded string is decoded again and must

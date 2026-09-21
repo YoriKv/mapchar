@@ -247,8 +247,8 @@ def decode_run(
 ) -> RunResult:
     """Decode consecutive runs from ``start``, each resuming where the last ended.
 
-    ``runs`` is how many to read -- a block's strings per pointer -- and
-    ``None`` reads on until the data runs out. Reading stops early when a run
+    ``runs`` is how many to read, and ``None`` reads on until the data runs
+    out. Reading stops early when a run
     makes no progress, when it ends at the end of the data or at the limit,
     or, with ``ends_only``, when it ends any way other than an end token.
 
