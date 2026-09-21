@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.5 - unreleased
+## v0.1.5 - 2026-09-20
 
 - Additional strings options for dealing with edge cases
 
