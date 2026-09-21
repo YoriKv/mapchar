@@ -24,8 +24,9 @@ With no table, the file reads as ASCII.
 
 A table maps bytes to characters.
 
-**Search ▸ Search Window…** (Ctrl+Shift+F) runs a relative search. `KITANA`
-is found with `upper=41`: `A` is `41`.
+**Search ▸ Search Window…** (Ctrl+Shift+F) runs a
+[relative search](Relative-Search). `KITANA` is found with `upper=41`: `A` is
+`41`.
 
 ![Relative search for KITANA](images/02-relative-search.png)
 

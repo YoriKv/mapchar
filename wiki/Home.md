@@ -6,6 +6,8 @@ writes it back in place.
 
 - **[Getting Started](Getting-Started)** — a first project from an unopened
   ROM to translated text written back, on Mortal Kombat II for the Game Boy.
+- **[Relative Search](Relative-Search)** — finding text with no table yet, and
+  turning a hit into one.
 - **[Advanced Pointers](Advanced-Pointers)** — pointers inside code, one
   pointer that reaches several strings, and pointers into length-prefixed
   records, on the same ROM.

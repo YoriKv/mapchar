@@ -12,6 +12,13 @@
 8. [Translate](Getting-Started#8-translate-the-strings)
 9. [Write the ROM](Getting-Started#9-write-the-rom)
 
+**[Relative Search](Relative-Search)**
+
+1. [Type a word](Relative-Search#1-type-a-word)
+2. [The settings](Relative-Search#2-the-settings)
+3. [Read the results](Relative-Search#3-read-the-results)
+4. [Build a table](Relative-Search#4-build-a-table-from-a-hit)
+
 **[Advanced Pointers](Advanced-Pointers)**
 
 1. [Pointers inside code](Advanced-Pointers#1-pointers-inside-code-link)
