@@ -281,5 +281,3 @@ moved and the pointers have new values:
 ![The ROM after writing](images/09-rom-after.png)
 
 Test the ROM in an emulator.
-
-Next: [Advanced Pointers](Advanced-Pointers).
