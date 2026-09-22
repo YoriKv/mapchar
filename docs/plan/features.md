@@ -1049,7 +1049,10 @@ The editing surface, opened on a block.
 - **A file changed on disk** by another program while it is open — an
   emulator's save, a patcher, a hex editor — is noticed, and a reload is
   offered once its bytes have actually changed; a touch that changed nothing,
-  the app's own writes, and a file that is momentarily gone ask nothing. The
+  the app's own writes, and a file that is momentarily gone ask nothing.
+  Coming back to the window looks at every open file once more, for a write
+  made where the watcher cannot see — the other side of a WSL mount, a
+  network share — or a save by rename. The
   question waits while another dialog is up, and several files changed
   together are one question, naming the entries with edits not yet written.
   **Reload** reads the files again and lays the edits made here back over

@@ -1137,7 +1137,10 @@ subscribed rather than polled, knowing that it sees nothing of a write made
 from the other side of a WSL mount or a network share. A signal only says the
 file was touched, and several come for one write, so they rest
 `CHANGE_REST_MS` before the files are looked at, and wait while another modal
-is up. What decides anything is the window's `DiskState`
+is up. The window coming to the front (`changeEvent`) looks at every open file
+once — a stat each, no timer — for the write the watcher cannot see and the
+path it dropped when a program saved by rename, which the look takes up
+again; a closed file is unsubscribed as it leaves the workspace. What decides anything is the window's `DiskState`
 (`pipeline/filechange.py`): per file, its modification time and a digest of
 its bytes as they were last read (`_load_document`), written (`apply_write`)
 or declined here. The time is the cheap question and the digest the sure one,

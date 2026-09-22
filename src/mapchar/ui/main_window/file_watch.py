@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from PySide6.QtCore import QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from mapchar.core.errors import MapcharError
@@ -57,6 +58,25 @@ class FileWatchMixin:
         self._disk_state.retain(tuple(p for e in files for p in e.paths))
         for entry in files:
             self._watch_file(entry)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        """Coming back to the window is the moment to look at every open file,
+        once: for the write the watcher cannot see — made from the other side
+        of a WSL mount, or a network share — and the path it dropped when a
+        program saved by rename. Deferred out of the activation itself, since
+        a modal shown from inside the event that made the window active is
+        shown to a window Qt has not finished activating.
+        """
+        super().changeEvent(event)
+        if event.type() is QEvent.Type.ActivationChange and self.isActiveWindow():
+            QTimer.singleShot(0, self._look_at_files)
+
+    def _look_at_files(self) -> None:
+        """One stat per open file — no timer — and the check a signal gets,
+        which takes up again any path the watcher dropped."""
+        for entry in self.workspace.files():
+            self._changed_paths.update(entry.paths)
+        self._check_changed_files()
 
     def _on_file_changed(self, path: str) -> None:
         """The watcher's signal: noted, and looked at once the signals rest."""

@@ -143,6 +143,36 @@ def test_the_watcher_itself_reaches_the_prompt(window, tmp_path, monkeypatch, qt
     assert asked == [(["rom.bin"], [])]
 
 
+def test_coming_back_to_the_window_looks_at_every_file(
+    window, tmp_path, monkeypatch, qtbot
+):
+    """What the watcher cannot see — a write from the other side of a mount, a
+    save by rename that drops the path — the one look on activation covers."""
+    import os
+
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+
+    file_entry, _ = _block(window, tmp_path)
+    asked = _answer(window, monkeypatch, False)
+    # Saved by rename: the file is a new one at the same path.
+    staged = tmp_path / "rom.bin.new"
+    staged.write_bytes(bytes.fromhex("42 41 00 41 42 00") + b"\xff" * 20)
+    os.replace(staged, file_entry.path)
+    monkeypatch.setattr(type(window), "isActiveWindow", lambda self: True)
+    QApplication.sendEvent(window, QEvent(QEvent.Type.ActivationChange))
+    qtbot.waitUntil(lambda: bool(asked), timeout=5000)
+    assert asked == [(["rom.bin"], [])]
+    # The watcher dropped the renamed-over path; whichever check runs next —
+    # this look, or the signal the drop itself sends — takes it up again.
+    qtbot.waitUntil(
+        lambda: file_entry.path in window.file_watcher.files(), timeout=5000
+    )
+    # Nothing changed since: coming back again asks nothing.
+    window._look_at_files()
+    assert len(asked) == 1
+
+
 def test_the_question_waits_while_another_dialog_is_up(window, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
