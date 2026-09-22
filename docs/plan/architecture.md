@@ -1139,7 +1139,8 @@ bytes, told against the document's `raw` — what the load read, or what the
 last write left, since `apply_write` sets it — so a touch that changed
 nothing, and the app's own writes, ask nothing. One that did change is offered
 a reload, and a declined one is remembered by a digest of the bytes declined
-until they change again. `reload_file` keeps the edits made here without a
+until they change again; File ▸ Reload from Disk (`_reload_current_file`,
+gated by `Capability.RELOAD`) asks for the file on screen outright. `reload_file` keeps the edits made here without a
 copy of the buffer to keep them in: they are the runs in which the buffer
 differs from what `raw` decodes to (`edit_runs`, in `pipeline/filechange.py`),
 and they are laid over the payload the new bytes decode to (`replay`), winning

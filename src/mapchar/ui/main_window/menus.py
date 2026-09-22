@@ -64,6 +64,9 @@ class MenuBarMixin:
         file_menu.addSeparator()
         self.write_action = act(file_menu, "&Write", self._write_current, "Ctrl+W")
         act(file_menu, "Write A&ll", self._write_all, "Ctrl+Shift+W")
+        self.reload_action = act(
+            file_menu, "Reloa&d from Disk", self._reload_current_file
+        )
         file_menu.addSeparator()
         import_menu = file_menu.addMenu("&Import")
         self.import_action = import_menu.menuAction()

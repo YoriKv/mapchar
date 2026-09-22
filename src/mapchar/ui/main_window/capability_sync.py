@@ -64,6 +64,7 @@ _GATES: dict[Capability, tuple[str, ...]] = {
     Capability.COMPRESSION_SCAN: ("decompress_action",),
     Capability.IMPORT_EXPORT: ("import_action", "export_action", "block_export"),
     Capability.WRITE: ("write_action",),
+    Capability.RELOAD: ("reload_action",),
 }
 
 # What is hidden rather than disabled. Nothing: a bar that came and went would

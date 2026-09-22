@@ -67,6 +67,7 @@ class Capability(Enum):
 
     # -- writing
     WRITE = auto()  # File ▸ Write on this entry
+    RELOAD = auto()  # File ▸ Reload from Disk on this entry's file
 
     # -- the other kind
     TABLE_EDIT = auto()  # the Table Editor over this entry's tables
@@ -85,6 +86,7 @@ _BYTE_LEVEL = frozenset(
         Capability.BLOCK_CREATE,
         Capability.BOOKMARK,
         Capability.WRITE,
+        Capability.RELOAD,
         # Here rather than with the string surfaces because importing is how
         # blocks are *created*: a Cartographer command file or an Atlas script
         # read against a whole file makes the blocks it names, so the row has to

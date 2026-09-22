@@ -117,6 +117,26 @@ class FileWatchMixin:
             return
         self.reload_file(entry)
 
+    def _reload_current_file(self) -> None:
+        """File ▸ Reload from Disk: the file on screen, asked for outright.
+
+        For the change the watcher never sees — a program that replaces the
+        file rather than writing over it, a filesystem it cannot follow — and
+        for a reload declined and wanted after all. A file that holds what it
+        held costs a read and nothing else.
+        """
+        entry = self._current_file()
+        if entry is None:
+            self.statusBar().showMessage("Nothing to reload", 3000)
+            return
+        doc = entry.doc if entry.doc is not None else self._load_document(entry)
+        if doc is None:
+            return
+        if on_disk(entry.paths) == doc.raw:
+            self.statusBar().showMessage(f"{entry.name} is up to date", 4000)
+            return
+        self.reload_file(entry)
+
     def _has_edits(self, entry: Entry) -> bool:
         """Whether the file, or a block over it, holds edits not yet written."""
         return entry.dirty or any(b.dirty for b in self.workspace.blocks_of(entry))

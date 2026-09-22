@@ -109,6 +109,28 @@ def test_the_watcher_itself_reaches_the_prompt(window, tmp_path, monkeypatch, qt
 # --- reloading --------------------------------------------------------------
 
 
+def test_reload_from_disk_reads_the_file_on_screen(window, tmp_path, monkeypatch):
+    from window_helpers import menu_actions
+
+    row = dict(menu_actions(window))["Reload from Disk"]
+    assert not row.isEnabled()
+    file_entry, block = _block(window, tmp_path)
+    assert row.isEnabled()
+    asked = _answer(window, monkeypatch, True)
+    window._reload_current_file()
+    assert window.statusBar().currentMessage() == "rom.bin is up to date"
+    window._on_translation_edited(0, "BB[end]")
+    Path(file_entry.path).write_bytes(bytes.fromhex("41 42 00 41 41 00") + b"\xff" * 20)
+    row.trigger()
+    assert not asked
+    assert [r.current_text() for r in block.doc.strings] == ["BB[end]", "AA[end]"]
+    assert window.statusBar().currentMessage() == "Reloaded rom.bin"
+    window._new_project()
+    assert not row.isEnabled()
+    window._reload_current_file()
+    assert window.statusBar().currentMessage() == "Nothing to reload"
+
+
 def test_a_changed_file_is_offered_and_reloaded(window, tmp_path, monkeypatch):
     file_entry, block = _block(window, tmp_path)
     asked = _answer(window, monkeypatch, True)
