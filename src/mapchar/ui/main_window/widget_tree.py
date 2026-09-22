@@ -8,7 +8,7 @@ that answers for a control owns its behaviour, not its construction.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QFileSystemWatcher, Qt
+from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDockWidget,
@@ -31,6 +31,7 @@ from mapchar.ui.find_row import FindRow
 from mapchar.ui.glossary_panel import GlossaryPanel
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.hex_panel import HexPanel
+from mapchar.ui.main_window.file_watch import CHANGE_REST_MS
 from mapchar.ui.main_window.navigation import CUSTOM_ID
 from mapchar.ui.number_fields import AddressEdit, AddressSpelling, HexEdit
 from mapchar.ui.preview_window import PreviewWindow
@@ -394,6 +395,15 @@ class WidgetsMixin:
         self.table_watcher.fileChanged.connect(self._on_table_file_changed)
         self.workspace.on_added.append(self._watch_table)
         self.workspace.on_reset.append(self._rewatch_tables)
+        self.file_watcher = QFileSystemWatcher(self)
+        self.file_watcher.fileChanged.connect(self._on_file_changed)
+        self._file_change_rest = QTimer(self)
+        self._file_change_rest.setSingleShot(True)
+        self._file_change_rest.setInterval(CHANGE_REST_MS)
+        self._file_change_rest.timeout.connect(self._check_changed_files)
+        self.workspace.on_added.append(self._watch_file)
+        self.workspace.on_removed.append(self._unwatch_file)
+        self.workspace.on_reset.append(self._rewatch_files)
 
     def _reset_layout(self) -> None:
         """Panels ▸ Reset Panel Layout: the arrangement a fresh install has.

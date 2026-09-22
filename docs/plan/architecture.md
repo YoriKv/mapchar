@@ -963,7 +963,7 @@ through `_push_command`.
 | Active entry and refresh | `session.py`, `refresh.py`, `capability_sync.py` |
 | Text view | `text_tab.py` (the Text tab's window, and moving it by lines) |
 | Interpretation and position | `format_bar.py` (the Format and Reading bars, the reading of the entry on screen, the encodings as tables), `navigation.py`, `history.py` |
-| Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `compression.py` (the Decompressed view's preview and the Compression picker), `structure_scan.py` (the cancellable walk over a whole file, and making a block of what it finds), `plugins.py` |
+| Entries and disk | `opening.py`, `entries.py`, `files_menu.py`, `entry_clipboard.py`, `containers.py`, `writing.py`, `file_watch.py` (noticing another program change an open file, and reading it again with the edits kept), `compression.py` (the Decompressed view's preview and the Compression picker), `structure_scan.py` (the cancellable walk over a whole file, and making a block of what it finds), `plugins.py` |
 | Tables | `table_files.py`, `table_edits.py` |
 | Raw view | `raw_view.py` |
 | Blocks and strings | `blocks.py`, `block_reading.py` (reading one block, or every block a project-wide surface goes over), `extraction.py` (cutting a block's bytes into strings, and the caches that spare it), `string_rows.py` (the Strings grid's rows), `strings_menu.py` (the grid's context menu, marks and steps), `string_edit.py`, `wrap.py`, `replacing.py` (Find and Replace over the strings' text: what is typed or the glossary's terms, one hit at a time or all), `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary panel, its undo steps, and what is asked of a term) |
@@ -1130,6 +1130,24 @@ of bytes that differed and the file's size, from `pipeline/filechange.py`. Apply
 reads the file then and moves it only while it still holds the other side; the
 disk is written by the write itself, so the command's first redo finds its
 files already there and lands the in-memory half alone.
+
+A file another program changes while it is open is noticed by
+`FileWatchMixin`'s `QFileSystemWatcher` over every file entry's paths. A signal
+only says the file was touched, and several come for one write, so they rest
+`CHANGE_REST_MS` before the file is looked at; what decides anything is its
+bytes, told against the document's `raw` — what the load read, or what the
+last write left, since `apply_write` sets it — so a touch that changed
+nothing, and the app's own writes, ask nothing. One that did change is offered
+a reload, and a declined one is remembered by a digest of the bytes declined
+until they change again. `reload_file` keeps the edits made here without a
+copy of the buffer to keep them in: they are the runs in which the buffer
+differs from what `raw` decodes to (`edit_runs`, in `pipeline/filechange.py`),
+and they are laid over the payload the new bytes decode to (`replay`), winning
+byte for byte where the two overlap. Plain blocks are handed the buffer; a
+compressed block with no edits is dropped to decompress again from the new
+bytes, and one with edits keeps its payload, as a write leaves it. Revision
+tokens stay as they are, and the undo stack with them: a step over bytes the
+disk changed lands the bytes it holds, as it does after any reload.
 
 A block edit (`BlockEditCommand`) carries the block's name, configuration,
 compression, spare-room rule and remembered room on both sides, so an undo of a

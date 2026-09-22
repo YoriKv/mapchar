@@ -1046,6 +1046,15 @@ The editing surface, opened on a block.
 - Opening, creating or saving a project with unsaved edits offers **Write All
   / Continue Without / Cancel**, as does changing a file's container, which
   reads the file from disk again.
+- **A file changed on disk** by another program while it is open — an
+  emulator's save, a patcher, a hex editor — is noticed, and a reload is
+  offered once its bytes have actually changed; a touch that changed nothing,
+  and the app's own writes, ask nothing. Reloading reads the file again and
+  lays the edits made here back over it, byte for byte, winning where the two
+  overlap; the entry stays unsaved by exactly those edits. A block over a
+  compressed region with no edits decompresses again from the new bytes, and
+  one with edits keeps them. A reload declined is not asked for again until
+  the file changes again.
 
 ## Export and import
 

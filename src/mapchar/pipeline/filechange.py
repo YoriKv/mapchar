@@ -10,7 +10,17 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-__all__ = ["FileChange", "current_bytes", "existing_bytes"]
+__all__ = [
+    "FileChange",
+    "current_bytes",
+    "edit_runs",
+    "existing_bytes",
+    "on_disk",
+    "replay",
+]
+
+_CHUNK = 4096
+"""How many bytes :func:`edit_runs` compares at a time before looking closer."""
 
 
 def current_bytes(path: str) -> bytes:
@@ -28,6 +38,68 @@ def current_bytes(path: str) -> bytes:
 def existing_bytes(paths: tuple[str, ...]) -> dict[str, bytes]:
     """What each destination holds right now, keyed by path."""
     return {p: current_bytes(p) for p in paths}
+
+
+def on_disk(paths: tuple[str, ...]) -> bytes:
+    """What the files hold right now, end to end — the shape a load's ``raw``
+    has, so the two can be compared."""
+    return b"".join(current_bytes(p) for p in paths)
+
+
+def edit_runs(before: bytes, after: bytes) -> tuple[tuple[int, bytes], ...]:
+    """The runs of bytes in which ``after`` differs from ``before``, each as
+    ``(offset, bytes)`` in ``after``, in order.
+
+    What a buffer's edits are, apart from the bytes they were made over, so
+    they can be laid over other bytes (:func:`replay`). Whole chunks are
+    compared first, since a buffer of megabytes with a handful of edits is the
+    usual case. Bytes ``after`` has past ``before``'s end are one run; bytes
+    it lacks are not a run at all, there being nothing to lay over.
+    """
+    runs: list[tuple[int, bytes]] = []
+    limit = min(len(before), len(after))
+    start: int | None = None
+    at = 0
+    while at < limit:
+        end = min(at + _CHUNK, limit)
+        if before[at:end] == after[at:end]:
+            if start is not None:
+                runs.append((start, after[start:at]))
+                start = None
+        else:
+            for i in range(at, end):
+                if before[i] != after[i]:
+                    if start is None:
+                        start = i
+                elif start is not None:
+                    runs.append((start, after[start:i]))
+                    start = None
+        at = end
+    if len(after) > limit:
+        # The tail joins a run still open at the end, so each run is one splice.
+        start = limit if start is None else start
+        runs.append((start, after[start:]))
+    elif start is not None:
+        runs.append((start, after[start:limit]))
+    return tuple(runs)
+
+
+def replay(runs: tuple[tuple[int, bytes], ...], base: bytes) -> bytes:
+    """``base`` with ``runs`` laid over it, each at its offset.
+
+    The runs win wherever they overlap what ``base`` holds — they are the
+    edits, and ``base`` is what the disk says now. One that reaches past the
+    end lengthens the result, padded with ``$FF`` up to it when ``base`` is
+    shorter than the buffer the run was made in.
+    """
+    if not runs:
+        return base
+    out = bytearray(base)
+    for offset, chunk in runs:
+        if offset > len(out):
+            out.extend(b"\xff" * (offset - len(out)))
+        out[offset : offset + len(chunk)] = chunk
+    return bytes(out)
 
 
 @dataclass(frozen=True)

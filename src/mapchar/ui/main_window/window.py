@@ -49,6 +49,7 @@ from mapchar.ui.main_window.containers import ContainerMixin
 from mapchar.ui.main_window.entries import EntriesMixin
 from mapchar.ui.main_window.entry_clipboard import EntryClipboardMixin
 from mapchar.ui.main_window.extraction import ExtractionMixin
+from mapchar.ui.main_window.file_watch import FileWatchMixin
 from mapchar.ui.main_window.files_menu import FilesMenuMixin
 from mapchar.ui.main_window.format_bar import FormatBarMixin
 from mapchar.ui.main_window.glossary import GlossaryMixin
@@ -103,6 +104,7 @@ class MainWindow(
     StructureScanMixin,
     PluginsMixin,
     TableFilesMixin,
+    FileWatchMixin,
     TableEditorMixin,
     RawViewMixin,
     BlocksMixin,
@@ -196,6 +198,13 @@ class MainWindow(
         """Restarted by every move of a dragged view, so the refresh the drag
         put off runs once it stops (:meth:`_refresh_view`)."""
         self._selection: tuple[int, int] | None = None
+        self._changed_paths: set[str] = set()
+        """The files the watcher reported since they were last looked at
+        (:mod:`mapchar.ui.main_window.file_watch`)."""
+        self._checking_files = False
+        self._declined_disk: dict[str, bytes] = {}
+        """Per file, a digest of the bytes on disk whose reload was declined,
+        so the same state is not asked about twice."""
         self._bars_show: tuple | None = None
         """The entry and reading the bars were last loaded with."""
         self._string_bounds: tuple[int, int] | None = None
