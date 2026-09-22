@@ -648,6 +648,10 @@ class WriteSide:
     live: int
     saved: int
     blocks: tuple[BlockSide, ...]
+    base: bytes = b""
+    """What the file's buffer decodes from on this side: the bytes as read on
+    the side before a write, the written bytes after it — so a reload after an
+    undone write still knows which bytes are the edits."""
     wrote: bool = False
     """Whether landing this side is the write rather than the undo of one.
 

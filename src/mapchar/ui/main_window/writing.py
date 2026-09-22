@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 
 from mapchar.core.errors import MapcharError
-from mapchar.pipeline.filechange import FileChange, existing_bytes, on_disk
+from mapchar.pipeline.filechange import FileChange, existing_bytes
 from mapchar.pipeline.insert import Splice, apply_splices
 from mapchar.pipeline.pipeline import (
     FileRef,
@@ -13,7 +13,7 @@ from mapchar.pipeline.pipeline import (
     compress_for_slot,
     save,
 )
-from mapchar.project.entry import Entry, EntryKind, normalize_path
+from mapchar.project.entry import Entry, EntryKind
 from mapchar.ui.dialogs import TextDialog
 from mapchar.ui.undo_commands import BlockSide, BytesCommand, WriteCommand, WriteSide
 
@@ -226,6 +226,7 @@ class WritingMixin:
                 )
                 for block, payload in written
             ),
+            parent_doc.base,
         )
         after = WriteSide(
             files,
@@ -241,6 +242,7 @@ class WritingMixin:
                 )
                 for block, payload in written
             ),
+            new_data,
             wrote=True,
         )
         return WriteCommand(self, file_entry, before, after)
@@ -269,10 +271,9 @@ class WritingMixin:
         if doc is None:
             return
         doc.data = side.data
-        # The disk now holds what this document says, and the watcher tells a
-        # change against that rather than against the load.
-        doc.raw = on_disk(entry.paths)
-        self._declined_disk.pop(normalize_path(entry.path), None)
+        doc.base = side.base
+        # This program's own write, not someone else's change.
+        self._disk_state.record(entry.paths)
         self.workspace.set_revisions(entry, side.live, side.saved)
         written = []
         for bs in side.blocks:

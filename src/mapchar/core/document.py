@@ -17,14 +17,20 @@ class Document:
     ctx: PipelineContext
     writable: bool
     raw: bytes = b""
-    """The file bytes as this document last met them, before the container ran:
-    what the load read, or what the last write left on disk.
+    """The file bytes as the load read them, before the container ran.
 
-    A record, not a write-back buffer: a save reads the destination again at
-    the moment it writes, so that nothing captured here can undo a change made
-    to the file since. It is what a change on disk is told against, and what
-    :attr:`data` decodes from, so the edits made here are the difference
-    between the two.
+    A record of what was opened, not a write-back buffer: a save reads the
+    destination again at the moment it writes, so that nothing captured here can
+    undo a change made to the file since.
+    """
+    base: bytes = b""
+    """Files: :attr:`data` as it was read, or as the last write left it.
+
+    The edits made here are the bytes in which :attr:`data` differs from it,
+    which is what a reload from disk lays over the file's new contents
+    (:func:`~mapchar.pipeline.filechange.merge`). One object with :attr:`data`
+    until the first edit, since bytes are immutable, so it costs nothing
+    before one. Empty on a block, whose reload is its file's.
     """
     missing_plugins: list[str] = field(default_factory=list)
     table_set: TableSet | None = None

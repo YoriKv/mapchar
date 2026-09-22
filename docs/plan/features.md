@@ -1049,15 +1049,21 @@ The editing surface, opened on a block.
 - **A file changed on disk** by another program while it is open — an
   emulator's save, a patcher, a hex editor — is noticed, and a reload is
   offered once its bytes have actually changed; a touch that changed nothing,
-  and the app's own writes, ask nothing. Reloading reads the file again and
-  lays the edits made here back over it, byte for byte, winning where the two
-  overlap; the entry stays unsaved by exactly those edits. A block over a
-  compressed region with no edits decompresses again from the new bytes, and
-  one with edits keeps them. A reload declined is not asked for again until
-  the file changes again. **File ▸ Reload from Disk** asks for the same of
-  the file on screen outright — what a program that replaces the file rather
-  than writing over it leaves the watcher blind to, and a way back to a
-  reload declined — and says when the file is up to date.
+  the app's own writes, and a file that is momentarily gone ask nothing. The
+  question waits while another dialog is up, and several files changed
+  together are one question, naming the entries with edits not yet written.
+  **Reload** reads the files again and lays the edits made here back over
+  them, byte for byte, winning where the two overlap; the entry stays unsaved
+  by exactly those edits, and the status bar says how many edited bytes were
+  kept, how many of them the disk had changed too, and how many were dropped
+  past the end of a file that shrank. A block over a compressed region with no
+  edits decompresses again from the new bytes, and one with edits keeps them.
+  **Keep In Memory** leaves the window as it is, and is not asked again until
+  the file changes again; a later Write then puts the buffer over the other
+  program's change. **File ▸ Reload from Disk** asks for the same of the file
+  on screen outright — what a program that replaces the file rather than
+  writing over it leaves the watcher blind to, and the way back to a reload
+  declined — and says when the file is up to date.
 
 ## Export and import
 

@@ -7,20 +7,22 @@ version, and every check against the disk is made at the moment it is made.
 
 from __future__ import annotations
 
+import hashlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 __all__ = [
+    "DiskState",
     "FileChange",
+    "Merge",
     "current_bytes",
-    "edit_runs",
     "existing_bytes",
-    "on_disk",
-    "replay",
+    "fingerprint",
+    "merge",
 ]
 
 _CHUNK = 4096
-"""How many bytes :func:`edit_runs` compares at a time before looking closer."""
+"""How many bytes :func:`_runs` compares at a time before looking closer."""
 
 
 def current_bytes(path: str) -> bytes:
@@ -40,21 +42,14 @@ def existing_bytes(paths: tuple[str, ...]) -> dict[str, bytes]:
     return {p: current_bytes(p) for p in paths}
 
 
-def on_disk(paths: tuple[str, ...]) -> bytes:
-    """What the files hold right now, end to end — the shape a load's ``raw``
-    has, so the two can be compared."""
-    return b"".join(current_bytes(p) for p in paths)
-
-
-def edit_runs(before: bytes, after: bytes) -> tuple[tuple[int, bytes], ...]:
+def _runs(before: bytes, after: bytes) -> tuple[tuple[int, bytes], ...]:
     """The runs of bytes in which ``after`` differs from ``before``, each as
     ``(offset, bytes)`` in ``after``, in order.
 
-    What a buffer's edits are, apart from the bytes they were made over, so
-    they can be laid over other bytes (:func:`replay`). Whole chunks are
-    compared first, since a buffer of megabytes with a handful of edits is the
-    usual case. Bytes ``after`` has past ``before``'s end are one run; bytes
-    it lacks are not a run at all, there being nothing to lay over.
+    Whole chunks are compared first, since a buffer of megabytes with a
+    handful of edits is the usual case. Bytes ``after`` has past ``before``'s
+    end are one run; bytes it lacks are not a run at all, there being nothing
+    to lay over.
     """
     runs: list[tuple[int, bytes]] = []
     limit = min(len(before), len(after))
@@ -84,22 +79,137 @@ def edit_runs(before: bytes, after: bytes) -> tuple[tuple[int, bytes], ...]:
     return tuple(runs)
 
 
-def replay(runs: tuple[tuple[int, bytes], ...], base: bytes) -> bytes:
-    """``base`` with ``runs`` laid over it, each at its offset.
+@dataclass(frozen=True)
+class Merge:
+    """What :func:`merge` produced, and how much of the edits it carried."""
 
-    The runs win wherever they overlap what ``base`` holds — they are the
-    edits, and ``base`` is what the disk says now. One that reaches past the
-    end lengthens the result, padded with ``$FF`` up to it when ``base`` is
-    shorter than the buffer the run was made in.
+    data: bytes
+    kept: int
+    """Bytes the edits changed that were laid onto the new contents."""
+    conflicts: int
+    """Of those, the bytes the disk changed too: the edit won there, and these
+    are the places worth a look."""
+    dropped: int
+    """Edited bytes past the end of the new contents, which had nowhere to
+    land: the file shrank under an edit near its end."""
+
+
+def merge(base: bytes, local: bytes, disk: bytes) -> Merge:
+    """``disk`` with every byte ``local`` changed since ``base`` laid over it.
+
+    The three-way merge a reload runs: ``base`` is the buffer as it was read
+    or last written here, ``local`` the same buffer with the edits in it, and
+    ``disk`` what the file decodes to now. Wherever ``local`` differs from
+    ``base`` the edit wins — carrying it is the whole point — and everywhere
+    else the new contents stand. A byte both sides changed is a conflict the
+    edit still wins, since a silent revert of the user's own work is the one
+    outcome a reload exists to prevent, and it is counted so it can be said.
+    An edit past the end of ``disk`` — the file shrank under it, or the edit
+    lengthened the buffer — has nowhere to land, and is dropped and counted.
     """
+    runs = _runs(base, local)
     if not runs:
-        return base
-    out = bytearray(base)
+        return Merge(disk, 0, 0, 0)
+    out = bytearray(disk)
+    kept = conflicts = dropped = 0
     for offset, chunk in runs:
-        if offset > len(out):
-            out.extend(b"\xff" * (offset - len(out)))
-        out[offset : offset + len(chunk)] = chunk
-    return bytes(out)
+        room = max(0, min(len(chunk), len(out) - offset))
+        dropped += len(chunk) - room
+        if not room:
+            continue
+        for i in range(room):
+            at = offset + i
+            was = base[at] if at < len(base) else None
+            if out[at] != was and out[at] != chunk[i]:
+                conflicts += 1
+        out[offset : offset + room] = chunk[:room]
+        kept += room
+    return Merge(bytes(out), kept, conflicts, dropped)
+
+
+Fingerprint = tuple[int, bytes]
+"""A file's modification time and a digest of its bytes."""
+
+
+def _digest(data: bytes) -> bytes:
+    return hashlib.blake2b(data, digest_size=16).digest()
+
+
+def fingerprint(path: str) -> Fingerprint | None:
+    """``(mtime_ns, digest)`` for ``path``, or ``None`` while it cannot be read:
+    mid-rename, or gone."""
+    try:
+        mtime = os.stat(path).st_mtime_ns
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    return (mtime, _digest(data))
+
+
+def _key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+@dataclass
+class DiskState:
+    """What each open file looked like the last time this program read or
+    wrote it, so a look at the disk can say whether someone else changed it.
+
+    The time is the cheap question and the digest the sure one: a file whose
+    time has not moved is not read, and one whose time moved but whose bytes
+    digest the same — a touch, a rewrite of the same bytes — is noted as seen
+    and reported as nothing. A digest rather than the bytes, since the
+    document keeps those already, and rather than the size, which a rewrite
+    of a ROM never changes.
+    """
+
+    _seen: dict[str, Fingerprint] = field(default_factory=dict)
+
+    def record(self, paths: tuple[str, ...]) -> None:
+        """Take ``paths`` as they are now: read, written or declined here."""
+        for path in paths:
+            now = fingerprint(path)
+            if now is None:
+                self._seen.pop(_key(path), None)
+            else:
+                self._seen[_key(path)] = now
+
+    def forget(self, paths: tuple[str, ...]) -> None:
+        for path in paths:
+            self._seen.pop(_key(path), None)
+
+    def retain(self, paths: tuple[str, ...]) -> None:
+        """Stop knowing everything but ``paths``: the files still open."""
+        keep = {_key(p) for p in paths}
+        for key in list(self._seen):
+            if key not in keep:
+                del self._seen[key]
+
+    def changed(self, path: str) -> bool:
+        """Whether ``path`` holds other bytes than when it was last recorded.
+
+        A path never recorded, or one that cannot be read right now, is not a
+        change: the first has nothing to have gone stale, and the second is
+        mid-rename or deleted, and neither is something to reload.
+        """
+        key = _key(path)
+        seen = self._seen.get(key)
+        if seen is None:
+            return False
+        try:
+            mtime = os.stat(path).st_mtime_ns
+        except OSError:
+            return False
+        if mtime == seen[0]:
+            return False
+        now = fingerprint(path)
+        if now is None:
+            return False
+        if now[1] == seen[1]:
+            self._seen[key] = now
+            return False
+        return True
 
 
 @dataclass(frozen=True)

@@ -1132,23 +1132,33 @@ disk is written by the write itself, so the command's first redo finds its
 files already there and lands the in-memory half alone.
 
 A file another program changes while it is open is noticed by
-`FileWatchMixin`'s `QFileSystemWatcher` over every file entry's paths. A signal
-only says the file was touched, and several come for one write, so they rest
-`CHANGE_REST_MS` before the file is looked at; what decides anything is its
-bytes, told against the document's `raw` — what the load read, or what the
-last write left, since `apply_write` sets it — so a touch that changed
-nothing, and the app's own writes, ask nothing. One that did change is offered
-a reload, and a declined one is remembered by a digest of the bytes declined
-until they change again; File ▸ Reload from Disk (`_reload_current_file`,
-gated by `Capability.RELOAD`) asks for the file on screen outright. `reload_file` keeps the edits made here without a
-copy of the buffer to keep them in: they are the runs in which the buffer
-differs from what `raw` decodes to (`edit_runs`, in `pipeline/filechange.py`),
-and they are laid over the payload the new bytes decode to (`replay`), winning
-byte for byte where the two overlap. Plain blocks are handed the buffer; a
-compressed block with no edits is dropped to decompress again from the new
-bytes, and one with edits keeps its payload, as a write leaves it. Revision
-tokens stay as they are, and the undo stack with them: a step over bytes the
-disk changed lands the bytes it holds, as it does after any reload.
+`FileWatchMixin`'s `QFileSystemWatcher` over every file entry's paths —
+subscribed rather than polled, knowing that it sees nothing of a write made
+from the other side of a WSL mount or a network share. A signal only says the
+file was touched, and several come for one write, so they rest
+`CHANGE_REST_MS` before the files are looked at, and wait while another modal
+is up. What decides anything is the window's `DiskState`
+(`pipeline/filechange.py`): per file, its modification time and a digest of
+its bytes as they were last read (`_load_document`), written (`apply_write`)
+or declined here. The time is the cheap question and the digest the sure one,
+so a touch that changed nothing, the app's own writes and a file that is
+missing — mid-rename, or gone — ask nothing. The files that did change are
+put as one question, **Reload** or **Keep In Memory**, naming the entries
+with edits not yet written; File ▸ Reload from Disk (`_reload_current_file`,
+gated by `Capability.RELOAD`) asks for the file on screen outright, and is
+the way back to a reload declined. `reload_file` keeps the edits made here
+through `Document.base`, the payload as read or as the last write left it —
+one object with `data` until the first edit, and carried on both sides of a
+`WriteSide` so an undone write still knows which bytes are the edits. The
+edits are the bytes in which `data` differs from `base`, and `merge` lays them
+over the payload the new bytes decode to, winning byte for byte where the two
+overlap, counting the bytes kept, the bytes the disk changed too and the bytes
+dropped past a shrunk file's end, which the status bar says. Plain blocks are
+handed the buffer; a compressed block with no edits is dropped to decompress
+again from the new bytes, and one with edits keeps its payload, as a write
+leaves it. Revision tokens stay as they are, and the undo stack with them: a
+step over bytes the disk changed lands the bytes it holds, as it does after
+any reload.
 
 A block edit (`BlockEditCommand`) carries the block's name, configuration,
 compression, spare-room rule and remembered room on both sides, so an undo of a

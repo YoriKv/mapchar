@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from mapchar import APP_NAME
 from mapchar.core.bits import Bits
 from mapchar.core.document import Document
+from mapchar.pipeline.filechange import DiskState
 from mapchar.pipeline.text_view import TextDecode
 from mapchar.plugins.registry import Registry, default_registry
 from mapchar.project.entry import Entry
@@ -202,9 +203,9 @@ class MainWindow(
         """The files the watcher reported since they were last looked at
         (:mod:`mapchar.ui.main_window.file_watch`)."""
         self._checking_files = False
-        self._declined_disk: dict[str, bytes] = {}
-        """Per file, a digest of the bytes on disk whose reload was declined,
-        so the same state is not asked about twice."""
+        self._disk_state = DiskState()
+        """What each open file held when it was last read, written or declined
+        here, so the watcher's signal can be told from a change."""
         self._bars_show: tuple | None = None
         """The entry and reading the bars were last loaded with."""
         self._string_bounds: tuple[int, int] | None = None

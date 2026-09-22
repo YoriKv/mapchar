@@ -100,9 +100,13 @@ class SessionMixin:
                     loaded.ctx,
                     loaded.writable,
                     loaded.raw,
-                    loaded.missing_plugins,
+                    base=loaded.data,
+                    missing_plugins=loaded.missing_plugins,
                 )
                 entry.missing = False
+                # What the files held for this read is what a change on disk
+                # is told against from here.
+                self._disk_state.record(entry.paths)
             elif entry.kind is EntryKind.BLOCK and entry.parent is not None:
                 parent_doc = self._load_document(entry.parent)
                 if parent_doc is None:
