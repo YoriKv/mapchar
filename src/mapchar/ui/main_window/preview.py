@@ -53,11 +53,6 @@ class PreviewMixin:
             return
         self._push_command(BoxCommand(self, entry, entry.box, box))
 
-    def _on_preview_font_changed(self) -> None:
-        """The app's preview font changed: every surface measured through it —
-        the *overflows box* status above all — is drawn again."""
-        self._refresh_view()
-
     def apply_box(self, entry: Entry, box: TextBox | None, revision: int) -> None:
         entry.box = box
         self.workspace.stamp(entry, revision)

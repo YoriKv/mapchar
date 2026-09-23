@@ -247,10 +247,6 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
                 "Marked done, by hand or by an import",
             ),
             (
-                Swatch("overflows box", ink=theme.ERROR_INK),
-                "The text does not fit the block's Preview box",
-            ),
-            (
                 Swatch("unwritten", ink=theme.ERROR_INK),
                 "A translation the bytes refused, kept unwritten",
             ),

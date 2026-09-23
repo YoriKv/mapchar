@@ -79,8 +79,8 @@ class TextBox:
     effects: dict[str, CodeEffect] = field(default_factory=dict)
     """Code label to its layout effect."""
     chars_per_line: int = 0
-    """How many characters a line holds; 0 sets no limit. With it, *overflows
-    box* and Wrap work by counting characters rather than measuring them."""
+    """How many characters a line holds; 0 sets no limit. With it, the
+    preview and Wrap work by counting characters rather than measuring them."""
 
     @property
     def max_lines(self) -> int:

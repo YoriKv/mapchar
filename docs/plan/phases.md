@@ -84,7 +84,7 @@ Edit strings beside the original and write them back in place.
 ## 6. Layout and preview
 
 - The app's system preview font; text boxes; code
-  effects; the Preview window; the *overflows box* status; Wrap.
+  effects; the Preview window and its Box tab; Wrap.
 - Complete when the fixtures' strings render in the preview font and Wrap
   produces strings that no longer overflow.
 - Everything listed above exists.

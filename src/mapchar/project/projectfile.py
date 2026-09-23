@@ -556,7 +556,7 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
         # happened rather than naming a kind nobody recognises.
         raise ValueError(
             "glyph-sheet fonts are gone; the Preview draws every block in the "
-            "system font its Font tab picks"
+            "system font its Preview tab picks"
         )
     kind = EntryKind(raw["kind"])
     path = _abs(raw.get("path"), base)

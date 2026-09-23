@@ -77,7 +77,7 @@ No layout's minimum size may be set by text or a count that varies.
 - **Fields** keep a minimum from `fit_chars`, so no layout squeezes one below
   what it holds; pickers in a bar are `CompactComboBox`es of a stated width —
   `PICKER_WIDTH` unless one whose items are shorter or longer passes its own.
-- **Content that grows** scrolls: the Preview canvas and the raw view, which
+- **Content that grows** scrolls: the Preview canvas, the Box tab's picture and the raw view, which
   scrolls sideways when narrower than its rows. The Hex and Text tabs are the exception: each holds the window its
   box has room for, and what does not fit is reached by moving the view — its
   scrollbar is the file's (or the stretch of it the view is confined to),

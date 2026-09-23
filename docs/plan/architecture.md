@@ -180,8 +180,8 @@ in bytes, which is the unit their results are reported and selected in.
   *untouched* are settled from the bits' checksum (`refresh_status`), with the
   text as the fallback for an original saved before digests and as the
   tie-break when a re-encode reaches the same text through other codes;
-  *review* and *done* are set by hand and stay (`HELD`); *overflows box* and
-  *unwritten* are a row's to say, never stored as a status.
+  *review* and *done* are set by hand and stay (`HELD`); *unwritten* is a
+  row's to say, never stored as a status.
 - **`PointerRef`** — `address`, `size`, `endian`, `mapping_id`, `offset`, and
   the `value` read from disk. A nested source's inner pointer is `linear`, its
   `offset` the base of its group.
@@ -1016,8 +1016,9 @@ covers and how it reads on one line, and script text with its codes left out,
 with no Qt), `ui/alphabets.py` (the canned runs of characters a fill offers,
 which name the relative search's runs too), `ui/preview_font.py` (`PreviewFont`, the
 app's one system font and the `Font` values it measures),
-`ui/preview_render.py` (a laid-out page drawn into an image), `ui/font_tab.py`
-(`FontTab`, which picks that font), `ui/entry_tree.py` (the Files tree's drags and keys),
+`ui/preview_render.py` (a laid-out page drawn into an image), `ui/box_editor.py`
+(`BoxEditor`, the Box tab's picture of the box with its edges and origin to
+drag), `ui/entry_tree.py` (the Files tree's drags and keys),
 `ui/entry_text.py` (what a Files row says, with no Qt), `ui/kind_names.py`
 (what the window calls a source kind and a string type, in one table, with no
 Qt), `ui/skips_picker.py`

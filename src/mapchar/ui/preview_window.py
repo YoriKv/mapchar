@@ -1,15 +1,22 @@
-"""The Preview window: a string drawn through a font into its text box."""
+"""The Preview window: a string drawn through a font into its text box.
+
+The font is the app's, not a block's — one family and size for every preview,
+stored beside the theme (:mod:`mapchar.ui.preview_font`) and picked on the
+Preview tab, under the page. The box is the block's: the Box tab draws it with
+its edges to drag (:mod:`mapchar.ui.box_editor`) over the fields that spell it.
+"""
 
 from __future__ import annotations
 
 from dataclasses import replace
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPalette, QPixmap
+from PySide6.QtGui import QFont, QImage, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
-    QFormLayout,
+    QFontComboBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -21,23 +28,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mapchar.core.font import CodeEffect, Effect, TextBox
+from mapchar.core.font import CodeEffect, Effect, Font, TextBox
 from mapchar.core.numbers import clamp
 from mapchar.core.tokens import Token
 from mapchar.engines.layout import Layout, layout, unspellable, with_code_effects
-from mapchar.ui.font_tab import FontTab
+from mapchar.ui.box_editor import BoxEditor
 from mapchar.ui.glyphs import Glyph
 from mapchar.ui.icon_font import ThemedIcons, themed_icon
 from mapchar.ui.number_fields import number_spin
-from mapchar.ui.preview_font import preview_font
+from mapchar.ui.preview_font import MAX_SIZE, MIN_SIZE, preview_font
 from mapchar.ui.preview_render import render
 from mapchar.ui.tool_window import ToolWindow
 from mapchar.ui.widgets import ElidedLabel, show_elided_tooltips
 
 
 class PreviewWindow(ThemedIcons, ToolWindow):
-    font_changed = Signal()
-    """The app's preview font changed: redraw whatever was drawn through it."""
     box_changed = Signal(object)
     """A new TextBox value for the current block."""
     wrap_requested = Signal()
@@ -70,7 +75,7 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         canvas_scroll.setWidgetResizable(True)
         pv.addWidget(canvas_scroll, 1)
         # The status has a line of its own: it is the part of the tab that says
-        # whether the string fits, and beside the buttons it had no room.
+        # how the string sits, and beside the buttons it had no room.
         self.status = ElidedLabel("")
         pv.addWidget(self.status)
         row = QHBoxLayout()
@@ -100,19 +105,34 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         row.addWidget(self.wrap)
         row.addWidget(self.copy)
         pv.addLayout(row)
+        # The font: the app's, standing in for the game's own.
+        font_row = QHBoxLayout()
+        self.family = QFontComboBox()
+        self.family.setToolTip(
+            "Font family for every preview: one for the whole app, not for this "
+            "block, standing in for the game's own"
+        )
+        self.font_size = number_spin(MIN_SIZE, MAX_SIZE, 2)
+        self.font_size.setToolTip("Point size for drawing and measuring")
+        font_row.addWidget(QLabel("Font"))
+        font_row.addWidget(self.family, 1)
+        font_row.addWidget(QLabel("Size"))
+        font_row.addWidget(self.font_size)
+        pv.addLayout(font_row)
         self.readout = ElidedLabel("")
         self.readout.setToolTip("Bytes the draft encodes to, of its room")
         pv.addWidget(self.readout)
         self.tabs.addTab(preview, "Preview")
 
-        # Font tab.
-        self.font_tab = FontTab()
-        self.font_tab.font_changed.connect(self._on_font_changed)
-        self.tabs.addTab(self.font_tab, "Font")
-
-        # Box tab.
+        # Box tab: the box drawn with its edges to drag, over the fields.
         box_tab = QWidget()
-        bf = QFormLayout(box_tab)
+        bv = QVBoxLayout(box_tab)
+        self.editor = BoxEditor(self._page_image)
+        editor_scroll = QScrollArea()
+        editor_scroll.setWidget(self.editor)
+        editor_scroll.setWidgetResizable(True)
+        bv.addWidget(editor_scroll, 1)
+        bf = QGridLayout()
         self.box_w = number_spin(1, 1024, 3)
         self.box_h = number_spin(1, 1024, 3)
         self.line_h = number_spin(1, 128, 2)
@@ -120,12 +140,12 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         self.lines = number_spin(0, 64, 2, special="fit")
         self.chars = number_spin(0, 999, 3, special="off")
         self.chars.setToolTip(
-            "Characters per line; when set, overflows box and Wrap count characters "
+            "Characters per line; when set, the preview and Wrap count characters "
             "instead of measuring them"
         )
         self.origin_x = number_spin(0, 1024, 3)
         self.origin_y = number_spin(0, 1024, 3)
-        for label, w in (
+        fields = (
             ("Width", self.box_w),
             ("Height", self.box_h),
             ("Line height", self.line_h),
@@ -134,8 +154,13 @@ class PreviewWindow(ThemedIcons, ToolWindow):
             ("Chars per line", self.chars),
             ("Origin X", self.origin_x),
             ("Origin Y", self.origin_y),
-        ):
-            bf.addRow(label, w)
+        )
+        for i, (label, w) in enumerate(fields):
+            r, c = divmod(i, 2)
+            bf.addWidget(QLabel(label), r, 2 * c)
+            bf.addWidget(w, r, 2 * c + 1)
+        bf.setColumnStretch(4, 1)
+        bv.addLayout(bf)
         self.tabs.addTab(box_tab, "Box")
 
         # Codes tab.
@@ -148,12 +173,16 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         cv.addWidget(self.codes)
         self.tabs.addTab(codes_tab, "Codes")
 
+        self._reload_font()
         self.prev.clicked.connect(lambda: self._set_page(self._page - 1))
         self.next.clicked.connect(lambda: self._set_page(self._page + 1))
         self.zoom.valueChanged.connect(lambda _: self._paint())
         self.grid.toggled.connect(lambda _: self._paint())
         self.wrap.clicked.connect(self.wrap_requested)
         self.copy.clicked.connect(self._copy)
+        self.family.currentFontChanged.connect(lambda _: self._on_font_edited())
+        self.font_size.valueChanged.connect(lambda _: self._on_font_edited())
+        self.editor.box_changed.connect(self._on_box_dragged)
         for w in (
             self.box_w,
             self.box_h,
@@ -175,11 +204,24 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         self.prev.setIcon(themed_icon(self, Glyph.ARROW_LEFT, role))
         self.next.setIcon(themed_icon(self, Glyph.ARROW_RIGHT, role))
 
-    def _on_font_changed(self) -> None:
-        """The Font tab picked another family: redraw, and tell the window so
-        every other surface measured through it catches up."""
+    def _reload_font(self) -> None:
+        """Show what the app's preview font is now."""
+        chosen = preview_font()
+        self._syncing = True
+        try:
+            self.family.setCurrentFont(QFont(chosen.family))
+            self.font_size.setValue(chosen.size)
+        finally:
+            self._syncing = False
+
+    def _on_font_edited(self) -> None:
+        """The Preview tab picked another family or size: it is the app's
+        font now, and the page is drawn again through it."""
+        if self._syncing:
+            return
+        family = self.family.currentFont().family()
+        preview_font().set_font(family, self.font_size.value())
         self._paint()
-        self.font_changed.emit()
 
     def update_box(self, box: TextBox) -> None:
         """A new value for the box the fields already show: redraw only."""
@@ -227,6 +269,7 @@ class PreviewWindow(ThemedIcons, ToolWindow):
                 self.codes.setItem(r, 2, QTableWidgetItem(str(effect.value)))
         finally:
             self._syncing = False
+        self._paint()
 
     def show_string(self, source: list[Token] | str, title: str) -> None:
         self.setWindowTitle(f"Preview — {title}")
@@ -234,21 +277,40 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         self._page = 0
         self._paint()
 
+    def _laid_out(self, box: TextBox) -> tuple[Layout, Font, TextBox, QFont]:
+        """The string on screen placed in ``box``, with the font it was
+        measured through, the box with its codes' effects, and the font drawn
+        with."""
+        chosen = preview_font()
+        font = chosen.measured(self._source)
+        full = with_code_effects(box, self._defaults)
+        return layout(self._source, font, full), font, full, chosen.qfont
+
+    def _page_image(self, box: TextBox) -> QImage | None:
+        """The page on screen drawn into ``box``, for the Box tab; ``None``
+        with nothing to draw."""
+        if self._source is None:
+            return None
+        result, font, full, qfont = self._laid_out(box)
+        page = clamp(self._page, 0, result.pages - 1)
+        return render(
+            result, font, full, qfont, page, self.zoom.value(), self.grid.isChecked()
+        )
+
     def _paint(self) -> None:
         source = self._source
         if source is None:
             self.canvas.clear()
             self.status.setText("Select a string to preview.")
+            self.editor.show_box(self._box, self.zoom.value())
             return
-        chosen = preview_font()
-        font = chosen.measured(source)
-        box = with_code_effects(self._box, self._defaults)
-        result = self._result = layout(source, font, box)
+        result, font, box, qfont = self._laid_out(self._box)
+        self._result = result
         image = render(
             result,
             font,
             box,
-            chosen.qfont,
+            qfont,
             self._page,
             self.zoom.value(),
             self.grid.isChecked(),
@@ -268,13 +330,11 @@ class PreviewWindow(ThemedIcons, ToolWindow):
         self.status.setText("  ·  ".join(parts))
         self.prev.setEnabled(self._page > 0)
         self.next.setEnabled(self._page + 1 < result.pages)
+        self.editor.show_box(self._box, self.zoom.value())
 
     def set_readout(self, text: str) -> None:
         """The byte budget of the draft being typed, from the window."""
         self.readout.setText(text)
-
-    def overflows(self) -> bool:
-        return bool(self._result and self._result.overflows)
 
     def _set_page(self, page: int) -> None:
         if self._result is None:
@@ -318,10 +378,25 @@ class PreviewWindow(ThemedIcons, ToolWindow):
             effects=effects,
         )
 
+    def _on_box_dragged(self, box: TextBox) -> None:
+        """The Box tab's picture was dragged: the fields take its size and
+        origin, and the box goes out once."""
+        self._syncing = True
+        try:
+            self.box_w.setValue(box.width)
+            self.box_h.setValue(box.height)
+            self.origin_x.setValue(box.origin_x)
+            self.origin_y.setValue(box.origin_y)
+        finally:
+            self._syncing = False
+        self._emit_box()
+
     def _emit_box(self) -> None:
         if self._syncing:
             return
-        self.box_changed.emit(self.current_box())
+        self._box = self.current_box()
+        self._paint()
+        self.box_changed.emit(self._box)
 
 
 __all__ = ["PreviewWindow"]

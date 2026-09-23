@@ -9,7 +9,7 @@ from dataclasses import replace
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent, QTextCursor, QTextDocument
 
-from mapchar.core.block import RangeSource, Status
+from mapchar.core.block import RangeSource
 from mapchar.core.font import TextBox
 from mapchar.core.tokens import piece_spans
 from mapchar.engines import scriptfind
@@ -371,8 +371,8 @@ def test_the_preview_draws_in_the_app_font_and_names_what_it_cannot(qtbot):
         assert "\ue000" in win.status.toolTip()
 
 
-def test_the_font_tab_picks_the_app_font(qtbot):
-    """Its pick is the app's, kept for the next run and announced once."""
+def test_the_preview_tab_picks_the_app_font(qtbot):
+    """Its pick is the app's, drawn with at once and kept for the next run."""
     from PySide6.QtGui import QFontDatabase
 
     from mapchar.ui.preview_font import forget_preview_font, preview_font
@@ -380,20 +380,59 @@ def test_the_font_tab_picks_the_app_font(qtbot):
 
     win = PreviewWindow()
     qtbot.addWidget(win)
-    changes: list = []
-    win.font_changed.connect(lambda: changes.append(True))
+    win.set_box(win._box, ["line"])
+    win.show_string("AB", "t")
     families = QFontDatabase.families()
     other = next(f for f in families if f != preview_font().family)
 
-    win.font_tab.family.setCurrentFont(win.font_tab.family.currentFont())
-    win.font_tab.size.setValue(20)
-    assert preview_font().size == 20 and changes
+    win.family.setCurrentFont(win.family.currentFont())
+    win.font_size.setValue(20)
+    assert preview_font().size == 20 and not win.canvas.pixmap().isNull()
 
-    win.font_tab.family.setCurrentText(other)
+    win.family.setCurrentText(other)
     assert preview_font().family == other
     # Stored, so the next run starts where this one left off.
     forget_preview_font()
     assert preview_font().family == other and preview_font().size == 20
+
+
+def test_the_box_tab_drags_the_box_edges_and_origin(qtbot):
+    """A drag on the picture lands on the box once, on release, and the fields
+    under it take the new size; the origin mark moves where text starts."""
+    from PySide6.QtCore import QPoint, Qt
+
+    from mapchar.core.font import TextBox
+    from mapchar.ui.box_editor import Handle
+    from mapchar.ui.preview_window import PreviewWindow
+
+    win = PreviewWindow()
+    qtbot.addWidget(win)
+    win.zoom.setValue(2)
+    win.set_box(TextBox(width=64, height=32), ["line"])
+    win.show_string("AB", "t")
+    boxes: list[TextBox] = []
+    win.box_changed.connect(boxes.append)
+    editor = win.editor
+
+    corner = editor.handle_point(Handle.CORNER)
+    qtbot.mousePress(editor, Qt.MouseButton.LeftButton, pos=corner)
+    qtbot.mouseMove(editor, corner + QPoint(20, 10))
+    # Redrawn as it goes, landed only on release.
+    assert editor.shown().width == 74 and not boxes
+    qtbot.mouseRelease(editor, Qt.MouseButton.LeftButton, pos=corner + QPoint(20, 10))
+    assert boxes[-1].width == 74 and boxes[-1].height == 37
+    assert win.box_w.value() == 74 and win.box_h.value() == 37
+
+    origin = editor.handle_point(Handle.ORIGIN)
+    qtbot.mousePress(editor, Qt.MouseButton.LeftButton, pos=origin)
+    qtbot.mouseRelease(editor, Qt.MouseButton.LeftButton, pos=origin + QPoint(8, 4))
+    assert (boxes[-1].origin_x, boxes[-1].origin_y) == (4, 2)
+    assert win.origin_x.value() == 4 and win.origin_y.value() == 2
+
+    # A press beside every handle takes nothing.
+    qtbot.mousePress(editor, Qt.MouseButton.LeftButton, pos=QPoint(2, 2))
+    qtbot.mouseRelease(editor, Qt.MouseButton.LeftButton, pos=QPoint(40, 40))
+    assert len(boxes) == 2
 
 
 def test_build_table_offers_the_kana_a_hit_pinned_down(window, monkeypatch):
@@ -489,8 +528,9 @@ def test_done_is_held_and_counted(window, tmp_path):
     assert window.strings._visible_rows() == [0]
 
 
-def test_chars_per_line_flags_overflow_and_wraps_without_a_font(window, tmp_path):
-
+def test_chars_per_line_counts_and_wraps_without_a_font(window, tmp_path):
+    """A box that counts characters never touches a row's status: the fit is
+    the preview's and the readout's to say, and Wrap's to mend."""
     from mapchar.core.font import CodeEffect, Effect
 
     # Room after the string: a line code makes the text a byte longer.
@@ -499,7 +539,7 @@ def test_chars_per_line_flags_overflow_and_wraps_without_a_font(window, tmp_path
     window._show_view("strings")
     box = TextBox(chars_per_line=3, effects={"line": CodeEffect(Effect.NEWLINE)})
     window._on_box_changed(box)
-    assert window.strings._row_data(0).status == "overflows box"
+    assert window.strings._row_data(0).status == "untouched"
     window.strings.select_index(0)
     window._on_draft("ABAB")
     assert "4 / 3 chars" in window.strings.pane.readout.text()
@@ -507,22 +547,7 @@ def test_chars_per_line_flags_overflow_and_wraps_without_a_font(window, tmp_path
     assert block.doc.strings[0].current_text() == "ABA[line]\nBA[end]"
     assert window.strings._row_data(0).status == "edited"
     window._on_box_changed(replace(box, lines_per_page=1))
-    assert window.strings._row_data(0).status == "overflows box"
-
-
-def test_next_untranslated_finds_a_string_its_box_overflows(window, tmp_path):
-    """A row shows "overflows box" in place of the string's own status, and an
-    untouched string is still untranslated whatever its box says about it."""
-    data = b"\x41\x42\x00\x42\x41\x00" + b"\xff" * 8
-    _entry, block = block_with(window, tmp_path, data, stop=6)
-    window._show_view("strings")
-    window._on_box_changed(TextBox(chars_per_line=1))
-    window._set_translation(block, 1, "BB[end]")
-    assert window.strings._row_data(0).status == "overflows box"
-    assert block.doc.strings[0].status is Status.UNTOUCHED
-    window.strings.select_index(1)
-    window._step_strings("untranslated")
-    assert window.strings.selected_indices() == [0]
+    assert window.strings._row_data(0).status == "edited"
 
 
 def test_project_strings_lists_every_block_and_jumps(window, tmp_path):

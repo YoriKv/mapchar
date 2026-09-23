@@ -833,9 +833,10 @@ The editing surface, opened on a block.
   untouched, while text typed back as it was is untouched however the encoder
   spells it — **review** and **done** (set by hand
   — **Edit ▸ Toggle Review / Toggle Done on Selected**, Ctrl+Alt+D for done —
-  or by import, and kept whatever the text does), **overflows box** when
-  the block has a text box (see [preview.md](preview.md#text-boxes)), and
-  **unwritten** when the string keeps a translation its bytes refused. Nothing
+  or by import, and kept whatever the text does), and **unwritten** when the
+  string keeps a translation its bytes refused. Whether the text fits the
+  block's box is the Preview's to show, never a status
+  (see [preview.md](preview.md#rendering)). Nothing
   in the bytes is ever *too long* or *invalid*: they cannot hold such a text,
   so an edit that would need them is refused, and kept unwritten instead.
 - **Editing** — the Translation cell is a multi-line editor, opened on the
@@ -953,8 +954,8 @@ The editing surface, opened on a block.
     word; the term alone is enough — over the terms already here, as one undo
     step; **Export…** writes one.
 - **Stepping** — **Edit ▸ Next / Previous Untranslated** (F4 / Shift+F4) and
-  **Next / Previous Flagged** (F6 / Shift+F6: review or overflows box) move
-  among the rows the filter shows, wrapping round.
+  **Next / Previous Flagged** (F6 / Shift+F6: review, unwritten or misses
+  glossary) move among the rows the filter shows, wrapping round.
 - **Progress** — the Block bar says how many strings are translated, and how
   many done, of the block and of the project.
 - **Filter** — words in any order over original, translation and notes; a

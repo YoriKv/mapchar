@@ -30,7 +30,7 @@ CHILD_KINDS = ("block", "bookmark", "folder")
 #: Kinds a project once had, and what became of them (``projectfile._entry_from``).
 RETIRED_KINDS = {
     "font": "glyph-sheet fonts are gone; the Preview draws every block in the "
-    "system font its Font tab picks",
+    "system font its Preview tab picks",
 }
 #: The kinds :func:`workspace.free_name` numbers apart (``NAMED_UNIQUELY``).
 NAMED_UNIQUELY = ("block", "bookmark")

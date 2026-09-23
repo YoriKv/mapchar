@@ -165,9 +165,8 @@ class StringsMenuMixin:
         if self._current_block(need_doc=True) is None:
             return
         if what == "untranslated":
-            # The record's own status, not the row's: a row shows "overflows
-            # box" in place of it, and an untouched string is still untranslated
-            # whatever its box says about it.
+            # The record's own status, not the row's: a row shows "unwritten"
+            # in place of it, and an untouched string is still untranslated.
             wanted = lambda d: self._is_untouched(d.index)  # noqa: E731
         else:
             wanted = lambda d: d.status in FLAGGED or bool(d.misses)  # noqa: E731

@@ -118,8 +118,6 @@ def test_preview_and_wrap(window, tmp_path):
             effects={"line": CodeEffect(Effect.NEWLINE)},
         )
     )
-    rows = window._row_data(block, block.doc)
-    assert rows[0].status == "overflows box"
     window.strings.select_index(0)
     window._wrap_selected()
     text = block.doc.strings[0].current_text()

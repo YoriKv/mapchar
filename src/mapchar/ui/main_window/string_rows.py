@@ -9,12 +9,9 @@ from mapchar.core.block import block_bound
 from mapchar.core.document import Document
 from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
-from mapchar.engines.layout import char_layout
-from mapchar.engines.layout import layout as layout_glyphs
 from mapchar.pipeline.insert import room_for, room_note, string_ends
-from mapchar.project.entry import Entry
 from mapchar.ui.code_editor import CodeInfo
-from mapchar.ui.strings_view import OVERFLOWS, UNWRITTEN, RowData
+from mapchar.ui.strings_view import UNWRITTEN, RowData
 
 _CODE_IN_TEXT = re.compile(r"(?<!\\)\[([^\]\s]+)")
 """A ``[label`` in script text, for counting which codes a block uses."""
@@ -37,18 +34,6 @@ class StringRowsMixin:
         if entry is None or entry.doc is None:
             return None
         return entry.doc.string_by_index(index)
-
-    def _overflow_status(self, rec, entry: Entry) -> bool:
-        """Whether the string overflows its box: measured through the preview
-        font, or counted where the box sets characters per line."""
-        box = self._layout_box(entry)
-        if box is None:
-            return False
-        text = rec.current_text()
-        font = self._layout_font(box, text)
-        if font is None:
-            return char_layout(text, box).overflows
-        return layout_glyphs(text, font, box).overflows
 
     def _fill_strings(self, doc: Document) -> None:
         if self._rows_patched:
@@ -198,8 +183,6 @@ class StringRowsMixin:
         status = rec.status.value
         if rec.unwritten is not None:
             status = UNWRITTEN
-        elif self._entry is not None and self._overflow_status(rec, self._entry):
-            status = OVERFLOWS
         return RowData(
             rec.index,
             rec.start,

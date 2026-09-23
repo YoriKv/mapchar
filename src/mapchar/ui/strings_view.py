@@ -64,19 +64,16 @@ HEADERS = [
     "Same",
     "Notes",
 ]
-OVERFLOWS = "overflows box"
-"""The one status a row has that :class:`~mapchar.core.block.Status` does not:
-the string is finished but does not fit, which is the bytes' answer rather than
-anything the record holds."""
 UNWRITTEN = "unwritten"
-"""The other one: the string keeps a translation its bytes refused, and the row
-shows that text rather than what the bytes say."""
+"""The one status a row has that :class:`~mapchar.core.block.Status` does not:
+the string keeps a translation its bytes refused, and the row shows that text
+rather than what the bytes say."""
 MISSES = "misses glossary"
 """Not a status but a filter beside them: the rows whose translation has a
 glossary term some other way than the glossary does."""
-STATUS_FILTERS = ["all", *(s.value for s in Status), OVERFLOWS, UNWRITTEN, MISSES]
+STATUS_FILTERS = ["all", *(s.value for s in Status), UNWRITTEN, MISSES]
 """What the Status picker offers, in the order it offers it."""
-FLAGGED = (Status.REVIEW.value, OVERFLOWS, UNWRITTEN)
+FLAGGED = (Status.REVIEW.value, UNWRITTEN)
 """The statuses Next Flagged steps through: what needs a second look."""
 SPLITTER_KEY = "view/strings_splitter"
 """Where the grid and the pane under it are split, remembered per machine."""
@@ -100,8 +97,7 @@ class RowData:
     used: int
     room: int
     status: str
-    """A :class:`~mapchar.core.block.Status` value, :data:`OVERFLOWS` or
-    :data:`UNWRITTEN`."""
+    """A :class:`~mapchar.core.block.Status` value or :data:`UNWRITTEN`."""
     notes: str
     pointers: str = ""
     same: int = 0
@@ -497,7 +493,7 @@ class StringsView(QWidget):
 
     @staticmethod
     def _status_colour(status: str) -> QColor | None:
-        if status in (OVERFLOWS, UNWRITTEN):
+        if status == UNWRITTEN:
             return theme.ERROR_INK
         if status == Status.REVIEW.value:
             return theme.WARNING_INK
@@ -639,7 +635,6 @@ class StringsView(QWidget):
 __all__ = [
     "FLAGGED",
     "MISSES",
-    "OVERFLOWS",
     "UNWRITTEN",
     "RowData",
     "StringsView",
