@@ -35,7 +35,7 @@ def test_terms_are_stepped_through_and_replaced_one_by_one(window, tmp_path):
     window.strings.select_index(0)
     window._replace_glossary_terms()
     dialog = window.find_replace
-    assert dialog.glossary() and not dialog.find.isEnabled()
+    assert dialog.glossary() and dialog.find.isHidden()
     search = dialog.search()
     assert search.glossary and search.scope == BLOCK
     window._search_next(search)

@@ -966,7 +966,8 @@ The editing surface, opened on a block.
   selected when it opened, the block or the project, with code-aware matching
   (`[line]` matches only the code). **Look for** is **Text** — what is typed —
   or **Glossary** — the glossary's terms, all of them or the one picked, each
-  becoming its translation. **Find Next** stands on a hit: its string
+  becoming its translation; **Find** and **Replace with** show for Text,
+  **Term** for Glossary. **Find Next** stands on a hit: its string
   selected, its span marked in the pane, and for a term what it becomes shown
   beside **Found**; **Replace** replaces the hit stood on and stands on the
   next, so every one is seen on the way through, and Find Next passes one by.

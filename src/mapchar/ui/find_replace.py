@@ -71,7 +71,7 @@ class FindReplaceDialog(QDialog):
         # window (:mod:`mapchar.ui.window_layout`).
         self._layout = remember_layout(self, "find_replace")
         self.setModal(False)
-        form = QFormLayout(self)
+        form = self._form = QFormLayout(self)
         self.mode = ModeToggle((("Text", False), ("Glossary", True)))
         self.mode.button(False).setToolTip("Find the typed text")
         self.mode.button(True).setToolTip(
@@ -171,13 +171,14 @@ class FindReplaceDialog(QDialog):
         self.hit.setText(text)
 
     def _sync_mode(self) -> None:
-        """Every row stays where it is; the ones the mode has no use for are
-        greyed."""
+        """The fields of the other mode are hidden; the rows both share but
+        one has no use for are greyed."""
         on = self.glossary()
-        for widget in (self.find, self.replace, self.case):
-            widget.setEnabled(not on)
-        for widget in (self.term, self.hit):
-            widget.setEnabled(on)
+        for widget in (self.find, self.replace):
+            self._form.setRowVisible(widget, not on)
+        self._form.setRowVisible(self.term, on)
+        self.case.setEnabled(not on)
+        self.hit.setEnabled(on)
         if not on:
             self.hit.setText("")
 
