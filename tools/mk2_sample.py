@@ -32,16 +32,22 @@ What the ROM holds, and where each fact comes from:
 - **PRESS START** is 11 title-font tiles copied by ``$4104``, blinking against
   the 11 blank tiles after it. The title font's letters are ASCII + ``$90``
   and its space is ``01``, read off those two runs.
-- **Not in the sample**: the legal screen (``$B3F3``) and the credits
-  (``$D255``) are tilemaps in two of the 29 ``RNC`` method-2 streams, which
-  mapchar decompresses; no block is built over them. No other run of ASCII or
-  tile-coded words is in the ROM.
+- **The legal screen and the credits** are tilemaps in two of the 29 ``RNC``
+  method-2 streams, ``$B3F3`` (32 tiles a row) and ``$D255`` (20 a row), in a
+  tile font of their own: ``00`` blank, digits from ``01``, letters from
+  ``0B``, then punctuation. The legal screen's ``2B`` and ``2C`` are the ``©``
+  and ``®`` beside the years and names; the credits fill whole rows with them,
+  a rule between teams and a line under each heading. Each is a block over
+  the decompressed stream, a fixed string per row. No other stream, and no
+  other run of ASCII or tile-coded words, holds text.
 """
 
 from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
+
+from mapchar.plugins.builtins.compression.rnc import decompress
 
 ROM_NAME = "Mortal Kombat II (USA, Europe).gb"
 
@@ -118,6 +124,19 @@ WINNERS = (0x457B, 12, 0x0F77)
 HUD_NAMES = (0x4DE9, 12, 0x8D9C)
 SELECT_NAMES = (0x5863, 8, 0x089C)
 
+SCREENS = (
+    # name, RNC method-2 stream, tiles a row, table
+    ("Legal", 0xB3F3, 32, "mk2-legal"),
+    ("Credits", 0xD255, 20, "mk2-credits"),
+)
+"""The tilemaps that hold text, each read a row at a time."""
+TILE_LETTERS = 0x0B
+TILE_DIGITS = 0x01
+TILE_PUNCTUATION = {0x25: ".", 0x26: ",", 0x27: "'", 0x2D: "(", 0x2E: ")"}
+TILE_MARKS = {"mk2-legal": "©®", "mk2-credits": "=-"}
+"""What ``2B`` and ``2C`` are on each screen: the marks on the legal screen, a
+rule and an underline in the credits."""
+
 
 @dataclass(frozen=True)
 class Block:
@@ -126,6 +145,9 @@ class Block:
     """The block's configuration line, as a native script's ``@block`` spells it."""
     folder: str | None = None
     """The Files panel folder the project puts the block in; ``None`` for none."""
+    compression: tuple[str, int, int] | None = None
+    """The scheme, offset and packed length of the stream the block reads,
+    decompressed; ``None`` for a block over the ROM itself."""
 
 
 def _u16(rom: bytes, at: int) -> int:
@@ -163,8 +185,9 @@ LETTERS = list(range(0x41, 0x5B))
 
 
 def table_files(rom: bytes) -> dict[str, str]:
-    """The sample's four native tables, by file name: one for each routine
-    that draws text, holding only what that routine can draw."""
+    """The sample's six native tables, by file name: one for each routine
+    that draws text, holding only what that routine can draw, and one for each
+    screen's tiles."""
     menu = sorted(_compares(rom, MENU_FONT))
     record = sorted(_compares(rom, RECORD_FONT))
     word = rom[TITLE_SITE + 1 : TITLE_SITE + 3]
@@ -211,6 +234,25 @@ def table_files(rom: bytes) -> dict[str, str]:
             *(f"{c + TITLE_OFFSET:02X}={chr(c)}" for c in LETTERS),
         ],
     }
+    for name, stream, _, table_id in SCREENS:
+        marks = TILE_MARKS[table_id]
+        files[f"{table_id}.tbl"] = [
+            *_header(
+                table_id,
+                f"Mortal Kombat II (Game Boy): the {name.lower()} screen's tiles in\n"
+                f"the RNC stream at ${stream:X}. Generated from the ROM by\n"
+                "tools/mk2_sample.py.",
+            ),
+            "00= ",
+            *(f"{TILE_DIGITS + i:02X}={i}" for i in range(10)),
+            *(f"{TILE_LETTERS + c - 0x41:02X}={chr(c)}" for c in LETTERS),
+            *(
+                f"{code:02X}={text}"
+                for code, text in sorted(
+                    {**TILE_PUNCTUATION, 0x2B: marks[0], 0x2C: marks[1]}.items()
+                )
+            ),
+        ]
     return {name: "\n".join(lines) + "\n" for name, lines in files.items()}
 
 
@@ -329,7 +371,19 @@ def blocks(rom: bytes) -> list[Block]:
                 "Fight",
             )
         )
-    order = ["Menus", "Fight", "Story"]
+    for name, stream, width, table_id in SCREENS:
+        data, packed, whole = decompress(rom[stream:], method=2)
+        assert whole and len(data) % width == 0, name
+        out.append(
+            Block(
+                name,
+                f"source=range start=$0 stop=${len(data):X} type=fixed:{width} "
+                f"table={table_id}",
+                "Screens",
+                ("rnc2", stream, packed),
+            )
+        )
+    order = ["Menus", "Fight", "Story", "Screens"]
     return sorted(out, key=lambda b: order.index(b.folder or "Menus"))
 
 

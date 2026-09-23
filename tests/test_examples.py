@@ -20,6 +20,7 @@ from helpers import (
 from mapchar.core.table import TableSet
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import layout_block
+from mapchar.plugins.builtins.compression.rnc import decompress
 from mapchar.project.exchange.cartographer import parse_command_file
 from mapchar.project.formats.blockspec import parse_config
 from mapchar.project.formats.table_native import parse_native
@@ -207,7 +208,8 @@ def test_mother_3(registry):
 def test_mortal_kombat_ii(registry):
     """The Mortal Kombat II sample, derived from the ROM: every block reads
     cleanly and lays out unchanged, records edit in place around their
-    headers, and a menu string moves with the code operand that loads it."""
+    headers, a menu string moves with the code operand that loads it, and the
+    legal screen and credits read out of their RNC streams."""
     mk2 = _sample_module("mk2_sample")
     rom = ROOT / "sample-projects" / "MK2" / mk2.ROM_NAME
     if not rom.exists():
@@ -222,18 +224,32 @@ def test_mortal_kombat_ii(registry):
     for block in mk2.blocks(data):
         config = parse_config(block.spec)
         ts = TableSet.build(tables[config.table_id], tables)
-        ex = extract(data, config, ts, registry)
+        source = data
+        if block.compression:
+            scheme, offset, packed = block.compression
+            assert scheme == "rnc2", block.name
+            source = decompress(data[offset : offset + packed], method=2)[0]
+        ex = extract(source, config, ts, registry)
         assert not ex.notices, (block.name, ex.notices)
         assert "[$" not in "".join(texts(ex)), block.name
-        res, out = relayout(data, config, ts, {}, registry)
-        assert res.ok and out == data, (block.name, res.problems)
+        res, out = relayout(source, config, ts, {}, registry)
+        assert res.ok and out == source, (block.name, res.problems)
         blocks[block.name] = (config, ts, ex)
-    assert len(blocks) == 19
-    assert sum(len(ex.strings) for _, _, ex in blocks.values()) == 89
+    assert len(blocks) == 21
+    assert sum(len(ex.strings) for _, _, ex in blocks.values()) == 201
 
     assert texts(blocks["Main menu"][2]) == ["START GAME[end]", "OPTIONS[end]"]
     assert texts(blocks["Fighter names"][2])[:2] == ["KANG[end]", "ZERO[end]"]
     assert texts(blocks["Press start"][2]) == ["PRESS START"]
+    legal = [row.rstrip() for row in texts(blocks["Legal"][2])]
+    assert legal[1:4] == [
+        "  MORTAL KOMBAT®II",
+        "   ©1994 ACCLAIM",
+        " ENTERTAINMENT, INC.",
+    ]
+    credits = [row.strip() for row in texts(blocks["Credits"][2])]
+    assert credits[:3] == ["MIDWAY MORTAL KOMBAT", "DESIGN TEAM", "-" * 13]
+    assert "ACCLAIM" in credits and credits[-1] == "THE END"
 
     # A record rewritten in its slot keeps the next record's header.
     config, ts, ex = blocks["Round announcer"]

@@ -124,6 +124,10 @@ def _derived(window, rom: str, module) -> list:
             folder=folder,
             config=parse_config(block.spec),
         )
+        if block.compression:
+            entry.compression_id, entry.slot_offset, entry.slot_length = (
+                block.compression
+            )
         window._push_add(entry)
         blocks.append(entry)
     return blocks
