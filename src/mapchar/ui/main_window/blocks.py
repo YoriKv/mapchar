@@ -16,8 +16,12 @@ from mapchar.core.block import (
     with_region,
 )
 from mapchar.core.context import KEY_SUGGESTED_MAPPING
+from mapchar.core.errors import MapcharError
 from mapchar.core.table import TokenKind
+from mapchar.pipeline.extract import extract
+from mapchar.plugins.base import Stage
 from mapchar.project.entry import Entry, EntryKind, has_edits
+from mapchar.ui.block_dialog import COUNT_LIMIT, NewBlockDialog, default_name
 from mapchar.ui.kind_names import SOURCE_NAMES, STRING_TYPE_NAMES
 from mapchar.ui.undo_commands import BlockEditCommand, TableCommand
 
@@ -88,19 +92,21 @@ class BlocksMixin:
             f"{count} {'string' if count == 1 else 'strings'}"
         )
 
-    def _new_block(
+    def _proposed_block(
         self,
         start: int | None = None,
         stop: int | None = None,
         reading: BlockConfig | None = None,
-    ) -> None:
-        """A block over ``start`` to ``stop`` — the selection, else the view
-        onwards — read the way the bars read the view now, or the way
-        ``reading`` says when the caller already knows how the bytes are cut."""
+    ) -> tuple[Entry, BlockConfig] | None:
+        """The file a new block would go under and the reading it would start
+        from: over ``start`` to ``stop`` — the selection, else the view onwards
+        — read the way the bars read the view now, or the way ``reading`` says
+        when the caller already knows how the bytes are cut. ``None``, said
+        so, when no file is open."""
         file_entry = self._current_file()
         if file_entry is None or self._doc is None:
             self._error("Open a ROM first.")
-            return
+            return None
         if start is None:
             start, stop = (
                 self._selection if self._selection else (self._offset, self._doc.size)
@@ -110,17 +116,71 @@ class BlocksMixin:
         )
         if not cfg.table_id:
             cfg = replace(cfg, table_id=self._default_table_id())
+        return file_entry, cfg
+
+    def _add_block(self, file_entry: Entry, name: str, cfg: BlockConfig) -> None:
+        """A block under ``file_entry`` read by ``cfg``, added and opened on
+        its strings."""
         entry = Entry(
-            EntryKind.BLOCK,
-            f"Block {start:X}",
-            file_entry.path,
-            parent=file_entry,
-            config=cfg,
+            EntryKind.BLOCK, name, file_entry.path, parent=file_entry, config=cfg
         )
         entry.session.resolve_pointers = self.resolve_pointers.isChecked()
         self._push_add(entry)
         self._activate_entry(entry)
         self._show_view("strings")
+
+    def _new_block(
+        self,
+        start: int | None = None,
+        stop: int | None = None,
+        reading: BlockConfig | None = None,
+    ) -> None:
+        """A block made without asking (:meth:`_proposed_block`), named after
+        its start: what a scanned region becomes, whose reading the scan
+        already settled."""
+        proposed = self._proposed_block(start, stop, reading)
+        if proposed is not None:
+            file_entry, cfg = proposed
+            self._add_block(file_entry, default_name(cfg), cfg)
+
+    def _new_block_dialog(
+        self, start: int | None = None, stop: int | None = None
+    ) -> None:
+        """File ▸ New Block…: the proposed block (:meth:`_proposed_block`) put
+        up for its name, table and reading to be settled, with a count of the
+        strings that reading cuts, and made only on OK."""
+        proposed = self._proposed_block(start, stop)
+        if proposed is None:
+            return
+        file_entry, cfg = proposed
+        dialog = NewBlockDialog(
+            cfg,
+            self._table_items(),
+            self.registry.plugins(Stage.MAPPING),
+            lambda reading: self._count_strings(file_entry, reading),
+            spelling=self.address_spelling,
+            suggested_mapping=self._suggested_mapping(),
+            parent=self,
+        )
+        if dialog.exec() != NewBlockDialog.DialogCode.Accepted:
+            return
+        self._add_block(file_entry, dialog.block_name(), dialog.config())
+
+    def _count_strings(self, file_entry: Entry, cfg: BlockConfig) -> int | str:
+        """How many strings ``cfg`` cuts out of ``file_entry``'s bytes, reading
+        no more of them than :data:`~mapchar.ui.block_dialog.COUNT_LIMIT`
+        takes to tell — or, as text, why they cannot be read."""
+        doc = file_entry.doc
+        if doc is None:
+            return "The file is not loaded"
+        tables = self._table_set_for(cfg.table_id)
+        if tables is None:
+            return f"@{cfg.table_id} is not loaded" if cfg.table_id else "No table"
+        try:
+            ex = extract(doc.data, cfg, tables, self.registry, limit=COUNT_LIMIT + 1)
+        except (MapcharError, NotImplementedError) as exc:
+            return str(exc)
+        return len(ex.strings)
 
     def _suggested_mapping(self) -> str | None:
         """What the current file's container says the ROM is mapped as."""

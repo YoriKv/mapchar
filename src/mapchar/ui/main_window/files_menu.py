@@ -57,12 +57,15 @@ class FilesMenuMixin:
         new_folder = None
         if entry.kind is EntryKind.FILE:
             menu.addAction(
-                "New &Block",
-                lambda: (self._activate_entry(entry), self._new_block()),
+                "New &Block…",
+                lambda: (self._activate_entry(entry), self._new_block_dialog()),
             )
             menu.addAction(
-                "New Block from &Selection",
-                lambda: (self._activate_entry(entry), self._new_block(*self._sel())),
+                "New Block from &Selection…",
+                lambda: (
+                    self._activate_entry(entry),
+                    self._new_block_dialog(*self._sel()),
+                ),
             ).setEnabled(entry is self._current_file() and self._selection is not None)
             menu.addAction(
                 "New Boo&kmark",

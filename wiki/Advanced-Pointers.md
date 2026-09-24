@@ -49,8 +49,8 @@ them. A **Pointer list** can. A pointer list holds the address of each pointer.
 
 1. Set **Show as** to **Pointers**.
 2. Select the two bytes at `$977` to `$978`.
-3. Choose **New Block** and rename the block to `Link`. The block is a pointer
-   table with one pointer.
+3. Choose **New Block…**, name the block `Link` and press OK. The block is a
+   pointer table with one pointer.
 4. On the Reading bar, set **Source** to **Pointer list**.
 5. Open **Addresses**. Each row of the list is one address. **Add** adds a row.
    **Remove** deletes the selected row.
@@ -124,7 +124,7 @@ Set **Show as** to **Pointers** and select `$857B` to `$8592`:
 
 ![The winners' pointer table](images/adv-3-select-table.png)
 
-Choose **New Block** and rename the block to `Winners`. The records contain no
+Choose **New Block…**, name the block `Winners` and press OK. The records contain no
 `00` byte, so each string continues through all the records after it.
 
 Set **Ends at** to **Length prefix** and **Prefix** to 1. The strings are still

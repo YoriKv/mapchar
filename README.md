@@ -55,8 +55,8 @@ Grab the build for your platform from the [Releases page](https://github.com/Yor
 2. **Find the text** - scroll the raw view, type in an offset, or use Search to find
    where the strings are.
 3. **Get a table** - load a `.tbl` file, build one yourself, or pick one of the built-in charsets.
-4. **Make a block** - File -> New Block over the strings, set how they are
-   parsed and if it's a pointer table.
+4. **Make a block** - File -> New Block... over the strings, set how they are
+   parsed and if it's a pointer table, and see how many strings that makes.
 5. **Translate** - edit translations in the Strings view or dump a script and import it back.
    Each edit rewrites the bytes in memory, so what you see is what the ROM will hold.
 6. **Write/Save** - write the file back to disk. Save your project session to

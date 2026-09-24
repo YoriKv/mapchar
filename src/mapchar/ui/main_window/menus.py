@@ -53,7 +53,7 @@ class MenuBarMixin:
         # Named where :mod:`mapchar.ui.main_window.capability_sync` gates them:
         # what each row applies to is declared in the capability table, not here.
         self.new_block_action = act(
-            file_menu, "New &Block", self._new_block, "Ctrl+Shift+B"
+            file_menu, "New &Block…", self._new_block_dialog, "Ctrl+Shift+B"
         )
         self.new_bookmark_action = act(
             file_menu, "New Boo&kmark", self._new_bookmark, "Ctrl+B"

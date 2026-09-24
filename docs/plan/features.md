@@ -208,7 +208,7 @@ the preview system in [preview.md](preview.md).
   (a file's rows) Offset puts the rows the clicked row sits among in order —
   one folder's, one file's top level, or one group's. By name and by type
   folders come first; by offset a folder sits where its earliest row does.
-- **Context menu**, by kind: New Block / from Selection, New Bookmark, New
+- **Context menu**, by kind: New Block… / from Selection…, New Bookmark, New
   Folder, Edit File Container…, Container Info…, Jump to
   Source, Jump to Bookmark, Edit…, Save As File…, New Table…, Write, Export ▸,
   Rename…, Cut / Copy / Paste / Duplicate, Move Up / Down, Sort By ▸, Show in
@@ -543,7 +543,7 @@ The exploration surface, the equivalent of celPix's tile canvas.
   down to the digit and bit, each digit being a nibble; the rest of the window
   gets the bytes it touches. The status bar shows offset, length and the
   selected bytes' decode. Another entry opens with nothing selected.
-- **Context menu** — New Block from Selection, New Bookmark, Jump to Pointer
+- **Context menu** — New Block from Selection…, New Bookmark, Jump to Pointer
   Target (on a pointer of the current block) and Jump to Pointer (on a string
   one of its pointers reaches), Add to Table… (opens the Table Editor with
   the bytes as a key), Add Skip from Selection (in a block: a skip range over
@@ -609,10 +609,20 @@ compression, and report offsets in the file's coordinates.
 
 ## Blocks
 
-A block is the unit of extraction and insertion. **File ▸ New Block** makes one
-over the selection — else from the view's position to the end — read the way
-the bars read the view, and opens it on its strings; from then on the bars are
-its settings (see [Reading the bytes](#reading-the-bytes)). The Reading bar
+A block is the unit of extraction and insertion. **File ▸ New Block…** puts
+one up for settling before it is made: over the selection — else from the
+view's position to the end — read the way the bars read the view, in a dialog
+holding its **Name** (blank names it after its start), its **Table**, **Read
+as** Strings or Pointers, and the Reading bar as a block has it, so the region
+and every setting below can be changed before OK makes the block and opens it
+on its strings. Under the bar a count says how many strings the reading cuts
+the region into, kept current as the settings change, counted up to a hundred
+and past that said as *more than* — or why it cannot be counted, a table not
+loaded. The Files panel's **New Block…** and **New Block from Selection…**,
+and the raw view's, are the same dialog over the same proposal; the Scan
+window's **New Block from Region** makes its block without asking, since the
+scan settled how it is read. From then on the bars are its settings (see
+[Reading the bytes](#reading-the-bytes)). The Reading bar
 holds the settings below in three framed sections, always there and always in
 this order: **Source** (the kind, start, stop, and **Writing**), **Pointers**
 (size, stride, endian, mapping, offset, null, bank) and **Strings** (string
@@ -1312,7 +1322,7 @@ Glossary and the Preview draw, each beside a swatch.
 
 | Area | Keys |
 |---|---|
-| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Shift+F5 Refresh Tables · F5 Refresh Plugins · Ctrl+Q Quit |
+| File | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S projects · Ctrl+Shift+O Open ROM · Ctrl+T Open Table · Ctrl+Shift+B New Block… · Ctrl+B New Bookmark · Ctrl+E Edit File Container · Ctrl+W Write · Ctrl+Shift+W Write All · Shift+F5 Refresh Tables · F5 Refresh Plugins · Ctrl+Q Quit |
 | Edit | Ctrl+Z / Ctrl+Shift+Z · Ctrl+X / C / V · Ctrl+H Find and Replace · Ctrl+Shift+L Glossary · Ctrl+Alt+D toggle done · F4 / Shift+F4 next / previous untranslated · F6 / Shift+F6 next / previous flagged |
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview · Ctrl+Shift+D Decompressed View |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |

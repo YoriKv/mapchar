@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from helpers import ABC_TABLE, relayout, table_set, texts
+from helpers import ABC_TABLE, pointer_rom, relayout, table_set, texts
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -397,3 +397,22 @@ def test_a_record_that_leaves_the_position_where_it_was_ends_the_reading():
     data = bytes.fromhex("41 42 43 00  41 42 00 43")
     cfg = BlockConfig(RangeSource(4, 8), EndToken(), "main", header=-1)
     assert texts(extract(data, cfg, TS)) == []
+
+
+def test_a_limited_extraction_reads_no_more_strings_than_asked(registry):
+    """A count that only needs to know whether there are that many strings
+    reads that many and stops — a range's first ones, and of a pointer source
+    that many, however its pointers lie."""
+    data = bytes.fromhex("41 00 42 00 43 00 41 42 00")
+    cfg = BlockConfig(RangeSource(0, 9), EndToken(), "main")
+    assert texts(extract(data, cfg, TS, limit=2)) == ["A[end]", "B[end]"]
+    assert len(extract(data, cfg, TS, limit=10).strings) == 4
+    # Six pointers to four strings: the count is of strings, not pointers.
+    ptrs = pointer_rom([0x10, 0x12, 0x14, 0x10, 0x12, 0x16], "41 00 42 00 43 00 44 00")
+    table = BlockConfig(PointerTableSource(0, 12, 2, 2), EndToken(), "main")
+    assert len(extract(ptrs, table, TS, registry, limit=3).strings) == 3
+    assert len(extract(ptrs, table, TS, registry, limit=100).strings) == 4
+    # A run counts every string of its own.
+    runs = BlockConfig(RUNS, EndToken(), "main", strings_per_pointer=3)
+    assert len(extract(RUN_DATA, runs, TS, registry, limit=2).strings) == 2
+    assert len(extract(RUN_DATA, runs, TS, registry, limit=4).strings) == 4

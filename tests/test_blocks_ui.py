@@ -328,3 +328,119 @@ def test_an_unedited_block_is_re_read_without_a_question(window, tmp_path, monke
     assert bar._groups["end_is_fill"].isEnabled()
     bar.end_is_fill.setChecked(True)
     assert block.config.end_is_fill
+
+
+def _accepting(monkeypatch, tweak=None):
+    """Answer the New Block dialog as a user who changed what ``tweak`` says
+    and pressed OK; the dialogs raised are handed back."""
+    from mapchar.ui.block_dialog import NewBlockDialog
+
+    raised = []
+
+    def take(dialog):
+        raised.append(dialog)
+        if tweak is not None:
+            tweak(dialog)
+        dialog.accept()
+        return NewBlockDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(NewBlockDialog, "exec", take)
+    return raised
+
+
+def test_new_block_asks_first_and_makes_what_the_dialog_says(
+    window, tmp_path, monkeypatch
+):
+    """File ▸ New Block… puts up the proposed block — the selection, read as
+    the bars read the file — and the block made is what the dialog was left
+    saying: its name, its region, its reading."""
+    data = ab_ba_rom(4)
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    window._on_selection(0, 6)
+
+    def tweak(dialog):
+        assert dialog.name.placeholderText() == "Block 0"
+        assert dialog.count.text() == "2 strings"
+        assert dialog.config().source == RangeSource(0, 6)
+        dialog.name.setText("Names")
+        dialog.reading_bar.stop.set_value(3)
+        dialog.reading_bar.stop.editingFinished.emit()
+        dialog.recount()
+        assert dialog.count.text() == "1 string"
+
+    raised = _accepting(monkeypatch, tweak)
+    window._new_block_dialog()
+    assert len(raised) == 1
+    block = window._entry
+    assert block.kind is EntryKind.BLOCK and block.parent is file_entry
+    assert block.name == "Names" and block.config.source == RangeSource(0, 3)
+    assert texts(block.doc.strings) == ["AB[end]"]
+
+
+def test_a_cancelled_new_block_makes_nothing(window, tmp_path):
+    """The window fixture answers every unarranged dialog with Cancel."""
+    open_rom_and_table(window, tmp_path, ab_ba_rom(4))
+    window._new_block_dialog()
+    assert not list(window.workspace.of_kind(EntryKind.BLOCK))
+
+
+def test_new_block_from_selection_and_the_menus_open_the_dialog(
+    window, tmp_path, monkeypatch
+):
+    from window_helpers import menu_actions
+
+    file_entry = open_rom_and_table(window, tmp_path, ab_ba_rom(4))
+    seen = []
+    raised = _accepting(monkeypatch, lambda d: seen.append(d.config().source))
+    window._on_selection(3, 6)
+    window._new_block_dialog(*window._selection)
+    assert seen == [RangeSource(3, 6)] and len(raised) == 1
+    assert "New Block…" in dict(menu_actions(window))
+    menu = window._build_files_menu(file_entry, None)
+    assert "New &Block…" in [a.text() for a in menu.actions()]
+    assert "New Block from &Selection…" in [a.text() for a in menu.actions()]
+
+
+def test_the_new_block_dialog_counts_as_the_reading_changes(qtbot):
+    """The count follows every change, says "more than" past the limit, says
+    why when it cannot count, and the default name follows the start."""
+    from mapchar.core.block import BlockConfig, EndToken, PointerTableSource
+    from mapchar.ui.block_dialog import COUNT_LIMIT, NewBlockDialog
+
+    asked = []
+
+    def counter(cfg):
+        asked.append(cfg)
+        if cfg.table_id != "main":
+            return f"@{cfg.table_id} is not loaded"
+        if cfg.has_pointers:
+            return 1
+        return cfg.source.stop - cfg.source.start
+
+    cfg = BlockConfig(RangeSource(0x10, 0x14), EndToken(), "main")
+    dialog = NewBlockDialog(
+        cfg, [("@main  (3)", "main"), ("ASCII", "ascii")], [], counter
+    )
+    qtbot.addWidget(dialog)
+    assert dialog.count.text() == "4 strings"
+    assert dialog.block_name() == "Block 10"
+    dialog.reading_bar.stop.set_value(0x10 + COUNT_LIMIT + 1)
+    dialog.reading_bar.stop.editingFinished.emit()
+    qtbot.waitUntil(lambda: dialog.count.text() == f"More than {COUNT_LIMIT} strings")
+    dialog.reading_bar.start.set_value(0x12)
+    dialog.reading_bar.start.editingFinished.emit()
+    dialog.recount()
+    assert dialog.block_name() == "Block 12"
+    dialog.name.setText("  Menu  ")
+    assert dialog.block_name() == "Menu"
+    dialog.table_pick.setCurrentIndex(1)
+    dialog.recount()
+    assert dialog.count.text() == "@ascii is not loaded"
+    dialog.table_pick.setCurrentIndex(0)
+    dialog.mode_toggle.button(True).click()
+    dialog.recount()
+    assert dialog.count.text() == "1 string"
+    assert isinstance(dialog.config().source, PointerTableSource)
+    assert dialog.config().source.start == 0x12
+    # Read at most one past the limit, never the whole of the region.
+    assert all(isinstance(c, BlockConfig) for c in asked)

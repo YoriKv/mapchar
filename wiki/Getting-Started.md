@@ -89,8 +89,8 @@ the three bytes before `FINISH HIM!` and ends at the last `!` of `BABALITY!!`.
 
 ![The region, selected](images/04-select-region.png)
 
-Choose **File ▸ New Block** (Ctrl+Shift+B). Press F2 and rename the block to
-`Finishes`.
+Choose **File ▸ New Block…** (Ctrl+Shift+B), name the block `Finishes` and
+press OK.
 
 ![One long string](images/04-block-end-token.png)
 
@@ -131,7 +131,7 @@ Select the ROM in the Files panel. Go to `$8DE0` and select `$8E02` to `$8E4D`.
 
 ![The names, selected](images/05-select-names.png)
 
-Choose **New Block** and rename the block to `Fighter names`.
+Choose **New Block…**, name the block `Fighter names` and press OK.
 
 ![Fighter names as a range](images/05-names-range.png)
 

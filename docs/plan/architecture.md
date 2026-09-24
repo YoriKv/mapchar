@@ -1023,7 +1023,9 @@ drag), `ui/entry_tree.py` (the Files tree's drags and keys),
 (what the window calls a source kind and a string type, in one table, with no
 Qt), `ui/skips_picker.py`
 (the Reading bar's skip ranges and their popup), `ui/writing_picker.py` (its
-write settings and theirs), `ui/table_dialogs.py` (Shift
+write settings and theirs), `ui/block_dialog.py` (New Block…: the name, table
+and reading a block is made with, and the count of strings the reading cuts),
+`ui/table_dialogs.py` (Shift
 Keys and Fill), `ui/table_entry_rows.py` (a code's operand rows and a switch's
 parameter rows), `ui/help_dialogs.py` (the live shortcut
 list and the legend) and `ui/__init__.py` (the `settings()` accessor, the

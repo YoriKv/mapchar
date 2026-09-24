@@ -107,21 +107,30 @@ def _without_code(line: str, label: str) -> str:
 
 
 def extract(
-    data: bytes, config: BlockConfig, tables: TableSet, registry=None
+    data: bytes,
+    config: BlockConfig,
+    tables: TableSet,
+    registry=None,
+    limit: int | None = None,
 ) -> Extraction:
     """Cut ``data`` into strings. Pointer sources need a ``registry`` for mappings.
 
     Every string's original is seeded from its bytes; a block the project
     already knows puts the originals it saved back over them.
+
+    ``limit`` reads at most that many strings and no more of the bytes or the
+    pointers than they take: what a count that only needs to know whether the
+    block holds that many asks for. A range's are its first strings; a pointer
+    source's are that many of its strings, and which is not promised.
     """
     bits = Bits(data)
     source = config.source
     if isinstance(source, RangeSource):
-        ex = _extract_range(bits, config, tables, source)
+        ex = _extract_range(bits, config, tables, source, limit)
     elif isinstance(
         source, PointerTableSource | PointerListSource | NestedPointerSource
     ):
-        ex = _extract_pointers(bits, config, tables, source, registry)
+        ex = _extract_pointers(bits, config, tables, source, registry, limit=limit)
     else:
         raise TypeError(f"unknown source {source!r}")
     for rec in ex.strings:
@@ -232,8 +241,11 @@ def _extract_pointers(
     source: PointerSource,
     registry,
     bases=None,
+    limit: int | None = None,
 ) -> Extraction:
-    refs, targets, notices = read_pointers(bits.data, source, registry, bases)
+    refs, targets, notices = read_pointers(
+        bits.data, source, registry, bases, limit=limit
+    )
     inner_tables: dict[int, int] = {}
     if isinstance(source, NestedPointerSource):
         # Each group is keyed by the base its pointers count from
@@ -261,10 +273,12 @@ def _extract_pointers(
             key = by_target[target][0].offset if nested else None
             stops.setdefault(key, []).append(target)
     for i, target in enumerate(ordered):
+        if limit is not None and len(strings) >= limit:
+            break
         start = target * 8
         if start >= bits.length:
             continue
-        limit = stop_bit if stop_bit > start else bits.length
+        end_bit = stop_bit if stop_bit > start else bits.length
         if stops:
             key = by_target[target][0].offset if nested else None
             _read_run(
@@ -272,11 +286,12 @@ def _extract_pointers(
                 config,
                 tables,
                 start,
-                limit,
+                end_bit,
                 stops[key],
                 by_target,
                 strings,
                 notices,
+                limit,
             )
             continue
         nxt = ordered[i + 1] * 8 if i + 1 < len(ordered) else None
@@ -292,14 +307,14 @@ def _extract_pointers(
             # keeps them whatever it says: the padding a shorter replacement
             # left at its end is not text, so it is not read, but the slot
             # stays whole so the string can grow back into it.
-            limit = min(limit, nxt)
-            read_to = _without_padding(bits, start, limit, pad)
+            end_bit = min(end_bit, nxt)
+            read_to = _without_padding(bits, start, end_bit, pad)
             r = decode(bits, tables, start, _rules(config, read_to, False))
-            tokens, end, res_notices = r.tokens, limit, r.notices
+            tokens, end, res_notices = r.tokens, end_bit, r.notices
         else:
             # A fixed string keeps its whole extent even when it stops early
             # at an end token, so its slot stays whole.
-            tokens, end, res_notices = decode_one(bits, config, tables, start, limit)
+            tokens, end, res_notices = decode_one(bits, config, tables, start, end_bit)
         strings.append(
             StringRecord(
                 len(strings),
@@ -323,9 +338,11 @@ def _read_run(
     by_target: dict[int, list[PointerRef]],
     strings: list[StringRecord],
     notices: list[Notice],
+    limit: int | None = None,
 ) -> None:
     """The run of end-token strings the pointer to bit ``start`` reaches, added
-    to ``strings``: the first carries the pointers, the rest none.
+    to ``strings``: the first carries the pointers, the rest none — or as many
+    of them as ``limit`` leaves room for.
 
     A run ends at the string another of ``targets`` reaches, which is that
     pointer's; else after :attr:`~BlockConfig.strings_per_pointer` strings, or
@@ -337,13 +354,13 @@ def _read_run(
     """
     pos = start
     count = 0
-    while pos < stop_bit:
+    while pos < stop_bit and (limit is None or len(strings) < limit):
         at = bisect_right(targets, pos // 8)
         nxt = targets[at] * 8 if at < len(targets) else None
-        limit = stop_bit
+        end_bit = stop_bit
         if config.run_to_next and nxt is not None:
-            limit = min(limit, nxt)
-        r = decode(bits, tables, pos, _rules(config, limit, True))
+            end_bit = min(end_bit, nxt)
+        r = decode(bits, tables, pos, _rules(config, end_bit, True))
         if count and not r.tokens:
             break
         rec = StringRecord(
@@ -358,7 +375,7 @@ def _read_run(
         count += 1
         began, pos = pos, r.end_bit
         if r.ended_by is not EndedBy.END_TOKEN:
-            if nxt is not None and pos == nxt == limit:
+            if nxt is not None and pos == nxt == end_bit:
                 notices.append(
                     Notice(
                         f"string #{rec.index} runs into the next pointer's "
@@ -450,9 +467,14 @@ def _rules(config: BlockConfig, limit_bit: int, end_terminated: bool) -> DecodeR
 
 
 def _extract_range(
-    bits: Bits, config: BlockConfig, tables: TableSet, source: RangeSource
+    bits: Bits,
+    config: BlockConfig,
+    tables: TableSet,
+    source: RangeSource,
+    limit: int | None = None,
 ) -> Extraction:
-    """Consecutive strings from ``start`` to ``stop``.
+    """Consecutive strings from ``start`` to ``stop``, or the first ``limit``
+    of them.
 
     A string written shorter than the one it replaced leaves its slot padded
     with the block's fill byte, and the next string starts after the padding:
@@ -471,7 +493,7 @@ def _extract_range(
         )
     pad = padding_bits(config, tables) if config.fixed_length is None else None
     skips = sorted((a * 8, b * 8) for a, b in config.skips)
-    while pos < stop_bit:
+    while pos < stop_bit and (limit is None or len(strings) < limit):
         start = pos
         if pad is not None and strings and start % 8 == 0:
             start += pad_run(bits, start, pad, stop_bit)

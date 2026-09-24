@@ -24,8 +24,8 @@ class RawViewMixin:
         menu = QMenu(self)
         sel = self._selection
         menu.addAction(
-            "New &Block from Selection",
-            lambda: self._new_block(*sel) if sel else self._new_block(),
+            "New &Block from Selection…",
+            lambda: self._new_block_dialog(*sel) if sel else self._new_block_dialog(),
         )
         menu.addAction("New Boo&kmark", self._new_bookmark)
         if sel:

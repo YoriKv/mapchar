@@ -232,17 +232,24 @@ def _outside(slot: PointerSlot) -> Notice:
 
 
 def read_nested(
-    data: bytes, source: NestedPointerSource, registry, bases=None
+    data: bytes,
+    source: NestedPointerSource,
+    registry,
+    bases=None,
+    limit: int | None = None,
 ) -> tuple[list[PointerRef], list[int | None], list[Notice]]:
     """Every inner pointer of a nested source with its target offset: its value
     counted from its record's base. With ``bases``, only the records counting
-    from one of those."""
+    from one of those; with ``limit``, no more records than it takes to reach
+    that many distinct targets inside the data (:func:`read_pointers`)."""
     records, notices = nested_records(data, source, registry)
     if bases is not None:
         records = [r for r in records if r.base in bases]
     refs: list[PointerRef] = []
     targets: list[int | None] = []
     for rec in records:
+        if limit is not None and _reached(targets, len(data)) >= limit:
+            break
         for slot in inner_slots(data, rec, source):
             if slot.value is None or slot.null:
                 continue
@@ -262,15 +269,28 @@ def read_nested(
     return refs, targets, notices
 
 
+def _reached(targets: list[int | None], size: int) -> int:
+    """How many distinct targets inside ``size`` bytes the pointers reach: the
+    strings they would be read as, before runs."""
+    return len({t for t in targets if t is not None and t < size})
+
+
 def read_pointers(
-    data: bytes, source: PointerSource, registry, bases=None
+    data: bytes,
+    source: PointerSource,
+    registry,
+    bases=None,
+    limit: int | None = None,
 ) -> tuple[list[PointerRef], list[int | None], list[Notice]]:
     """Every pointer of the source with its target offset (None when unmapped).
 
     A pointer holding the source's null value reaches no string and is left
-    out."""
+    out. With ``limit``, the reading stops once the pointers read so far reach
+    that many distinct targets inside the data — enough to cut ``limit``
+    strings — so a count over a table that runs to the end of the file does
+    not read the whole of it."""
     if isinstance(source, NestedPointerSource):
-        return read_nested(data, source, registry, bases)
+        return read_nested(data, source, registry, bases, limit)
     mapping = mapping_for(source, registry)
     notices: list[Notice] = []
     if mapping is None:
@@ -278,7 +298,10 @@ def read_pointers(
         return [], [], notices
     refs: list[PointerRef] = []
     targets: list[int | None] = []
+    reached: set[int] = set()
     for slot in pointer_slots(data, source, mapping):
+        if limit is not None and len(reached) >= limit:
+            break
         if slot.value is None:
             notices.append(
                 Notice("pointer past the end of the data", offset=slot.address)
@@ -299,6 +322,8 @@ def read_pointers(
             )
         )
         targets.append(slot.target)
+        if slot.target is not None and slot.target < len(data):
+            reached.add(slot.target)
     return refs, targets, notices
 
 
