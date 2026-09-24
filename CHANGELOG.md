@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.6 - unreleased
+## v0.1.6 - 2026-09-23
 
 - New Block opens a dialog with settings
 
