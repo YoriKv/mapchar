@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.6 - unreleased
+
+- New Block opens a dialog to set the block's name, table and reading, with a live string count
+
 ## v0.1.5 - 2026-09-20
 
 - Additional strings options for dealing with edge cases
