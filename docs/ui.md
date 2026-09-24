@@ -233,3 +233,13 @@ folder to save them to. It runs from WSL,
 loading Windows' fonts, since the offscreen platform has none. A change to a
 surface the tutorial shows runs it again, and changes the page's text where the
 steps changed.
+
+## The README gallery
+
+`uv run python local-tools/readme_screenshots.py` opens a scratch copy of the
+Super Mario World sample project in `tmp/readme-shots/` and saves the six shots
+`README.md`'s gallery shows to `screenshots/`, in the dark theme: the ROM in
+Hex, the Message boxes pointer table, one message in Text, Level names in
+Strings with a few translated, the table picker open, and the Table Editor
+with Kind open. `README_SHOTS_OUT` names another folder to save them to. Like
+the wiki's tool it runs from WSL, loading Windows' fonts.

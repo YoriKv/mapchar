@@ -44,7 +44,7 @@ Every doc in this folder gets a line here: its link and what it covers.
 - [ui.md](ui.md): the UI conventions — label capitalisation, what a surface
   does when its room runs out, tooltips over cut-short text, shared keys —
   the screenshot tool for reviewing the UI, and `wiki/` with the tool that
-  takes its tutorial's screenshots.
+  takes its tutorial's screenshots, and the tool that takes the README gallery's.
 - [release.md](release.md): building the app with `packaging/build.py`,
   cutting a release with `release.sh`, and the GitHub release workflow.
 - [lint.md](lint.md): `tools/mapchar-lint`, the standalone checker for

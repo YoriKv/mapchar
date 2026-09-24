@@ -67,7 +67,8 @@ mapchar/
 │                       mother3_sample.py, mk2_sample.py, dump_script.py,
 │                       subset_icon_font.py, samples/,
 │                       mapchar-lint/ (the project-file linter, see lint.md)
-├── local-tools/         ui_screenshots.py, wiki_screenshots.py (gitignored, see ui.md)
+├── local-tools/         ui_screenshots.py, wiki_screenshots.py, readme_screenshots.py
+│                       (gitignored, see ui.md)
 ├── screenshots/         the six PNGs README.md's gallery shows
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
