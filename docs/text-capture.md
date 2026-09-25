@@ -248,7 +248,8 @@ Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
 Linux build, `EXTRA=` adds switches), `analyze.py`,
 `backtrace.py`, `glyph.py`, `bridge.lua`, `bridge_server.py`, `wram_ext.lua`,
 `prov_ext.lua`, `dict.py`, `sweep_alttp.lua`, `dict2.py`, `sweep_yi.lua`,
-`yi_infer.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `GSU=true`, `FRAMES=`,
+`yi_infer.py`, `gbaprobe.lua`, `m3_truth.py`, `m3_analyze.py`,
+`m3_backtrace.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `GSU=true`, `FRAMES=`,
 `SHOTS=`.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
@@ -593,6 +594,52 @@ only): 257 messages, 604 k events. `yi_infer.py` interprets.
 That is the whole block — pointer table, table file with commands, and the
 font to draw it — from evidence of a coprocessor-rendered, proportional
 text engine.
+
+### 9. A second console — Mother 3 (GBA)
+
+**Setup.** Mesen's GBA core needs a BIOS (`gba_bios.bin`, 16 KB, from
+`Firmware/`; there is no built-in stand-in): the Linux build uses the
+open-source Cult-of-GBA replacement (MIT), installed as
+`~/.config/MesenCE/Firmware/gba_bios.bin`, which runs Mother 3. The sample
+project `sample-projects/Mother 3/` is the known answer: `m3_truth.py`
+extracts its 20 blocks' 12 997 strings with their ROM spans and pointer
+addresses. `gbaprobe.lua` logs every ARM ROM data read as an event
+(`gbaPrgRom`, `emu.cpuType.gba`; the PC is `pipeline.execute.address`, the
+instruction executing, not R15 with its pipeline offset) and presses A every
+30 frames and Start every 90, which reaches the first naming screen (menu
+labels, the character's description) and stops there. `m3_analyze.py`
+checks the reads against the project; `m3_backtrace.py` infers without it.
+
+**Findings.**
+
+- **Literal pools look like data.** ARM code loads its constants from just
+  past itself: 777 k of 6.3 M reads were within 4 KB of the PC and are
+  dropped. Code copied into IWRAM (`$03000xxx`) reads the ROM too, and is
+  not near it.
+- **Reads are 8, 16 or 32 bits** — a callback reports one read of the
+  access's width — so a run is a reader stepping forward by up to its width,
+  not by one byte.
+- **Against the known answer:** 40 strings were shown in 2621 frames
+  (Character names, Party battle names, Battler and Enemy names, 11 Menu text
+  strings), and the readers that read them read nothing else: of their reads
+  only 2 fall outside every known string. For all 11 Menu text strings, one
+  instruction (`$080486CC`) read the string's pointer just before its text.
+- **Without the answer:** runs of 4+ reads (28 091 of them — graphics and
+  map data too) and, for each, the 16-bit reads by another PC in the 10 reads
+  before it: the hypothesis with the most distinct slots holding distinct
+  values is `$080486CC`, 11 slots in `$1BC2462–$1BC25FC`, stride 2, base
+  `$1BC263E` — the project's Menu text table (`$1BC23FC–$1BC263A`, stride 2,
+  base `$1BC263C`). The base is 2 off because one PC reads a string's first
+  character and another the rest, which the twin merge of experiment 8
+  handles. With a 30-read window the reads of IWRAM code swamp the vote:
+  scoring distinct slots, not raw votes, and keeping the window tight
+  matter.
+- **Cost.** Printing every read is the expense: 6.3 M events took the 100 s
+  test-runner timeout for 2621 frames, slower than real time; the run-based
+  probe's bookkeeping is what a real GBA probe needs.
+- **Not reached:** blind input stops at the naming screen, so the Script
+  (7825 strings) was never shown; a message sweep needs the engine's own
+  way to show message *N*, as for ALTTP and YI.
 
 **Mesen traps met.**
 
