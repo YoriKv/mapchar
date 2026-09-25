@@ -247,7 +247,9 @@ Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
 `sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh` (`MESEN=linux` for the
 Linux build, `EXTRA=` adds switches), `analyze.py`,
 `backtrace.py`, `glyph.py`, `bridge.lua`, `bridge_server.py`, `wram_ext.lua`,
-`prov_ext.lua`, `dict.py`, `sweep_alttp.lua`, `dict2.py`, `sweep_yi.lua`, `yi_infer.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `GSU=true`, `FRAMES=`, `SHOTS=`.
+`prov_ext.lua`, `dict.py`, `sweep_alttp.lua`, `dict2.py`, `sweep_yi.lua`,
+`yi_infer.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `GSU=true`, `FRAMES=`,
+`SHOTS=`.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
 
