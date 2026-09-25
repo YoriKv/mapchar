@@ -83,13 +83,25 @@ of dotted keys: `cpu.a`, `ppu.*`, `frameCount`); `getAccessCounters`,
   matches the full 24-bit bus address, so an I/O register is a different
   address in every bank: `$2118` must be hooked in every bank a routine may
   run with.
+- A callback receives `(address, value)`, and the address is always the
+  **bus** address (`relAddr`), even on an absolute memory type: a
+  `snesPrgRom` callback reports `$05A5D9`, not `$2A5D9`. mapchar maps it.
+- Read callbacks fire for `Read`, `DmaRead`, `DummyRead` and
+  `PpuRenderingRead`; opcode and operand fetches are exec, not read, so a
+  read callback on ROM sees data reads only (`ScriptManager.h:41`).
 - DMA reads and writes pass through `ProcessMemoryRead/Write`, so they reach
-  script callbacks at their bus addresses.
-- **SNES VRAM / CGRAM / OAM write callbacks never fire.**
-  `SnesDebugger::ProcessPpuWrite` updates the access counters and break
-  conditions but never dispatches to scripts. VRAM traffic is seen at the
-  ports (`$2116–$2119`) and the DMA registers (`$420B`, `$43x0–$43xA`)
-  instead, or after the fact through the access counters.
+  script callbacks. A DMA's B-bus write is reported at `$002118`-style
+  addresses whatever the A-bus bank (`SnesDmaController.cpp` builds
+  `0x2100 | reg` as a `uint16_t`); a CPU `STA $2118` is reported in the bank
+  it ran with.
+- **SNES VRAM / CGRAM / OAM callbacks never fire**, reads or writes, CPU or
+  DMA. The PPU hook does dispatch to scripts (`Debugger.cpp:447`), but the
+  callback is matched against `GetAbsoluteAddress`, which
+  `SnesConsole::GetAbsoluteAddress` (`SnesConsole.cpp:449`) answers with
+  `{-1, None}` for those types, so no match ever succeeds. PCE fails the same
+  way; NES works, its PPU memory being a relative type. VRAM traffic is seen
+  at the ports (`$2115–$2119`) and the DMA registers (`$420B`,
+  `$43x0–$43xA`) instead, or after the fact through the access counters.
 - Coprocessors need their own `cpuType` and `memType` (`sa1`, `gsu` with
   `gsuMemory`); a callback with the wrong CPU silently never fires.
 - `createSavestate` / `loadSavestate` only work inside a main-CPU exec
@@ -209,9 +221,68 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 
 ## Experiments
 
-The first spike: a probe that logs ROM data reads grouped by reading PC to
-stdout, run on Super Mario World, checked against the sample's message-box
-block; measure the slowdown. Then read runs and pointer backtrace against the
-same answer.
+Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
+`sweep_ext.lua`, `run.sh`, `analyze.py`, `backtrace.py`.
 
-No experiments have run yet.
+### 1. Read runs and pointer backtrace — Super Mario World
+
+**Setup.** Headless Mesen 2.2.1 launched straight from WSL
+(`Mesen.exe --testRunner --enablestdout --doNotSaveSettings
+--debug.scriptWindow.allowIoOsAccess=true <rom> <lua>`, Windows paths), stdout
+to a log; no PowerShell wrapper needed. The probe:
+
+- hooks `read` on all of `snesPrgRom`, takes the reading instruction from
+  `getCpuState(snes)` (`k`, `pc`; the PC is already past the operand, which
+  still names the instruction uniquely);
+- grows a run per reader while each read is the next address (or the same
+  one), and prints runs of 3+ bytes with their bytes, frames, and the 12
+  reads that came before the run's first byte;
+- drives the menus with `setInput` from `inputPolled` (Start / A until game
+  mode `$0E`), which reaches the intro level with its message box open by
+  frame ~590.
+
+A sweep extension (test scaffolding, not probe) shows every message: at the
+message routine's entry it snapshots once, at the lookup it pokes the
+translevel and trigger that select case *X*, and a few frames later rolls
+back — 22 messages in ~500 frames.
+
+**Findings.**
+
+- The intro message is **one run** by one reader (`$05:B212`), 141 bytes at
+  `$2A5D9`, decoding under the sample table to the full text. Across the
+  sweep all 22 messages come from that reader. Runs split at some line ends
+  (the routine steps back a byte to pad short lines); merging a reader's runs
+  that touch within a frame gives exactly one sighting per message.
+- **Pointer backtrace works from evidence alone.** For each sighting, pairs
+  of consecutive-address reads by one PC in its context are candidate
+  pointers; a relative hypothesis is `base = run start − value`. The
+  hypothesis *16-bit relative, read by `$05:B1E3`, base `$2A5D9`* explains
+  22 of 23 sightings, with pointer slots `$2A5A9–$2A5D3` at stride 2 — the
+  sample's table is `$2A5A7–$2A5D9`, the missing ends being entries the
+  sweep never selects. Pointer discovery would extend it.
+- **Timing does not tell text here.** SMW reads a whole message in one frame
+  and animates the box afterwards, so "slow reads" is a property of some
+  engines, not a rule.
+- **Table-free ranking is weak.** Bulk readers (DMA from ROM, the graphics
+  decompressor) dominate the data reads; "read once in the session" plus
+  byte entropy puts the message among title-screen tilemap and stripe runs
+  of similar statistics. Telling text apart needs the glyph path, a user
+  hint, or a known reader.
+- **Cost.** SMW makes ~290 ROM data reads per frame in a level and 900 k over
+  3000 frames. Per read: ~1.9 µs for an empty Lua callback, ~1 µs for
+  `getCpuState`, ~2.5 µs for the spike's string-heavy bookkeeping. The whole
+  probe ran 3000 frames in 14 s against a 9 s baseline (both incl. startup)
+  — well inside real time. A game with far more data reads, or a
+  decompression burst (28 k reads in one frame here), would stutter under a
+  headed probe; bookkeeping in numbers instead of strings, and dropping known
+  bulk readers, are the first levers.
+
+**Mesen traps met.**
+
+- A savestate taken in an exec callback at instruction *X*, when loaded,
+  does not fire *X*'s callback again: snapshot at an earlier instruction
+  than the one that acts.
+- Environment variables set in WSL do not reach `Mesen.exe` unless listed in
+  `WSLENV`; the spike passes settings by rewriting the script instead.
+- `grep` treats the log as binary (the ROM header banner has high bytes):
+  use `grep -a`.
