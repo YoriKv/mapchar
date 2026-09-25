@@ -247,7 +247,7 @@ Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
 `sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh` (`MESEN=linux` for the
 Linux build, `EXTRA=` adds switches), `analyze.py`,
 `backtrace.py`, `glyph.py`, `bridge.lua`, `bridge_server.py`, `wram_ext.lua`,
-`prov_ext.lua`, `dict.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `FRAMES=`, `SHOTS=`.
+`prov_ext.lua`, `dict.py`, `sweep_alttp.lua`, `dict2.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `FRAMES=`, `SHOTS=`.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
 
@@ -461,6 +461,51 @@ the last ROM data read before it (probe's ring). `dict.py` interprets.
   `$10 = $0E` opens the box the same frame (from the disassembly; not run
   yet). Messages are found by scanning, not a pointer table: the game walks
   the text once at boot into 3-byte pointers at `$7F71C0 + 3·id`.
+
+### 6. The whole encoding from a message sweep — A Link to the Past (USA)
+
+**Setup.** `sweep_alttp.lua`, Linux build, no input. At the attract
+sequence's own call of the decoder (`$0E:C4E2`) it snapshots once; at
+`$0E:C4E4`, before `$1CF0` is read, it pokes message id *N*; until the next
+frame's `$00:80B5` it prints every ROM data read (`E pc addr value`) and
+every write to `$7F1200–$7F19FF` (`X pc addr value`) in order; then it rolls
+back. All 397 messages decode in 9 s (172 k reads, 52 k writes). The decode
+pass is all a table needs, so no text box has to open. `dict2.py`
+interprets.
+
+**Method** (no knowledge of the game):
+
+1. **Drop DMA reads.** HDMA reads the ROM every scanline and is credited to
+   whatever instruction is running; an address "read" by four or more PCs is
+   a DMA source, not an operand (25 addresses here).
+2. **The stream reader** is the PC whose reads are copied straight into the
+   buffer from the most distinct addresses (`$0E:C50D`: 23 043; the
+   dictionary reader `$0E:C6F5` copies more often but from 271).
+3. **Each stream byte is classified by what happens before the next stream
+   read:** a *literal* writes itself and reads nothing; a *command* writes
+   itself first, or writes nothing, and its parameter count is the stream
+   bytes the reader steps over; a *dictionary code* writes bytes that are
+   the values just read elsewhere; an *insertion* writes bytes no ROM read
+   supplied.
+
+**Findings — every one matches the game's own tables or the disassembly:**
+
+- literals: 89 codes, `$00–$5E`; 12 codes show one to four stray
+  classifications among hundreds;
+- dictionary: the 96 codes in use (of `$88–$E8`) each expand exactly to the
+  ROM table's entry;
+- commands: 18 codes, `$67–$7E`, each parameter count as documented (`$6B`,
+  `$6D`, `$6E`, `$77`, `$78`, `$79`, `$7A` take one);
+- insertions: `$6A` (the player's name, from SRAM) and `$6C` (a number, one
+  parameter);
+- end token: the last stream byte of all 397 messages is `$7F`;
+- layout: 395 of 396 message boundaries are back to back — the break is the
+  switch from the first text set to the second — so the text is a scanned
+  run of `$7F`-terminated strings, not a pointer table.
+
+That is a complete table file and block for ALTTP's dialogue, from evidence.
+Only the characters behind the 89 literals remain, which the font reads of
+experiment 5 or a relative search supply.
 
 **Mesen traps met.**
 
