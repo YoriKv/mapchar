@@ -246,7 +246,8 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
 `sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh` (`MESEN=linux` for the
 Linux build, `EXTRA=` adds switches), `analyze.py`,
-`backtrace.py`, `glyph.py`, `bridge.lua`, `bridge_server.py`.
+`backtrace.py`, `glyph.py`, `bridge.lua`, `bridge_server.py`, `wram_ext.lua`,
+`prov_ext.lua`, `dict.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `FRAMES=`, `SHOTS=`.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
 
@@ -389,6 +390,51 @@ sends a line and drains the commands waiting (`ping`, `read <addr>`,
 - Closing the socket from mapchar's side is seen as `closed` on the next
   receive; the probe ends the run on it, so a vanished mapchar never leaves
   a headless Mesen behind.
+
+### 5. Buffered, dictionary-compressed text — A Link to the Past (USA)
+
+**Setup.** Linux build, no input: the title screen's attract sequence types
+out the prologue in the dialogue font. First pass: the probe and
+`vram_ext.lua` idle for 4000 frames, plus `wram_ext.lua` (whole-WRAM dumps
+at three frames). Second pass, once the buffer is known: `prov_ext.lua`
+hooks writes to `$7F:1200–$7F:13FF` and logs each with the writing PC and
+the last ROM data read before it (probe's ring). `dict.py` interprets.
+
+**Findings.**
+
+- **Read runs miss it.** Neither slow (typewriter) nor one-shot ROM runs
+  single out the text: the typewriter draws from RAM, and the decoder's reads
+  are cut into short runs by dictionary lookups.
+- **Relative search on the ROM mostly fails; on WRAM it succeeds.** Of the
+  prologue's words only "Hyrule" is in the ROM whole (A = `$00`, a = `$1A`)
+  — dictionary codes cover the rest. In a WRAM dump taken after the text
+  appears every word is found, at `$7F:1216` onward: the whole prologue
+  decoded one byte per character into a buffer at once (frame 1526), before
+  the typewriter shows any of it. "Type what you see" should search WRAM
+  snapshots as well as the ROM.
+- **Buffer-write provenance recovers the encoding.** Pairing each buffer
+  write with the ROM read just before it:
+  - the PC whose writes equal the byte it just read is the literal copier
+    (`$0E:C517`, copying what `$0E:C50D` reads from the stream at
+    `$1C:D960`, file `$E5960`);
+  - a stream byte skipped between two literals is a dictionary code, and
+    what other PCs wrote in its place is its expansion (`$0E:C6F9` writing
+    what `$0E:C6F5` reads from the dictionary around `$0E:C82E`).
+  This gives 21 dictionary entries (`$8F` "ain", `$90` "and", `$C4` "ound",
+  `$D8` "the", …) with no conflict across repeated uses, and marks `$73`,
+  `$75`, `$76`, `$78` as bytes passed through as commands. Decoding the
+  stream with the literals plus these entries reproduces the prologue
+  ("Long a·, in the beautiful kingdom of Hyrule surrounded by mountains
+  ··ests…") but for two gaps: adjacent codes, which the one-byte-gap rule
+  skips, and punctuation, whose codes appear only as literals. Splitting
+  the writes between two literals where the dictionary read address jumps
+  resolves adjacent codes ("mountains and forests", "evil power"), but
+  inferring the stream from the writes alone then mislabels a literal or
+  two as codes: the stream should come from the stream reader's own read
+  sequence, with the writes only saying what each byte became.
+- **Two-phase capture.** The cheap pass (dumps, or the hotkey) finds where
+  the text is; a targeted second pass (hooks on that range only, from a
+  rollback or a replay) explains how it got there. This is tier 2's shape.
 
 **Mesen traps met.**
 
