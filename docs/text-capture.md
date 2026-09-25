@@ -109,7 +109,9 @@ of dotted keys: `cpu.a`, `ppu.*`, `frameCount`); `getAccessCounters`,
 
 **Access counters** keep, for every byte of every memory type, read / write /
 exec counts and the master clock of the last read / write / exec, and they
-record PPU writes too. `getAccessCounters(LastWriteClock, snesVideoRam)`
+record PPU writes too (`SnesDebugger::ProcessPpuWrite`; a VRAM byte address
+is the word address × 2; a write the PPU blocks outside vblank is not
+counted). `getAccessCounters(LastWriteClock, snesVideoRam)`
 therefore says which VRAM bytes changed since a moment, and
 `LastReadClock` over `snesPrgRom` which ROM bytes were read since it — with
 no callback running during play. Each call builds a Lua table as big as the
@@ -222,7 +224,8 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 ## Experiments
 
 Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
-`sweep_ext.lua`, `run.sh`, `analyze.py`, `backtrace.py`.
+`sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh`, `analyze.py`,
+`backtrace.py`, `glyph.py`.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
 
@@ -277,7 +280,83 @@ back — 22 messages in ~500 frames.
   headed probe; bookkeeping in numbers instead of strings, and dropping known
   bulk readers, are the first levers.
 
+### 2. Byte → tile → glyph — Super Mario World
+
+**Setup.** `vram_ext.lua` on top of the probe and the sweep. VRAM callbacks
+never fire, so it hooks writes to `$2115–$2119` in banks `$00–$3F` and
+`$80–$BF` (128 small callbacks; DMA arrives at `$00:21xx`) and models the
+word address register (`$2116/7`, increment step and timing from `$2115`).
+At each frame end that touched VRAM it prints the touched words in
+first-write order with their final values (`emu.read` on `snesVideoRam`
+works), the layer setup from `getState` (0.2 ms; `ppu.bgMode`,
+`ppu.layers[i].tilemapAddress` / `chrAddress` in words, `doubleWidth`,
+`doubleHeight`, scrolls), and at two frames a whole-VRAM dump. `glyph.py`
+does the rest.
+
+**Findings.**
+
+- **Changed, not touched.** SMW rewrites the status bar every frame with the
+  same words; keeping only words whose value changes leaves the text box.
+  The message lands on BG3 at `$50C7 + 32·row`, 18 cells a row, as words
+  `$39xx`.
+- **Byte → tile needs no table.** For each sighting, pair the run's bytes
+  with the changed cells of the next frames at about the same relative
+  position, vote on `tile − (byte & mask)`, and keep the rule whose mapped
+  bytes form the longest common subsequence with the tiles. 20 of 21
+  sightings give tile = `(byte & $7F) + $100` — the table's own structure
+  (bit 7 marks a line end; attribute `$39` carries tile bit 8). What stays
+  unexplained is a cell that already held the same character. The rule
+  family `(b & mask) + k` covers fonts laid out by code; a lookup table from
+  code to tile would need the equality-pattern alignment (a byte repeats
+  exactly where its tile repeats), not yet tried.
+- **Glyphs.** The text layer's char base and bit depth (mode 1 BG3: 2bpp)
+  give each byte's 8×8 glyph from the VRAM dump; a sheet with each glyph at
+  its byte value reproduces the sample table's layout (`$00` A … `$40` a).
+  SMW's glyph cells are filled: ink is the colours other than the font's
+  most common one.
+- **Glyph → character is parked.** A first try at matching glyphs against
+  system-font renders got 29/55 alone (case confusions) and 37/43 when each
+  alphabet is fitted as a consecutive byte run; this line of work is set
+  aside for now.
+
+### 3. The hotkey from access counters — Super Mario World
+
+**Setup.** `hotkey.lua`: no memory callbacks at all. At a mark it keeps
+`emu.getMasterClock()` and a copy of VRAM (64 K `emu.read`s, 5–7 ms). At the
+"press" (frame 620, the Welcome box up since 589) it reads the ROM's
+`lastReadClock` and `readCount` and VRAM's `lastWriteClock`, cuts the ROM
+bytes read since the mark into ranges, and diffs VRAM against the copy.
+Marks at frame 560 (1 s before the press) and 300 (5 s, spanning the level
+load).
+
+**Findings.**
+
+- **Cheap enough for a key press.** ROM `lastReadClock` 16 ms and
+  `readCount` 13 ms (512 KB), VRAM `lastWriteClock` 2 ms, the Lua scans and
+  the VRAM diff 7–13 ms each: under 60 ms in all, and nothing during play.
+- **ROM alone depends on the window.** Of the ranges read since the mark
+  whose bytes were read at most twice all session, the message is the
+  largest with the 1 s window — the next two being the tables that selected
+  it (`$2A594`, `$2A580`) — but only 7th with the 5 s window, behind level
+  and graphics data loaded in it.
+- **ROM plus the screen does not.** Aligning each such range with the VRAM
+  words that changed since the mark (spike 2's vote-and-LCS) explains the
+  message 141/141 as tile = `(b & $7F) + $100` in both windows; the best other
+  range explains 66%. The text on screen and its ROM source come out of one
+  query, with the byte → tile rule as a by-product.
+- A live hotkey needs a mark before the text: a rolling pair of marks (clock
+  + VRAM copy, ~7 ms every few seconds), or the user's "text on" key.
+
 **Mesen traps met.**
+
+- `getAccessCounters` takes `(memType, counterType)`, the reverse of
+  `LuaDocumentation.json`: `LuaCallHelper` reads parameters from the last.
+  The enum is `emu.counterType` (`readCount`, `lastReadClock`, …).
+- One callback may run at most `ScriptTimeout` seconds (default 1); past it
+  the script stops with the error only in the script window, and a
+  `--testRunner` run then idles to its 100 s timeout. Pass
+  `--debug.scriptWindow.scriptTimeout=N` and wrap handlers in `pcall` to see
+  errors on stdout.
 
 - A savestate taken in an exec callback at instruction *X*, when loaded,
   does not fire *X*'s callback again: snapshot at an earlier instruction
