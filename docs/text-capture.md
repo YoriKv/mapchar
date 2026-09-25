@@ -224,8 +224,8 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 ## Experiments
 
 Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
-`sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh`, `analyze.py`,
-`backtrace.py`, `glyph.py`.
+`sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh` (`EXTRA=` adds switches), `analyze.py`,
+`backtrace.py`, `glyph.py`, `bridge.lua`, `bridge_server.py`.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
 
@@ -346,6 +346,27 @@ load).
   query, with the byte → tile rule as a by-product.
 - A live hotkey needs a mark before the text: a rolling pair of marks (clock
   + VRAM copy, ~7 ms every few seconds), or the user's "text on" key.
+
+### 4. The live bridge — TCP from Mesen's Lua
+
+**Setup.** `bridge.lua` with `--debug.scriptWindow.allowNetworkAccess=true`
+(on top of the I/O switch): `require("socket.core")`, connect to
+`127.0.0.1:47800`, `settimeout(0)` and `tcp-nodelay`; each frame end it
+sends a line and drains the commands waiting (`ping`, `read <addr>`,
+`stop`). `bridge_server.py` plays mapchar's side.
+
+**Findings.**
+
+- LuaSocket loads under the two switches and needs nothing else. A
+  non-blocking `receive("*l")` per frame end keeps the emulator unblocked.
+- **Round trip 2.6 ms median, 3.5 ms p95** with the server in Windows Python
+  (mapchar's own runtime): one emulated frame, since commands are answered at
+  frame end. Headed at 60 fps that bounds it at ~17 ms. A server in WSL,
+  reached through localhost forwarding, costs ~44 ms a round trip — WSL's
+  relay, not Mesen.
+- Closing the socket from mapchar's side is seen as `closed` on the next
+  receive; the probe ends the run on it, so a vanished mapchar never leaves
+  a headless Mesen behind.
 
 **Mesen traps met.**
 
