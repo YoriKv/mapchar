@@ -533,12 +533,14 @@ one context ring per CPU.
   `$CFD1` — and the GSU's text run begins 6 bytes past it: a record with a
   6-byte header, then text. Backtrace needs "absolute plus a constant"
   alongside "relative to a base".
-- **Cost.** 5.5 M ROM reads over 3600 frames once code fetches are dropped
-  (~1500 a frame, nearly all the GSU's): 88 s against a 20 s baseline, slower
-  than real time. `getCpuState(gsu)` per read is the cost — the GSU state is
-  large. Reading R15 and PBR from their registers (`$00:301E`, `$00:3034`)
-  instead is the next thing to try; tier 2 (replay) takes it off the player
-  either way.
+- **Cost.** 5.5 M ROM reads over 3600 frames (~1500 a frame, nearly all the
+  GSU's). With `getCpuState(gsu)` on every read: 88 s against a 20 s
+  baseline, slower than real time — the call costs **15 µs**, the GSU state
+  being large. Peeking R15 and PBR from the 65816 side (`$00:301E`,
+  `$00:3034`) returns 0, so that is no way round it. Remembering the 256-byte
+  pages where a code fetch was seen, and dropping later reads there before
+  asking for state, brings it to 45.6 s — faster than real time (3600 frames
+  are 60 s) — with the same 14 caption runs found.
 
 **Mesen traps met.**
 
