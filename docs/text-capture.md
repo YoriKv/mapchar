@@ -74,12 +74,32 @@ of dotted keys: `cpu.a`, `ppu.*`, `frameCount`); `getAccessCounters`,
 - A GUI instance can only be closed from outside (`emu.stop` exits only under
   `--testRunner`); the harness kills by matching the process command line.
 - Many instances run concurrently, which parallel headless sweeps rely on.
+- `--testRunner` never opens a window on any OS: `TestRunner.Run`
+  initialises the core with no audio, video or input and no UI at all.
+
+**Builds:**
+
+- **Windows** — `../mesen/Mesen.exe` (2.2.1), the reference: it is what
+  mapchar's users run beside it. From WSL it is launched through interop
+  with Windows paths (`wslpath -w`).
+- **Linux** — the single-file build from `../mesen-linux/Mesen`, installed
+  at `~/.local/opt/mesen/Mesen` and linked as `~/.local/bin/mesen`. Its home
+  is `~/.config/MesenCE`, where the first run unpacks `MesenCore.so`, Skia
+  and HarfBuzz and writes `settings.json`. It needs `libSDL2` (installed).
+  Run it headless — `--testRunner` with `DISPLAY` and `WAYLAND_DISPLAY`
+  unset — so nothing reaches WSLg. It takes Linux paths, runs as fast as the
+  Windows build, and six concurrent instances ran clean. It is for
+  WSL-side tests: a TCP peer in WSL reaches it without the Windows relay.
+  One early run hung with no script output until the timeout and has not
+  recurred in a dozen since.
+- Output written to `/mnt/d` from Linux is slow: a 2.5 MB log added 6 s to a
+  14 s run. Heavy output goes to a Linux path or a pipe.
 
 **Memory callbacks:**
 
 - An absolute memory type (`snesPrgRom`, `snesWorkRam`) matches the callback
-  against the absolute address, so a `snesPrgRom` read callback reports ROM
-  offsets directly, with no mapping arithmetic. A relative one (`snesMemory`)
+  against the absolute address, so a `snesPrgRom` callback's range is given in
+  ROM offsets and catches the ROM through every mirror. A relative one (`snesMemory`)
   matches the full 24-bit bus address, so an I/O register is a different
   address in every bank: `$2118` must be hooked in every bank a routine may
   run with.
@@ -224,7 +244,8 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 ## Experiments
 
 Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
-`sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh` (`EXTRA=` adds switches), `analyze.py`,
+`sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh` (`MESEN=linux` for the
+Linux build, `EXTRA=` adds switches), `analyze.py`,
 `backtrace.py`, `glyph.py`, `bridge.lua`, `bridge_server.py`.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
@@ -362,8 +383,9 @@ sends a line and drains the commands waiting (`ping`, `read <addr>`,
 - **Round trip 2.6 ms median, 3.5 ms p95** with the server in Windows Python
   (mapchar's own runtime): one emulated frame, since commands are answered at
   frame end. Headed at 60 fps that bounds it at ~17 ms. A server in WSL,
-  reached through localhost forwarding, costs ~44 ms a round trip — WSL's
-  relay, not Mesen.
+  reached through localhost forwarding, costs ~44 ms a round trip to the
+  Windows build — WSL's relay, not Mesen; the Linux build with the same WSL
+  server takes 3.2 ms median, 4.0 ms p95.
 - Closing the socket from mapchar's side is seen as `closed` on the next
   receive; the probe ends the run on it, so a vanished mapchar never leaves
   a headless Mesen behind.
