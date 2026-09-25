@@ -432,9 +432,35 @@ the last ROM data read before it (probe's ring). `dict.py` interprets.
   inferring the stream from the writes alone then mislabels a literal or
   two as codes: the stream should come from the stream reader's own read
   sequence, with the writes only saying what each byte became.
+- **Checked against the disassembly** (`../alttp-disassembly`, which is the
+  USA version): the stream read is `LDA [$04],Y` at `$0E:C50B` and the
+  buffer write `$0E:C513` (the probe's PCs are the next instruction's); the
+  buffer is `$7F1200`, holding codes and commands with the dictionary, name
+  and numbers already expanded; dictionary codes are `$88–$E8`, strings
+  indexed by the word table at `$0E:C703`. **All 26 dictionary entries the
+  probe inferred match that table.** Its two other "codes" are a literal
+  mislabelled by the split (`$07` H) and a command parameter (`$09`, of
+  `$78` Wait). Punctuation per the ROM map: `$41` `.`, `$42` `,`, `$43` `…`.
+- **The glyph path of a proportional font is its font reads.** ALTTP draws
+  8×16 glyphs into a 2bpp tile buffer at `$7F0000`, DMA'd to BG3 characters
+  `$180–$1FD`, so the tilemap holds fixed cell numbers and spike 2's byte →
+  tile alignment has nothing to align. But the renderer reads each glyph's
+  rows from the font at `$0E:8000` (reads at `$0E:CBD1`, bottom half
+  `$0E:CC67`), and those reads, in order, spell the text as it is typed —
+  "Long ago, in the beautiful kingdom of Hyrule surrounded by mountains and
+  forests…" (frames 1564–2419) — with the code given by the address:
+  top tile `((c & $F0)·2) | (c & $0F)`, 16 bytes a tile. The spike's run
+  merging doubles or drops a letter where neighbouring glyphs are read back
+  to back; per-read events fix that.
 - **Two-phase capture.** The cheap pass (dumps, or the hotkey) finds where
   the text is; a targeted second pass (hooks on that range only, from a
   rollback or a replay) explains how it got there. This is tier 2's shape.
+- **Showing message N**, for a sweep: message id at `$1CF0`; an exec hook on
+  `Module_MainRouting` (`$00:80B5`) in module `$07`/`$09` with `$11 = 0`
+  that writes `$1CF0/1`, `$0223 = 0`, `$1CD8 = 0`, `$010C = $10`, `$11 = 2`,
+  `$10 = $0E` opens the box the same frame (from the disassembly; not run
+  yet). Messages are found by scanning, not a pointer table: the game walks
+  the text once at boot into 3-byte pointers at `$7F71C0 + 3·id`.
 
 **Mesen traps met.**
 
