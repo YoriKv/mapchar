@@ -137,6 +137,37 @@ therefore says which VRAM bytes changed since a moment, and
 no callback running during play. Each call builds a Lua table as big as the
 memory, so it suits a query on demand, not every frame.
 
+**Traps** (each met in an experiment below):
+
+- `getAccessCounters` takes `(memType, counterType)`, the reverse of
+  `LuaDocumentation.json`: `LuaCallHelper` reads parameters from the last.
+  The enum is `emu.counterType` (`readCount`, `lastReadClock`, …).
+- One callback may run at most `ScriptTimeout` seconds (default 1); past it
+  the script stops with the error only in the script window. A
+  `--testRunner` run then idles to its own timeout — 100 s unless
+  `--timeout=N` says otherwise. Pass `--debug.scriptWindow.scriptTimeout=N`
+  and wrap handlers in `pcall` to see errors on stdout.
+- A savestate taken in an exec callback at instruction *X*, when loaded,
+  does not fire *X*'s callback again: snapshot at an earlier instruction
+  than the one that acts.
+- **A read callback cannot tell who read.** DMA and HDMA reads arrive with
+  whatever instruction is running as the PC; a coprocessor's instruction
+  fetches (the SuperFX filling its cache) arrive as data reads; so do an ARM
+  CPU's literal-pool loads. Each needs its own filter (experiments 6, 7, 9).
+- The SuperFX prefetches: writing R14 reads the byte at the new address, so
+  a `GETB` stream shows at the instruction that moved R14, often as two PCs.
+- `getCpuState` costs ~1 µs for the 65816 and **15 µs for the SuperFX**, its
+  state being large; `getState` 0.2 ms. The SuperFX's registers read as 0
+  when peeked from the 65816 side (`$00:3000–$303F`).
+- The GBA core needs a BIOS in `Firmware/` (`gba_bios.bin`); there is no
+  built-in stand-in. The GBA PC to use is `pipeline.execute.address`.
+- `emu.takeScreenshot()` returns PNG bytes; saving them needs the I/O
+  switch and `io.open(…, "wb")`.
+- Environment variables set in WSL do not reach `Mesen.exe` unless listed in
+  `WSLENV`; the spike passes settings by rewriting the script instead.
+- `grep` treats a log as binary (the ROM header banner has high bytes): use
+  `grep -a`.
+
 **CDL:** the code/data logger marks every ROM byte read as data or executed as
 code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 
@@ -161,10 +192,10 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 ## Unassisted ideas
 
 - **Read runs.** A text engine is one instruction (`LDA [$00],Y`) walking
-  ROM a byte at a time, usually over many frames (typewriter), with stops for
-  input. Group data reads by the reading PC into ascending runs; a run's last
-  byte suggests the end token. Timing tells text from decompression, which
-  reads in dense single-frame bursts.
+  ROM a byte at a time. Group data reads by the reading PC into ascending
+  runs; a run's last byte suggests the end token. Timing does not tell text
+  from decompression: SMW reads a whole message in one frame, and ALTTP's
+  typewriter draws from RAM (experiments 1, 5).
 - **Pointer backtrace.** Just before a run starts, its address was stored in
   direct page from ROM bytes read moments earlier. Match recent reads against
   the run's start under each mapping: that is the pointer table, its entry and
@@ -225,21 +256,59 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 
 ## Risks
 
-- Lua speed on every ROM data read — to measure first; tier 2 is the answer
-  if it is too slow.
-- Noise: level data, music, graphics decompression.
-- SA-1 and SuperFX games read text on a coprocessor.
-- Text built at runtime (numbers, names).
-- The two script switches must be passed on every launch.
+- **Speed.** Measured: well inside real time on SMW and ALTTP; the SuperFX
+  and the GBA need their read filters to stay there (experiments 7, 9).
+  Tier 2 takes the cost off the player regardless.
+- **Noise.** Level data, graphics decompression and DMA dominate the reads;
+  telling text apart needs the screen, a lookup into a font, a user hint or
+  a known reader — never read statistics alone (experiments 1, 3).
+- **Showing every message needs the engine.** Each sweep so far poked a
+  game-specific message id found in a disassembly. Without one, text is
+  captured only as play shows it.
+- Text built at runtime (names, numbers) — seen as insertions, not text.
+- The script switches must be passed on every launch.
 
 ## Test games
 
-- **Super Mario World** — the known answer is in
-  `tools/samples/Super Mario World/`: message boxes with a relative pointer
-  table at `$2A5A7`, text `$2A5D9–$2B0FF`, table `messages.tbl`; level names.
-- **Zelda: A Link to the Past** — dictionary-compressed dialogue.
-- **Yoshi's Island (Japanese)** — kana, SuperFX; the yi-shiny harness already
-  opens its message boxes.
+| Game | Console | Engine | Known answer |
+|---|---|---|---|
+| Super Mario World | SNES | fixed tiles, plain text, relative pointers | `tools/samples/Super Mario World/` |
+| A Link to the Past (USA) | SNES | dictionary-compressed, buffered in WRAM, 8×16 proportional font | `../alttp-disassembly` |
+| Yoshi's Island (USA V1.0) | SNES + SuperFX | text read and plotted by the coprocessor, proportional font | `../yi-shiny` |
+| Mother 3 | GBA | 16-bit characters, pointer tables and archives | `sample-projects/Mother 3/` |
+
+## What the experiments show
+
+Four text engines on two consoles reduce to the same evidence and the same
+few inferences:
+
+- **Evidence is per-read events**: `(cpu, pc, address, value)` for ROM data
+  reads, plus writes to a buffer once one is known, in order. Runs, sightings
+  and statistics are derived from them, not recorded instead of them — the
+  run-merging spikes lost letters the events keep.
+- **Filters come first** (DMA, coprocessor code fetches, literal pools), or
+  every later step fits noise.
+- **The stream reader** is the reader of the most distinct addresses in one
+  contiguous span, joined by any reader inside the same span (a twin).
+- **Each stream byte is classified by what happens before the next one**:
+  written as itself (a literal), written as other bytes it caused to be read
+  (a dictionary entry), written from no ROM read (an insertion), triggering a
+  lookup at `base + code × stride` (a glyph), or nothing, the reader stepping
+  over parameters (a command).
+- **Pointer backtrace** needs several hypotheses — relative to a base,
+  absolute plus a constant, 16-bit values on the GBA — and the pointer may
+  be read by another CPU than the text. A tight window before the text and a
+  score by distinct slots holding distinct values keep it honest.
+- **Checked against a known answer every time**: SMW's sample, ALTTP's
+  and YI's disassemblies, Mother 3's project. The inferred tables, entries,
+  command lengths, end tokens and pointer tables matched, bar the gaps each
+  experiment names (Mother 3's base 2 bytes off, table ends a sweep never
+  reached).
+
+Open: a generic way to show message *N*. Each pointer read
+`table + id × stride` is preceded by a read of `id` — a RAM variable that,
+found from the evidence, would make any game sweepable without a
+disassembly (not yet tried).
 
 ## Experiments
 
@@ -595,6 +664,13 @@ That is the whole block — pointer table, table file with commands, and the
 font to draw it — from evidence of a coprocessor-rendered, proportional
 text engine.
 
+YI's other text, from yi-shiny (not run): every renderer is a SuperFX
+routine on the same font. Level names (`$51:49BC`, 72 pointers by level,
+`$FD`-terminated with `$FF`/`$FE` position codes) are plotted into OBJ tiles
+at VRAM `$5C00` and shown as 16 sprites; the file-select strings (`$17:94BE`
+…) and the ending story (`$0D:F3E8`) each have their own renderer and
+codes; the credits appear to be bitmaps, not text.
+
 ### 9. A second console — Mother 3 (GBA)
 
 **Setup.** Mesen's GBA core needs a BIOS (`gba_bios.bin`, 16 KB, from
@@ -640,22 +716,3 @@ checks the reads against the project; `m3_backtrace.py` infers without it.
 - **Not reached:** blind input stops at the naming screen, so the Script
   (7825 strings) was never shown; a message sweep needs the engine's own
   way to show message *N*, as for ALTTP and YI.
-
-**Mesen traps met.**
-
-- `getAccessCounters` takes `(memType, counterType)`, the reverse of
-  `LuaDocumentation.json`: `LuaCallHelper` reads parameters from the last.
-  The enum is `emu.counterType` (`readCount`, `lastReadClock`, …).
-- One callback may run at most `ScriptTimeout` seconds (default 1); past it
-  the script stops with the error only in the script window, and a
-  `--testRunner` run then idles to its 100 s timeout. Pass
-  `--debug.scriptWindow.scriptTimeout=N` and wrap handlers in `pcall` to see
-  errors on stdout.
-
-- A savestate taken in an exec callback at instruction *X*, when loaded,
-  does not fire *X*'s callback again: snapshot at an earlier instruction
-  than the one that acts.
-- Environment variables set in WSL do not reach `Mesen.exe` unless listed in
-  `WSLENV`; the spike passes settings by rewriting the script instead.
-- `grep` treats the log as binary (the ROM header banner has high bytes):
-  use `grep -a`.
