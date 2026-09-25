@@ -507,6 +507,39 @@ That is a complete table file and block for ALTTP's dialogue, from evidence.
 Only the characters behind the 89 literals remain, which the font reads of
 experiment 5 or a relative search supply.
 
+### 7. Text read by a coprocessor — Yoshi's Island (USA V1.0)
+
+**Setup.** Linux build, no input: the attract intro is a storybook whose
+captions ("A long, long time ago…", "A stork hurries across the dusky,
+pre-dawn sky.") appear in a proportional font. The probe gains `gsu = true`:
+a second `snesPrgRom` read callback registered for `emu.cpuType.gsu`, its PC
+taken as `programBank:R15` from `getCpuState(gsu)` and tagged `$1xxxxxx`, and
+one context ring per CPU.
+
+**Findings.**
+
+- **The SuperFX reads the text.** Relative search finds the captions whole
+  in the ROM (file `$07CF7E–$07D0F0`, `a` = `$D8`, `A` = `$AA`), never in WRAM.
+  Their readers are GSU instructions `$09:E9C1` and `$09:E9C5` (one byte
+  apart, reading each byte and its successor), one caption line in one or
+  two frames. A 65816-only probe misses this text altogether.
+- **GSU code fetches look like data reads.** The GSU filling its
+  instruction cache is reported to a read callback like any `GETB`: 98% of
+  its "reads" were its own code. A read of the program bank within `$200`
+  of R15 is dropped before any bookkeeping.
+- **The pointer crosses CPUs.** With a context ring per CPU, the 65816's
+  reads just before each caption hold its pointer: `$0F:CCFB` reads a word
+  from the table at `$0F:CD56` (file `$7CD56`, stride 2) — `$CF78`, `$CF9A`,
+  `$CFD1` — and the GSU's text run begins 6 bytes past it: a record with a
+  6-byte header, then text. Backtrace needs "absolute plus a constant"
+  alongside "relative to a base".
+- **Cost.** 5.5 M ROM reads over 3600 frames once code fetches are dropped
+  (~1500 a frame, nearly all the GSU's): 88 s against a 20 s baseline, slower
+  than real time. `getCpuState(gsu)` per read is the cost — the GSU state is
+  large. Reading R15 and PBR from their registers (`$00:301E`, `$00:3034`)
+  instead is the next thing to try; tier 2 (replay) takes it off the player
+  either way.
+
 **Mesen traps met.**
 
 - `getAccessCounters` takes `(memType, counterType)`, the reverse of
