@@ -247,7 +247,7 @@ Spike scripts live in `tmp/capture-spike/` (scratch, gitignored): `probe.lua`,
 `sweep_ext.lua`, `vram_ext.lua`, `hotkey.lua`, `run.sh` (`MESEN=linux` for the
 Linux build, `EXTRA=` adds switches), `analyze.py`,
 `backtrace.py`, `glyph.py`, `bridge.lua`, `bridge_server.py`, `wram_ext.lua`,
-`prov_ext.lua`, `dict.py`, `sweep_alttp.lua`, `dict2.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `FRAMES=`, `SHOTS=`.
+`prov_ext.lua`, `dict.py`, `sweep_alttp.lua`, `dict2.py`, `sweep_yi.lua`, `yi_infer.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `GSU=true`, `FRAMES=`, `SHOTS=`.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
 
@@ -541,6 +541,56 @@ one context ring per CPU.
   pages where a code fetch was seen, and dropping later reads there before
   asking for state, brings it to 45.6 s — faster than real time (3600 frames
   are 60 s) — with the same 14 caption runs found.
+
+### 8. Message boxes drawn by a coprocessor — Yoshi's Island (USA V1.0)
+
+**Setup.** `sweep_yi.lua`, Linux build, four instances in parallel over id
+ranges (102 s for all). It loads 1-1 through yi-shiny's `load_level.lua`,
+then records which ROM pages 120 frames of ordinary play read (111 pages);
+at `$00:8150` it snapshots, and per message id writes `$70:4070` and
+`$7E:0D0F = 1`, answers every wait for input (an exec hook at `$01:E1D6`
+writes `$0080` to `$70:4076`), and logs every ROM read of either CPU outside
+the play pages, in order, until the box closes; then rolls back. Ids whose
+pointer is `$0000` are skipped (read from the game's table, scaffolding
+only): 257 messages, 604 k events. `yi_infer.py` interprets.
+
+**Method** (no knowledge of the game):
+
+1. **Stream:** per message, the reader with the most distinct addresses in
+   one contiguous span, plus any reader whose reads fall inside that span —
+   its twin (the GSU reads the low and high byte of each word at two PCs,
+   `$09:B0C2` and `$09:B0C4`). The stream is the union, in address order.
+2. **Lookup tables:** for each other reader, the `(stride, base)` for which
+   its reads land on `base + code × stride` with `code` a stream byte. The
+   game reads ahead of what it draws (a word is measured before it is
+   plotted), so a lookup is paired with any stream byte within ±24, and a
+   table must be hit by at least 20 distinct codes — a reader of a handful
+   of addresses fits anything.
+3. **Glyph codes** are the stream bytes some table lookup lands on; the rest
+   are structure. A structural byte followed by the most common one (`$FF`)
+   is a command, and its length is the reader's step past it.
+4. **Pointer:** the two consecutive-address reads by one 65816 PC before the
+   stream whose value is the stream's first address.
+
+**Findings — matching the disassembly (yi-shiny) throughout:**
+
+- lookup tables: the font — glyph rows at file `$04BD2F` (`$09:BD2F`),
+  stride 12 (8×12, 1bpp), and widths at `$04BC2F`, stride 1 — each
+  explaining 14 448 of 14 453 lookups; the scaled renderer (`$09:B5ED`) uses
+  the same two; no other table survives the test;
+- 100 glyph codes, `$18–$F9`;
+- commands, each `code $FF`: `05–08` (row), `0A`, `0F` (wait), `0E` (line
+  break), `12` (one-pixel scroll, 3792 uses), `31`, `38` (size), `3D`, `3E`
+  (counters), `50–52` (yes / no), `60` (picture); every observed one is a
+  two-byte word;
+- end token: all 257 messages end `$FFFF`;
+- pointers: `$01:E19E` reads a word from `$51:10DB + 2·id` (file `$1110DB`)
+  whose value is the stream's address in bank `$51`, for 257 of 257
+  messages — the 65816 reads the pointer, the GSU the text.
+
+That is the whole block — pointer table, table file with commands, and the
+font to draw it — from evidence of a coprocessor-rendered, proportional
+text engine.
 
 **Mesen traps met.**
 
