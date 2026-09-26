@@ -54,6 +54,9 @@ Every doc in this folder gets a line here: its link and what it covers.
   a game running in an emulator (Mesen2 first) — constraints, the probe and
   bridge shape, what Mesen's Lua API can and cannot see, the capture ideas,
   and the experiments' findings.
+- [capture.md](capture.md): running text capture — the emulator it needs and
+  where it looks for it, the files a session keeps beside the project, and
+  its tests, the opt-in one on real games included.
 - [plan/README.md](plan/README.md): the target design of mapchar itself and
   its build order: features, architecture, the native table and script
   formats, the preview system, and phases.

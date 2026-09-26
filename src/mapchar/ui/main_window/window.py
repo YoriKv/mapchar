@@ -45,6 +45,7 @@ from mapchar.ui.main_window.autosave import AutosaveMixin
 from mapchar.ui.main_window.block_reading import BlockReadingMixin
 from mapchar.ui.main_window.blocks import BlocksMixin
 from mapchar.ui.main_window.capability_sync import CapabilitySyncMixin
+from mapchar.ui.main_window.capture import CaptureMixin
 from mapchar.ui.main_window.compression import CompressionMixin
 from mapchar.ui.main_window.containers import ContainerMixin
 from mapchar.ui.main_window.entries import EntriesMixin
@@ -121,6 +122,7 @@ class MainWindow(
     SearchMixin,
     RelativeSearchMixin,
     PointerDiscoveryMixin,
+    CaptureMixin,
     ImportExportMixin,
     LegacyExchangeMixin,
     ProjectMixin,
@@ -298,6 +300,8 @@ class MainWindow(
             return
         # A session ended on purpose leaves no copy to recover.
         self._discard_autosave()
+        # The headless emulators go with the window; the one being played stays.
+        self._capture_close()
         # The layout is written on a short delay, so a quit inside that delay
         # would otherwise lose the last drag.
         self._window_layout.save()

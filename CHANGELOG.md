@@ -2,6 +2,8 @@
 
 ## v0.1.7 - unreleased
 
+- Capture text from a running game: play it in Mesen 2, type what you see, and review the blocks, pointers and table entries it proposes
+- Research into capturing on-screen text from a running emulator, and refreshed screenshots
 - Strings that end just before a skip range can be written again
 - Realign applies to every string type, so fixed-size records can be filled
 

@@ -246,11 +246,18 @@ class MenuBarMixin:
             search_menu, "Project &Strings…", self._show_project_strings, "Ctrl+Shift+G"
         )
 
+        capture_menu = bar.addMenu("&Capture")
+        act(capture_menu, "&Play in Emulator…", self._play_in_emulator, "Ctrl+Shift+E")
+        act(capture_menu, "&Captures", self._show_captures)
+        capture_menu.addSeparator()
+        act(capture_menu, "&Emulator Path…", self._capture_choose_emulator)
+
         panels_menu = bar.addMenu("&Panels")
         for dock, text in (
             (self.files_dock, "&Files"),
             (self.glossary_dock, "&Glossary"),
             (self.hex_dock, "&Hex"),
+            (self.captures_dock, "&Captures"),
         ):
             toggle = dock.toggleViewAction()
             toggle.setText(text)

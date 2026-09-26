@@ -1,11 +1,11 @@
 # Text capture from a running game
 
-Exploration of a feature not yet built: run the ROM in an emulator, watch its
-text engine through the emulator's debugging hooks, and turn what it reads and
-draws into blocks, pointers and table entries in the open project. This doc
-holds the ideas, what is known about the emulators, and the findings of each
-experiment. Nothing here is in `src/` yet, and nothing here is yet part of
-[plan/](plan/README.md).
+The evidence behind capturing text from a running game: what is known about
+the emulators, the ideas, and the findings of each experiment. The feature's
+design is in the plan — [features](plan/features.md#capturing-text-from-a-running-game),
+[architecture §9](plan/architecture.md#9-capture) and
+[phase 7](plan/phases.md#7-capture-from-a-running-game); this doc is what it
+rests on.
 
 ## Constraints
 
@@ -145,8 +145,19 @@ memory, so it suits a query on demand, not every frame.
 - One callback may run at most `ScriptTimeout` seconds (default 1); past it
   the script stops with the error only in the script window. A
   `--testRunner` run then idles to its own timeout — 100 s unless
-  `--timeout=N` says otherwise. Pass `--debug.scriptWindow.scriptTimeout=N`
-  and wrap handlers in `pcall` to see errors on stdout.
+  `--timeout=N` says otherwise. `--debug.scriptWindow.scriptTimeout=N` does
+  not reach the core under `--testRunner` (the Linux build stopped at 1 s
+  with it passed), so keep each callback short, and wrap handlers in `pcall`
+  to see errors on stdout.
+- `getAccessCounters` on a 32 MB GBA ROM builds a 32 M-entry table: over the
+  callback limit on its own.
+- An exec callback over a CPU's whole address space fires on the next
+  instruction, whatever it is: registered at a frame end and removed in its
+  first call, it gives `createSavestate` a place to run once a frame, on any
+  console. The range's top must be the CPU's own (`$FFFFFF` for the 65816,
+  `$0FFFFFFF` for the ARM); `$FFFFFFFF` never fires.
+- `drawString(x, y, text, fg, bg, maxWidth, duration)`: a `maxWidth` of 1
+  wraps after every character.
 - A savestate taken in an exec callback at instruction *X*, when loaded,
   does not fire *X*'s callback again: snapshot at an earlier instruction
   than the one that acts.
@@ -156,20 +167,54 @@ memory, so it suits a query on demand, not every frame.
   CPU's literal-pool loads. Each needs its own filter (experiments 6, 7, 9).
 - The SuperFX prefetches: writing R14 reads the byte at the new address, so
   a `GETB` stream shows at the instruction that moved R14, often as two PCs.
+- **A non-blocking `receive("*l")` hands back a partial line as its third
+  result and drops it unless it is passed back in** (`receive("*l",
+  pending)`); a non-blocking `send` can write part of a line. Either leaves
+  the two ends waiting on each other: the probe server blocks for its sends
+  and keeps partial commands.
 - `getCpuState` costs ~1 µs for the 65816 and **15 µs for the SuperFX**, its
   state being large; `getState` 0.2 ms. The SuperFX's registers read as 0
   when peeked from the 65816 side (`$00:3000–$303F`).
 - The GBA core needs a BIOS in `Firmware/` (`gba_bios.bin`); there is no
   built-in stand-in. The GBA PC to use is `pipeline.execute.address`.
+- **NES:** a read callback on `nesPrgRom` also gets the 6502's dummy reads
+  (the byte after an implied opcode, at the PC), and reports the bus
+  address, which under a mapper names no bank: `convertAddress(addr,
+  nesMemory, nes)` gives the PRG offset, for PCs too. Battery RAM is
+  `nesSaveRam`; `nesWorkRam` can be empty.
+- Battery saves persist between runs even with `--doNotSaveSettings`, so a
+  game's title menu can differ from one run to the next.
 - `emu.takeScreenshot()` returns PNG bytes; saving them needs the I/O
   switch and `io.open(…, "wb")`.
 - Environment variables set in WSL do not reach `Mesen.exe` unless listed in
   `WSLENV`; the spike passes settings by rewriting the script instead.
 - `grep` treats a log as binary (the ROM header banner has high bytes): use
   `grep -a`.
+- **Two access-counter tables of a 3 MB ROM and a walk over them take longer
+  than one callback may** (EarthBound's replay stopped there): the work is
+  spread over one-shot execution callbacks, each with a second of its own.
+- **A short line sent in two pieces waits for the second** — Nagle's
+  algorithm against a delayed ACK, ~40 ms a probe: both ends set
+  `TCP_NODELAY`.
+- Mesen's home is `$XDG_CONFIG_HOME/MesenCE`: under another config home it is
+  a first run, and opens a window even with `--testRunner` (the test suite
+  points the variable at a temporary folder).
 
 **CDL:** the code/data logger marks every ROM byte read as data or executed as
 code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
+
+**Pausing:** with a script loaded the debugger is attached, so the UI's pause
+is a debugger break (`Emulator::Pause` → `BreakSource::Pause`). The emulation
+thread then sleeps in `Debugger::SleepUntilResume`, and scripts get one
+`codeBreak` event before it does, and nothing after until the user resumes.
+In that event `read`, `getState`, `takeScreenshot`, `getAccessCounters`,
+`getCdlData`, `io` and LuaSocket all work; `createSavestate` does not (it
+needs an exec callback). A pause shows the last frame with whatever was drawn
+on it; drawing in `codeBreak` never reaches the screen.
+
+**Headed screenshots:** a GUI Mesen window is captured from WSL with
+PowerShell and `user32!PrintWindow` (flag 2), which grabs the window's own
+content even under other windows; `CopyFromScreen` grabs whatever is on top.
 
 ## Transport
 
@@ -188,6 +233,14 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 | 0 | **Files, no bridge.** Import a Mesen `.cdl`: mask the Scan to data-read bytes, shade them in the Hex panel. Export blocks as Mesen labels. | Cheapest, useful at once. |
 | 1 | **Live bridge.** mapchar launches Mesen with its probe; evidence streams over TCP while the user plays. | The main path. |
 | 2 | **Record, replay.** Play is recorded (movie + savestate ring); mapchar replays chosen stretches headless with heavy instrumentation, in parallel instances. | Play never slows; costly analysis runs only where needed. |
+
+## The feature
+
+Its design — the user's side, the bridge, the replay, the rules each result
+is decided by, and the build order — is in the plan
+([architecture §9](plan/architecture.md#9-capture)), and it is built as
+`mapchar.capture` ([capture.md](capture.md) runs it). Experiments 10 to 17
+below are the evidence for it.
 
 ## Unassisted ideas
 
@@ -276,6 +329,8 @@ code; `getCdlData` returns it and Mesen saves it as a `.cdl` file.
 | A Link to the Past (USA) | SNES | dictionary-compressed, buffered in WRAM, 8×16 proportional font | `../alttp-disassembly` |
 | Yoshi's Island (USA V1.0) | SNES + SuperFX | text read and plotted by the coprocessor, proportional font | `../yi-shiny` |
 | Mother 3 | GBA | 16-bit characters, pointer tables and archives | `sample-projects/Mother 3/` |
+| EarthBound (USA) | SNES | ASCII + `$30`, fixed-length menu records, a scripted main engine | none: the unseen game |
+| Dragon Warrior II (U) | NES (MMC1) | plain-byte prologue and menus; a 5/10-bit packed script over a dictionary, 16 strings a pointer | `sample-projects/Dragon Warrior II/` |
 
 ## What the experiments show
 
@@ -319,7 +374,43 @@ Linux build, `EXTRA=` adds switches), `analyze.py`,
 `prov_ext.lua`, `dict.py`, `sweep_alttp.lua`, `dict2.py`, `sweep_yi.lua`,
 `yi_infer.py`, `gbaprobe.lua`, `m3_truth.py`, `m3_analyze.py`,
 `m3_backtrace.py`; `run.sh` takes `ROM=`, `DRIVE=false`, `GSU=true`, `FRAMES=`,
-`SHOTS=`.
+`SHOTS=`. The feature's spikes: `live.lua`, `replay.lua`, `cap.sh` (Linux
+build; `cap.sh <lua> <game> <frames>`, output in `cap/<game>/`),
+`contact.py`, `locate.py`, `session.py`, `t_break.lua`, `t_overlay.lua`,
+`t_send.lua`, `shot.ps1`, `dw2_truth.py`, `bits.py`; causal probing: `probe_srv.lua`, `causal.py`, `effects.py`, `pipe.py` (`pipe.py <game> <capture> "<typed text>"`), `c_bits.py`, `t_typo.py`, `t_late.py`, `vpipe.py`, `replays.sh`, `run_all.sh`, `bench.py`.
+
+**Running them.**
+
+- Evidence logs go in `tmp/capture-spike/ev/` (`replays.sh game:capture …`
+  regenerates them); anything under `/tmp` is gone after a restart.
+- A probe costs the frames it replays over the emulator's headless speed —
+  about 250–350 frames a second for the SNES, 150 with the SuperFX, 130 for the
+  GBA. Start from the state just before the read in question, stop at the
+  text's last write (or the frame its VRAM settles), and ask the narrow
+  question: the full dependency set of one SMW message is over 1100 bytes.
+- Launch a long job in the background and wait on its process, never on
+  `ps | grep <name>`: a shell whose own command line holds the name matches
+  itself and never exits. Every wait has a deadline. Stop a job by its PID,
+  never `pkill -f <name>`, which kills the shell issuing it.
+- `causal.py` gives its socket a timeout and `probe_srv.lua` wraps its
+  callbacks in `pcall`, so a script stopped by an error or the one-second
+  limit is reported instead of leaving the driver waiting.
+- Run the venv's Python (`.venv-linux/bin/python`), not `uv run python`,
+  under `timeout`: `timeout` stops `uv`, and the Python it started carries
+  on, holding its port and its emulator.
+- A probe server still busy when its driver closes it (a stalled probe) is
+  killed, not left running on its port.
+- `bench.py` runs the pure-Python stages on the saved logs without Mesen and
+  checks them against the outputs recorded in `golden/` (`record`, `check`,
+  `--orig` for the code before a change). The matching is indexed: a
+  sequence's values and neighbour differences kept as byte strings pick the
+  positions to test, each ROM byte's latest read is kept as the log is walked,
+  and the layout search remembers positions it has failed from. Mother 3's
+  full search went from 52 s to 8 s, finding the text from 3–9 s to under
+  1 s, a source's candidate lists from up to 15 s to under 0.5 s, and a DW2
+  layout search from 99 s to 33 s — its node budget still has to be counted
+  out. There is no numpy in the environment, and most of what is left
+  (building the event tuples, the layout search) would not vectorise.
 
 ### 1. Read runs and pointer backtrace — Super Mario World
 
@@ -716,3 +807,306 @@ checks the reads against the project; `m3_backtrace.py` infers without it.
 - **Not reached:** blind input stops at the naming screen, so the Script
   (7825 strings) was never shown; a message sweep needs the engine's own
   way to show message *N*, as for ALTTP and YI.
+
+### 10. Savestate ring and replay — five games
+
+**Setup.** `live.lua` plays each game headless (SMW's menu driver,
+EarthBound and Mother 3 pressing A and Start blind, ALTTP and YI their attract
+sequences) with no data hooks: a savestate a second from a one-shot exec
+callback, 16 kept, and every polled input. At chosen capture frames it writes
+the ring, the inputs, a screenshot and an Adler hash of WRAM + VRAM (GBA: both
+WRAMs and VRAM). `replay.lua`, in a second headless instance, loads a ring
+state, feeds the inputs back with `setInput` by poll index, and compares the
+hash at the capture frame; with evidence on it logs every ROM data read (PC,
+address, value; the SuperFX's too, with experiment 7's filter; the ARM's with
+experiment 9's), every WRAM write with its PC, every write to `$2115–$2119`,
+`$420B` and `$43xx`, and at the end WRAM, VRAM and CDL.
+
+**Findings.**
+
+- **Replay is exact.** Nine captures (SMW 1, ALTTP 1, YI 2, EarthBound 4,
+  Mother 3 1) each replayed from the ring's oldest state, 16 s back, to the
+  same hash; SMW from three states too. Spaced to 113 frames (a 30 s window),
+  ALTTP and two EarthBound captures replayed exactly from their oldest state,
+  28–29 s back. A capture needs no savestate at the capture itself.
+- **Cheap during play.** A savestate costs 1.5–3.5 ms on SNES (120–260 KB)
+  and ~15 ms on GBA (40 KB); the ring is 2–4 MB. `getInput` in `inputPolled`
+  reads back what `setInput` set, so it records the player's input as well.
+- **Replay cost** with evidence: 6–17 s for 16 s of SNES play (0.7–2.5 M
+  events), 18–21 s for 29 s (3.7–6.1 M), 58 s for 16 s of Mother 3 (3.6 M).
+  Off the player's path.
+
+### 11. Pausing, overlay and hand-off — Mesen's UI
+
+**Setup.** `t_break.lua` headless: `emu.breakExecution()` at a frame, and a
+`codeBreak` handler trying each API. `t_overlay.lua` in the Windows build,
+headed: SMW with its message box up, drawing text on the frames before the
+break and in `codeBreak`, the window captured by `shot.ps1`. `t_send.lua`:
+the ring and a screenshot sent over TCP from `codeBreak` to a Python peer.
+
+**Findings.**
+
+- A break from a script and the UI's pause take the same path and raise
+  `codeBreak` once; everything but `createSavestate` works there, and the
+  emulator stays paused after it.
+- The paused window shows the last frame with its overlay; text drawn in
+  `codeBreak` never appears. An overlay can only carry what was drawn before
+  the pause (a "recording" mark), never a text box.
+- 16 SNES states and the screenshot (3 MB) reach the peer in 3.5 ms from
+  `codeBreak`: the whole capture is handed to mapchar at the pause.
+
+### 12. Finding typed text — five games
+
+**Setup.** `locate.py` over each replay's evidence, given the text on screen
+as a user would type it. The text is cut into words; each word of four or
+more letters anchors a chain in which the others follow in order within 40
+codes, sharing the anchor's bases; short words join only once their alphabet
+is pinned. Channels: each PC's ROM reads (values; and `addr // stride` for 21
+strides, a font lookup), each PC's WRAM writes, and WRAM and VRAM at the
+capture as 1- and 2-byte codes.
+
+**Findings.**
+
+- **Every capture is found**, EarthBound's included:
+
+  | Game | Found in | Answer |
+  |---|---|---|
+  | SMW | ROM stream (`$05:B212`, `$2A5D9`), WRAM buffer, VRAM tilemap (`$50C7`) | experiments 1–2 |
+  | ALTTP | WRAM only (`$7F1205`) — dictionary codes break the ROM stream | experiment 5 |
+  | YI | the SuperFX's ROM stream (`$09:E9C1`, `$07CFA0`) | experiment 7 |
+  | EarthBound | ROM stream (`$C1:0F35`, file `$04C194`…; `$C4:9F06` for "The year is 199X") and a WRAM buffer; `A` `$71`, `a` `$91`, `0` `$60`, space `$50`, `?` `$6F`, `.` `$5E` | the ROM, decoded as ASCII + `$30` |
+  | Mother 3 | ROM stream (`$0804936C`, `$1BC330A`) and the font lookups at `$D0B…` (stride 10) | `m3.tbl`: `い` = `$011D` |
+
+- **Words, not lines.** A user cannot know the spacing, and engines mark
+  line ends in the characters (SMW sets bit 7 on each line's last one). Per
+  word chains absorb both: SMW's stream matches 18 of 24 words, the six
+  misses being line-final.
+- **Kana order.** Mother 3's font follows Shift-JIS, small and voiced kana
+  between the plain ones; searched in gojūon order it finds nothing, in JIS
+  order at once. mapchar's relative search knows only gojūon order.
+- **The gaps are table entries.** Aligning typed separators with the codes
+  between words gives space and punctuation (SMW space `$1F`, `.` `$1B`, `!`
+  `$1A`; YI space `$D0`, `,` `$CF`), and untyped codes there are commands
+  (YI's `$FE $FD $FC` line break).
+- A pure-Python search takes 3–7 s a SNES capture and 100 s for Mother 3;
+  the shipped one needs arrays.
+
+### 13. Session analysis — SMW, YI, EarthBound
+
+**Setup.** `session.py` over each game's sightings: the best stream per
+sighting, its reader's run around it (addresses stepping ≤ 4, reads ≤ 4
+frames apart), the last byte, pointer hypotheses from the 48 reads before the
+run, and every ROM place holding the string's address, labelled by the
+replay's CDL (for the 65816, an executed spot after an immediate opcode is an
+immediate operand).
+
+**Findings.**
+
+- **Extents.** SMW's message comes out exactly (`$2A5D9`, 141 bytes); YI's
+  captions and EarthBound's strings do once reads are bounded in time —
+  without that bound a reader continuing into the next string later merges
+  them.
+- **End of string.** YI ends every string `$FF` (as experiment 8 found).
+  EarthBound's menu strings are **fixed-length**: 40-byte records padded with
+  `$00` (`Please name him.`, `Name her, too.` …), or packed back to back with
+  no terminator (`Favorite food:Coolest thing:Are you sure?Yep`), so
+  "the byte after the string" is padding or the next string, and fixed
+  length is a hypothesis of its own. Its script text is framed by commands
+  (`[02][0C][01][32]The year is 199X[09][00]`).
+- **Pointers need more than one source.**
+  - YI: the reads before the text give experiment 7's table from two
+    sightings — slots `$0F:CD58` and `$0F:CD5E`, one PC (`$0F:CCFB`), each
+    value 2 short of its string. Two slots give the stride only as a multiple
+    (6 here, truly 2); pointer discovery settles it and finds the rest.
+  - SMW, one sighting: every relative hypothesis explains one of one, so
+    none can be chosen — relative pointers need two sightings of an engine,
+    or pointer discovery to test each.
+  - EarthBound: no pointer is read before the text. Its menu strings are
+    addressed by immediates in code — `LDA #$C194` at `$01F94A`, `$01F9AD`,
+    `$01FA01`, `$01FA53` (four naming prompts), `$01FBB8`, `$01FC6A` — which a
+    data-read probe never sees, and "The year is 199X" by a 24-bit pointer at
+    `$049EA4` read long before. The static search finds both, and the CDL
+    separates them from chance matches: of 19–118 places holding each
+    address, the executed and read ones are the right ones.
+- **Ties.** A reader that reads many similar strings offers several chains
+  for the same words ("Name another friend." … "Name your pet."); the
+  tightest chain is the string, and a search that stops at its first few
+  chains misses it.
+
+### 14. A new console and a bit-packed script — Dragon Warrior II (NES)
+
+**Setup.** `live.lua` and `replay.lua` gain the NES (`nesPrgRom`, internal,
+save, CHR and nametable RAM); pressing A and Start blind reaches the title
+menu, the scrolling prologue and the Moonbrooke dialogue. Five captures
+(450, 1800, 3000, 4050, 4200) replayed from the ring's oldest state and were
+searched with `locate.py` (plus 1-byte nametable cells). `bits.py` then
+infers the script's encoding from the 3000 capture alone. The answer is the
+project's Cartographer file and `dw2_script.tbl`.
+
+**Findings.**
+
+- **Replay is exact on the NES** too: all five hashes match, 3–18 s each.
+- **Found everywhere, in the channel each text uses:** the menu's "BEGIN A
+  NEW QUEST" in the ROM stream (reader PRG `$3ED01`), a RAM buffer and the
+  nametable (`A` `$24`, space `$5F`); the prologue as plain bytes at file
+  `$1CACE`, 28 of 28 words; the three dialogue boxes only in RAM (`$006D`,
+  written by PRG `$B3F0`), since the script is bit-packed.
+- **The script's source.** While a box decodes, fixed-bank code (PRG
+  `$3FE50`, `$3FE56`) walks file `$14C08–$14C4C`, and the characters are
+  copied (PRG `$B3EE`) from a dictionary at PRG `$B48B+`, whole entries at a
+  time ("here", " the", "King"). The known answer puts the string 4 bits into
+  `$14C07`, ending at `$14C4D`.
+- **The code table from one sighting.** Aligning the span's bits with the
+  copied characters — a code is one dictionary entry (a run of consecutive
+  addresses, the same run each time, no two codes the same run) or nothing —
+  leaves one parse: MSB-first 5-bit codes, the top four escaping to 10 bits,
+  from bit 4. Its 31 codes are the project's own: `%00101` y, `%01001` e,
+  `%01111` space, `%11010` a, `%1111101101` here, `%1111111111` " the",
+  `%1110001010` King, `%00000` end. Tokens cut by address alone fail
+  (single letters sit alphabetically, so "hi" looks like one entry), and so
+  does a one-code-per-entry pairing (codes that print nothing drift it).
+- **The pointer names a group.** Just before the decoder starts, fixed-bank
+  code reads PRG `$B760` = `$880D`: slot 7 of the project's table, which as a
+  CPU address in the bank the stream is read through is the group's start
+  (file `$1481D`). The decoder then decodes 13 strings unseen before
+  printing the 14th — the "16 strings a pointer" layout, visible as the
+  reader's walk from the group start.
+- **Not general yet.** `bits.py` names the copy PC, the stream readers, the
+  frames and the bank itself; experiments 5 and 8 give the rules that find
+  them (the reader whose reads the buffer receives; the reader of the most
+  distinct addresses in one span). The search takes 110 s in Python.
+- "ADVENTURE LOG" is stored backwards (the project's block of that name); it
+  was not on screen in these captures, so a reversed search is untested.
+
+### 15. Causal probing — SMW, ALTTP, EarthBound, Dragon Warrior II
+
+**Setup.** `probe_srv.lua` replays a capture from a ring state, recording the
+writes to one observed range (from the text's first frame to its last) and a
+savestate every 10 frames; then it serves probes over TCP: load the state
+before a frame, write ROM bytes (`emu.write` on the PRG ROM type; savestates
+do not hold ROM, so the probe undoes its writes), run, and report the
+observed writes and, optionally, the text reader's reads. `pipe.py` runs one
+set of rules on every game; its only per-game inputs are console facts (the
+address mapping, the RAM types), the capture and the typed text.
+
+**Findings.**
+
+| Game | Sources | Pointer | Codes |
+|---|---|---|---|
+| SMW | 140/140 copied, 140 probes, 6 s: `$2A5D9–$2A664`, plus the line headers from `$2A580` | slot `$2A5AF`, value `$0000`, base `$2A5D9` — from one sighting, 64 probes | `$00–$7F` one tile each, `$80–$FF` the same plus the line padded: bit 7 ends a line |
+| ALTTP | 80/80, 93 probes, 3 s: the stream at `$E5968…` and dictionary entries at `$747xx–$748xx` | — | 135 literals; 120 codes expand to strings — the dictionary (`$8F` "ain", `$C4` "ound", `$D8` "the", …) — from one sighting, 256 probes, 9 s |
+| EarthBound | 15/15 copied, 15 probes: `$4C194–$4C1A2` | the operand of `LDA #` at `$1F94A`, in code | 251 values one character each (ASCII + `$30`); `$00`, `$20`, `$22`, `$2F` write nothing |
+| Dragon Warrior II | 123/125 (121 copied from the dictionary), 191 probes, 42 s | — | stream PRG `$14BF6–$14C3B`; MSB-first 5-bit codes, four escapes to 10 bits, from bit 4 of file `$14C07`: the project's own 29 codes |
+
+- **Everything the correlation spikes needed a threshold for is measured
+  instead**: a relative pointer from one sighting (it needed two), line-final
+  characters SMW flags in bit 7 (the word matcher missed them), code
+  immediates (EarthBound), and the packed script's inputs (named by hand in
+  experiment 14).
+- **The smallest change.** Inverting a byte flips SMW's line-end bit, so no
+  letter is ever just substituted; flipping the lowest bit is.
+- **Intervene late.** A probe starts from the state before the read in
+  question, not before the byte's first read: 15 ms a probe instead of 1 s.
+- **Finding every dependency is the wrong question**: SMW's message depends
+  on over 1100 bytes (the level, the trigger); asking "where does output *k*
+  come from" costs one probe an output.
+- **Observe only the text.** The observed range gets other writes too (a
+  level load, a character port reused by later text); the reference is the
+  text's writes, from its first frame to its last.
+- **Spaces move line breaks.** Changing a space re-flows the words before
+  it, so a space's dictionary byte is *copied* only when the lengths match —
+  hence the tiers.
+- **Pointer probes must start before the pointer is used**, and compare the
+  reader's reads from the string's frame on: from an early state the reader
+  first reads other strings.
+- **Rules still open.** Word chains still bound the gap between typed words
+  (40 codes); a source is sought among the reads of the output's frame and
+  the one before, within a budget (reported unsourced beyond it); when
+  several bit layouts fit, the one with fewest codes is shown (8 fit one DW2
+  sighting). Yoshi's Island and Mother 3 draw text from the ROM straight into
+  bitmaps, so no RAM write holds it: they need the VRAM or the screen as the
+  observed output.
+
+### 16. Failure cases — what the capture window can say
+
+- **A typo** matches nowhere; the words that chain in the best channel mark
+  the one that does not: 16 of 17 words chain for "Dinosuar", and the window
+  can underline it.
+- **Too little text** ("Wel") occurs in 757 places: the window asks for more
+  of the line.
+- **Text not on screen** ("Hello there, Mario!") matches no word anywhere.
+- **Drawn before the window**: the text is in RAM at the pause but no write
+  in the replay produced it (ALTTP replayed from 66 frames before the pause:
+  0 occurrences in the writes, found at `$7F1205` in RAM). Detected exactly;
+  the table codes still come from RAM, the trace does not.
+
+### 17. Bitmap text, a second sighting, and the rules refined — YI, Mother 3, DW2
+
+**Setup.** `vpipe.py` runs the same rules when the text never reaches RAM:
+the typed text is found in one reader's ROM reads, and the output compared is
+the whole VRAM (`probe_srv.lua`'s `VOBS`), first at the capture frame and then,
+once the text's VRAM range is known, at the frame it settles (`settle`: the
+earliest frame after which that range holds what the user saw, in the
+unchanged run). Structure comes from the reader's own reads after the swept
+byte. `c_bits.py` takes several captures.
+
+**Findings.**
+
+- **VRAM as the output works.** Every typed character is confirmed by a VRAM
+  change — 34/34 in Yoshi's Island (70 s), 18/18 in Mother 3 — and the change
+  says where its glyph lands; in YI's proportional font changing an `i`
+  moves everything after it (115 bytes).
+- **Settle.** Mother 3's text is final in VRAM at frame 1833 against a
+  capture at 2700: comparing there cut a sweep from 2437 s for 256 probes to
+  253 s for 512.
+- **Sweep every byte of the code.** Mother 3's low byte alone gave 256
+  printable codes; its high byte gives the structure — `$FF` stops the
+  reader, Mother 3's `$FFxx` commands.
+- **Pointers: change by 2, from the earliest read.** Mother 3's slot
+  (`$1BC25B8`, the project's) is found only when the candidates are the reads
+  before the *earliest* read of the string's first byte — by another routine
+  (`$08048758`) than the one reading the typed text, with the pointer read
+  just before it — and when the change is 2: a +1 makes an odd address, which
+  a halfword read rounds away. A second byte (`$1B90128`) moves the string the
+  same way: the table's base, which a second sighting tells from a slot.
+  Such probes run only to the string's read: 4 s for 64 candidates.
+- **A second sighting decides the layout.** DW2's 4050 capture fits one bit
+  layout on its own; with the 3000 capture (8 fits) exactly one fits both
+  with one code table — MSB-first 5-bit, four escapes — and its 41 codes are
+  the project's, `%10101` `‘`, `%1110100010` `’[wait][line]`, `%1111011011`
+  "Hargon" and `%1111010000` "d the" among them.
+- **Copied means the output moves with the byte.** SMW's line-final
+  characters carry bit 7, so their output never *equals* the byte; it moves by
+  the same amount. Searching on for a stronger relation cost 150 probes a
+  character; the strongest relation in the nearest window of reads is taken,
+  and the window widens only when it holds none.
+- **Static candidates need a narrower filter.** Mesen keeps a CDL per ROM
+  between runs, so after many runs it marks nearly every byte as touched, and
+  SMW's candidates holding its string's address still each replay from the
+  window's start.
+- **A change can stall the emulator**: one YI pointer candidate left its probe
+  unanswered past 600 s. The driver now gives a probe a deadline from its
+  frames, restarts the server and counts it as no answer.
+- **The protocol lost lines.** A non-blocking LuaSocket receive hands back a
+  partial line as its third result, which the server dropped: the driver
+  waited for an answer to a command the server never saw.
+- **Pointer candidates: only the string's own bytes are excluded.** Skipping
+  every read within 256 bytes of the string dropped SMW's slot, which sits
+  just before its text. With that fixed, one SMW capture gives both bytes of
+  its slot (`$2A5AF` moves the string by 2, `$2A5B0` by `$200`) and the base
+  the relative pointers are added to, an operand in code (`$2B210`).
+- **This replay's own accesses.** Resetting the access counters when the
+  replay starts marks 94 K of EarthBound's bytes as read or executed, where
+  the CDL (every run) marks 332 K: its pointer stage went from 45 s to 11 s.
+- **A pointer whose change stalls the game before the string is read cannot
+  be confirmed.** Yoshi's Island's caption slot (`$7CD58`, 8 reads before its
+  text) points at a record's header; moved by 2, the header no longer parses
+  and the game hangs before the SuperFX reads a byte. The probe now answers as
+  soon as the reader's first reads are in, but here there are none, and the
+  candidate is reported as stalling rather than as a pointer.
+- **A packed string's pointer moves the stream**, not the dictionary reads
+  the source stage finds first; its test has to follow the stream reader's
+  first read (DW2, not yet done).
+- **Yoshi's Island's codes** from one byte and 256 probes: `$FC`–`$FE`
+  commands with one parameter, `$FF` the end, 252 printable codes leaving 160
+  distinct glyph images.

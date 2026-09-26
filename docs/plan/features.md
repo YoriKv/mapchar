@@ -14,18 +14,19 @@ the preview system in [preview.md](preview.md).
 5. [Tables](#tables)
 6. [Raw view](#raw-view)
 7. [Finding text](#finding-text)
-8. [Blocks](#blocks)
-9. [Pointers](#pointers)
-10. [Strings view](#strings-view)
-11. [Writing back to disk](#writing-back-to-disk)
-12. [Export and import](#export-and-import)
-13. [Compression](#compression)
-14. [Preview](#preview)
-15. [Hex panel](#hex-panel)
-16. [Projects](#projects)
-17. [Plugins](#plugins)
-18. [Undo](#undo)
-19. [Keyboard reference](#keyboard-reference)
+8. [Capturing text from a running game](#capturing-text-from-a-running-game)
+9. [Blocks](#blocks)
+10. [Pointers](#pointers)
+11. [Strings view](#strings-view)
+12. [Writing back to disk](#writing-back-to-disk)
+13. [Export and import](#export-and-import)
+14. [Compression](#compression)
+15. [Preview](#preview)
+16. [Hex panel](#hex-panel)
+17. [Projects](#projects)
+18. [Plugins](#plugins)
+19. [Undo](#undo)
+20. [Keyboard reference](#keyboard-reference)
 
 ---
 
@@ -606,6 +607,92 @@ compression, and report offsets in the file's coordinates.
     scores the windows, the second cuts the regions, and Stop at either point
     hands back what was cut.
 - **Pointer discovery** — see [Pointers](#pointers).
+- **Capture** — text the user types while playing the game; see
+  [Capturing text from a running game](#capturing-text-from-a-running-game).
+
+## Capturing text from a running game
+
+mapchar runs the open ROM in an emulator, and while the user plays they type
+the text they see; mapchar finds where each string lives in the ROM, how it is
+encoded and what points to it, and proposes blocks, pointers and table entries
+for the project. No knowledge of the game is needed: the rules are the same
+for every game, and the only per-console facts are the ones a console profile
+states (how an address maps to the ROM, which memory holds RAM and VRAM, which
+processors read text).
+
+- **Play in Emulator** (Capture menu, Ctrl+Shift+E) launches the emulator on
+  the current file — Mesen 2, for the SNES (with the SuperFX), the NES and the
+  GBA; **Emulator Path…** says where it is, and it is asked for the first time
+  when it is not on the `PATH`. The emulator is the user's own install,
+  started by mapchar and never linked into it. Play runs at full speed: the
+  script mapchar loads into it watches no memory, keeping only a ring of 16
+  savestates spaced over the last 30 seconds and the controller input.
+- **Pause to capture.** Pausing the emulator the usual way hands mapchar the
+  moment — the savestates, the input, a screenshot — and opens the **capture
+  window**: the screenshot and a text box. The user types what they see, all
+  of it or part, and presses **Capture**, or **Skip**; there is no time limit,
+  and they may resume play at once. The typed text is what the capture is
+  about, so a line with only kanji or symbols asks for kana or Latin letters,
+  and a line too short to be found in one place (fewer than four letters)
+  asks for more. The one condition is when the user pauses: within 30 seconds of the
+  game starting to show the text — or, for a game that decodes a message
+  before it types it out, starting to decode it.
+- **Tracing** runs in the background, one capture at a time, in a second,
+  hidden emulator: it replays the moment from the savestates, checks that it
+  reproduced it exactly, and answers each question by changing ROM bytes and
+  watching what the text becomes:
+  - where the text is — found from the typed words, as relative search does,
+    with kana in gojūon and in Shift-JIS order;
+  - the ROM byte each character comes from;
+  - the bytes that point to the string, whether in a table or in code;
+  - what every code does: a character, a dictionary entry, a command and its
+    parameters, the end of the string;
+  - for bit-packed text, the code layout, once the sightings agree on one.
+
+  The **Captures** dock (**Capture ▸ Captures**) lists every capture with its
+  screenshot, its typed text and its state — waiting, replaying, finding the
+  text, tracing (with what it is on, and Stop), done with how many of its
+  characters were traced, or what went wrong, with Retry — and the user keeps
+  playing meanwhile. **Type Text…** or a double-click opens a capture's
+  window again; **Remove** drops it and its files.
+- **What can go wrong** is said on the capture itself, never guessed around:
+  - a typed word that does not fit is underlined, to be corrected or dropped;
+  - text that is not on screen matches nothing, and the capture says so;
+  - text drawn before the 30 seconds is still read from memory, for its
+    codes, but not traced — the capture says to pause sooner next time;
+  - text found in too many places to tell apart asks for more of the line;
+  - a moment the replay could not reproduce keeps its screenshot and says so;
+  - a character with no source found, or a pointer not confirmed, is marked
+    in the proposal and left for the user.
+- **Review** (the Captures dock's second tab) proposes, from every finished
+  capture together:
+  - **blocks** — one per text engine (the routine that read the captures'
+    text): the strings' end (an end token, a fixed length, or the next
+    pointer) and their source — a pointer table with its mapping, base and
+    stride, extended to the slots around the ones seen that still point near
+    the strings, or else the range seen, with the pointers found outside a
+    table named, including pointers held in code;
+  - **table entries** — letters from the typed text, punctuation from what
+    was typed between words, dictionary entries and commands from what the
+    engine did with every code;
+  - **glyphs to label** — codes that draw something nobody has typed yet
+    (with the typed code that draws the same, when one does), for the user to
+    type what each stands for;
+  - **conflicts** — two captures that disagree about a code, naming both.
+
+  Each proposal is accepted, edited first (a block in the New Block dialog,
+  entries as table lines), or rejected; an accepted one becomes an ordinary
+  block or table entries through the usual undoable edits — into the
+  reading's table, or a new `captured` table — and an entry that would change
+  one the table has is shown first and kept only if the user says so. A
+  proposal lists the captures behind it and what is unconfirmed, and remembers
+  whether it was accepted or rejected.
+- **Confirm in game.** A block or a glyph can be shown in the game: mapchar
+  changes the byte it names — the block's first character, or the glyph's
+  code in place of a typed one — replays the capture, and shows the frame
+  before and after.
+- Captures are game data and live beside the project, in `<project>.capture/`
+  (beside the ROM while the project is unsaved), never in it.
 
 ## Blocks
 
@@ -1333,6 +1420,7 @@ Glossary and the Preview draw, each beside a swatch.
 | View | Ctrl+1 Hex · Ctrl+2 Text · Ctrl+3 Strings · Ctrl+Shift+T Table Editor · Ctrl+P Preview · Ctrl+Shift+D Decompressed View |
 | Navigate | Alt+Left/Right history (also mouse 4/5) · Home/End · Up/Down row · Left/Right or - / + byte · PgUp/PgDn page · Ctrl+G go to address |
 | Search | Ctrl+Shift+F Search Window · Ctrl+Shift+R scan · Ctrl+F the Find bar · F3 / Shift+F3 next / previous · Ctrl+Shift+P find pointers · Ctrl+Shift+G Project Strings |
+| Capture | Ctrl+Shift+E Play in Emulator · Enter in the capture window captures |
 | Find bar | Enter next · Shift+Enter previous · Esc closes Find and Replace |
 | Strings view | F2, double-click or typing edit the cell · Enter commit and move on · Ctrl+Enter commit and stay · Shift+Enter newline code · [ complete a code, Enter or Tab accept it · Esc cancel · the same keys in the pane under the grid · right-click in the pane adds the marked text to the glossary · right-click a header to choose columns, drag one to reorder |
 | Files panel | click or Up/Down open the row · Shift/Ctrl+click extend · Alt+Up/Down or drag reorder · Ctrl+X/C/V/D entries · Del remove · Ctrl+F filter · F2 or double-click rename · right-click menu |

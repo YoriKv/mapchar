@@ -15,6 +15,7 @@ the Qt UI, and tests. What the app does for a user lives in
 6. [The project layer](#6-the-project-layer)
 7. [The UI layer](#7-the-ui-layer)
 8. [Build, tooling and tests](#8-build-tooling-and-tests)
+9. [Capture](#9-capture)
 
 ---
 
@@ -36,6 +37,7 @@ app.py ─────────────► ui/ ────────�
 | `core/`     | The data model: tables and tokens, strings and blocks, pointers and mappings, the preview font and boxes, the pipeline context, notices, errors, capabilities. |
 | `engines/`  | Pure algorithms over the model: decode, encode, relative search, text scan, pointer discovery, layout. No I/O. |
 | `pipeline/` | Runs the byte stages in both directions, extracts blocks into strings, and lays strings out for writing. |
+| `capture/`  | Capturing text from a running game ([9](#9-capture)), whole and apart from the rest: its search over codes, the bit-layout search, the console profiles, the emulator bridge and its Lua scripts, the replay and its evidence, the probes, and the proposals they add up to. |
 | `plugins/`  | The plugin API, registry, discovery, trust, detection, and every built-in plugin: containers, compressions, charsets, mappings. |
 | `project/`  | The entry and the pure rules over a list of them (`entry.py`), the open-entries model (`workspace.py`), finding and re-pointing moved files (`missing_files.py`), the `.mapchar` file (`projectfile.py`), the glossary (`glossary.py`), reading a table file from disk (`tables.py`), the table-file and script readers and writers (`formats/`), and the other tools' formats (`exchange/`). |
 | `ui/`       | The PySide6 application: `MainWindow`, the raw and strings views, docks, tool windows, dialogs, undo commands, theme. |
@@ -47,9 +49,13 @@ Rules:
 - **Only `ui/` and `app.py` import Qt.** Everything else is headless and
   tested without a `QApplication`.
 - **`core/` is the bottom layer.** `engines/` depends only on `core/`.
+- **`capture/` sits beside `pipeline/`, and nothing outside it but `ui/`
+  imports it**: it uses `engines/`, `plugins/` and `core/`, and hands `ui/`
+  proposals; it never changes a project itself.
 - **Everything runs on the GUI thread.** Long operations (scan, pointer
   discovery, compression scan) pump the event loop through a progress
-  callback and can be cancelled.
+  callback and can be cancelled. Capture's long work runs in emulator
+  processes; its session advances a step at a time from the UI's timer.
 - **Text formats live in `project/formats/`**, not in `core/`: table files
   and scripts are file formats, and the model does not know how it was
   spelled.
@@ -968,6 +974,7 @@ through `_push_command`.
 | Raw view | `raw_view.py` |
 | Blocks and strings | `blocks.py`, `block_reading.py` (reading one block, or every block a project-wide surface goes over), `extraction.py` (cutting a block's bytes into strings, and the caches that spare it), `string_rows.py` (the Strings grid's rows), `strings_menu.py` (the grid's context menu, marks and steps), `string_edit.py`, `wrap.py`, `replacing.py` (Find and Replace over the strings' text: what is typed or the glossary's terms, one hit at a time or all), `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary panel, its undo steps, and what is asked of a term) |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
+| Capture | `capture.py` (Play in Emulator, the Captures dock and its Review tab, applying proposals, Confirm in game, the timer that advances the session); the widgets are `ui/capture.py` (the capture window, the dock, the before-and-after) |
 | Exchange | `import_export.py` (mapChar's own script, translator tables and PO files), `legacy_exchange.py` (Cartographer command files and Atlas scripts, which address the file) |
 | Projects | `projects.py`, `relocate.py`, `autosave.py` |
 | Preview | `preview.py`, `hex_view.py` |
@@ -1250,3 +1257,209 @@ putting the factory arrangement back behind Panels ▸ Reset Panel Layout.
   pointer sorting and duplicate-target merging; NFC on load and in storage
   where abcde normalises to NFD; fallback bits always emitted; romjuice's text-mode reads, stale buffers and last-line
   truncation not reproduced.
+
+## 9. Capture
+
+Capturing text from a running game ([features](features.md#capturing-text-from-a-running-game)):
+the evidence behind every rule here is in [`../text-capture.md`](../text-capture.md).
+All of it is the `capture/` package, and only `ui/` reaches into it.
+
+```
+emulator (user's, headed) ──moment──▶ session ──▶ replay (headless) ──▶ evidence
+  recorder script                        │                                  │
+                                         │        typed text ──▶ occurrence ◀┘
+                                         │                           │
+                                         └──▶ probe server (headless) ◀── trace: sources,
+                                                                          pointers, codes,
+                                              combine ◀── sightings ◀──── streams, layouts
+                                                 │
+                                                 └──▶ proposals ──▶ ui/ (review, undoable edits)
+```
+
+Every answer is decided by an intervention: the probe server changes ROM
+bytes, re-runs the stretch that produced the text, and reports what the text
+became. What the replay recorded only orders what is tried, and a budget only
+bounds how long a search goes on — past it a thing is reported not found,
+never guessed.
+
+| Module | What |
+|---|---|
+| `chains.py` | Relative search over a sequence of codes, per typed word ([9.4](#94-finding-the-text)) |
+| `bitlayout.py` | How a bit-packed stream is cut into codes ([9.6](#96-tracing)) |
+| `consoles.py` | The console profiles ([9.1](#91-the-emulator-bridge)) |
+| `emulator.py`, `scripts/` | The Mesen 2 bridge and its Lua: a shared prelude, the recorder, the replay, the probe server |
+| `protocol.py` | The line protocol, and the steps long work is made of ([9.2](#92-the-session)) |
+| `evidence.py` | The moment, its replay and its evidence ([9.3](#93-evidence)) |
+| `occurrence.py` | Finding the typed text ([9.4](#94-finding-the-text)) |
+| `probe.py` | The probe server's client ([9.5](#95-probes)) |
+| `trace.py` | The rules ([9.6](#96-tracing)) |
+| `session.py` | The captures, the recorder and the queue ([9.2](#92-the-session)) |
+| `combine.py`, `proposals.py` | What the captures say together ([9.7](#97-combining-and-proposals)) |
+
+### 9.1 The emulator bridge
+
+A bridge (`emulator.py`) knows one emulator: how to launch it on a ROM with a
+script in one of three **roles** — the recorder (headed, the user's), the
+replay and the probe server (both headless) — and how a path is spelled for
+its scripts. The one bridge is Mesen 2: it passes every setting a launch needs
+as switches (`--testRunner`, `--enablestdout`, `--doNotSaveSettings`, the
+script window's I/O and network switches, a longer script timeout) and never
+edits the user's settings; a Windows `Mesen.exe` run from WSL gets Windows
+paths. A script is generated per launch: `CFG`, the console's facts and the
+role's settings as a Lua table, then `scripts/common.lua` (the connection, the
+callback guard, the hash, the read and write hooks per processor), then the
+role's own script. mapchar never links an emulator.
+
+A **console profile** (`consoles.py`) states the per-console facts, and nothing
+else does: how a logged address maps to a ROM offset and a ROM offset to the
+addresses a pointer may hold, which memory a RAM write lands in, the memory
+types of the ROM, the RAMs and the VRAM, which processors read text, and the
+pointer mappings a table is tried with. Profiles: the SNES as LoROM, HiROM or
+LoROM with the SuperFX, the NES (whose PRG offsets the emulator converts) and
+the GBA. The scripts' read filters — the 6502's dummy read at the PC, the
+SuperFX's instruction fetches, the ARM's literal pools — only prune reports.
+ROM offsets in capture are the emulator's, without a copier or iNES header;
+proposals shift them to where the image starts in the payload.
+
+### 9.2 The session
+
+`session.py` holds a session's captures, each a folder in
+`<project>.capture/` (beside the ROM when no project is saved): the ring of
+savestates, the input since its oldest, the capture point and its RAM and
+VRAM hash, the screenshot, the typed text, the evidence, and the results
+(`capture.json`). A capture's state is *waiting* (for its text, or its turn),
+*replaying*, *finding*, *tracing*, *done* or *failed* with its reason.
+
+The recorder keeps the ring (a savestate every 113 frames, 16 kept, taken by a
+one-shot execution callback) and every port's polled input. On the emulator's
+pause (`codeBreak`) it writes the moment — with the master clock of the
+pause, which falls inside a frame — into the session's `incoming/` folder and
+says so over TCP; the session moves it into a capture folder.
+
+Long work is written as generator **steps**: a step yields `WAIT` while it
+waits on an emulator and returns its result. `Session.advance(budget)` resumes
+the current capture's step for at most `budget` seconds; `ui/` calls it from a
+timer, so the GUI thread never blocks. Captures are traced one at a time, in
+the order their text was given. Every socket read has a deadline, lines are
+whole in both directions (a partial line is kept until its newline), and the
+scripts wrap their callbacks so that an error reaches the session as a
+message; a replay whose script stops is killed rather than waited out. A
+callback may run a second at most, so the replay's end is spread over several.
+
+### 9.3 Evidence
+
+`evidence.py` runs the replay: a headless emulator loads the ring's oldest
+state, feeds the input back by poll, and at the capture point — the first
+instruction at the pause's master clock — checks the hash; a mismatch fails the
+capture. On the way it logs every ROM data read with its reading PC, every RAM
+write with its writing PC, and each frame; at the end it saves every RAM and
+which ROM bytes this replay read or executed (the access counters, reset as it
+starts). The log is read once into a list of events.
+
+### 9.4 Finding the text
+
+`chains.py` matches typed text against a sequence of codes: the text is cut
+into words at anything that is not a letter, digit or kana; each word of four
+or more letters anchors a chain, and the other words follow in order, each at
+its nearest fit under the bases the chain has fixed, found through the
+sequence's values or its neighbour differences as byte strings. A chain counts
+only when every word is in it, the tightest wins, and what sits between two
+words is kept, so the separators the user typed become table entries. Kana are
+tried in gojūon order and in Shift-JIS order.
+
+`occurrence.py` looks in two kinds of place: the RAM writes — per writing PC,
+and the final contents of each run of addresses — and the ROM reads per reading
+PC, repeated reads of a byte once. Of the places that hold all of it, the one
+holding it earliest is nearest the ROM and is the occurrence; RAM writes come
+before ROM reads, which are for text drawn straight into VRAM. What ends a
+capture is said exactly: no letters to search for, too few, no chain (with the
+words the best partial chain holds, so the capture window underlines the
+rest), chains at too many addresses to tell apart, or the text in RAM at the
+capture point but produced before the replay began.
+
+### 9.5 Probes
+
+`probe.py` drives the probe server. The server replays once, keeping a
+savestate every 10 frames and the reference output — the occurrence's writes
+from its first frame to its last, or VRAM at a chosen frame; then each probe
+loads the latest state before a given frame, writes ROM bytes, runs, undoes
+the writes and reports the output's difference and, when asked, a reader's
+first reads. *Settle* finds the earliest frame after which the text's VRAM
+holds what the user saw, and the VRAM comparison moves there. A probe's cost is
+the frames it runs, so it starts at the read in question and stops at the last
+output it compares. A probe not answered by a deadline its frames set is
+counted as *no answer*, the server is restarted, and the tracing goes on
+without it. The same server takes a screenshot with bytes changed, for Confirm
+in game.
+
+### 9.6 Tracing
+
+`trace.py` holds the rules:
+
+- **Sources.** For each output, candidates in order — the byte after the last
+  source, the reads of the value written, the rest most recent first — in a
+  window of reads (this frame and the one before), widened (to 4 frames, 16,
+  all) only while nothing in it is a source. The byte's lowest bit is
+  flipped, and within the window the strongest relation wins: *copied* (the
+  output moves by what the byte moved, so a flag bit or an offset between code
+  and output is kept), *only this* (only substitutions, this output among
+  them), *determines* (this output is the first to change). For VRAM output,
+  a typed character's read is confirmed when its change reaches VRAM, which
+  also says where its glyph lands.
+- **Extent.** The reader of the last source goes on reading in order past it;
+  where it stops is the string's last byte, its end token included.
+- **Packed.** Text is packed when fewer than a third of its outputs have a
+  source just past the last one's, walking the outputs in order: its outputs
+  come from a dictionary, not from the stream.
+- **Pointers.** A byte holds the string's address when changing it by 2 moves
+  the string's first read by 2 × 1, 2 or 4, or 256 times that for the byte
+  above. The first read is the earliest read of the string's first byte, by
+  whichever routine; of a packed string, the stream's. Candidates are the reads
+  before it (all but the string's own bytes), and every place in the ROM
+  holding its address that this replay read or executed. The probe answers as
+  soon as the reader's first reads are in, so a change that then stalls the
+  game still counts; one that stalls it before the string is read is reported
+  as a stall.
+- **Codes.** Every value of a source byte used once — every byte of it, for a
+  wider code, and then the code the string ended with whole. With RAM output,
+  what replaces the output is a character, a string (a dictionary entry),
+  nothing, or a structural change (the text cut short is an end); with VRAM
+  output, the reader's next reads say printable, a command skipping *n* bytes,
+  or the end, and the VRAM left groups the printable codes by glyph.
+- **Streams.** For packed text, the stream is the run of consecutive bytes,
+  read during the text, whose change alters the output (found by halving) and
+  whose first changed output moves forward with the address. `bitlayout.py`
+  then parses it under every layout of its model — code width, bit order, how
+  many of the top codes escape to a second code, the start bit — and aligns
+  the codes with the outputs by backtracking: a code is one dictionary entry
+  (a run of consecutive addresses, the same run every time, no two codes the
+  same run) or produces nothing. A scheme outside the model fits nothing.
+
+### 9.7 Combining and proposals
+
+`combine.py` works over every finished capture: captures read by one routine
+are one engine; code meanings merge — a typed reading outweighs an inferred
+one, and two readings otherwise are a conflict; a code that writes a character
+and pads its line is that character and a line break; a bit layout is decided
+when one fits every sighting with one code table (layouts that read them into
+the same table are one). An end is the end token the strings agree on, a fixed
+length when they start a constant stride apart, or the next pointer. Pointer
+slots give the pointer's size and byte order (the bytes that moved it by
+powers of 256), the mapping that turns its value into the string's address —
+the console's own, or a constant added — and, from two or more, the table's
+stride; the table is extended both ways while each neighbour still points
+near the strings seen. `proposals.py` states the results as the model states
+them — block configurations, table entries, glyphs to label and conflicts —
+each with the captures behind it and what is unconfirmed. `ui/` applies an
+accepted proposal through the usual undo commands, relabelling an entry whose
+label the table already gives other bits.
+
+### 9.8 Tests
+
+The rules are tested on synthetic evidence and on a scripted fake emulator
+(`tests/capture_fake.py`): a tiny text engine whose replay writes the evidence
+and whose probe server answers over TCP, splitting every line in two.
+`tests/test_capture_games.py` runs the whole chain on the games of
+[`../text-capture.md`](../text-capture.md) against their known answers; it is
+opt-in, since it runs for half an hour, and skips a game whose ROM, recorded
+moment or emulator is missing ([capture.md](../capture.md)).

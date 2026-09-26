@@ -17,6 +17,7 @@ from window_helpers import add_block, menu_actions, open_rom_and_table
 # project and plugin rows, the panels, the themes, the help, the visit trail
 # (armed by the trail), the undo pair (armed by the stack) and the entry
 # clipboard (scoped to the Files panel, which has a selection of its own).
+# Capture's rows say for themselves when there is no ROM to play.
 ALWAYS_ON = frozenset(
     {
         "Open ROM…",
@@ -49,6 +50,9 @@ ALWAYS_ON = frozenset(
         "Table Editor…",
         "Glossary",
         "Project Strings…",
+        "Play in Emulator…",
+        "Captures",
+        "Emulator Path…",
         "Light Theme",
         "Dark Theme",
         "Back",

@@ -1,8 +1,8 @@
 # Phases
 
 The build order. Each phase names what it delivers and when it is complete;
-every phase below is built, with its tests in place. Nothing in a later phase
-was started until the earlier one was complete. The other docs in this folder
+every phase below is built, with its tests in place. Nothing in a later
+phase was started until the earlier one was complete. The other docs in this folder
 say what the app does now — this one says only in what order it arrived.
 
 ## 1. Foundation and dumping
@@ -88,6 +88,30 @@ Edit strings beside the original and write them back in place.
 - Complete when the fixtures' strings render in the preview font and Wrap
   produces strings that no longer overflow.
 - Everything listed above exists.
+
+## 7. Capture from a running game
+
+Type the text on screen while playing; get blocks, pointers and table entries
+([features](features.md#capturing-text-from-a-running-game),
+[architecture 9](architecture.md#9-capture)). Built in this order, each step
+tested before the next:
+
+1. `capture/chains.py`: relative search over code sequences, kana in gojūon
+   and Shift-JIS order, with its per-word report.
+2. `capture/bitlayout.py`.
+3. The Mesen 2 bridge, the console profiles for the SNES (with the SuperFX),
+   NES and GBA, the three scripts and the line protocol.
+4. Evidence: the replay and its hash check.
+5. Occurrence, the probe client and server, and tracing.
+6. The session, `<project>.capture/`, combining and proposals.
+7. The UI: Play in Emulator, the capture window, the Captures dock with its
+   Review tab and glyph labelling, Confirm in game.
+
+- Complete when captures of Super Mario World, A Link to the Past,
+  EarthBound, Yoshi's Island, Mother 3 and Dragon Warrior II — the text of
+  [`../text-capture.md`](../text-capture.md)'s experiments — propose the
+  strings, pointers and table entries their known answers hold, with no
+  setting specific to any of them: `tests/test_capture_games.py`.
 
 ## Afterwards
 

@@ -17,8 +17,9 @@ delivers; every phase is built.
 ## Topic index
 
 - [features.md](features.md): what the app does and how a user drives it:
-  entries, tables, the raw and strings views, search, blocks, pointers,
-  writing, export and import, compression, projects, plugins, undo, keys.
+  entries, tables, the raw and strings views, search, capturing text from a
+  running game, blocks, pointers, writing, export and import, compression,
+  projects, plugins, undo, keys.
 - [architecture.md](architecture.md): how it is built: layers, the data model,
   the decode and encode engines, search engines, the plugin system, the
   `.mapchar` file, the Qt UI, tests and verification against abcde.

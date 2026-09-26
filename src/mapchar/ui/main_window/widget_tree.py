@@ -97,6 +97,7 @@ class WidgetsMixin:
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, hex_dock)
         hex_dock.hide()
         self.hex_dock = hex_dock
+        self._build_capture()
 
         central = QWidget()
         layout = QVBoxLayout(central)
