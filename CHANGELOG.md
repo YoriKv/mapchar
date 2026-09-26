@@ -3,6 +3,7 @@
 ## v0.1.7 - unreleased
 
 - Strings that end just before a skip range can be written again
+- Realign applies to every string type, so fixed-size records can be filled
 
 ## v0.1.6 - 2026-09-23
 

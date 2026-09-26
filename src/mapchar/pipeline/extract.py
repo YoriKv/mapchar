@@ -6,7 +6,7 @@ from bisect import bisect_right
 from collections.abc import Container
 from dataclasses import replace
 
-from mapchar.core.bits import Bits, bits_to_bytes
+from mapchar.core.bits import Bits, align_up, bits_to_bytes
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -516,6 +516,12 @@ def _extract_range(
             StringRecord(len(strings), start, record_end, tokens, notices=res_notices)
         )
         pos = record_end
+        if not isinstance(config.string_type, EndToken):
+            # A string with no end token ends where its length or its lines
+            # say, and the next begins realigned; an end token has realigned
+            # the reading already.
+            m, o = config.realign
+            pos = align_up(pos, m * 8, o * 8)
     return Extraction(strings, notices)
 
 

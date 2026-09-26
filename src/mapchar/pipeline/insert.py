@@ -202,6 +202,7 @@ def slot_ends(
     fill: bytes | None = None,
     header: int = 0,
     skips=(),
+    realign: tuple[int, int] = (0, 0),
 ) -> dict[int, int]:
     """Where each string's slot ends, by index.
 
@@ -213,7 +214,9 @@ def slot_ends(
     belong to no slot: nothing the block writes may touch them. The ``header``
     bytes in front of the next string are its record's, fill-valued or not,
     and no slot reaches into them — counted back over the ``skips`` the
-    reading stepped over on its way through them (:func:`_before`).
+    reading stepped over on its way through them (:func:`_before`). Where the
+    block realigns, the bytes up to the next aligned position are the string's
+    too, whatever they hold: the reading never looks at them.
 
     Without ``data`` and ``fill`` there is no telling padding from anything
     else, and a slot is the whole gap to the next string — the room a block
@@ -229,7 +232,8 @@ def slot_ends(
         if data is None or not fill:
             ends[rec.index] = max(rec.end, stop)
             continue
-        ends[rec.index] = fill_end(data, rec.end, fill, stop)
+        aligned = min(align_up(rec.end, *realign), stop)
+        ends[rec.index] = max(fill_end(data, rec.end, fill, stop), aligned)
     return ends
 
 
@@ -332,7 +336,13 @@ def string_ends(
         bound = block_bound(config, strings, room)
         if slotted:
             return slot_ends(
-                strings, bound, data, config.fill, config.record_header, config.skips
+                strings,
+                bound,
+                data,
+                config.fill,
+                config.record_header,
+                config.skips,
+                config.realign,
             )
         return packed_ends(strings, bound, config.skips)
     groups = string_groups(config, strings)
@@ -342,7 +352,13 @@ def string_ends(
     ):
         if slotted:
             ends |= slot_ends(
-                group, bound, data, config.fill, config.record_header, config.skips
+                group,
+                bound,
+                data,
+                config.fill,
+                config.record_header,
+                config.skips,
+                config.realign,
             )
         else:
             ends |= packed_ends(group, bound, config.skips)
@@ -405,6 +421,17 @@ def _layout_slotted(
     out = bytearray()
     first = min(s.start for s in strings)
     ends = slot_ends(
+        strings,
+        bound,
+        data,
+        config.fill,
+        config.record_header,
+        config.skips,
+        config.realign,
+    )
+    # The part of each slot the fill already holds: a string padded out to
+    # it leaves everything past it -- the rest of a realigned slot -- alone.
+    filled = slot_ends(
         strings, bound, data, config.fill, config.record_header, config.skips
     )
     last = min(max(max(s.end for s in strings), max(ends.values())), len(data))
@@ -425,9 +452,10 @@ def _layout_slotted(
         # whatever the fixed length says: ``out`` is a bytearray, and a
         # slice assignment longer than the slot would grow the buffer
         # rather than stop, writing over — or past — the string that
-        # follows. Padding the chunk out to the slot writes the fill
-        # where the fill already is, so an unedited string's bytes, and
-        # every byte outside a slot, stay as they are.
+        # follows. Padding the chunk out to the string's old bytes and the
+        # fill after them writes the fill where the fill already is, so an
+        # unedited string's bytes, the rest of a realigned slot, and every
+        # byte outside a slot stay as they are.
         extent = ends[rec.index] - rec.start
         room = extent if fixed_len is None else min(fixed_len, extent)
         if fixed_len is not None and fixed_len > extent:
@@ -451,9 +479,10 @@ def _layout_slotted(
             )
             continue
         used += len(enc.data)
-        chunk = enc.data + fill_run(config.fill, room - len(enc.data))
+        pad = min(room, filled[rec.index] - rec.start) - len(enc.data)
+        chunk = enc.data + fill_run(config.fill, max(pad, 0))
         at = rec.start - first
-        out[at : at + room] = chunk
+        out[at : at + len(chunk)] = chunk
     result.used += used
     result.available += sum(
         (fixed_len if fixed_len is not None else ends[s.index] - s.start)

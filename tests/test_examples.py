@@ -318,8 +318,12 @@ def test_mortal_kombat(registry):
     again = extract(out, config, ts, registry)
     assert texts(again)[0] == "[pos $0D $07]\nGO[end]"
     assert texts(again)[1] == texts(ex)[1]
-    # A name fits the letters it had, and its length byte follows the edit.
+    # A name may take its whole 9-byte slot, its length byte following the
+    # edit, and not a byte more.
     config, ts, ex = blocks["Fighter names"]
-    res, out = relayout(data, config, ts, {1: "KAN"}, registry)
+    res, out = relayout(data, config, ts, {0: "JOHNNY C"}, registry)
     assert res.ok, res.problems
-    assert out[0x1A3A] == 3 and texts(extract(out, config, ts, registry))[1] == "KAN"
+    assert out[0x1A31:0x1A3B] == b"\x08JOHNNY C\x04"
+    assert texts(extract(out, config, ts, registry))[:2] == ["JOHNNY C", "KANO"]
+    res, _ = relayout(data, config, ts, {0: "JOHNNY CA"}, registry)
+    assert not res.ok

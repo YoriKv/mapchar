@@ -175,6 +175,33 @@ def test_a_string_ending_where_a_skip_begins_is_rewritten_in_place():
     assert res.ok and out == bytes.fromhex("42 00 CD EE EE 43 00")
 
 
+def test_realigned_pascal_records_grow_into_their_records():
+    """Names in 4-byte records, each a length and its letters: realigning
+    after every string reads one a record, and a name may take its whole
+    record -- whatever the bytes past it held -- and no more."""
+    data = bytes.fromhex("02 41 42 FF 01 43 EE FF 03 41 41 41")
+    cfg = BlockConfig(RangeSource(0, 12), Pascal(1), "main", realign=(4, 0))
+    ex = extract(data, cfg, TS)
+    assert texts(ex) == ["AB", "C", "AAA"]
+    assert [(s.start, s.end) for s in ex.strings] == [(0, 3), (4, 6), (8, 12)]
+    res, out = relayout(data, cfg, TS, {})
+    assert res.ok and out == data
+    res, out = relayout(data, cfg, TS, {0: "A", 1: "CCC"})
+    assert res.ok, res.problems
+    assert out == bytes.fromhex("01 41 FF FF 03 43 43 43 03 41 41 41")
+    assert texts(extract(out, cfg, TS)) == ["A", "CCC", "AAA"]
+    res, _ = relayout(data, cfg, TS, {1: "CCCC"})
+    assert not res.ok and res.problems[0].over == 1
+
+
+def test_realigned_fixed_strings_step_over_their_records_tails():
+    data = bytes.fromhex("41 42 EE EE 43 43 EE EE")
+    cfg = BlockConfig(RangeSource(0, 8), FixedLength(2), "main", realign=(4, 0))
+    assert texts(extract(data, cfg, TS)) == ["AB", "CC"]
+    res, out = relayout(data, cfg, TS, {1: "AA"})
+    assert res.ok and out == bytes.fromhex("41 42 EE EE 41 41 EE EE")
+
+
 def test_pascal_records_keep_the_headers_they_skip():
     """A record rewritten in its slot leaves the next record's header alone."""
     data = bytes.fromhex("EE EE 02 41 42 EE EE 01 43")

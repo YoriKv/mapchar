@@ -701,8 +701,11 @@ of end-token strings.
   config line). A token that is this code, or whose table text ends in it,
   renders with a line break after it everywhere text is shown, so table text
   needs no `\n` for it; the break is dropped on insert as any line break is.
-- **Realign** — after each end token, round the position up to a multiple of
-  `M` plus `O`.
+- **Realign** — after each string — its end token, its Pascal length, its
+  fixed length or its lines — round the position up to a multiple of `M`
+  plus `O`. A slotted string's slot runs to that position whatever the bytes
+  there hold, so a record of a fixed size whose text is shorter — a Pascal
+  name in a 9-byte slot — may grow to fill it.
 - **Skip ranges** — `from → to` pairs: reading a string's bytes reaches `from`
   and continues at `to` (Cartographer's auto-jump), so data sitting inside the
   text is stepped over. A Pascal prefix is among a string's bytes, and a string
@@ -1021,7 +1024,8 @@ The editing surface, opened on a block.
     every string stays at its address and may use up to its slot, padded with
     the fill. A slot is the bytes the string holds itself and the run of fill
     after them — the padding a shorter string left, which the next edit takes
-    back — stopping at the next string, at the bound (a
+    back — or, where the block realigns and that is further, everything up
+    to the next aligned position; stopping at the next string, at the bound (a
     nested source's group bound), or at the end of the bytes, whichever comes
     first, and a fixed length caps it. Bytes between two strings that are not
     that padding belong to no slot and are left standing. A run of the fill
