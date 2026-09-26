@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QTabWidget,
@@ -197,6 +198,13 @@ class CapturesPanel(QWidget):
         )
         self.list.currentItemChanged.connect(self._sync_buttons)
         col.addWidget(self.list)
+        self.work = QLabel()
+        self.work.setObjectName("capture_work")
+        self.work.setWordWrap(True)
+        col.addWidget(self.work)
+        self.progress = QProgressBar()
+        self.progress.setObjectName("capture_progress")
+        col.addWidget(self.progress)
         self.status = QLabel()
         self.status.setWordWrap(True)
         self.status.setTextFormat(Qt.TextFormat.RichText)
@@ -321,8 +329,25 @@ class CapturesPanel(QWidget):
             if cap.id == current:
                 self.list.setCurrentItem(item)
         self.list.blockSignals(False)
+        self._show_work()
         self.status.setText("<br>".join(html.escape(m) for m in messages))
         self._sync_buttons()
+
+    def _show_work(self) -> None:
+        """The capture being worked on, and how far through its step: a bar
+        that fills while the step is counted, and moves while it is not."""
+        cap = next((c for c in self.captures if c.state in BUSY), None)
+        self.work.setVisible(cap is not None)
+        self.progress.setVisible(cap is not None)
+        if cap is None:
+            return
+        state = STATE_WORDS.get(cap.state, cap.state)
+        if cap.status:
+            state += f": {cap.status}"
+        self.work.setText(f"“{cap.text}” — {state}")
+        done, total = cap.progress or (0, 0)
+        self.progress.setRange(0, total)
+        self.progress.setValue(done)
 
     def _sync_buttons(self, *_):
         cid = self._selected()

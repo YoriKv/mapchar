@@ -6,6 +6,7 @@
 - Research into capturing on-screen text from a running emulator, and refreshed screenshots
 - Strings that end just before a skip range can be written again
 - Realign applies to every string type, so fixed-size records can be filled
+- A progress bar in the Captures dock while a capture is traced
 
 ## v0.1.6 - 2026-09-23
 

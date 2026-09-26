@@ -7,7 +7,7 @@ import time
 
 from capture_fake import CONSOLE, END, LETTERS, FakeEmulator, Game, build_rom
 from mapchar.capture.proposals import BLOCK, ENTRIES
-from mapchar.capture.session import DONE, FAILED, Session
+from mapchar.capture.session import BUSY, DONE, FAILED, Session
 from mapchar.core.block import EndToken, PointerTableSource
 from mapchar.project.entry import EntryKind
 from mapchar.ui.capture import finding_html
@@ -54,6 +54,29 @@ def test_a_capture_is_typed_traced_and_listed(window, qtbot, tmp_path):
     items = window.captures_panel.list
     assert items.count() == 1
     assert "Done" in items.item(0).text() and cap.text in items.item(0).text()
+
+
+def test_tracing_shows_its_progress(window, qtbot, tmp_path):
+    s = start(window, tmp_path)
+    cap = arrive(s)
+    window._capture_tick()
+    assert window.captures_panel.progress.isHidden()
+    s.submit(cap, "Welcome to the Island of Tests!")
+    panel, counted = window.captures_panel, []
+    end = time.monotonic() + 60
+    while cap.state != DONE:
+        window._capture_tick()
+        window._capture_refresh()
+        if cap.state == "tracing" and panel.progress.maximum():
+            counted.append((panel.progress.value(), panel.progress.maximum()))
+            assert cap.status in panel.work.text()
+        assert panel.progress.isHidden() is (cap.state not in BUSY)
+        qtbot.wait(1)
+        assert cap.state != FAILED, cap.reason
+        assert time.monotonic() < end
+    assert counted and all(0 <= v < m for v, m in counted)
+    window._capture_refresh()
+    assert panel.progress.isHidden()
 
 
 def test_a_short_text_is_answered_in_the_window(window, qtbot, tmp_path):

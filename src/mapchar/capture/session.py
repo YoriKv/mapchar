@@ -67,6 +67,8 @@ class Capture:
     state: str = WAITING
     reason: str = ""
     status: str = ""
+    progress: tuple[int, int] | None = None
+    """Done and total of the step :attr:`status` names, when it is counted."""
     result: Result | None = None
     finding: Finding | None = None
     order: int = 0
@@ -156,6 +158,7 @@ class Session:
                     self.captures.append(Capture.load(folder))
 
     def _changed(self, cap: Capture) -> None:
+        cap.progress = None  # a new state starts uncounted
         cap.save()
         if self.on_change is not None:
             self.on_change(cap)
@@ -316,6 +319,7 @@ class Session:
                 continue
             if job.tracer is not None:
                 job.capture.status = job.tracer.status
+                job.capture.progress = job.tracer.progress
             if y is WAIT:
                 break
         return True

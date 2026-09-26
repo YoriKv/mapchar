@@ -360,7 +360,7 @@ def line_break(ref: list[int], got: list[int], k: int) -> int | None:
 
 class Tracer:
     """Traces one capture. :meth:`run` is a step; :attr:`status` says what it
-    is on."""
+    is on, and :attr:`progress` how far through it, when that is counted."""
 
     def __init__(
         self,
@@ -377,12 +377,18 @@ class Tracer:
         self.moment = Moment.load(folder)
         self.result = Result()
         self.status = ""
+        self.progress: tuple[int, int] | None = None
+        """Done and total of the stage :attr:`status` names, or None."""
         self._servers: list[ProbeServer] = []
 
     def _server(self, **kw) -> ProbeServer:
         p = ProbeServer(self.emulator, self.rom_path, self.console, self.folder, **kw)
         self._servers.append(p)
         return p
+
+    def _at(self, status: str, done: int = 0, total: int = 0) -> None:
+        self.status = status
+        self.progress = (done, total) if total else None
 
     def close(self) -> None:
         for p in self._servers:
@@ -420,7 +426,7 @@ class Tracer:
         r.region, r.frames = (mt, min(offs), max(offs)), (f0, f1)
         r.decoder, r.gaps = dict(occ.decoder), occ.gaps
         r.outputs = len(occ_w)
-        self.status = "starting the probe server"
+        self._at("starting the probe server")
         p = self._server(
             name="sources", obs=(mt, min(offs), max(offs)), obs_from=f0, obs_to=f1
         )
@@ -480,7 +486,7 @@ class Tracer:
         src: dict[int, tuple[int, list[int], str]] = {}
         prev = None
         for n, i in enumerate(occ_w):
-            self.status = f"sources: output {n + 1} of {len(occ_w)}"
+            self._at(f"sources: output {n + 1} of {len(occ_w)}", n, len(occ_w))
             k = pos[i]
             best, tried = None, set()
             for back in WINDOWS:
@@ -575,7 +581,7 @@ class Tracer:
         fr = next(e[3] for e in evs if e[0] == "E" and e[1] == b)
         r.code_byte = b
         for v in range(256):
-            self.status = f"codes: value {v + 1} of 256"
+            self._at(f"codes: value {v + 1} of 256", v, 256)
             res = yield from p.effect([(b, v)], fr)
             if res is None:
                 r.codes.append(Code(v, "same"))
@@ -600,11 +606,11 @@ class Tracer:
         for e in evs:
             if e[0] == "E" and f0 - 1 <= e[3] <= f1 and e[1] not in first:
                 first[e[1]] = e[3]
-        self.status = f"stream: which of {len(first)} bytes change the text"
+        self._at(f"stream: which of {len(first)} bytes change the text")
         dep = yield from self._find(p, list(first), first)
         firstk: dict[int, int] = {}
         for n, a in enumerate(dep):
-            self.status = f"stream: byte {n + 1} of {len(dep)}"
+            self._at(f"stream: byte {n + 1} of {len(dep)}", n, len(dep))
             res = yield from p.effect([(a, rom[a] ^ 0x01)], first[a])
             if res:
                 refv, got = res
@@ -637,7 +643,7 @@ class Tracer:
             else:
                 tokens.append(("value", evs[i][2]))
         r.tokens = [list(t) if isinstance(t, tuple) else t for t in tokens]
-        self.status = "stream: fitting bit layouts"
+        self._at("stream: fitting bit layouts")
         # The run and a byte either side.
         lays = yield from bitlayout.iter_fits(
             tokens, rom[s0 - 1 : s1 + 2], rom.__getitem__
@@ -679,7 +685,7 @@ class Tracer:
         reader = evs[i0][4] if reader is None else reader
         lo, hi = max(0, first_src - 0x8000), min(len(rom) - 1, first_src + 0x8000)
         rfrom = evs[i0][3]
-        self.status = "pointers: starting the probe server"
+        self._at("pointers: starting the probe server")
         p = self._server(
             name="pointers",
             robs=(lo, hi, reader, rfrom, reader_cpu(console, reader), 4),
@@ -716,7 +722,7 @@ class Tracer:
             r.notes.append("the string's first read could not be measured")
             return
         for n, (b, fr, why) in enumerate(cands):
-            self.status = f"pointers: candidate {n + 1} of {len(cands)}"
+            self._at(f"pointers: candidate {n + 1} of {len(cands)}", n, len(cands))
             c = (
                 2 if rom[b] < 0xFE else -2
             )  # 2, so a halfword or word reader still moves
@@ -750,7 +756,7 @@ class Tracer:
         r.frames = (f_read, self.moment.frame)
         r.unit = 2 if any(evs[i][2] > 0xFF for i, _ in chars) else 1
         cpu = reader_cpu(console, reader)
-        self.status = "starting the probe server"
+        self._at("starting the probe server")
         p = self._server(
             name="sources",
             vobs=(console.vram, self.moment.frame),
@@ -766,7 +772,7 @@ class Tracer:
         yield from p.start()
         cells = []
         for n, (i, chr_) in enumerate(chars):
-            self.status = f"sources: character {n + 1} of {len(chars)}"
+            self._at(f"sources: character {n + 1} of {len(chars)}", n, len(chars))
             b, fr = evs[i][1], evs[i][3]
             yield from p.effect([(b, rom[b] ^ 0x01)], fr)
             ans = p.answer
@@ -785,7 +791,7 @@ class Tracer:
             self._extent(max(c[1] for c in cells), reader),
         )
         vlo, vhi = min(c[2] for c in cells), max(c[3] for c in cells)
-        self.status = "settling"
+        self._at("settling")
         r.settled = yield from p.settle(vlo, vhi, f_read)
         yield from p.move_vobs(r.settled)
         yield from self._pointers(lo, frozenset(evs[i][1] for i, _ in chars), None)
@@ -822,7 +828,11 @@ class Tracer:
         base = int.from_bytes(rom[b0 : b0 + unit], "little")
         for byte in range(unit):
             for v in range(256):
-                self.status = f"codes: byte {byte + 1} of {unit}, value {v + 1} of 256"
+                self._at(
+                    f"codes: byte {byte + 1} of {unit}, value {v + 1} of 256",
+                    byte * 256 + v,
+                    unit * 256,
+                )
                 code = (base & ~(0xFF << 8 * byte)) | (v << 8 * byte)
                 yield from p.effect([(b0 + byte, v)], fr)
                 r.codes.append(classify(code, p.answer))
@@ -832,7 +842,7 @@ class Tracer:
         last = r.string[1] - unit + 1
         term = int.from_bytes(rom[last : last + unit], "little")
         if unit > 1 and all(c.value != term for c in r.codes):
-            self.status = "codes: the code the string ends with"
+            self._at("codes: the code the string ends with")
             writes = [(b0 + k, (term >> 8 * k) & 0xFF) for k in range(unit)]
             yield from p.effect(writes, fr)
             r.codes.append(classify(term, p.answer))

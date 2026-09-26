@@ -1338,7 +1338,9 @@ says so over TCP; the session moves it into a capture folder.
 
 Long work is written as generator **steps**: a step yields `WAIT` while it
 waits on an emulator and returns its result. `Session.advance(budget)` resumes
-the current capture's step for at most `budget` seconds; `ui/` calls it from a
+the current capture's step for at most `budget` seconds, and copies the
+tracer's status and progress — done and total of the step it is on, when that
+step is counted — onto the capture; `ui/` calls it from a
 timer, so the GUI thread never blocks. Captures are traced one at a time, in
 the order their text was given. Every socket read has a deadline, lines are
 whole in both directions (a partial line is kept until its newline), and the

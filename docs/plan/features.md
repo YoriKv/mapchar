@@ -653,7 +653,9 @@ processors read text).
   screenshot, its typed text and its state — waiting, replaying, finding the
   text, tracing (with what it is on, and Stop), done with how many of its
   characters were traced, or what went wrong, with Retry — and the user keeps
-  playing meanwhile. **Type Text…** or a double-click opens a capture's
+  playing meanwhile. Under the list, a progress bar follows the capture being
+  worked on: it fills through each counted step of tracing — the characters,
+  the pointer candidates, the code values — and runs busy through the rest. **Type Text…** or a double-click opens a capture's
   window again; **Remove** drops it and its files.
 - **What can go wrong** is said on the capture itself, never guessed around:
   - a typed word that does not fit is underlined, to be corrected or dropped;
