@@ -3,11 +3,11 @@
 For each game with its ROM under ``sample-projects/<game>/``, copies the
 game's tables and command file beside it -- from abcde's examples, or from
 ``tools/samples/<game>/`` for the games abcde has none for -- imports the
-command file into a fresh project and saves ``<game>.mapchar`` there. Mother 3
-and Mortal Kombat II have no command file: ``mother3_sample.py`` and
-``mk2_sample.py`` derive their tables and blocks from the ROM, and they are
-written and added the same way. Names given on the
-command line build only those games. Headless; needs the offscreen Qt platform,
+command file into a fresh project and saves ``<game>.mapchar`` there. Mother 3,
+Mortal Kombat II and Mortal Kombat have no command file: ``mother3_sample.py``,
+``mk2_sample.py`` and ``mk1_sample.py`` derive their tables and blocks from the
+ROM, and they are written and added the same way. Names given on the command
+line build only those games. Headless; needs the offscreen Qt platform,
 which it sets itself.
 """
 
@@ -22,7 +22,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import mk2_sample  # noqa: E402 - beside this script, not a package
+import mk1_sample  # noqa: E402 - beside this script, not a package
+import mk2_sample  # noqa: E402
 import mother3_sample  # noqa: E402
 
 EXAMPLES = os.path.join(os.path.dirname(ROOT), "abcde", "eg", "NES")
@@ -42,7 +43,7 @@ GAMES: dict[str, tuple[str, str]] = {
         os.path.join(SAMPLES, "Super Mario World"),
     ),
 }
-DERIVED = {"Mother 3": mother3_sample, "MK2": mk2_sample}
+DERIVED = {"Mother 3": mother3_sample, "MK2": mk2_sample, "mk1": mk1_sample}
 """Games whose tables and blocks a module derives from the ROM, by folder."""
 
 

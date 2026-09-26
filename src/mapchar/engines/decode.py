@@ -170,7 +170,10 @@ def decode(
             continue
 
         start = pos
-        pos = advance(pos, len(entry.bits), skips)
+        # An end token that ends the string ends it at its own last bit: a
+        # skip range starting there is the next string's to follow.
+        ends = entry.kind is TokenKind.END and rules.end_terminated
+        pos = advance(pos, len(entry.bits), skips, land=not ends)
         operands: tuple[int, ...] = ()
         if entry.operands:
             operands, pos, short = _read_operands(bits, entry, pos, limit, skips)
@@ -379,8 +382,9 @@ def _window(
     return out
 
 
-def advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
-    """``n`` bits past ``pos``, jumping over any skip range on the way."""
+def advance(pos: int, n: int, skips: list[tuple[int, int]], land: bool = True) -> int:
+    """``n`` bits past ``pos``, jumping over any skip range on the way; one
+    starting just past the last bit is followed too unless ``land`` is off."""
     if not skips:
         return pos + n
     cur = follow_skips(pos, skips)
@@ -391,7 +395,7 @@ def advance(pos: int, n: int, skips: list[tuple[int, int]]) -> int:
             break
         remaining -= nxt - cur
         cur = next(e for s, e in skips if s == nxt)
-    return follow_skips(cur + remaining, skips)
+    return follow_skips(cur + remaining, skips) if land else cur + remaining
 
 
 def follow_skips(pos: int, skips: list[tuple[int, int]]) -> int:

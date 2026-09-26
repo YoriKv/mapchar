@@ -164,6 +164,17 @@ def test_a_string_read_across_a_backwards_skip_keeps_both_pieces(registry):
     assert not res.ok and "skip range" in res.problems[0].message
 
 
+def test_a_string_ending_where_a_skip_begins_is_rewritten_in_place():
+    """Inline strings with code between them: a string whose end token is the
+    byte before a skip range ends there, so it is one run and can be written."""
+    data = bytes.fromhex("41 00 CD EE EE 42 00")
+    cfg = BlockConfig(RangeSource(0, 7), EndToken(), "main", skips=((2, 5),))
+    ex = extract(data, cfg, TS)
+    assert [(s.start, s.end) for s in ex.strings] == [(0, 2), (5, 7)]
+    res, out = relayout(data, cfg, TS, {0: "B[end]", 1: "C[end]"})
+    assert res.ok and out == bytes.fromhex("42 00 CD EE EE 43 00")
+
+
 def test_pascal_records_keep_the_headers_they_skip():
     """A record rewritten in its slot leaves the next record's header alone."""
     data = bytes.fromhex("EE EE 02 41 42 EE EE 01 43")

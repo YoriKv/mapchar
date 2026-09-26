@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.7 - unreleased
+
+- Strings that end just before a skip range can be written again
+
 ## v0.1.6 - 2026-09-23
 
 - New Block opens a dialog with settings

@@ -21,6 +21,7 @@ from mapchar.core.table import TableSet
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import layout_block
 from mapchar.plugins.builtins.compression.rnc import decompress
+from mapchar.plugins.charsets import apply_charset
 from mapchar.project.exchange.cartographer import parse_command_file
 from mapchar.project.formats.blockspec import parse_config
 from mapchar.project.formats.table_native import parse_native
@@ -274,3 +275,51 @@ def test_mortal_kombat_ii(registry):
     again = extract(out, config, ts, registry)
     assert texts(again)[:2] == ["P1 IN[end]", "PLAYER 2 HAS ENTERED[end]"]
     assert out[0x097E:0x0980] == (0x43E6).to_bytes(2, "little")
+
+
+def test_mortal_kombat(registry):
+    """The Mortal Kombat sample, derived from the ROM: every inline string is
+    read from its call site with the code between them skipped, reads with no
+    unknown code, lays out unchanged, and edits in place up to the code after
+    it; the names keep their 9-byte slots."""
+    mk1 = _sample_module("mk1_sample")
+    rom = ROOT / "sample-projects" / "mk1" / mk1.ROM_NAME
+    if not rom.exists():
+        pytest.skip(f"{mk1.ROM_NAME} not present")
+    data = rom.read_bytes()
+    tables = {}
+    for name, text in mk1.table_files(data).items():
+        table = parse_native(text, name).table
+        apply_charset(table, registry)
+        tables[table.id] = table
+    blocks = {}
+    for block in mk1.blocks(data):
+        config = parse_config(block.spec)
+        ts = TableSet.build(tables[config.table_id], tables)
+        ex = extract(data, config, ts, registry)
+        assert not ex.notices, (block.name, ex.notices)
+        assert "[$" not in "".join(texts(ex)), block.name
+        res, out = relayout(data, config, ts, {}, registry)
+        assert res.ok and out == data, (block.name, res.problems)
+        blocks[block.name] = (config, ts, ex)
+    assert len(blocks) == 19
+    assert sum(len(ex.strings) for _, _, ex in blocks.values()) == 81
+
+    assert texts(blocks["Banners"][2])[1] == "[pos $03 $07]\nROUND [end]"
+    assert texts(blocks["Fighter names"][2])[:3] == ["CAGE", "KANO", "RAYDEN"]
+    assert texts(blocks["High score initials"][2])[0] == "ARH"
+
+    # A string between two others, rewritten shorter: the code after each
+    # string is left alone, and the next string still reads.
+    config, ts, ex = blocks["Press start"]
+    res, out = relayout(data, config, ts, {0: "[pos $0D $07]\nGO[end]"}, registry)
+    assert res.ok, res.problems
+    assert out[0x41CD:0x41D1] == data[0x41CD:0x41D1]
+    again = extract(out, config, ts, registry)
+    assert texts(again)[0] == "[pos $0D $07]\nGO[end]"
+    assert texts(again)[1] == texts(ex)[1]
+    # A name fits the letters it had, and its length byte follows the edit.
+    config, ts, ex = blocks["Fighter names"]
+    res, out = relayout(data, config, ts, {1: "KAN"}, registry)
+    assert res.ok, res.problems
+    assert out[0x1A3A] == 3 and texts(extract(out, config, ts, registry))[1] == "KAN"

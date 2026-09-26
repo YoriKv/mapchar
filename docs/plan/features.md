@@ -707,7 +707,9 @@ of end-token strings.
   and continues at `to` (Cartographer's auto-jump), so data sitting inside the
   text is stepped over. A Pascal prefix is among a string's bytes, and a string
   that begins on a skip begins where it lands, so a header before each record
-  is stepped over too. They shape the strings, not where a source's addresses
+  is stepped over too. A string that ends just before a skip ends there, so
+  inline strings with code between them are each one run and can be written.
+  They shape the strings, not where a source's addresses
   are: a pointer table is still walked from `start` by `stride`, and a gap in
   one is a matter for the stride or for a second block. Being a string's own
   setting, the Skips picker stays in the Strings section, so it is there in
