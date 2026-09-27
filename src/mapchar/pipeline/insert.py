@@ -9,12 +9,15 @@ the decompressed buffer; nothing is written here.
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
-from mapchar.core.bits import Bits, align_up
+from mapchar.core.bits import Bits, align_up, bits_to_bytes, bytes_to_bits
 from mapchar.core.block import (
+    Align,
     BlockConfig,
+    ChainMode,
     EndToken,
     Extraction,
     FixedLength,
@@ -27,13 +30,19 @@ from mapchar.core.block import (
     string_groups,
 )
 from mapchar.core.errors import EncodeError, MapcharError
-from mapchar.core.fill import fill_end, fill_run
+from mapchar.core.fill import fill_end, fill_run, format_fill
 from mapchar.core.mapping import pointer_bytes
 from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.text import same_text
+from mapchar.core.tokens import render
 from mapchar.engines.decode import DecodeRules, decode
 from mapchar.engines.encode import encode
-from mapchar.pipeline.extract import extract, reextract, strip_artificial
+from mapchar.pipeline.extract import (
+    end_code_split,
+    extract,
+    reextract,
+    strip_artificial,
+)
 from mapchar.pipeline.pointers import nested_records
 from mapchar.plugins.registry import default_registry, resolve_mapping
 
@@ -262,7 +271,16 @@ def _before(pos: int, n: int, skips) -> int:
     return pos
 
 
-def packed_ends(strings: list[StringRecord], bound: int, skips=()) -> dict[int, int]:
+def record_start(rec: StringRecord, config: BlockConfig) -> int:
+    """Where the record of ``rec`` begins: its string, behind the block's
+    record header (:attr:`~mapchar.core.block.BlockConfig.record_header`) —
+    which is where a pointer that reaches it points."""
+    return _before(rec.start, config.record_header, config.skips)
+
+
+def packed_ends(
+    strings: list[StringRecord], bound: int, skips=(), header: int = 0
+) -> dict[int, int]:
     """Where each string's room ends, by index, when the group is packed.
 
     A packed group is laid out afresh from its first string, so no string has
@@ -274,11 +292,13 @@ def packed_ends(strings: list[StringRecord], bound: int, skips=()) -> dict[int, 
 
     The measure, not an address: the layout moves the strings, so where a
     string's room ends is how far it may grow, counted from where it starts.
+    A chain packed with its record headers (:func:`_layout_chain_pack`) counts
+    each ``header`` as held too, from the first string's.
     """
     if not strings:
         return {}
-    first = min(rec.start for rec in strings)
-    held = sum(rec.byte_length(skips) for rec in strings)
+    first = min(rec.start for rec in strings) - header
+    held = sum(rec.byte_length(skips) + header for rec in strings)
     spare = max(bound - first - held, 0)
     return {rec.index: rec.start + rec.byte_length(skips) + spare for rec in strings}
 
@@ -332,6 +352,11 @@ def string_ends(
     :func:`room_for` reads a string's room from, and ``room`` is what the block
     remembers giving up (:func:`~mapchar.core.block.block_bound`)."""
     slotted = config.effective_write_mode is WriteMode.SLOTTED
+    if config.chained:
+        bound = block_bound(config, strings, room)
+        if config.chain is ChainMode.PACK:
+            return packed_ends(strings, bound, header=config.record_header)
+        return chain_ends(data, config, strings, bound)
     if not isinstance(config.source, NestedPointerSource):
         bound = block_bound(config, strings, room)
         if slotted:
@@ -395,12 +420,17 @@ def layout_block(
         bounds = [block_bound(config, strings, room)]
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     for group, bound in zip(groups, bounds, strict=True):
+        if config.chained and config.chain is ChainMode.PAD:
+            _layout_chain_pad(data, config, tables, group, bound, result)
+            continue
         for rec in group:
             enc = encode_string(rec, config, tables, data)
             result.encoded[rec.index] = enc
             if enc.problem is not None:
                 result.problems.append(enc.problem)
-        if slotted:
+        if config.chained:
+            _layout_chain_pack(data, config, group, bound, result, registry)
+        elif slotted:
             _layout_slotted(data, config, group, bound, result)
         else:
             _layout_packed(data, config, group, bound, result, registry)
@@ -560,20 +590,36 @@ def _layout_packed(
     result.used += pos - first
     result.available += bound - first
     if result.ok:
-        # The fill goes as far as the bound, but the splice need not: past
-        # both the new text and the old, bytes that are already the fill the
-        # write would lay there are left alone, and the spare of a block whose
-        # bound is the fill run behind it can be a megabyte of free space.
-        # The pattern is laid from ``pos``, so what stands has to carry it on
-        # at its own phase — a multi-byte fill starting over mid-pattern is
-        # not one run, and the next reading would not read it as padding.
-        end = min(max(pos, max(rec.end for rec in strings)), bound)
-        carried = _rotated(fill, end - pos)
-        if end < bound and fill_end(data, end, carried, bound) < bound:
-            end = bound
-        out += fill_run(fill, end - first - len(out))
+        _fill_tail(data, fill, strings, first, pos, bound, out)
         result.splices.append(Splice(first, bytes(out)))
         result.splices.extend(_pointer_splices(config, strings, result, registry))
+
+
+def _fill_tail(
+    data: bytes,
+    fill: bytes,
+    strings: list[StringRecord],
+    first: int,
+    pos: int,
+    bound: int,
+    out: bytearray,
+) -> None:
+    """Pad a packed layout, ``out`` from ``first`` with its text ending at
+    ``pos``, with the fill towards ``bound``.
+
+    The fill goes as far as the bound, but the splice need not: past both the
+    new text and the old, bytes that are already the fill the write would lay
+    there are left alone, and the spare of a block whose bound is the fill run
+    behind it can be a megabyte of free space. The pattern is laid from
+    ``pos``, so what stands has to carry it on at its own phase — a multi-byte
+    fill starting over mid-pattern is not one run, and the next reading would
+    not read it as padding.
+    """
+    end = min(max(pos, max(rec.end for rec in strings)), bound)
+    carried = _rotated(fill, end - pos)
+    if end < bound and fill_end(data, end, carried, bound) < bound:
+        end = bound
+    out += fill_run(fill, end - first - len(out))
 
 
 def _rotated(fill: bytes, by: int) -> bytes:
@@ -615,9 +661,10 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
     splices = []
     for rec in strings:
         enc = result.encoded.get(rec.index)
-        new_start = enc.new_start
-        if new_start is None:
+        if enc.new_start is None:
             continue
+        # A range's pointer reaches its string's record, header and all.
+        new_start = enc.new_start - config.record_header
         for ref in rec.pointers:
             if ref.mapping_id not in mappings:
                 mappings[ref.mapping_id] = resolve_mapping(registry, ref.mapping_id)
@@ -679,6 +726,384 @@ def _crosses_skip(rec: StringRecord, config: BlockConfig) -> bool:
     return len(rec.pieces(config.skips)) > 1
 
 
+# -- chains -------------------------------------------------------------------
+
+
+def pad_unit(config: BlockConfig, tables: TableSet) -> tuple[bytes, str]:
+    """What pads a chained string, as bytes and as the text they read as: the
+    block's pad, else the start table's space. Refused with an
+    :class:`EncodeError` when the table has no space, or the pad does not read
+    as text in it."""
+    pad = config.pad if config.pad is not None else _table_space(tables)
+    if not pad:
+        raise EncodeError(
+            f"table @{tables.start.id} has no space to pad with; set the block's pad"
+        )
+    rules = DecodeRules(end_terminated=False, limit_bit=len(pad) * 8)
+    tokens = decode(Bits(pad), tables, 0, rules).tokens
+    if (
+        not tokens
+        or tokens[-1].bit_end != len(pad) * 8
+        or any(
+            t.fallback or t.entry is None or t.entry.kind is not TokenKind.TEXT
+            for t in tokens
+        )
+    ):
+        raise EncodeError(
+            f"the pad {format_fill(pad)} is not text in table @{tables.start.id}"
+        )
+    return pad, render(tokens)
+
+
+def _table_space(tables: TableSet) -> bytes | None:
+    """The start table's shortest whole-byte entry for a space."""
+    keys = [
+        bits
+        for bits, entry in tables.start.entries.items()
+        if entry.kind is TokenKind.TEXT and entry.text == " " and len(bits) % 8 == 0
+    ]
+    return bits_to_bytes(min(keys, key=len)) if keys else None
+
+
+def chain_links(
+    config: BlockConfig, strings: list[StringRecord]
+) -> list[tuple[StringRecord, StringRecord]]:
+    """Every string of a chained block with the one the game reads straight
+    after it: the next in address order, unless that one begins a chain."""
+    ordered = sorted(strings, key=lambda r: r.start)
+    starts = set(config.chain_starts(len(strings)))
+    return [
+        (a, b)
+        for a, b in zip(ordered, ordered[1:], strict=False)
+        if b.index not in starts
+    ]
+
+
+def chain_gaps(config: BlockConfig, strings: list[StringRecord]) -> dict[int, int]:
+    """The strings of a chained block that stand past fill rather than where
+    the game reads them, each by the offset the gap begins at: what
+    :attr:`~mapchar.core.block.Extraction.chain_gaps` says of the bytes,
+    worked out from the strings."""
+    return {
+        b.index: a.end
+        for a, b in chain_links(config, strings)
+        if b.start - config.record_header > a.end
+    }
+
+
+def chain_ends(
+    data: bytes, config: BlockConfig, strings: list[StringRecord], bound: int
+) -> dict[int, int]:
+    """Where each chained string's room ends, by index, when the block pads
+    inside its strings: a string the next one follows in its chain has up to
+    that one's record, so nothing moves; the last of a chain has its slot —
+    its own bytes and the fill after them (:func:`slot_ends`)."""
+    ends = slot_ends(strings, bound, data, config.fill, config.record_header)
+    for rec, nxt in chain_links(config, strings):
+        ends[rec.index] = nxt.start - config.record_header
+    return ends
+
+
+def _padded_parts(
+    text: str, config: BlockConfig, tables: TableSet, pad: bytes, align: Align
+) -> tuple[bytes, bytes]:
+    """``text`` encoded for a chained string, as the body the pad goes around
+    and the end token after it (none for a length prefix).
+
+    The pad a text already holds at its edges — read back from an earlier
+    write — is taken off, so the write lays it afresh: the trailing pad
+    always, and the leading pad unless the string is left-aligned, where
+    leading room is the translator's own.
+    """
+    prefixed = isinstance(config.string_type, Pascal)
+    r = encode(text, tables, end_terminated=not prefixed)
+    if not prefixed and not r.ends_with_end:
+        raise EncodeError("the text must end with an end token")
+    rules = DecodeRules(end_terminated=False, limit_bit=len(r.bits))
+    tokens = decode(Bits(r.data), tables, 0, rules).tokens
+    end = b""
+    if not prefixed:
+        cut = tokens.pop().bit_start
+        if cut % 8:
+            raise EncodeError("the end token does not begin on a byte")
+        end = r.data[cut // 8 :]
+    unit = bytes_to_bits(pad)
+    lo, hi = 0, len(tokens)
+    while hi > lo and tokens[hi - 1].encoded_bits() == unit:
+        hi -= 1
+    while align is not Align.LEFT and lo < hi and tokens[lo].encoded_bits() == unit:
+        lo += 1
+    if lo == hi:
+        return b"", end
+    a, b = tokens[lo].bit_start, tokens[hi - 1].bit_end
+    if a % 8 or b % 8:
+        raise EncodeError("the text does not end on a byte, so no pad can follow it")
+    return r.data[a // 8 : b // 8], end
+
+
+def _encode_padded(
+    rec: StringRecord,
+    config: BlockConfig,
+    tables: TableSet,
+    room: int,
+    tied: bool,
+) -> Encoded:
+    """A chained string's replacement, padded inside itself.
+
+    ``room`` is how many bytes it may take. A string ``tied`` to the next one
+    of its chain takes all of them, since the next begins where it ends; the
+    last of a chain takes at least the bytes it holds now, so the text keeps
+    the place the old one had, which is what aligning it works within. The
+    pad goes after the text, in front of it, or both, as the string's
+    alignment says, and a length prefix counts it.
+    """
+    st = config.string_type
+    width = st.width if isinstance(st, Pascal) else 0
+    align = rec.align or config.align
+    try:
+        pad, _ = pad_unit(config, tables)
+        body, end = _padded_parts(rec.replacement or "", config, tables, pad, align)
+    except EncodeError as exc:
+        return Encoded(rec.index, b"", Problem(rec.index, str(exc)))
+    size = width + len(body) + len(end)
+    if size > room:
+        over = size - room
+        return Encoded(
+            rec.index,
+            b"",
+            Problem(
+                rec.index,
+                f"the text encodes to {size - width} byte(s); its place in the "
+                f"chain holds {room - width}, so {over} do not fit",
+                over,
+            ),
+        )
+    spare = (room if tied else max(size, rec.length)) - size
+    if spare % len(pad):
+        return Encoded(
+            rec.index,
+            b"",
+            Problem(
+                rec.index,
+                f"{spare} byte(s) are left to pad and the pad {format_fill(pad)} "
+                f"is {len(pad)}, so the string cannot end where the next begins",
+            ),
+        )
+    n = spare // len(pad)
+    lead = {Align.LEFT: 0, Align.CENTRE: n // 2, Align.RIGHT: n}[align]
+    payload = pad * lead + body + pad * (n - lead)
+    if not isinstance(st, Pascal):
+        return Encoded(rec.index, payload + end)
+    try:
+        return Encoded(rec.index, _pascal(payload, st, None, "", tables))
+    except EncodeError as exc:
+        return Encoded(rec.index, b"", Problem(rec.index, str(exc)))
+
+
+def _layout_chain_pad(
+    data: bytes,
+    config: BlockConfig,
+    tables: TableSet,
+    strings: list[StringRecord],
+    bound: int,
+    result: LayoutResult,
+) -> None:
+    """Every chained string in its own place, a shorter text padded inside it
+    (:func:`_encode_padded`), so each still ends where the next begins and the
+    fill is never written inside a chain."""
+    ends = chain_ends(data, config, strings, bound)
+    tied = {a.index for a, _ in chain_links(config, strings)}
+    first = min(r.start for r in strings)
+    last = min(max(max(r.end for r in strings), max(ends.values())), len(data))
+    out = bytearray(data[first:last])
+    for rec in strings:
+        room = ends[rec.index] - rec.start
+        result.available += room
+        if rec.replacement is None:
+            enc = encode_string(rec, config, tables, data)
+        else:
+            enc = _encode_padded(rec, config, tables, room, rec.index in tied)
+        result.encoded[rec.index] = enc
+        if enc.problem is not None:
+            result.problems.append(enc.problem)
+            continue
+        result.used += len(enc.data)
+        if rec.replacement is not None:
+            at = rec.start - first
+            out[at : at + len(enc.data)] = enc.data
+    if result.ok:
+        result.splices.append(Splice(first, bytes(out)))
+
+
+def _layout_chain_pack(
+    data: bytes,
+    config: BlockConfig,
+    strings: list[StringRecord],
+    bound: int,
+    result: LayoutResult,
+    registry,
+) -> None:
+    """The chains back to back from the block's first record, each record's
+    header carried verbatim with its string, the fill after the last up to
+    ``bound``, and every pointer rewritten.
+
+    A string that begins a chain is one the game reaches by a pointer or a
+    code operand, so one that moves must carry the pointer that reaches it
+    (**Attach**); one that has none refuses the write, since the game would go
+    on reaching it where it no longer is. A string inside a chain is reached
+    by reading the one before, and needs none.
+    """
+    header = config.record_header
+    ordered = sorted(strings, key=lambda r: r.start)
+    first = ordered[0].start - header
+    pos = first
+    out = bytearray()
+    for rec in ordered:
+        enc = result.encoded[rec.index]
+        if enc.problem is not None:
+            continue
+        chunk = data[rec.start - header : rec.start] + enc.data
+        if pos + len(chunk) > bound:
+            over = pos + len(chunk) - bound
+            result.problems.append(
+                Problem(
+                    rec.index,
+                    f"the record takes {len(chunk)} byte(s) and only "
+                    f"{max(bound - pos, 0)} are left before the block's bound "
+                    f"(${bound:X}), so it crosses the bound by {over}",
+                    over,
+                )
+            )
+            pos += len(chunk)
+            continue
+        enc.new_start = pos + header
+        out += chunk
+        pos += len(chunk)
+    starts = set(config.chain_starts(len(strings)))
+    for rec in ordered:
+        moved = result.encoded[rec.index].new_start
+        if rec.index in starts and not rec.pointers and moved not in (None, rec.start):
+            result.problems.append(
+                Problem(
+                    rec.index,
+                    f"moves from ${rec.start - header:X} to ${moved - header:X} and "
+                    "has no pointer; if the game reaches it directly, it will break",
+                )
+            )
+    result.used += pos - first
+    result.available += bound - first
+    if result.ok:
+        _fill_tail(data, config.fill, strings, first, pos, bound, out)
+        result.splices.append(Splice(first, bytes(out)))
+        result.splices.extend(_pointer_splices(config, strings, result, registry))
+
+
+def repair_chains(
+    data: bytes,
+    config: BlockConfig,
+    tables: TableSet,
+    strings: list[StringRecord],
+    gaps: dict[int, int],
+) -> tuple[list[Splice], list[Problem]]:
+    """The splices that close every gap of ``gaps``
+    (:attr:`~mapchar.core.block.Extraction.chain_gaps`), and what stands in
+    the way of any.
+
+    The string in front of each gap is extended over the fill with the pad —
+    its length prefix raised, or its end token moved past the pad — so the
+    game reads the next string where it stands. Raises
+    :class:`~mapchar.core.errors.EncodeError` when the block has no pad.
+    """
+    pad, _ = pad_unit(config, tables)
+    by_index = {r.index: r for r in strings}
+    st = config.string_type
+    splices: list[Splice] = []
+    problems: list[Problem] = []
+    for index in sorted(gaps):
+        prev, nxt = by_index.get(index - 1), by_index.get(index)
+        if prev is None or nxt is None:
+            continue
+        n = nxt.start - config.record_header - prev.end
+        if n <= 0:
+            continue
+        if n % len(pad):
+            problems.append(
+                Problem(
+                    prev.index,
+                    f"the {n}-byte gap at ${prev.end:X} is no whole number of "
+                    f"the {len(pad)}-byte pad",
+                )
+            )
+            continue
+        run = pad * (n // len(pad))
+        if isinstance(st, Pascal):
+            order = "big" if st.endian == "big" else "little"
+            count = int.from_bytes(data[prev.start : prev.start + st.width], order)
+            count += n // len(pad) * _pad_weight(pad, tables) if st.counts_tokens else n
+            if count >= 1 << (st.width * 8):
+                problems.append(
+                    Problem(
+                        prev.index,
+                        f"its {st.width}-byte length prefix cannot count {count}",
+                    )
+                )
+                continue
+            splices.append(Splice(prev.start, count.to_bytes(st.width, order)))
+            splices.append(Splice(prev.end, run))
+            continue
+        last = prev.tokens[-1] if prev.tokens else None
+        if last is None or not last.is_end or last.bit_start % 8 or prev.end_bit % 8:
+            problems.append(
+                Problem(prev.index, "does not end with an end token on a byte")
+            )
+            continue
+        at = last.bit_start // 8
+        splices.append(Splice(at, run + data[at : prev.end]))
+    return splices, problems
+
+
+def _pad_weight(pad: bytes, tables: TableSet) -> int:
+    """What the pad counts for in a prefix that counts tokens."""
+    rules = DecodeRules(end_terminated=False, limit_bit=len(pad) * 8)
+    return sum(t.pascal_weight for t in decode(Bits(pad), tables, 0, rules).tokens)
+
+
+def padded_view(text: str, pad: str, mark: str, tables: TableSet) -> str:
+    """``text`` with each unit of ``pad`` at its edges — in front of its end
+    code, if it closes with one — shown as ``mark``: the room a chained
+    string still has."""
+    body, end = end_code_split(text, tables)
+    lead = trail = 0
+    while pad and body.endswith(pad):
+        body, trail = body[: -len(pad)], trail + 1
+    while pad and body.startswith(pad):
+        body, lead = body[len(pad) :], lead + 1
+    unit = mark * len(pad)
+    return unit * lead + body + unit * trail + end
+
+
+def _unpadder(config: BlockConfig, tables: TableSet) -> Callable[[str], str]:
+    """How a chained block that pads compares texts: without the pad at
+    either edge, which a write lays afresh as the room and the alignment say
+    (:func:`_padded_parts`)."""
+    if not (config.chained and config.chain is ChainMode.PAD):
+        return lambda text: text
+    try:
+        _, pad = pad_unit(config, tables)
+    except EncodeError:
+        return lambda text: text
+
+    def unpad(text: str) -> str:
+        body, end = end_code_split(text, tables)
+        while body.endswith(pad):
+            body = body[: -len(pad)]
+        while body.startswith(pad):
+            body = body[len(pad) :]
+        return body + end
+
+    return unpad
+
+
 def apply_splices(data: bytes, splices: list[Splice]) -> bytes:
     out = bytearray(data)
     for s in splices:
@@ -725,7 +1150,12 @@ def room_note(used: int, room: int, config: BlockConfig | None) -> str:
         return ""
     if config.fixed_length is not None:
         return f"{used} of {room} byte(s): the block's fixed length"
-    if config.effective_write_mode is WriteMode.PACKED:
+    if config.chained and config.chain is ChainMode.PAD:
+        return (
+            f"{used} of {room} byte(s): its place in the chain, padded inside "
+            "when the text is shorter"
+        )
+    if config.chained or config.effective_write_mode is WriteMode.PACKED:
         return (
             f"{used} of {room} byte(s): its own plus the block's "
             f"{room - used} spare, shared by every string of the block"
@@ -787,10 +1217,22 @@ def reads_back(
             None,
             None,
         )
+    if config.chained:
+        broken = set(check.chain_gaps) - set(chain_gaps(config, strings))
+        if broken:
+            first = min(broken)
+            return ReadBack(
+                f"string #{first} would start in fill at "
+                f"${check.chain_gaps[first]:X}: the game reads the chain back to "
+                "back",
+                None,
+                None,
+            )
+    unpad = _unpadder(config, tables)
     read = {r.index: r for r in check.strings}
     for i, t in edits.items():
         back = read[i].current_text()
-        if not same_text(back, t):
+        if not same_text(unpad(back), unpad(t)):
             return ReadBack(None, f"#{i}: reads back as {back!r}", None)
     for rec in strings:
         if rec.index in edits or read[rec.index] is rec:
@@ -804,6 +1246,13 @@ def reads_back(
 
 __all__ = [
     "LayoutResult",
+    "chain_ends",
+    "chain_gaps",
+    "chain_links",
+    "pad_unit",
+    "padded_view",
+    "record_start",
+    "repair_chains",
     "Problem",
     "ReadBack",
     "Splice",

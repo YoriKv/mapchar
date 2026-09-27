@@ -55,6 +55,12 @@ class RowModel:
     tips: dict[int, str] = field(default_factory=dict)
     """A token's hover text in place of its own, by its first bit: what a
     pointer holds and reaches."""
+    chain_starts: set[int] = field(default_factory=set)
+    """Relative byte offsets where a chain of the current block begins: the
+    record of its first string."""
+    chain_gaps: set[int] = field(default_factory=set)
+    """Relative byte offsets of fill a chain of the current block runs into
+    (:attr:`~mapchar.core.document.Document.chain_gaps`)."""
 
 
 class CellGeometry:

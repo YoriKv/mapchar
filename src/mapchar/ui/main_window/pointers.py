@@ -18,6 +18,7 @@ pointers on the strings.
 from __future__ import annotations
 
 from mapchar.engines.pointers import discover
+from mapchar.pipeline.insert import record_start
 from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import resolve_mapping
 from mapchar.project.entry import Entry
@@ -50,11 +51,9 @@ class PointerDiscoveryMixin:
         )
         if setup.exec() != PointerSearchDialog.DialogCode.Accepted:
             return
-        starts = (
-            [rec.start]
-            if setup.selected_only() and rec is not None
-            else [r.start for r in entry.doc.strings]
-        )
+        # A record is pointed at where its header begins.
+        picked = [rec] if setup.selected_only() and rec is not None else None
+        starts = [record_start(r, entry.config) for r in picked or entry.doc.strings]
         mappings = {
             mid: resolve_mapping(self.registry, mid)
             for mid in self.registry.ids(Stage.MAPPING)
@@ -121,7 +120,7 @@ class PointerDiscoveryMixin:
         before: dict[int, tuple] = {}
         after: dict[int, tuple] = {}
         for rec in entry.doc.strings:
-            found = refs.get(rec.start)
+            found = refs.get(record_start(rec, entry.config))
             if found is None or found == rec.pointers:
                 continue
             before[rec.index] = rec.pointers

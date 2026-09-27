@@ -13,6 +13,7 @@ from mapchar_lint.context import Context, EntryView
 from mapchar_lint.diagnostics import Severity
 from mapchar_lint.reading import int_reading
 from mapchar_lint.schema import (
+    ALIGNS,
     BOX_KEYS,
     DEFAULT_SPARE_ROOM,
     EFFECTS,
@@ -161,11 +162,19 @@ def _strings(ctx: Context, view: EntryView) -> None:
             if key not in STRING_KEYS:
                 ctx.error(
                     "E646",
-                    f"`{key}` is not a string-record key (i, o, h, t, s, n, u)",
+                    f"`{key}` is not a string-record key (i, o, h, t, s, n, u, al)",
                     pointer=f"{pointer}/{key}",
                     entry=view,
                     detail="Ignored, and dropped by the next save.",
                 )
+        if "al" in record and record["al"] not in ALIGNS:
+            ctx.warn(
+                "W654",
+                f"al is {record['al']!r}, not one of {', '.join(ALIGNS)}",
+                pointer=f"{pointer}/al",
+                entry=view,
+                detail="Read as none: the string takes the block's alignment.",
+            )
         if "t" in record:
             ctx.info(
                 "I644",

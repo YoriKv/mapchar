@@ -364,11 +364,19 @@ class RawWidget(QAbstractScrollArea):
                     self._geom.text_cell(first, span), theme.TINT_SELECTION
                 )
 
-        # String boundary rules, in both columns.
-        for rel in model.string_starts:
+        # String boundary rules, in both columns; a chain's first record has a
+        # heavier one, and fill a chain runs into a notch.
+        for rel in model.string_starts - model.chain_starts:
             if 0 <= rel < min(shown, len(model.data)):
                 for cell in (self._geom.hex_cell(rel), self._geom.text_cell(rel)):
                     marks.rule(painter, cell)
+        for rel in model.chain_starts:
+            if 0 <= rel < min(shown, len(model.data)):
+                for cell in (self._geom.hex_cell(rel), self._geom.text_cell(rel)):
+                    marks.chain_rule(painter, cell)
+        for rel in model.chain_gaps:
+            if 0 <= rel < min(shown, len(model.data)):
+                marks.notch(painter, self._geom.hex_cell(rel), theme.ERROR_INK)
 
         # Addresses and hex, each pair centred in its own cell: the pairs are
         # laid out once for the face, and only placed here.

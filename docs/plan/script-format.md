@@ -55,7 +55,10 @@ done well.[end]
   adds `inner_size`, `inner_endian` and `inner_null`, its `stride` defaulting
   to two pointers. `header=2` is a range's record header, 0 to 255 bytes.
   `fill=$FFFF` is a fill pattern, a byte for every two hex digits, and
-  `end_is_fill=1` reads a fill that is the end token as padding. `spp=3` is
+  `end_is_fill=1` reads a fill that is the end token as padding.
+  `chain=pad` or `chain=pack` reads the strings as chains, `breaks=1,5` the
+  indices that begin a chain of their own, `pad=$20` what pads them (absent:
+  the table's space) and `align=centre` where a padded text sits. `spp=3` is
   three strings a pointer, and `spp=next` or `spp=next:3` each run to the
   next pointer's target, the last pointer's three:
 

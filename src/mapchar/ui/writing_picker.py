@@ -17,7 +17,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import QComboBox, QFormLayout, QLineEdit, QWidget
 
-from mapchar.core.block import WriteMode, default_write_mode
+from mapchar.core.block import Align, ChainMode, WriteMode, default_write_mode
 from mapchar.core.fill import format_fill, parse_fill
 from mapchar.ui.number_fields import HEX_NUMBER, AddressEdit
 from mapchar.ui.popup_picker import PopupFrame, PopupPicker
@@ -32,6 +32,7 @@ _MODE_FORCED = (
     "How a write lays the strings out; skip ranges and a record header break "
     "the text up, so the block is written slotted"
 )
+_MODE_CHAINED = "Unavailable: a chained block is written as its Chain row says"
 _PACKED_TIP = "Strings laid end to end, every pointer rewritten"
 _PACKED_FORCED = "Unavailable: a write cannot lay end to end what it has to step around"
 """What the Write picker says of itself, with and without something forcing
@@ -118,6 +119,42 @@ class WritingPicker(PopupPicker):
         self.spare_room.setToolTip(
             "After a shorter re-compression: fill the slot's tail, or keep it"
         )
+        self.chain_mode = QComboBox()
+        for label, mode, tip in (
+            (
+                "Pad inside string",
+                ChainMode.PAD,
+                "Nothing moves: a shorter text is padded inside its string",
+            ),
+            (
+                "Pack",
+                ChainMode.PACK,
+                "Records laid back to back, headers and all; each chain's first "
+                "string needs its pointer attached",
+            ),
+        ):
+            self.chain_mode.addItem(label, mode)
+            self.chain_mode.setItemData(
+                self.chain_mode.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
+            )
+        self.chain_mode.setToolTip("How a write lays out a chained block")
+        self.pad = FillEdit()
+        hint_field(
+            self.pad,
+            "space",
+            "Bytes that pad a shorter text inside a chained string, in hex; "
+            "blank uses the table's space",
+        )
+        self.align = QComboBox()
+        for label, align in (
+            ("Left", Align.LEFT),
+            ("Centre", Align.CENTRE),
+            ("Right", Align.RIGHT),
+        ):
+            self.align.addItem(label, align)
+        self.align.setToolTip(
+            "Where a padded text sits in its string, unless the string says"
+        )
         self.popup = WritingPopup(
             self,
             (
@@ -125,15 +162,26 @@ class WritingPicker(PopupPicker):
                 ("Write", self.write_mode),
                 ("Fill", self.fill),
                 ("Spare room", self.spare_room),
+                ("Chain", self.chain_mode),
+                ("Pad", self.pad),
+                ("Align", self.align),
             ),
         )
+        self._chained = False
         for name, combo in (
             ("write_mode", self.write_mode),
             ("spare_room", self.spare_room),
+            ("chain_mode", self.chain_mode),
+            ("align", self.align),
         ):
             combo.currentIndexChanged.connect(lambda _=0, n=name: self.changed.emit(n))
-        for name, field in (("bound", self.bound), ("fill", self.fill)):
+        for name, field in (
+            ("bound", self.bound),
+            ("fill", self.fill),
+            ("pad", self.pad),
+        ):
             field.editingFinished.connect(lambda n=name: self.changed.emit(n))
+        self.show_chained(False)
 
     # -- loading ---------------------------------------------------------------
 
@@ -156,6 +204,11 @@ class WritingPicker(PopupPicker):
         self.spare_room.setCurrentIndex(max(self.spare_room.findData(spare_room), 0))
         # Only a re-compression leaves room over, so only then is there a rule.
         self.spare_room.setEnabled(compressed)
+        self.chain_mode.setCurrentIndex(
+            max(self.chain_mode.findData(config.chain or ChainMode.PAD), 0)
+        )
+        self.pad.set_value(config.pad)
+        self.align.setCurrentIndex(max(self.align.findData(config.align), 0))
 
     def set_bound_default(self, default: int | str | None) -> None:
         """Say in the Bound field's placeholder where a blank bound stops: at an
@@ -190,6 +243,18 @@ class WritingPicker(PopupPicker):
         self.write_mode.setToolTip(_MODE_FORCED if forced else _MODE_TIP)
         self._say()
 
+    def show_chained(self, chained: bool) -> None:
+        """Offer the chain's settings, and grey the write mode they stand in
+        for, where the block is read as chains; the other way round where it
+        is not."""
+        self._chained = chained
+        self.write_mode.setEnabled(not chained)
+        if chained:
+            self.write_mode.setToolTip(_MODE_CHAINED)
+        for field in (self.chain_mode, self.pad, self.align):
+            field.setEnabled(chained)
+        self._say()
+
     def _say(self) -> None:
         """The write settings on one line: the mode, where the room ends, the
         fill."""
@@ -197,9 +262,12 @@ class WritingPicker(PopupPicker):
             self.set_summary("")
             return
         bound = self.bound.text() or self.bound.placeholderText()
-        self.set_summary(
-            f"{self.write_mode.currentText()} · to {bound} · {self.fill.text()}"
+        mode = (
+            f"Chained, {self.chain_mode.currentText().lower()}"
+            if self._chained
+            else self.write_mode.currentText()
         )
+        self.set_summary(f"{mode} · to {bound} · {self.fill.text()}")
 
     # -- reading back ----------------------------------------------------------
 
@@ -210,6 +278,15 @@ class WritingPicker(PopupPicker):
 
     def spare_room_rule(self) -> str:
         return self.spare_room.currentData()
+
+    def chain_values(self) -> tuple[ChainMode, bytes | None, Align]:
+        """How a chained block is written, what pads it — ``None`` for the
+        table's space — and where a padded text sits."""
+        return (
+            self.chain_mode.currentData(),
+            self.pad.value(),
+            self.align.currentData(),
+        )
 
 
 __all__ = ["FillEdit", "WritingPicker", "WritingPopup"]

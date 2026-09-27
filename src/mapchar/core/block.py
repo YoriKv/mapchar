@@ -165,6 +165,23 @@ class WriteMode(Enum):
     SLOTTED = "slotted"
 
 
+class ChainMode(Enum):
+    """How a write lays out a chained block (:attr:`BlockConfig.chain`)."""
+
+    PAD = "pad"
+    """Nothing moves: a shorter text is padded inside its string."""
+    PACK = "pack"
+    """The strings are laid back to back, each header carried with its string."""
+
+
+class Align(Enum):
+    """Where a padded text sits in its string's room."""
+
+    LEFT = "left"
+    CENTRE = "centre"
+    RIGHT = "right"
+
+
 MAX_RECORD_HEADER = 255
 """The largest record header, in bytes: what the Header control sets, and what
 a configuration line may name."""
@@ -209,6 +226,20 @@ class BlockConfig:
     """Label of the artificial end code shown after fixed strings."""
     line_label: str = "line"
     """Label of the artificial line code shown between fixed lines."""
+    chain: ChainMode | None = None
+    """The game reads the strings back to back — it finishes one and starts
+    the next at the very next byte, with no pointer of its own — and a write
+    keeps them so this way; ``None`` for strings found one by one. Applies
+    only where :func:`chain_refusal` has nothing against it."""
+    chain_breaks: tuple[int, ...] = ()
+    """The indices of the strings that begin a new chain: the one before is
+    not tied to them. Without any the whole block is one chain."""
+    pad: bytes | None = None
+    """What pads a shorter text inside a chained string; ``None`` for the
+    table's space."""
+    align: Align = Align.LEFT
+    """Where a padded text sits in its room, for a string that says nothing
+    itself (:attr:`StringRecord.align`)."""
 
     @property
     def has_pointers(self) -> bool:
@@ -246,6 +277,36 @@ class BlockConfig:
     def record_header(self) -> int:
         """:attr:`header` where it applies: over a range."""
         return self.header if isinstance(self.source, RangeSource) else 0
+
+    @property
+    def chained(self) -> bool:
+        """Whether the strings are read and written as chains: asked for, and
+        nothing against it (:func:`chain_refusal`)."""
+        return self.chain is not None and chain_refusal(self) is None
+
+    def chain_starts(self, count: int) -> list[int]:
+        """The indices of ``count`` strings that begin a chain, in order: the
+        first string and every break."""
+        return sorted({0} | {i for i in self.chain_breaks if 0 < i < count})
+
+
+def chain_refusal(config: BlockConfig) -> str | None:
+    """Why ``config``'s strings cannot be chained, or ``None`` when they can.
+
+    Chains are read over a range, of strings whose length varies: fixed-length
+    strings are back to back already. A chain across a skip range, or over a
+    realigned slot, says nothing of which bytes the game reads as the string,
+    so it is refused rather than guessed.
+    """
+    if not isinstance(config.source, RangeSource):
+        return "chains are read over a range"
+    if not isinstance(config.string_type, EndToken | Pascal):
+        return "only strings that end at an end token or a length prefix chain"
+    if config.skips:
+        return "a chain across a skip range is not defined"
+    if config.realign[0]:
+        return "a chain over realigned slots is not defined"
+    return None
 
 
 def default_write_mode(pointers: bool, skips: bool) -> WriteMode:
@@ -394,6 +455,9 @@ class StringRecord:
     notices: list[Notice] = field(default_factory=list)
     lines: tuple[int, ...] = ()
     """Token indices where fixed-line pieces start (fixed-line layout only)."""
+    align: Align | None = None
+    """Where a padded text sits in a chained string's room; ``None`` for the
+    block's (:attr:`BlockConfig.align`)."""
     _text: tuple[tuple[int, int], str] | None = field(
         default=None, repr=False, compare=False
     )
@@ -584,3 +648,8 @@ class Extraction:
     """A nested source's inner pointer table address, by the base its pointers
     count from — which is what :func:`string_groups` keys a group by, so a
     group can say which table reached it. Empty for every other source."""
+    chain_gaps: dict[int, int] = field(default_factory=dict)
+    """In a chained block, the strings the game does not reach where they
+    stand, each by the offset of the fill in front of it: the string before
+    was shortened outside the chain. Every such string, not only a chain's
+    first."""

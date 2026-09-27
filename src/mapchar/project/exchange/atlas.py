@@ -148,6 +148,11 @@ def write_atlas(
         out.append(f"#STRINGALIGN({config.realign[0]})")
         if config.realign[1]:
             notices.append("realign offset has no Atlas form")
+    if config.chained:
+        notices.append(
+            "chained strings have no Atlas form; each is written where it "
+            "stands, and a shorter one is not padded"
+        )
     mode = config.effective_write_mode
     packed = mode is WriteMode.PACKED and not nested
     if packed and strings:

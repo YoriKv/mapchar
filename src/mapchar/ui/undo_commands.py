@@ -246,9 +246,14 @@ class OffsetCommand(_MergingCommand, _CurrentEntryCommand):
         self.window.apply_offset(self.entry, state)
 
 
+_FIELD_LABELS = {"unwritten": "Keep unwritten translation", "align": "Align string"}
+"""What a :class:`StringFieldCommand` is called in the Edit menu, where the
+field's own name does not say it."""
+
+
 class StringFieldCommand(_MergingCommand, _EditContextCommand):
-    """One field of one string: its notes, its status or the translation it
-    keeps unwritten.
+    """One field of one string: its notes, its status, the translation it
+    keeps unwritten or its alignment in a chain.
 
     State is the value paired with the revision token it leaves the entry at, so
     an undo hands back the exact unsaved-state the entry had before it.
@@ -273,7 +278,7 @@ class StringFieldCommand(_MergingCommand, _EditContextCommand):
         super().__init__(
             window,
             entry,
-            "Keep unwritten translation" if field == "unwritten" else f"Edit {field}",
+            _FIELD_LABELS.get(field, f"Edit {field}"),
             *_stamped(window, entry, before, after, fresh_when_same=False),
             "strings",
             index,

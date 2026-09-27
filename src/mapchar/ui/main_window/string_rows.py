@@ -5,13 +5,27 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from mapchar.core.block import block_bound
+from mapchar.core.block import ChainMode, block_bound
 from mapchar.core.document import Document
+from mapchar.core.errors import MapcharError
 from mapchar.core.font import Effect
 from mapchar.core.table import TableSet
-from mapchar.pipeline.insert import room_for, room_note, string_ends
+from mapchar.pipeline.insert import (
+    pad_unit,
+    padded_view,
+    room_for,
+    room_note,
+    string_ends,
+)
 from mapchar.ui.code_editor import CodeInfo
-from mapchar.ui.strings_view import UNWRITTEN, RowData
+from mapchar.ui.strings_view import (
+    CHAIN_GAP,
+    CHAIN_LINK,
+    CHAIN_START,
+    PAD_MARK,
+    UNWRITTEN,
+    RowData,
+)
 
 _CODE_IN_TEXT = re.compile(r"(?<!\\)\[([^\]\s]+)")
 """A ``[label`` in script text, for counting which codes a block uses."""
@@ -198,7 +212,47 @@ class StringRowsMixin:
             rec.unwritten,
             self._why_unwritten(self._entry, rec) if self._entry is not None else "",
             self._missing_terms(rec),
+            *self._chain_cells(rec, cfg),
         )
+
+    def _chain_cells(self, rec, cfg) -> tuple[str, str]:
+        """Where ``rec`` stands in a chained block, and its text with the pad
+        it holds at its edges marked (:attr:`RowData.chain`,
+        :attr:`RowData.padded`)."""
+        entry = self._entry
+        if cfg is None or not cfg.chained or entry is None or entry.doc is None:
+            return "", ""
+        if rec.index in entry.doc.chain_gaps:
+            where = CHAIN_GAP
+        elif rec.index == 0 or rec.index in cfg.chain_breaks:
+            where = CHAIN_START
+        else:
+            where = CHAIN_LINK
+        pad = self._pad_text(entry)
+        if pad is None:
+            return where, ""
+        tables = self._table_set_of(entry)
+        if tables is None:
+            return where, ""
+        marked = padded_view(rec.current_text(), pad, PAD_MARK, tables)
+        return where, marked if marked != rec.current_text() else ""
+
+    def _pad_text(self, entry) -> str | None:
+        """The text the pad of the chained block ``entry`` reads as, when it
+        pads inside its strings; worked out once per reading."""
+        cfg = entry.config
+        if cfg.chain is not ChainMode.PAD:
+            return None
+        cached = self._pad_cache
+        if cached is not None and cached[0] == cfg:
+            return cached[1]
+        tables = self._table_set_of(entry)
+        try:
+            text = pad_unit(cfg, tables)[1] if tables is not None else None
+        except MapcharError:
+            text = None
+        self._pad_cache = (cfg, text)
+        return text
 
     def _refresh_string_row(self, entry, index: int) -> None:
         doc = entry.doc

@@ -150,8 +150,14 @@ in bytes, which is the unit their results are reported and selected in.
   not text, at most `MAX_RECORD_HEADER`), `line_length`, `bound`, `write_mode`
   (`PACKED`, `SLOTTED`; `effective_write_mode` is slotted whatever it holds
   once skip ranges or a header break the text up), `fill` (a byte pattern),
-  and the artificial codes a fixed string is shown with: `show_end`,
-  `end_label`, `line_label`.
+  the artificial codes a fixed string is shown with: `show_end`,
+  `end_label`, `line_label`, and the chain: `chain` (`ChainMode.PAD`,
+  `PACK`, or `None`), `chain_breaks` (the indices that begin a chain), `pad`
+  (`None` for the table's space) and `align` (`Align`). `chained` holds only
+  where `chain_refusal` has nothing against it — a range of end-token or
+  Pascal strings, no skips, no realign — and `chain_starts` lists a chain's
+  first strings. A `StringRecord`'s own `align` overrides the block's, and
+  the project keeps it as the string record's `al`.
 - **The fill pattern** is `core/fill.py`'s: `DEFAULT_FILL`, `fill_run` (which
   lays a pattern down from the start of the room it fills, the last repeat
   allowed to be cut short), `fill_end`, `is_fill`, `fill_bits`, `parse_fill`
@@ -597,6 +603,21 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   *next pointer* string, which keeps its whole extent — but only when the
   table maps nothing beginning with it (`padding_bits`); a fill byte the table
   maps is text and is read.
+- **Chains** — `_extract_range` reads a chained block as any range, and
+  where it passes over fill in front of a string that does not begin a chain
+  it records the gap in `Extraction.chain_gaps` (by index, at the fill's
+  offset), with a notice for the first of each chain. `layout_block` hands a
+  chained block to `_layout_chain_pad` — every string in place, its room
+  (`chain_ends`) up to the next record of its chain (`chain_links`) or, for a
+  chain's last, its slot; `_encode_padded` encodes the text without the pad at
+  its edges (`_padded_parts`), then lays the pad (`pad_unit`) around it by the
+  alignment — or to `_layout_chain_pack`, which packs records with their
+  headers and refuses a moved chain start with no pointer. A range's pointer
+  reaches its record (`record_start`), so `_pointer_splices` writes the new
+  record start. `reads_back` refuses a gap the strings did not have
+  (`chain_gaps`) and compares a padded block's texts without their edge pad;
+  `repair_chains` is the splices that close every gap, and `padded_view`
+  marks a text's pad for the grid.
 - **Slots** (`compress_for_slot`) are the write minus the store, so the checks
   that make one safe hold however the bytes are delivered — through a container
   to a file, or spliced into a parent's buffer by a block. A *bounded* slot
@@ -914,7 +935,9 @@ stored, being the ROM's bytes. *Edited* is the string's bytes no longer giving
 that checksum and no longer saying its text either, so a re-encode that reaches
 the original text through other codes is untouched; an original saved without a
 checksum goes by its text until its bytes say it again, and one whose `h` a
-build cannot read is read as having none.
+build cannot read is read as having none. A string of a chained block that
+sits other than as its block aligns has its alignment (`al`: `left`,
+`centre` or `right`); one a build cannot read is read as none.
 A block that was loaded but never opened keeps its own in
 `Entry.pending_strings` until an extraction adopts them — so a save writes back
 the state of every block, not only the ones that were looked at. A translation

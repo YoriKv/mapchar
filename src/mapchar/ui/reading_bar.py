@@ -40,6 +40,7 @@ from mapchar.core.block import (
     PointerTableSource,
     RangeSource,
     StringType,
+    chain_refusal,
 )
 from mapchar.ui.addresses_picker import AddressesPicker
 from mapchar.ui.bars import ROW_BREAK, WrapBar
@@ -101,6 +102,7 @@ SECTIONS = {
         "realign",
         "header",
         "skips",
+        "chain",
         "fixed_length",
         "count",
         "stop_at_end",
@@ -262,6 +264,7 @@ class ReadingBar(WrapBar):
         self.show_end.setToolTip("Show an [end] code after every fixed string")
         self.header = number_spin(0, MAX_RECORD_HEADER, 2, off=True)
         self.skips = SkipsPicker()
+        self.chain = QCheckBox("Chained")
 
         self.writing = WritingPicker(self.spelling)
 
@@ -335,6 +338,7 @@ class ReadingBar(WrapBar):
             ),
             ("lines", "Lines", (self.lines,), "Line codes per string"),
             ("end_is_fill", "", (self.end_is_fill,), None),
+            ("chain", "", (self.chain,), None),
             (
                 "realign",
                 "Realign",
@@ -407,6 +411,7 @@ class ReadingBar(WrapBar):
             ("show_end", self.show_end),
             ("run_to_next", self.run_to_next),
             ("end_is_fill", self.end_is_fill),
+            ("chain", self.chain),
         ):
             box.toggled.connect(lambda _=False, n=name: self._edited(n))
         for name, field in (
@@ -537,6 +542,7 @@ class ReadingBar(WrapBar):
             self.show_end.setChecked(config.show_end)
             self.header.setValue(config.header)
             self.skips.set_value(config.skips)
+            self.chain.setChecked(config.chain is not None)
             self.writing.load(
                 config, block=block, spare_room=spare_room, compressed=compressed
             )
@@ -658,6 +664,7 @@ class ReadingBar(WrapBar):
             "spp": pointers and st == END,
             "lines": st == LINES,
             "end_is_fill": block and st in (END, NEXT) and not runs,
+            "chain": block and self._chain_refusal() is None,
         }
         for name, applying in applies.items():
             group = self._groups[name]
@@ -675,6 +682,27 @@ class ReadingBar(WrapBar):
             kind == RANGE and bool(self.header.value())
         )
         self.writing.show_forced(self._pointers, forced)
+        why = self._chain_refusal()
+        self.chain.setToolTip(
+            "The game reads the strings back to back: one ends where the next "
+            "begins, with no pointer of its own"
+            if why is None
+            else f"Unavailable: {why}"
+        )
+        self.writing.show_chained(block and why is None and self.chain.isChecked())
+
+    def _chain_refusal(self) -> str | None:
+        """Why the reading the controls show cannot be chained, or ``None``
+        (:func:`~mapchar.core.block.chain_refusal`)."""
+        if source_kind_for(self.source_kind.currentData(), self._pointers) != RANGE:
+            return "chains are read over a range"
+        probe = BlockConfig(
+            RangeSource(0, 0),
+            self._string_type(),
+            skips=self.skips.value(),
+            realign=(self.realign_m.value(), self.realign_o.value()),
+        )
+        return chain_refusal(probe)
 
     def show_string_view(self, string_view: bool) -> None:
         """Grey what says where the strings are — for a view of strings' own
@@ -741,7 +769,11 @@ class ReadingBar(WrapBar):
         }
         if self._block:
             bound, write_mode, fill = self.writing.values()
+            chain, pad, align = self.writing.chain_values()
             changes |= {
+                "chain": chain if self.chain.isChecked() else None,
+                "pad": pad,
+                "align": align,
                 "header": self.header.value(),
                 "skips": self.skips.value(),
                 "end_is_fill": self.end_is_fill.isChecked(),

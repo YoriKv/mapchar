@@ -242,9 +242,16 @@ def test_mortal_kombat_ii(registry):
     assert out[0x853D:0x8545] == bytes.fromhex("07CB05") + b"RND 2"
     assert texts(extract(out, config, ts, registry))[1:3] == ["RND 2", "ROUND 3"]
 
-    # The story screens are chains of records, one per line.
+    # The story screens are chains of records, one per line: a shorter line
+    # is padded inside its record, so the next is where the game reads it.
     config, ts, ex = blocks["Goro's lair"]
     assert texts(ex)[-2:] == ["TO RETURN TO GORO'S", "LAIR"]
+    assert config.chained and config.chain_breaks == (1, 5, 9, 10)
+    res, out = relayout(data, config, ts, {1: "YOU FOUND THE"}, registry)
+    assert res.ok, res.problems
+    assert out[0x86FD:0x8712] == bytes.fromhex("01 CC 12") + b"YOU FOUND THE     "
+    assert blocks["Ending"][0].chain_breaks == (2,)
+    assert not blocks["Round announcer"][0].chained
 
     # Shortening one link message moves the next, and the ld hl that loads it.
     config, ts, ex = blocks["Link"]

@@ -2,8 +2,8 @@
 
 The raw view paints them over its bytes and the Legend paints them beside their
 meanings, so both draw the same shapes from here: a rounded chip for a token's
-tint, a tick where a token shows nothing, a rule where a string starts, and a
-corner notch on text cut short.
+tint, a tick where a token shows nothing, a rule where a string starts — a
+heavier one where a chain of them does — and a corner notch on text cut short.
 """
 
 from __future__ import annotations
@@ -35,6 +35,15 @@ def rule(painter: QPainter, cell: QRect | QRectF) -> None:
     box = QRectF(cell)
     painter.setPen(QPen(theme.TINT_STRING_RULE, 1))
     painter.drawLine(QPointF(box.left(), box.top()), QPointF(box.left(), box.bottom()))
+
+
+def chain_rule(painter: QPainter, cell: QRect | QRectF) -> None:
+    """Where a chain of strings begins: a heavier rule down the cell's left
+    edge, in the pointer tint."""
+    box = QRectF(cell)
+    painter.setPen(QPen(theme.TINT_CHAIN_RULE, 2))
+    x = box.left() + 1
+    painter.drawLine(QPointF(x, box.top()), QPointF(x, box.bottom()))
 
 
 def notch(painter: QPainter, cell: QRect | QRectF, color: QColor) -> None:

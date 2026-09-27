@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from mapchar.core.block import BlockConfig, Status, StringRecord
+from mapchar.core.block import Align, BlockConfig, Status, StringRecord
 from mapchar.core.capabilities import EntryKind
 from mapchar.core.document import Document
 from mapchar.core.font import TextBox
@@ -45,6 +45,9 @@ class StringState:
     unwritten: str | None = None
     """A translation the bytes refused, kept until they can take it
     (:attr:`~mapchar.core.block.StringRecord.unwritten`)."""
+    align: Align | None = None
+    """Where a padded text sits in a chained string's room
+    (:attr:`~mapchar.core.block.StringRecord.align`)."""
 
 
 def string_state(rec, extent: bool = False) -> StringState:
@@ -56,6 +59,7 @@ def string_state(rec, extent: bool = False) -> StringState:
         digest=rec.original_digest,
         extent=(rec.start_bit, rec.end_bit) if extent else None,
         unwritten=rec.unwritten,
+        align=rec.align,
     )
 
 

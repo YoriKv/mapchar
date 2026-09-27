@@ -23,11 +23,12 @@ from mapchar.core.block import (
     RangeSource,
     StringRecord,
     bits_digest,
+    chain_refusal,
     fill_reads_as_padding,
     grouped_strings,
 )
 from mapchar.core.fill import fill_bits, is_fill
-from mapchar.core.notices import Notice
+from mapchar.core.notices import Level, Notice
 from mapchar.core.table import TableEntry, TableSet, TokenKind
 from mapchar.core.tokens import (
     CodeRef,
@@ -87,6 +88,19 @@ def _split_end_code(text: str, labels: Container[str]) -> tuple[str, str]:
         return text, ""
     at = trimmed.rfind("[")
     return text[:at], text[at:]
+
+
+def end_code_split(text: str, tables: TableSet) -> tuple[str, str]:
+    """``text`` cut in two at the end code of ``tables`` that closes it: what
+    stands in front of it, and the code with whatever follows it
+    (:func:`_split_end_code`)."""
+    labels = {
+        e.label
+        for table in tables.tables.values()
+        for e in table.entries.values()
+        if e.kind is TokenKind.END and e.label
+    }
+    return _split_end_code(text, labels)
 
 
 def _is_code(item: TextRun | CodeRef, label: str) -> bool:
@@ -482,6 +496,15 @@ def _extract_range(
     be padding (:func:`padding_bits`) — a fill byte the table maps is text and
     is read like any other. A fixed-length string keeps its whole slot, so
     nothing is skipped.
+
+    A chained block (:attr:`~mapchar.core.block.BlockConfig.chained`) is one
+    the game reads back to back, so fill in front of a string that does not
+    begin a chain is where the game reads the string instead: the one before
+    was shortened outside the chain. The strings are still read past it, as
+    they were meant to stand, and each such string is kept in
+    :attr:`~mapchar.core.block.Extraction.chain_gaps`, with a notice for the
+    first of each chain — the game's reading of the rest of that chain is off
+    from there.
     """
     strings: list[StringRecord] = []
     notices: list[Notice] = []
@@ -491,6 +514,16 @@ def _extract_range(
         notices.append(
             Notice("'next pointer' needs a pointer source; reading to end tokens")
         )
+    if config.chain is not None and not config.chained:
+        notices.append(
+            Notice(
+                f"not read as chains: {chain_refusal(config)}",
+                Level.INFO,
+                offset=source.start,
+            )
+        )
+    breaks = {0, *config.chain_breaks} if config.chained else None
+    gaps: dict[int, int] = {}
     pad = padding_bits(config, tables) if config.fixed_length is None else None
     skips = sorted((a * 8, b * 8) for a, b in config.skips)
     while pos < stop_bit and (limit is None or len(strings) < limit):
@@ -499,6 +532,8 @@ def _extract_range(
             start += pad_run(bits, start, pad, stop_bit)
             if start >= stop_bit:
                 break
+            if breaks is not None and start > pos and len(strings) not in breaks:
+                gaps[len(strings)] = pos // 8
         # A string that begins on a skip range begins where it lands, and one
         # behind a record header begins past it — the header's own bytes step
         # over the skips between them.
@@ -522,7 +557,31 @@ def _extract_range(
             # the reading already.
             m, o = config.realign
             pos = align_up(pos, m * 8, o * 8)
-    return Extraction(strings, notices)
+    if breaks is not None:
+        notices += _chain_notices(gaps, breaks)
+    return Extraction(strings, notices, chain_gaps=gaps)
+
+
+def _chain_notices(gaps: dict[int, int], breaks: set[int]) -> list[Notice]:
+    """A notice for the first string of each chain that the game reaches in
+    fill (:func:`_extract_range`)."""
+    notices: list[Notice] = []
+    told: set[int] = set()
+    for index, offset in sorted(gaps.items()):
+        chain = max(b for b in breaks if b <= index)
+        if chain in told:
+            continue
+        told.add(chain)
+        notices.append(
+            Notice(
+                f"string #{index} starts in fill: string #{index - 1} was "
+                "shortened outside the chain",
+                offset=offset,
+                detail="The game reads the fill as the start of the next string.\n"
+                "Edit ▸ Repair Chains pads each shortened string over it.",
+            )
+        )
+    return notices
 
 
 def decode_one(

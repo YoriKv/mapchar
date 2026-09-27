@@ -9,6 +9,7 @@ from mapchar.core.block import NestedPointerSource, block_bound
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.engines.decode import RunResult
+from mapchar.pipeline.insert import record_start
 from mapchar.pipeline.pointers import PointerCell, pointer_cells
 from mapchar.pipeline.view_read import decode_strings, target_string
 from mapchar.project.progress import progress_text
@@ -198,6 +199,7 @@ class RefreshMixin:
                     rel = b - self._offset
                     if 0 <= rel < len(data):
                         pointer_bytes.add(rel)
+        chain_starts, chain_gaps = self._chain_marks(block, len(data))
         self.raw.set_model(
             RowModel(
                 self._offset,
@@ -207,7 +209,27 @@ class RefreshMixin:
                 doc.size,
                 pointer_bytes,
                 self._bounds,
+                chain_starts=chain_starts,
+                chain_gaps=chain_gaps,
             )
+        )
+
+    def _chain_marks(self, block, size: int) -> tuple[set[int], set[int]]:
+        """Where the chains of a chained block on screen begin, and where one
+        runs into fill, relative to the view: the raw view marks both, so a
+        string between two chains is told from one inside a chain."""
+        cfg = block.config if block is not None else None
+        if cfg is None or block.doc is None or not cfg.chained:
+            return set(), set()
+        strings = block.doc.strings
+        starts = set(cfg.chain_starts(len(strings)))
+        heads = {
+            record_start(r, cfg) - self._offset for r in strings if r.index in starts
+        }
+        gaps = {at - self._offset for at in block.doc.chain_gaps.values()}
+        return (
+            {r for r in heads if 0 <= r < size},
+            {r for r in gaps if 0 <= r < size},
         )
 
     def _on_raw_rows_changed(self) -> None:

@@ -732,7 +732,7 @@ scan settled how it is read. From then on the bars are its settings (see
 holds the settings below in three framed sections, always there and always in
 this order: **Source** (the kind, start, stop, and **Writing**), **Pointers**
 (size, stride, endian, mapping, offset, null, bank) and **Strings** (string
-type, realign, header, skip ranges). A setting the entry on screen has no use
+type, realign, header, skip ranges, chained). A setting the entry on screen has no use
 for is greyed where it stands — a file has no addresses of its own, so its
 Source and Writing are; a range reads no pointers, so its Pointers section is
 — and only what one kind of source or string has and another has not comes and
@@ -741,7 +741,8 @@ addresses, a nested source's inner size, endian and null, and on a row of
 their own under Strings the string type's own fields (length, count and lines;
 the prefix; strings per pointer; line codes). **Writing** is one line — the write
 mode, where the room ends, the fill — that opens a popup of bound, write mode,
-fill and spare room, since they are set once for a block. With nothing open
+fill, spare room and a chained block's chain, pad and align, since they are
+set once for a block. With nothing open
 the bars are disabled and show the default reading, a file read as a **Range**
 of end-token strings.
 
@@ -834,6 +835,39 @@ of end-token strings.
   over first and the header after it, so a header should not begin with the
   fill. A pointer reaches its string past any header, so a pointer source
   has no such setting.
+- **Chained** — on a range of end-token or length-prefix strings, the game
+  reads the strings **back to back**: it finishes one and starts the next at
+  the very next byte, with no pointer of its own (a story screen drawn by one
+  pointer load and a call per line). Greyed, with the reason in its tooltip,
+  for fixed-length strings (back to back already), skip ranges and realign,
+  over which a chain is not defined. A **Chain Break** on a string (the
+  Strings view's context menu) makes it the first of a chain of its own, so
+  one block holds several chains; without breaks the whole block is one.
+  Chaining changes how the block is written and checked, not how its strings
+  are cut, so it never asks first:
+  - **Reading** — fill in front of a string that does not begin a chain is
+    where the game reads that string instead: the one before was shortened
+    outside the chain. The strings are read past it as they were meant to
+    stand, the block gets a notice at the first such gap of each chain, and
+    **Edit ▸ Repair Chains** pads every string in front of a gap over it —
+    its length raised or its end token moved past the pad — as one undo step.
+  - **Writing** — the Writing popup's **Chain** row: **Pad inside string**
+    (the default) moves nothing: a string's room is its place up to the next
+    record of its chain, a shorter text is padded inside it with the block's
+    **Pad** (blank: the table's space), which the length prefix counts or the
+    end token follows, and a longer one is refused; the last of a chain has
+    its place and the fill after it, and a shorter text keeps its place. The
+    **Align** row puts the text left, centred or right in its room, and a
+    string's own **Align** (context menu) overrides it — centring by pad keeps
+    a line centred whose screen position its header fixes. **Pack** lays the
+    records back to back from the block's first, headers and all, the fill
+    after the last up to the bound, and rewrites every pointer the strings
+    carry: a chain's first string that moves needs the pointer that reaches it
+    attached (**Attach**), or the write is refused naming it, since the game
+    would go on reaching it where it was. Either way the fill is never written
+    inside a chain, and the write is checked the way the game reads: bytes
+    that leave fill in front of a chained string are refused, even when every
+    string encodes.
 - **Table** — the start table: a loaded table or an encoding, picked in the
   Table list; the table set follows from it.
 - **Fixed-line layout** — for fixed-length strings, an optional `line length`
@@ -925,7 +959,9 @@ of end-token strings.
     file that holds the same table twice keeps both in step, and dropping the
     strays between them, since a packed write would rewrite a coincidence; a
     string the run does not reach takes all of its addresses, which is what a
-    block of scattered pointers needs.
+    block of scattered pointers needs. On a range with a record header the
+    search looks for pointers to each record, header and all, which is where a
+    game points.
 - **Overlays** — the raw view marks bytes that are pointers of the current
   block — a nested source's outer pointers as well as its inner ones — and
   jumping from a pointer to its target and back is a click: **Jump to Pointer
@@ -946,7 +982,13 @@ The editing surface, opened on a block.
   is made of: the block's fixed length, or a slotted string's own bytes plus
   the fill after them, or a packed string's own bytes plus the block's spare
   — the bytes its group has left over, which every string of the group shares
-  and no two of them may take.
+  and no two of them may take — or a padded chain's place in its chain.
+- **Chains** — in a chained block the `#` of a chain's first string reads
+  `» N`, one the game reaches in fill is in the error colour, and the pad a
+  string holds at its edges shows as `·` in the Translation cell, the room its
+  text can still take; the editor opens on the text itself. The raw view marks
+  where each chain begins with a heavier rule in the pointer tint, and fill a
+  chain runs into with a notch.
 - **Status**, per string: **untouched** (the bytes are still the original's,
   or say its text again), **edited** (neither) — told by the bytes, through a
   checksum of them the project keeps beside each original, so a block switched

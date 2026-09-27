@@ -164,9 +164,10 @@ class Swatch:
     ``tint`` is a chip behind ``text``; ``ink`` colours the text (the palette's
     text colour when ``None``); ``mark`` is one of the marks that are not a
     chip — ``"tick"`` for a token that prints nothing, ``"rule"`` for a string
-    boundary, ``"notch"`` for text cut short, ``"box"`` for a missing glyph;
-    ``small`` draws the text in the
-    label face and its ink, and ``dim`` in the dimmed ink.
+    boundary, ``"chain"`` for where a chain of them begins (in ``tint``),
+    ``"notch"`` for text cut short, ``"box"`` for a missing glyph; ``small``
+    draws the text in the label face and its ink, and ``dim`` in the dimmed
+    ink.
     """
 
     text: str = ""
@@ -206,6 +207,10 @@ LEGEND: tuple[tuple[str, tuple[tuple[Swatch, str], ...]], ...] = (
                 "The compressed structure the Decompressed View is reading",
             ),
             (Swatch("A", mark="rule"), "The start of a string"),
+            (
+                Swatch("A", tint=theme.TINT_CHAIN_RULE, mark="chain"),
+                "The start of a chain of strings the game reads back to back",
+            ),
             (Swatch("s↵"), "A line break inside a run of text"),
             (Swatch("s▪"), "A code inside a run of text"),
             (Swatch("Abc", mark="notch"), "Text cut short; hover for the whole"),
@@ -423,13 +428,15 @@ class SwatchWidget(QWidget):
         dim.setAlpha(140)
         cell = QRectF(self.rect())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if swatch.tint is not None and swatch.mark != "tick":
+        if swatch.tint is not None and swatch.mark not in ("tick", "chain"):
             marks.chip(painter, cell, swatch.tint)
         if swatch.mark == "tick":
             marks.tick(painter, cell.adjusted(3, 0, 0, 0), swatch.tint or ink)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         if swatch.mark == "rule":
             marks.rule(painter, cell.adjusted(3, 0, 0, 0))
+        if swatch.mark == "chain":
+            marks.chain_rule(painter, cell.adjusted(3, 0, 0, 0))
         if swatch.mark == "box":  # as the Preview outlines a missing glyph
             painter.setPen(QPen(theme.ERROR_INK, 1))
             side = cell.height() - 8

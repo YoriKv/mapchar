@@ -243,6 +243,24 @@ def test_config_words_that_are_ignored_or_misread(project, doc, files):
         assert "W627" in project(doc(block={"config": line}), files), line
 
 
+CHAINED = "source=range start=$8533 stop=$857B type=pascal:1 table=main header=2"
+
+
+def test_chain_words(project, doc, files):
+    rom = {**files, "rom.nes": 0x40000}
+    clean = CHAINED + " chain=pad breaks=1,5 pad=$20 align=centre"
+    assert project(doc(block={"config": clean}), rom) == []
+    for code, line in (
+        ("E628", CHAINED + " chain=padded"),
+        ("E629", CHAINED + " chain=pad align=middle"),
+        ("E630", CHAINED + " chain=pad pad=$ZZ"),
+        ("E606", CHAINED + " chain=pad breaks=1,x"),
+        ("W631", RECORDS + " chain=pad"),
+        ("W631", CHAINED.replace("pascal:1", "fixed:4") + " chain=pack"),
+    ):
+        assert code in project(doc(block={"config": line}), rom), line
+
+
 def test_config_lines_the_samples_use_are_clean(project, doc, files):
     rom = {**files, "rom.nes": 0x40000}
     for line in (

@@ -152,6 +152,7 @@ class MenuBarMixin:
                     self._write_unwritten_project,
                     None,
                 ),
+                ("Repair C&hains", self._repair_chains, None),
                 (
                     "&Next Untranslated",
                     lambda: self._step_strings("untranslated"),

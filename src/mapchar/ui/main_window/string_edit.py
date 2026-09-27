@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from mapchar.core.block import (
+    Align,
     BlockConfig,
     EndToken,
     Status,
@@ -642,9 +643,9 @@ class StringEditMixin:
     def apply_string_field(
         self, entry, index: int, field: str, value, revision: int
     ) -> None:
-        """Land one field of one string — its notes, its status or its unwritten
-        translation — at the revision that half of the step leaves the entry
-        at."""
+        """Land one field of one string — its notes, its status, its unwritten
+        translation or its alignment — at the revision that half of the step
+        leaves the entry at."""
         rec = self._string(entry, index)
         if rec is None:
             return
@@ -656,6 +657,8 @@ class StringEditMixin:
         elif field == "status":
             rec.status = Status(value)
             rec.refresh_status()
+        elif field == "align":
+            rec.align = Align(value) if value else None
         self.workspace.stamp(entry, revision)
         self._refresh_string_row(entry, index)
         self.files_panel.refresh_labels()

@@ -43,6 +43,9 @@ TINT_POINTER = QColor(90, 200, 120, 110)
 TINT_SELECTION = QColor(60, 140, 240, 110)
 TINT_STRUCTURE = QColor(170, 110, 230, 70)
 TINT_STRING_RULE = QColor(120, 120, 120, 160)
+TINT_CHAIN_RULE = QColor(90, 200, 120, 230)
+"""Where a chain of strings begins: the pointer tint, since a pointer is what
+reaches it."""
 # Warning and error inks sit at the lightness that reads equally on both
 # themes' surfaces.
 WARNING_INK = QColor(0xAE, 0x7A, 0x11)

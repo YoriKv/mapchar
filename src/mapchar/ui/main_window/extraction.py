@@ -94,6 +94,7 @@ class ExtractionMixin:
                     prev.notes,
                 )
                 rec.unwritten = prev.unwritten
+                rec.align = prev.align
         saved = entry.pending_strings
         legacy: dict[int, str] = {}
         if saved and entry.runs_joined:
@@ -120,6 +121,7 @@ class ExtractionMixin:
                         rec.original_digest = st.digest
                     rec.status, rec.notes = st.status, st.notes
                     rec.unwritten = st.unwritten
+                    rec.align = st.align
                 if st.translation is not None:
                     legacy[rec.index] = spelled(st.translation, rec)
             entry.pending_strings = None
@@ -130,6 +132,7 @@ class ExtractionMixin:
         doc.strings = ex.strings
         doc.notices = ex.notices
         doc.inner_tables = ex.inner_tables
+        doc.chain_gaps = ex.chain_gaps
         doc.extraction_key = key
         if legacy:
             self._land_legacy_translations(entry, doc, legacy)

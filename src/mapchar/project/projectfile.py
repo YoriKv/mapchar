@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from mapchar.core.block import FixedLength, Status
+from mapchar.core.block import Align, FixedLength, Status
 from mapchar.core.errors import MapcharError
 from mapchar.core.font import CodeEffect, Effect, TextBox
 from mapchar.core.table import Table
@@ -192,6 +192,7 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
                 None,
                 rec.original_digest,
                 rec.unwritten,
+                rec.align,
             )
             for rec in entry.doc.strings
         ]
@@ -205,6 +206,7 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
                 st.translation,
                 st.digest,
                 st.unwritten,
+                st.align,
             )
             for i, st in sorted(entry.pending_strings.items())
         ]
@@ -218,7 +220,16 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
         # (:attr:`~mapchar.project.entry.Entry.strings_cache`).
         return kept[1]
     records: list[dict[str, Any]] = []
-    for index, original, status, notes, translation, digest, unwritten in states:
+    for (
+        index,
+        original,
+        status,
+        notes,
+        translation,
+        digest,
+        unwritten,
+        align,
+    ) in states:
         s: dict[str, Any] = {"i": index}
         if original is not None:
             s["o"] = original
@@ -232,9 +243,19 @@ def _string_records(entry: Entry) -> list[dict[str, Any]]:
             s["n"] = notes
         if unwritten is not None:
             s["u"] = unwritten
+        if align is not None:
+            s["al"] = align.value
         records.append(s)
     entry.strings_cache = (states, records)
     return records
+
+
+def _align(text: object) -> Align | None:
+    """A string record's ``al``: an alignment, or none a build can use."""
+    try:
+        return Align(text) if isinstance(text, str) else None
+    except ValueError:
+        return None
 
 
 def _digest(text: object) -> int | None:
@@ -667,6 +688,7 @@ def _entry_from(raw: dict[str, Any], base: str) -> tuple[Entry, int | None]:
                 s.get("t"),
                 _digest(s.get("h")),
                 unwritten=s["u"] if isinstance(s.get("u"), str) else None,
+                align=_align(s.get("al")),
             )
         except (KeyError, ValueError):
             continue

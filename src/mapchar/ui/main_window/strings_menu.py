@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QPoint
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import QApplication, QMenu
 
-from mapchar.core.block import Status
+from mapchar.core.block import Align, ChainMode, Status
+from mapchar.core.errors import EncodeError
+from mapchar.pipeline.extract import extract
+from mapchar.pipeline.insert import apply_splices, repair_chains
 from mapchar.project.entry import Entry
 from mapchar.ui.find_replace import BLOCK, PROJECT
 from mapchar.ui.main_window.string_rows import same_key
 from mapchar.ui.strings_view import FLAGGED
-from mapchar.ui.undo_commands import StringFieldCommand
+from mapchar.ui.undo_commands import StringFieldCommand, StringsEditCommand
+
+ALIGN_NAMES = {
+    None: "Block's",
+    Align.LEFT: "Left",
+    Align.CENTRE: "Centre",
+    Align.RIGHT: "Right",
+}
+"""The Align menu's rows: a string's own alignment, or none to take the
+block's."""
 
 
 class StringsMenuMixin:
@@ -109,6 +124,120 @@ class StringsMenuMixin:
         if problems:
             self._report("Not Applied", f"{len(problems)} string(s) refused", problems)
 
+    def _toggle_chain_break(self, indices: list[int]) -> None:
+        """Make the selected strings each begin a chain, or — when the first of
+        them does — tie them to the string before again: a block edit, since
+        where the chains break is part of how the block is read."""
+        entry = self._current_block(need_doc=True)
+        if entry is None or not entry.config.chained:
+            return
+        cfg = entry.config
+        breaks = set(cfg.chain_breaks)
+        chosen = {i for i in indices if i > 0}
+        if not chosen:
+            return
+        first = min(chosen)
+        breaks = breaks - chosen if first in breaks else breaks | chosen
+        self._push_block_edit(
+            entry, config=replace(cfg, chain_breaks=tuple(sorted(breaks)))
+        )
+
+    def _align_selected(self, indices: list[int], align: Align | None) -> None:
+        """Where the padded text of each selected string sits, as one step;
+        ``None`` hands it back to the block's alignment. The bytes follow at
+        the string's next edit."""
+        entry = self._entry
+        with self._macro("Align strings"):
+            for index in indices:
+                rec = self._string(entry, index)
+                if rec is None or rec.align is align:
+                    continue
+                self._push_command(
+                    StringFieldCommand(
+                        self,
+                        entry,
+                        index,
+                        "align",
+                        rec.align.value if rec.align else None,
+                        align.value if align else None,
+                    )
+                )
+
+    def _repair_chains(self) -> None:
+        """Close every gap in the current block's chains, as one undo step: each
+        string shortened outside its chain is padded over the fill after it
+        (:func:`~mapchar.pipeline.insert.repair_chains`)."""
+        entry = self._current_block(need_doc=True, complain="Select a block first.")
+        if entry is None:
+            return
+        doc, cfg = entry.doc, entry.config
+        if not cfg.chained or not doc.chain_gaps:
+            self.statusBar().showMessage("No chain of this block starts in fill", 4000)
+            return
+        tables = self._table_set_of(entry)
+        if tables is None:
+            self._error(f"Table @{cfg.table_id} is not loaded.")
+            return
+        try:
+            splices, problems = repair_chains(
+                doc.data, cfg, tables, doc.strings, doc.chain_gaps
+            )
+        except EncodeError as exc:
+            self._error(f"The chains cannot be repaired: {exc}")
+            return
+        if problems:
+            self._report(
+                "Chains Not Repaired",
+                f"{len(problems)} gap(s) cannot be closed",
+                [f"#{p.index}: {p.message}" for p in problems],
+            )
+            return
+        new = apply_splices(doc.data, splices)
+        after = extract(new, cfg, tables, self.registry)
+        if after.chain_gaps or len(after.strings) != len(doc.strings):
+            self._error("The repair would not read back as the same strings.")
+            return
+        lo = min(s.offset for s in splices)
+        hi = max(s.end for s in splices)
+        self._push_command(
+            StringsEditCommand(
+                self,
+                entry,
+                lo,
+                doc.data[lo:hi],
+                new[lo:hi],
+                min(doc.chain_gaps) - 1,
+                "Repair chains",
+            )
+        )
+        self.statusBar().showMessage(f"Repaired {len(doc.chain_gaps)} gap(s)", 4000)
+
+    def _chain_menu(self, menu: QMenu, indices: list[int]) -> None:
+        """A chained block's rows: where its chains break, where each padded
+        text sits, and the repair of a chain a shorter string broke."""
+        cfg = self._entry.config if self._entry is not None else None
+        if cfg is None or not cfg.chained or not indices:
+            return
+        menu.addSeparator()
+        rec = self._string(self._entry, indices[0])
+        brk = menu.addAction("Chain &Break", lambda: self._toggle_chain_break(indices))
+        brk.setCheckable(True)
+        brk.setChecked(indices[0] in cfg.chain_breaks)
+        brk.setEnabled(any(i > 0 for i in indices))
+        brk.setToolTip("The string begins a chain of its own")
+        align = menu.addMenu("A&lign")
+        align.setEnabled(cfg.chain is ChainMode.PAD)
+        group = QActionGroup(align)
+        for value, name in ALIGN_NAMES.items():
+            label = f"{name} ({cfg.align.value})" if value is None else name
+            a = align.addAction(label, lambda v=value: self._align_selected(indices, v))
+            a.setCheckable(True)
+            a.setChecked(rec is not None and rec.align is value)
+            group.addAction(a)
+        menu.addAction("Repair C&hains", self._repair_chains).setEnabled(
+            bool(self._entry.doc.chain_gaps)
+        )
+
     def _strings_menu(self, indices: list[int], pos: QPoint) -> None:
         menu = QMenu(self)
         menu.addAction("Re&vert to Original", self._revert_selected)
@@ -143,6 +272,7 @@ class StringsMenuMixin:
                     "Apply to Identical Originals in &Project",
                     lambda: self._apply_to_identical(index, True),
                 )
+        self._chain_menu(menu, indices)
         menu.addSeparator()
         terms = any(t.translation for t in self.workspace.glossary)
         for text, slot in (

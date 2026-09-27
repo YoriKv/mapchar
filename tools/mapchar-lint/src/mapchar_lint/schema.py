@@ -91,7 +91,9 @@ SESSION_KEYS_NOT_FOR = {"config": ("block",)}
 TOP_KEYS = ("version", "current", "entries", "glossary")
 #: A string record (``_string_records``): index, original, translation, status,
 #: notes.
-STRING_KEYS = ("i", "o", "h", "t", "s", "n", "u")
+STRING_KEYS = ("i", "o", "h", "t", "s", "n", "u", "al")
+#: What a string record's ``al`` may say; anything else reads as none.
+ALIGNS = ("left", "centre", "right")
 #: A glossary term (``glossary_dicts``).
 GLOSSARY_KEYS = ("t", "r", "n", "c", "w")
 #: The glossary keys that are flags rather than text.
@@ -115,6 +117,8 @@ SOURCES = ("range", "pointers", "list", "nested")
 ROOM_SOURCES = ("pointers", "list")
 STRING_TYPES = ("end", "fixed", "pascal", "next", "lines")
 WRITE_MODES = ("packed", "slotted")
+#: How a chained block is written (``chain=``).
+CHAIN_MODES = ("pad", "pack")
 ENDIANS = ("little", "big")
 #: The largest record header ``parse_config`` reads, as the Header control sets
 #: it (``mapchar.core.block.MAX_RECORD_HEADER``).
@@ -172,6 +176,10 @@ STRING_KEYS_CONFIG = (
     "end_is_fill",
     "show_end",
     "line_label",
+    "chain",
+    "breaks",
+    "pad",
+    "align",
 )
 CONFIG_KEYS = frozenset(
     {"source"}

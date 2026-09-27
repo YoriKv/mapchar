@@ -40,6 +40,10 @@ class Document:
     """A nested block's inner pointer table address by the base its pointers
     count from (:attr:`~mapchar.core.block.Extraction.inner_tables`), so a
     group of strings can say which table reached it."""
+    chain_gaps: dict[int, int] = field(default_factory=dict)
+    """A chained block's strings the game reaches in fill, by the offset of
+    the fill (:attr:`~mapchar.core.block.Extraction.chain_gaps`): what
+    **Repair Chains** closes."""
     extraction_key: tuple | None = None
     """What the strings were extracted from, to skip a repeat."""
 

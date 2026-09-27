@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from mapchar.core.block import (
     MAX_RECORD_HEADER,
+    Align,
     BlockConfig,
+    ChainMode,
     EndToken,
     FixedLength,
     Lines,
@@ -125,6 +127,14 @@ def format_config(config: BlockConfig) -> str:
         parts.append(f"fill={format_fill(config.fill)}")
     if config.end_is_fill:
         parts.append("end_is_fill=1")
+    if config.chain is not None:
+        parts.append(f"chain={config.chain.value}")
+    if config.chain_breaks:
+        parts.append("breaks=" + ",".join(str(i) for i in config.chain_breaks))
+    if config.pad is not None:
+        parts.append(f"pad={format_fill(config.pad)}")
+    if config.align is not Align.LEFT:
+        parts.append(f"align={config.align.value}")
     return " ".join(parts)
 
 
@@ -233,7 +243,17 @@ def parse_config(spec: str) -> BlockConfig:
         show_end="show_end" in fields,
         end_label=fields.get("show_end", "end"),
         line_label=fields.get("line_label", "line"),
+        chain=ChainMode(fields["chain"]) if "chain" in fields else None,
+        chain_breaks=_breaks(fields.get("breaks", "")),
+        pad=parse_fill(fields["pad"]) if fields.get("pad") else None,
+        align=Align(fields["align"]) if "align" in fields else Align.LEFT,
     )
+
+
+def _breaks(text: str) -> tuple[int, ...]:
+    """A chain's breaks as ``breaks=`` lists them: string indices, in order,
+    each once."""
+    return tuple(sorted({int(i) for i in text.split(",") if i}))
 
 
 def _null(fields: dict[str, str], key: str) -> int | None:

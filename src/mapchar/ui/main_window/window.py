@@ -234,6 +234,9 @@ class MainWindow(
         """Where each string's slot ends, with the records and the bytes it was
         worked out from (:meth:`~mapchar.ui.main_window.string_rows.
         StringRowsMixin._string_slots`)."""
+        self._pad_cache: tuple | None = None
+        """A chained block's reading and the text its pad reads as
+        (:meth:`~mapchar.ui.main_window.string_rows.StringRowsMixin._pad_text`)."""
         self._unspelled_cache: tuple | None = None
         """The glossary translations the block on screen cannot encode, with
         the tables and terms they were tried against (:meth:`~mapchar.ui.

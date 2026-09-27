@@ -18,6 +18,8 @@ import difflib
 from dataclasses import dataclass, field
 
 from mapchar_lint.schema import (
+    ALIGNS,
+    CHAIN_MODES,
     CONFIG_KEYS,
     ENDIANS,
     MAX_HEADER,
@@ -112,6 +114,7 @@ def read_config(spec: object) -> ConfigReading:
         return out
     _string_type(out, fields)
     _writing(out, fields)
+    _chain(out, fields)
     if out.fatal:
         return out
     _pointers(out, fields, source)
@@ -284,6 +287,51 @@ def _writing(out: ConfigReading, fields: dict) -> None:
     spp = fields.get("spp")
     if spp is not None and int(_run_count(spp)) < 1:
         out.add("W621", "warning", f"spp={spp} reads as 1")
+
+
+def _chain(out: ConfigReading, fields: dict) -> None:
+    """``chain=``, ``breaks=``, ``pad=`` and ``align=``, and whether the block
+    can be read as chains at all (``chain_refusal``)."""
+    chain = fields.get("chain")
+    if chain is not None and chain not in CHAIN_MODES:
+        out.drop("E628", f"chain={chain} is not {' or '.join(CHAIN_MODES)}")
+    align = fields.get("align")
+    if align is not None and align not in ALIGNS:
+        out.drop("E629", f"align={align} is not {', '.join(ALIGNS)}")
+    for item in fields.get("breaks", "").split(","):
+        if item and not item.isdigit():
+            out.drop("E606", f"breaks holds {item!r}, which is not a string index")
+    pad = fields.get("pad")
+    if pad:
+        digits = pad.strip().removeprefix("$")
+        try:
+            if not pad.strip().startswith("$"):
+                if not 0 <= int(pad, 10) <= 0xFF:
+                    raise ValueError
+            elif not digits:
+                raise ValueError
+            else:
+                bytes.fromhex(digits.zfill(len(digits) + len(digits) % 2))
+        except ValueError:
+            out.drop("E630", f"pad={pad} is not $hex bytes or a decimal byte")
+    if chain is None or out.fatal:
+        return
+    why = None
+    if out.source != "range":
+        why = "chains are read over a range"
+    elif out.string_type not in ("end", "pascal"):
+        why = "only strings that end at an end token or a length prefix chain"
+    elif fields.get("skips"):
+        why = "a chain across a skip range is not defined"
+    elif fields.get("realign", "0:0").partition(":")[0] not in ("", "0"):
+        why = "a chain over realigned slots is not defined"
+    if why is not None:
+        out.add(
+            "W631",
+            "warning",
+            f"chain={chain} on a block that cannot chain: {why}",
+            "The block is read and written as if it were not chained.",
+        )
 
 
 def _run_count(spp: str) -> str:

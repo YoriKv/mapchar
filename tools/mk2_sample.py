@@ -21,7 +21,9 @@ What the ROM holds, and where each fact comes from:
   offset is read by ``$1995`` and the characters by ``$19C8`` into ``$1930``,
   which draws space, ``!``, ``'``, digits and letters. A block over records
   steps over each header (``header=2``), which keeps the records in their
-  slots: a chained one keeps its length, or the next header moves.
+  slots. A story block is chained (``chain=pad``), a break wherever an
+  ``ld hl`` starts a chain of its own, so a shorter line is padded with spaces
+  inside its record and the next record is still where ``$18DE`` looks.
 - **Winner messages** are records behind the 12 pointers at ``$457B``, which
   ``$0F83`` indexes by fighter; the block's offset lands on the length byte.
 - **Fighter names** on the fight HUD (12 pointers at ``$4DE9``) are drawn by
@@ -296,19 +298,30 @@ def _menu(rom: bytes, name: str, sites: tuple[int, ...], per: int) -> Block:
 
 
 def _records(rom: bytes, name: str, folder: str, sites) -> Block:
-    """A range over a chain of records, each behind its two-byte header."""
+    """A range over the records the sites' calls read, each behind its
+    two-byte header: the story's, which ``$18DE`` reads back to back, are
+    chained, each site's records a chain."""
     first = at = None
+    breaks, read = [], 0
     for site, count in sites:
+        if read:
+            breaks.append(read)
+        read += count
         start = BANK2 + _literal(rom, site)
         assert at is None or start == at, (name, hex(site))
         at = start
         first = start if first is None else first
         for _ in range(count):
             at = _record_end(rom, at)
+    chain = ""
+    if folder == "Story":
+        chain = " chain=pad" + (
+            f" breaks={','.join(map(str, breaks))}" if breaks else ""
+        )
     return Block(
         name,
         f"source=range start=${first:X} stop=${at:X} type=pascal:1 "
-        "table=mk2-records header=2",
+        f"table=mk2-records header=2{chain}",
         folder,
     )
 

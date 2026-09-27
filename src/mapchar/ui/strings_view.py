@@ -75,6 +75,13 @@ STATUS_FILTERS = ["all", *(s.value for s in Status), UNWRITTEN, MISSES]
 """What the Status picker offers, in the order it offers it."""
 FLAGGED = (Status.REVIEW.value, UNWRITTEN)
 """The statuses Next Flagged steps through: what needs a second look."""
+CHAIN_START, CHAIN_LINK, CHAIN_GAP = "start", "link", "gap"
+"""Where a string stands in a chained block (:attr:`RowData.chain`)."""
+PAD_MARK = "·"
+"""What stands for a unit of pad in the Translation cell."""
+PADDED_ROLE = Qt.ItemDataRole.UserRole + 1
+"""Where a Translation cell keeps its text with the pad marked
+(:attr:`RowData.padded`), which the cell draws in place of the text."""
 SPLITTER_KEY = "view/strings_splitter"
 """Where the grid and the pane under it are split, remembered per machine."""
 
@@ -113,6 +120,13 @@ class RowData:
     misses: str = ""
     """The glossary terms the original holds that the translation has some
     other way than the glossary does; nothing for a string not translated."""
+    chain: str = ""
+    """Where the string stands in a chained block: :data:`CHAIN_START` for the
+    first of a chain, :data:`CHAIN_GAP` for one the game reaches in fill,
+    :data:`CHAIN_LINK` for the rest; nothing in a block that is not chained."""
+    padded: str = ""
+    """:attr:`translation` with the pad a chained string holds at its edges
+    marked, so the room left shows; nothing where it holds none."""
 
     @property
     def shown(self) -> str:
@@ -146,6 +160,14 @@ class TranslationDelegate(QStyledItemDelegate):
         self.newline_code = "[line]"
         self._editor: CodeEditor | None = None
         self._index = None
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt override
+        """Draw a chained string's text with its pad marked
+        (:data:`PADDED_ROLE`), which the editor still opens without."""
+        super().initStyleOption(option, index)
+        padded = index.data(PADDED_ROLE)
+        if padded:
+            option.text = padded.replace("\n", "↵")
 
     def createEditor(self, parent, option, index):
         editor = CodeEditor(self.codes, self.newline_code, parent)
@@ -458,12 +480,24 @@ class StringsView(QWidget):
                 it.setFlags(_LOCKED_FLAGS)
             return it
 
-        self.table.setItem(r, COL_INDEX, item(str(data.index)))
+        index = item(("» " if data.chain == CHAIN_START else "") + str(data.index))
+        if data.chain == CHAIN_START:
+            index.setToolTip("Begins a chain: the game reaches it by a pointer")
+        elif data.chain == CHAIN_GAP:
+            index.setForeground(theme.ERROR_INK)
+            index.setToolTip(
+                "Starts past fill: the string before was shortened outside the "
+                "chain (Edit ▸ Repair Chains)"
+            )
+        self.table.setItem(r, COL_INDEX, index)
         self.table.setItem(r, COL_ADDRESS, item(f"{data.address:X}"))
         self.table.setItem(r, COL_POINTERS, item(data.pointers))
         self.table.setItem(r, COL_ORIGINAL, item(data.original.replace("\n", "↵")))
         tr = item(data.shown.replace("\n", "↵"), True)
         tr.setData(Qt.ItemDataRole.EditRole, data.shown)
+        if data.padded and data.unwritten is None:
+            tr.setData(PADDED_ROLE, data.padded)
+            tr.setToolTip(f"{PAD_MARK} is pad: room the text can still take")
         if data.unwritten is not None:
             tr.setForeground(theme.ERROR_INK)
             tr.setToolTip(data.unwritten_note)
