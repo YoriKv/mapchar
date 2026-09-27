@@ -377,7 +377,7 @@ Linux build, `EXTRA=` adds switches), `analyze.py`,
 `SHOTS=`. The feature's spikes: `live.lua`, `replay.lua`, `cap.sh` (Linux
 build; `cap.sh <lua> <game> <frames>`, output in `cap/<game>/`),
 `contact.py`, `locate.py`, `session.py`, `t_break.lua`, `t_overlay.lua`,
-`t_send.lua`, `shot.ps1`, `dw2_truth.py`, `bits.py`; causal probing: `probe_srv.lua`, `causal.py`, `effects.py`, `pipe.py` (`pipe.py <game> <capture> "<typed text>"`), `c_bits.py`, `t_typo.py`, `t_late.py`, `vpipe.py`, `replays.sh`, `run_all.sh`, `bench.py`.
+`t_send.lua`, `shot.ps1`, `dw2_truth.py`, `bits.py`; causal probing: `probe_srv.lua`, `causal.py`, `effects.py`, `pipe.py` (`pipe.py <game> <capture> "<typed text>"`), `c_bits.py`, `t_typo.py`, `t_late.py`, `vpipe.py`, `replays.sh`, `run_all.sh`, `bench.py`; font watching: `fontwatch.lua`, `fontwatch.sh`, `fw_analyze.py`.
 
 **Running them.**
 
@@ -1110,3 +1110,40 @@ byte. `c_bits.py` takes several captures.
 - **Yoshi's Island's codes** from one byte and 256 probes: `$FC`–`$FE`
   commands with one parameter, `$FF` the end, 252 printable codes leaving 160
   distinct glyph images.
+
+### 18. Watching a font's reads from launch — ALTTP, Yoshi's Island
+
+**Setup.** `fontwatch.lua` (`fontwatch.sh <game> <tag> [hook] [pc] [frames]`,
+output in `fw/<game>/<tag>/`), Linux build, attract sequences, no input: a
+read callback on the font's ROM range only — ALTTP `$70000–$71FFF`, YI's
+glyphs from `$4BD2F` at stride 12 (the 65816's and the SuperFX's) — logging
+frame, clock, reading PC, address and value per read. `fw_analyze.py` cuts
+the reads into episodes (30 quiet frames apart) and the episodes into glyphs.
+
+**Findings.**
+
+- **The reads spell the text, with its codes.** Every episode is one page or
+  caption, and its glyphs in read order are the text as drawn, doubled
+  letters and punctuation included: ALTTP's five prologue pages ("Long ago, in
+  the beautiful kingdom of Hyrule surrounded by mountains and forests…"; the
+  space glyph `$59`), YI's ten screens ("A long, long time ago", "This is a
+  story about baby Mario and Yoshi", "SCRREEEECH", the controller notice). A
+  line break draws nothing, so the words either side of one join.
+- **A glyph's code needs the font's layout, not just a stride.** YI's is
+  `(address − base) / 12` for the lowest read of a burst (each glyph reads 16
+  bytes, and a lone read of the table's first byte comes before each).
+  ALTTP's is the top tile `((c & $F0)·2) | (c & $0F)`, 16 bytes a tile, the
+  bottom half `$10` tiles on — no single stride.
+- **Episodes mark when text starts.** ALTTP's first page starts at frame 1564,
+  38 frames after its decode into the buffer (experiment 5); YI's captions are
+  plotted in one or two frames each.
+- **The readers are the renderers**: ALTTP `$0E:CBD3` and `$0E:CC69` (top and
+  bottom tile), YI's SuperFX `$09:EA36` and `$09:EA3D` (plus `$09:EB0C…` for the
+  large font).
+- **Cheap for a proportional 65816 font, not for a SuperFX burst.** ALTTP:
+  11 424 reads in 4000 frames, at most 32 a frame; its cost is inside the
+  runs' own spread (13–17 s either way). YI: 7257 reads in 3600 frames but up
+  to 1482 in one frame, and the SuperFX's PC costs 15 µs a read (experiment
+  7): about 25 ms in that frame, a dropped frame headed. The PC is not needed
+  live — the replay has it — so a recorder logs address and clock only.
+- **The log is small**: 370 KB (ALTTP) and 230 KB (YI) as text.
