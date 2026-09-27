@@ -8,7 +8,7 @@ import random
 import pytest
 
 from compression_helpers import decode, hexs
-from conftest import ROOT
+from conftest import game_rom
 from mapchar.plugins.builtins.compression import Rnc1, Rnc2, rnc
 from mapchar.plugins.builtins.compression._limits import MAX_OUT
 
@@ -140,9 +140,7 @@ def test_every_rnc2_stream_in_the_mk2_rom_unpacks_to_its_declared_size() -> None
     every ``RNC\\x02`` whose packed CRC checks out has to reach its declared
     unpacked size and report the header's extent.
     """
-    rom = ROOT / "sample-projects" / "MK2" / "Mortal Kombat II (USA, Europe).gb"
-    if not rom.exists():
-        pytest.skip("the Mortal Kombat II ROM is not present")
+    rom = game_rom("MK2", "Mortal Kombat II (USA, Europe).gb")
     data = rom.read_bytes()
     found = 0
     at = data.find(b"RNC\x02")

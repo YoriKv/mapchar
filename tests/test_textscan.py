@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from conftest import ROOT
+from conftest import game_rom, tool_module
 from helpers import ASCII_TABLE, table_set, texts
 from mapchar.core.block import BlockConfig, EndToken, Pascal, RangeSource
 from mapchar.core.table import TableSet
@@ -269,14 +269,12 @@ def test_the_mortal_kombat_ii_finishing_messages_scan_as_a_record_chain(registry
     from the winner messages at ``$8593``, and the block the region describes
     reads every one of them.
     """
-    rom = ROOT / "sample-projects" / "MK2" / "Mortal Kombat II (USA, Europe).gb"
-    folder = ROOT / "sample-projects" / "MK2"
-    if not rom.exists():
-        pytest.skip("the Mortal Kombat II ROM is not present")
-    table = parse_native((folder / "mk2.tbl").read_text(encoding="utf-8")).table
+    rom = game_rom("MK2", "Mortal Kombat II (USA, Europe).gb")
+    data = rom.read_bytes()
+    mk2 = tool_module("mk2_sample")
+    table = parse_native(mk2.table_files(data)["mk2.tbl"]).table
     apply_charset(table, registry)
     ts = TableSet.build(table, {table.id: table})
-    data = rom.read_bytes()
     regions = [r for r in scan(data, ts) if r.start <= 0x8646 < r.end]
     assert len(regions) == 1
     region = regions[0]

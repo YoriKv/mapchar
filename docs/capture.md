@@ -47,7 +47,7 @@ All of it is game data: it never enters the repository.
     uv run pytest tests/test_capture_games.py -v
   ```
 
-  `MAPCHAR_ROMS` lists folders holding the ROMs (besides `sample-projects/*/`),
+  `MAPCHAR_ROMS` lists folders holding the ROMs (besides `test-data/*/`),
   `MAPCHAR_CAPTURES` the recorded moments (default `tmp/capture-spike/cap`,
   `<game>/capNNNNN.txt` and its files), `MAPCHAR_MESEN` the emulator. A game
   with any of them missing skips.

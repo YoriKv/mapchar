@@ -3,6 +3,7 @@
 /local-tools/
 /tmp/
 /sample-projects/
+/test-data/
 
 # --- Python ---
 __pycache__/

@@ -8,7 +8,8 @@ Mortal Kombat II and Mortal Kombat have no command file: ``mother3_sample.py``,
 ``mk2_sample.py`` and ``mk1_sample.py`` derive their tables and blocks from the
 ROM, and they are written and added the same way. Names given on the command
 line build only those games. Headless; needs the offscreen Qt platform,
-which it sets itself.
+which it sets itself. :func:`build` makes one game's project in any folder
+holding its ROM, which is how the tests build theirs.
 """
 
 from __future__ import annotations
@@ -62,34 +63,35 @@ def main() -> int:
         ).toPlainText()
     )
     made = 0
-    for game, (rom_name, source) in GAMES.items():
+    for game in [*GAMES, *DERIVED]:
         if wanted and game not in wanted:
             continue
         folder = os.path.join(ROOT, "sample-projects", game)
-        rom = os.path.join(folder, rom_name)
-        if not os.path.exists(rom):
-            print(f"{game}: ROM not present, skipped")
-            continue
-        for name in os.listdir(source):
-            if name.endswith(".tbl") or name == "Cartographer.txt":
-                shutil.copy(os.path.join(source, name), os.path.join(folder, name))
-        window = MainWindow()
-        window.open_rom(rom)
-        blocks = window.import_cartographer(os.path.join(folder, "Cartographer.txt"))
-        _save(window, game, folder, blocks)
-        made += 1
-    for game, module in DERIVED.items():
-        if wanted and game not in wanted:
-            continue
-        folder = os.path.join(ROOT, "sample-projects", game)
-        rom = os.path.join(folder, module.ROM_NAME)
-        if os.path.exists(rom):
-            window = MainWindow()
-            _save(window, game, folder, _derived(window, rom, module))
+        if os.path.exists(os.path.join(folder, rom_name(game))):
+            build(MainWindow(), game, folder)
             made += 1
         else:
             print(f"{game}: ROM not present, skipped")
     return 0 if made else 1
+
+
+def rom_name(game: str) -> str:
+    return GAMES[game][0] if game in GAMES else DERIVED[game].ROM_NAME
+
+
+def build(window, game: str, folder: str) -> str:
+    """Writes ``game``'s tables beside its ROM in ``folder``, opens them and
+    its blocks in ``window``, and saves the project there; its path."""
+    rom = os.path.join(folder, rom_name(game))
+    if game in DERIVED:
+        return _save(window, game, folder, _derived(window, rom, DERIVED[game]))
+    source = GAMES[game][1]
+    for name in os.listdir(source):
+        if name.endswith(".tbl") or name == "Cartographer.txt":
+            shutil.copy(os.path.join(source, name), os.path.join(folder, name))
+    window.open_rom(rom)
+    blocks = window.import_cartographer(os.path.join(folder, "Cartographer.txt"))
+    return _save(window, game, folder, blocks)
 
 
 def _derived(window, rom: str, module) -> list:
@@ -134,8 +136,9 @@ def _derived(window, rom: str, module) -> list:
     return blocks
 
 
-def _save(window, game: str, folder: str, blocks: list) -> None:
-    """Read every block, then save the window's session as ``<game>.mapchar``."""
+def _save(window, game: str, folder: str, blocks: list) -> str:
+    """Read every block, then save the window's session as ``<game>.mapchar``;
+    its path."""
     total = 0
     for block in blocks:
         window._activate_entry(block)  # extracts the block's strings
@@ -144,6 +147,7 @@ def _save(window, game: str, folder: str, blocks: list) -> None:
     project = os.path.join(folder, f"{game}.mapchar")
     window._write_project(project)
     print(f"{game}: {len(blocks)} block(s), {total} string(s) -> {project}")
+    return project
 
 
 if __name__ == "__main__":

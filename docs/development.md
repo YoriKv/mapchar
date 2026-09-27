@@ -75,18 +75,27 @@ mapchar/
 ├── release.sh           cuts a release (see release.md)
 ├── CHANGELOG.md         release notes, one section per version
 ├── docs/                this documentation
+├── sample-projects/     the sample projects, each beside its ROM (gitignored)
+├── test-data/           the ROMs the tests read, one folder a game (gitignored)
 └── tmp/                 scratch (gitignored)
 ```
 
+- **Test ROMs**: a test that needs a game reads it from
+  `test-data/<game>/<ROM>` (gitignored) through `conftest.game_rom`, and
+  skips without it; no test reads `sample-projects/`, whose ROMs and projects
+  are the user's to change. The folders are the sample names —
+  `Super Mario World`, `Mother 3`, `MK2`, `mk1`, `Dragon Warrior II` — each
+  ROM the unmodified dump its sample module names.
 - **Example projects**: `tests/test_examples.py` runs the Super Mario World
   sample whose tables and command file live in `tools/samples/Super Mario
   World/` (the 22 message-box messages and the 57 level-name parts of the
-  unheadered USA ROM, located from the SMW disassembly). The ROM goes in
-  `sample-projects/Super Mario World/` (gitignored) under the name
-  `tools/make_sample_projects.py` lists; without it the test skips. `uv run
-  python tools/make_sample_projects.py [game…]` copies each game's tables and
-  command file beside its ROM and saves a `<game>.mapchar` project there,
-  ready to open; named games are the only ones built.
+  unheadered USA ROM, located from the SMW disassembly). `uv run python
+  tools/make_sample_projects.py [game…]` copies each game's tables and
+  command file beside its ROM in `sample-projects/<game>/` (gitignored) and
+  saves a `<game>.mapchar` project there, ready to open; named games are the
+  only ones built. Its `build` makes one game's project in any folder holding
+  the ROM: `tests/test_lint_snapshot.py` builds every sample whose ROM is in
+  `test-data/` into a scratch folder and lints it.
 - **Dragon Quest IV** and **Dragon Warrior II** are the two NES samples. Their
   tables and Cartographer command file come from abcde's own examples in the
   sibling checkout, `../abcde/eg/NES/<game>/`, so building one needs that
@@ -105,15 +114,16 @@ mapchar/
   second. The project reads every block as it opens, in
   about four seconds.
 - **Mortal Kombat II**: `tools/mk2_sample.py` derives the Game Boy sample's
-  four tables (`mk2`, `mk2-records`, `mk2-names`, `mk2-title`, one per routine
-  that draws text) and its 19 blocks, 84 strings, from
-  `sample-projects/MK2/Mortal Kombat II (USA, Europe).gb`: each block from the
+  six tables (`mk2`, `mk2-records`, `mk2-names`, `mk2-title`, one per routine
+  that draws text, and `mk2-legal`, `mk2-credits` for two screens' tiles) and
+  its 21 blocks, 201 strings, from `Mortal Kombat II (USA, Europe).gb` (CRC32
+  `BFAEADD0`): each block from the
   `ld hl,nn` before a call to a print routine, each table from that routine's
   compares. Menu strings are list sources over those code operands; the
   `[u16 screen offset][u8 length]` records are Pascal strings behind a
-  two-byte record header (`header=2`). Its docstring cites each routine, and
-  names the two RNC-compressed screens (legal, credits), whose streams mapchar
-  decompresses and the sample builds no block over.
+  two-byte record header (`header=2`). Its docstring cites each routine; the
+  legal screen and the credits are blocks over two decompressed RNC streams,
+  a fixed string per tilemap row.
   `tests/test_examples.py` reads every block and edits a record and a menu
   string.
 - **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's

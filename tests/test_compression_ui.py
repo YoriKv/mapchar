@@ -5,9 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from conftest import ROOT
+from conftest import game_rom
 from mapchar.core.block import RangeSource
 from mapchar.project.entry import EntryKind
 from window_helpers import (
@@ -465,9 +463,7 @@ def test_find_all_lists_every_structure_in_the_mk2_rom(window):
     Find All against a real packer's output: the walk over a whole ROM finds
     every stream and nothing else.
     """
-    rom = ROOT / "sample-projects" / "MK2" / "Mortal Kombat II (USA, Europe).gb"
-    if not rom.exists():
-        pytest.skip("the Mortal Kombat II ROM is not present")
+    rom = game_rom("MK2", "Mortal Kombat II (USA, Europe).gb")
     window.open_rom(str(rom))
     view = window.decompress_window
     view.find_button.click()

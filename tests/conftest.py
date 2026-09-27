@@ -3,6 +3,7 @@ registry, and closed widgets deleted as each test ends."""
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import sys
@@ -18,6 +19,29 @@ _QT_HINT = re.compile(r"PySide6|qtbot|MainWindow|window_helpers")
 
 ROOT = Path(__file__).resolve().parent.parent
 """The repository root."""
+
+TEST_DATA = ROOT / "test-data"
+"""The ROMs the tests read, one folder a game (gitignored): never
+``sample-projects/``, whose ROMs and projects are the user's to change."""
+
+
+def game_rom(game: str, name: str) -> Path:
+    """``test-data/<game>/<name>``; the test skips without it."""
+    rom = TEST_DATA / game / name
+    if not rom.is_file():
+        pytest.skip(f"{name} not present in test-data/{game}/")
+    return rom
+
+
+def tool_module(name: str):
+    """``tools/<name>.py``, which lives beside the tools, not in a package."""
+    path = ROOT / "tools" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # its dataclass resolves annotations there
+    spec.loader.exec_module(module)
+    return module
 
 
 def pytest_collection_modifyitems(config, items):

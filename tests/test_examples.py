@@ -1,17 +1,12 @@
 """The in-repo sample projects, when their ROMs are present.
 
-The ROMs never enter the repository: put each under
-``sample-projects/<game>/``. Without them these tests skip.
+The ROMs never enter the repository: put each under ``test-data/<game>/``.
+Without them these tests skip.
 """
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-
-import pytest
-
-from conftest import ROOT
+from conftest import ROOT, game_rom, tool_module
 from helpers import (
     load_abcde_tables,
     relayout,
@@ -33,9 +28,7 @@ SAMPLES = ROOT / "tools" / "samples"
 
 def test_super_mario_world(registry):
     """The in-repo SMW sample: the message boxes and the level-name parts."""
-    rom = ROOT / "sample-projects" / SMW / SMW_ROM
-    if not rom.exists():
-        pytest.skip(f"{SMW_ROM} not present")
+    rom = game_rom(SMW, SMW_ROM)
     folder = SAMPLES / SMW
     data = rom.read_bytes()
     assert registry.detect_container(data, str(rom)).info.id == "snes"  # no header
@@ -82,24 +75,11 @@ def test_super_mario_world(registry):
     assert texts(again)[1:3] == ["SUN [end]", originals[2]]
 
 
-def _sample_module(name: str):
-    """``tools/<name>.py``, which lives beside the tools, not in a package."""
-    path = ROOT / "tools" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # its dataclass resolves annotations there
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_mother_3(registry):
     """The Mother 3 sample, derived from the ROM: every block reads cleanly and
     lays out again, and edits through all three tables read back."""
-    m3 = _sample_module("mother3_sample")
-    rom = ROOT / "sample-projects" / "Mother 3" / m3.ROM_NAME
-    if not rom.exists():
-        pytest.skip(f"{m3.ROM_NAME} not present")
+    m3 = tool_module("mother3_sample")
+    rom = game_rom("Mother 3", m3.ROM_NAME)
     data = rom.read_bytes()
     assert registry.detect_container(data, str(rom)).info.id == "gba"
     tables = {}
@@ -211,10 +191,8 @@ def test_mortal_kombat_ii(registry):
     cleanly and lays out unchanged, records edit in place around their
     headers, a menu string moves with the code operand that loads it, and the
     legal screen and credits read out of their RNC streams."""
-    mk2 = _sample_module("mk2_sample")
-    rom = ROOT / "sample-projects" / "MK2" / mk2.ROM_NAME
-    if not rom.exists():
-        pytest.skip(f"{mk2.ROM_NAME} not present")
+    mk2 = tool_module("mk2_sample")
+    rom = game_rom("MK2", mk2.ROM_NAME)
     data = rom.read_bytes()
     assert registry.detect_container(data, str(rom)).info.id == "gb"
     tables = {}
@@ -282,10 +260,8 @@ def test_mortal_kombat(registry):
     read from its call site with the code between them skipped, reads with no
     unknown code, lays out unchanged, and edits in place up to the code after
     it; the names keep their 9-byte slots."""
-    mk1 = _sample_module("mk1_sample")
-    rom = ROOT / "sample-projects" / "mk1" / mk1.ROM_NAME
-    if not rom.exists():
-        pytest.skip(f"{mk1.ROM_NAME} not present")
+    mk1 = tool_module("mk1_sample")
+    rom = game_rom("mk1", mk1.ROM_NAME)
     data = rom.read_bytes()
     tables = {}
     for name, text in mk1.table_files(data).items():

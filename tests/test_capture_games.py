@@ -4,7 +4,7 @@ specific to any game.
 
 Opt-in, since it runs for about half an hour: set ``MAPCHAR_CAPTURE_GAMES=1``.
 It needs Mesen 2 on ``PATH`` (or ``MAPCHAR_MESEN``), the ROMs — under
-``sample-projects/<game>/`` or a folder ``MAPCHAR_ROMS`` lists — and the
+``test-data/<game>/`` or a folder ``MAPCHAR_ROMS`` lists — and the
 recorded moments, game data kept outside the repository: ``MAPCHAR_CAPTURES``
 names their folder
 (``<game>/capNNNNN.txt``, ``_sNN.mss``, ``_input.txt``, ``.png``), by default
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import ROOT
+from conftest import ROOT, TEST_DATA
 from mapchar.capture.consoles import detect
 from mapchar.capture.emulator import Mesen
 from mapchar.capture.session import DONE, FAILED, Session
@@ -57,10 +57,10 @@ ROMS = {
 
 
 def rom_for(game: str) -> Path | None:
-    """The ROM, under ``sample-projects/<game>/`` or in one of the folders
+    """The ROM, under ``test-data/<game>/`` or in one of the folders
     ``MAPCHAR_ROMS`` lists."""
     name = ROMS[game]
-    places = list((ROOT / "sample-projects").glob("*"))
+    places = list(TEST_DATA.glob("*"))
     places += [
         Path(p) for p in os.environ.get("MAPCHAR_ROMS", "").split(os.pathsep) if p
     ]

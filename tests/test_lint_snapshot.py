@@ -16,13 +16,15 @@ projects this build writes lint without an error.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 
 import pytest
 from mapchar_lint.known import load_snapshot
 from mapchar_lint.linter import lint
 from mapchar_lint.snapshot import registry_body
 
-from conftest import ROOT
+from conftest import ROOT, TEST_DATA, tool_module
 
 LINT = ROOT / "tools" / "mapchar-lint"
 SNAPSHOT = LINT / "src" / "mapchar_lint" / "data" / "registry.json"
@@ -38,12 +40,28 @@ def test_the_snapshot_matches_the_built_in_registry():
         assert shipped[key] == live[key], f"{key} {REGENERATE}"
 
 
-def test_the_sample_projects_lint_without_errors():
-    projects = sorted((ROOT / "sample-projects").glob("*/*.mapchar"))
-    if not projects:
-        pytest.skip("no sample projects built")
+def test_the_sample_projects_lint_without_errors(qtbot, monkeypatch, tmp_path):
+    """Each sample whose ROM is in ``test-data/``, built into a scratch folder
+    as ``make_sample_projects.py`` builds it."""
+    from mapchar.ui import dialogs
+    from window_helpers import make_window
+
+    monkeypatch.setattr(dialogs.TextDialog, "exec", lambda self: 0)
+    samples = tool_module("make_sample_projects")
     ids = load_snapshot()
-    for path in projects:
-        report = lint(str(path), ids)
+    built = 0
+    for game in [*samples.GAMES, *samples.DERIVED]:
+        rom = TEST_DATA / game / samples.rom_name(game)
+        tables = samples.GAMES.get(game, (None, None))[1]
+        if not rom.is_file() or (tables and not os.path.isdir(tables)):
+            continue
+        folder = tmp_path / game
+        folder.mkdir()
+        shutil.copy(rom, folder)
+        path = samples.build(make_window(qtbot, monkeypatch), game, str(folder))
+        report = lint(path, ids)
         errors = [d for d in report.diagnostics if d.severity.value == "error"]
-        assert not report.fatal and not errors, (path.name, errors)
+        assert not report.fatal and not errors, (game, errors)
+        built += 1
+    if not built:
+        pytest.skip("no sample ROM in test-data/")

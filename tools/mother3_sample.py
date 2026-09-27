@@ -174,6 +174,8 @@ class Block:
     """The block's configuration line, as a native script's ``@block`` spells it."""
     folder: str | None = None
     """The Files panel folder the project puts the block in; ``None`` for none."""
+    compression: tuple[str, int, int] | None = None
+    """Always ``None``: no block reads a compressed stream."""
 
 
 FOLDERS = {
