@@ -266,7 +266,9 @@ def test_mortal_kombat(registry):
     """The Mortal Kombat sample, derived from the ROM: every inline string is
     read from its call site with the code between them skipped, reads with no
     unknown code, lays out unchanged, and edits in place up to the code after
-    it; the names keep their 9-byte slots."""
+    it, padded with the ``nop`` the printer returns into; the names keep their
+    9-byte slots and the characters both fonts draw, and a picture screen
+    refuses the glyphs its picture overwrites."""
     mk1 = tool_module("mk1_sample")
     rom = game_rom("mk1", mk1.ROM_NAME)
     data = rom.read_bytes()
@@ -292,15 +294,25 @@ def test_mortal_kombat(registry):
     assert texts(blocks["Fighter names"][2])[:3] == ["CAGE", "KANO", "RAYDEN"]
     assert texts(blocks["High score initials"][2])[0] == "ARH"
 
-    # A string between two others, rewritten shorter: the code after each
-    # string is left alone, and the next string still reads.
+    # A string between two others, rewritten shorter: the printer returns to
+    # the byte after its 00, so the rest of the slot is nop up to the code
+    # after it, the code is left alone, and the next string still reads.
     config, ts, ex = blocks["Press start"]
     res, out = relayout(data, config, ts, {0: "[pos $0D $07]\nGO[end]"}, registry)
     assert res.ok, res.problems
+    assert out[0x41BC:0x41CD] == b"\x01\x0d\x07GO" + bytes(12)
     assert out[0x41CD:0x41D1] == data[0x41CD:0x41D1]
     again = extract(out, config, ts, registry)
     assert texts(again)[0] == "[pos $0D $07]\nGO[end]"
     assert texts(again)[1] == texts(ex)[1]
+    res, out = relayout(out, config, ts, {0: texts(ex)[0]}, registry)
+    assert res.ok and out == data, res.problems
+    res, _ = relayout(data, config, ts, {0: "[pos $0D $07]\nGO™[end]"}, registry)
+    assert not res.ok
+    # Shorter initials pad with spaces, since all three are drawn.
+    config, ts, ex = blocks["High score initials"]
+    res, out = relayout(data, config, ts, {0: "AB"}, registry)
+    assert res.ok and out[0x449A:0x449D] == b"AB ", res.problems
     # A name may take its whole 9-byte slot, its length byte following the
     # edit, and not a byte more.
     config, ts, ex = blocks["Fighter names"]
@@ -309,4 +321,6 @@ def test_mortal_kombat(registry):
     assert out[0x1A31:0x1A3B] == b"\x08JOHNNY C\x04"
     assert texts(extract(out, config, ts, registry))[:2] == ["JOHNNY C", "KANO"]
     res, _ = relayout(data, config, ts, {0: "JOHNNY CA"}, registry)
+    assert not res.ok
+    res, _ = relayout(data, config, ts, {0: "CAGE!"}, registry)
     assert not res.ok

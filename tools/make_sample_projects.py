@@ -84,7 +84,8 @@ def build(window, game: str, folder: str) -> str:
     its blocks in ``window``, and saves the project there; its path."""
     rom = os.path.join(folder, rom_name(game))
     if game in DERIVED:
-        return _save(window, game, folder, _derived(window, rom, DERIVED[game]))
+        blocks, notes = _derived(window, rom, DERIVED[game])
+        return _save(window, game, folder, blocks, notes)
     source = GAMES[game][1]
     for name in os.listdir(source):
         if name.endswith(".tbl") or name == "Cartographer.txt":
@@ -94,9 +95,10 @@ def build(window, game: str, folder: str) -> str:
     return _save(window, game, folder, blocks)
 
 
-def _derived(window, rom: str, module) -> list:
+def _derived(window, rom: str, module) -> tuple[list, list]:
     """Opens ``rom`` in ``window`` with the tables ``module`` derives, written
-    beside the ROM, and its blocks, in their folders."""
+    beside the ROM, and its blocks, in their folders; the blocks, and the notes
+    ``module`` gives each block's strings (``{}`` for none)."""
     from mapchar.core.capabilities import EntryKind
     from mapchar.project.entry import Entry
     from mapchar.project.formats.blockspec import parse_config
@@ -109,7 +111,7 @@ def _derived(window, rom: str, module) -> list:
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         window.open_table(path, "native")
-    blocks = []
+    blocks, notes = [], []
     folders: dict[str, Entry] = {}
     for block in module.blocks(data):
         folder = folders.get(block.folder) if block.folder else None
@@ -133,17 +135,22 @@ def _derived(window, rom: str, module) -> list:
             )
         window._push_add(entry)
         blocks.append(entry)
-    return blocks
+        notes.append(getattr(block, "notes", None) or {})
+    return blocks, notes
 
 
-def _save(window, game: str, folder: str, blocks: list) -> str:
-    """Read every block, then save the window's session as ``<game>.mapchar``;
-    its path."""
+def _save(window, game: str, folder: str, blocks: list, notes=None) -> str:
+    """Read every block, put ``notes`` on its strings -- ``{index: text}`` a
+    block, ``None`` for what every string starts with -- then save the window's
+    session as ``<game>.mapchar``; its path."""
     total = 0
-    for block in blocks:
+    for block, block_notes in zip(blocks, notes or [{}] * len(blocks), strict=True):
         window._activate_entry(block)  # extracts the block's strings
         doc = window._load_document(block)
         total += len(doc.strings) if doc else 0
+        for i, record in enumerate(doc.strings if doc else ()):
+            parts = (block_notes.get(None), block_notes.get(i))
+            record.notes = " ".join(p for p in parts if p)
     project = os.path.join(folder, f"{game}.mapchar")
     window._write_project(project)
     print(f"{game}: {len(blocks)} block(s), {total} string(s) -> {project}")

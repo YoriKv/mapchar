@@ -64,7 +64,8 @@ mapchar/
 ├── tests/               pytest, flat, one module per area
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
 ├── tools/               regen_fixtures.py, make_sample_projects.py,
-│                       mother3_sample.py, mk2_sample.py, dump_script.py,
+│                       mother3_sample.py, mk2_sample.py, mk1_sample.py,
+│                       dump_script.py,
 │                       subset_icon_font.py, samples/,
 │                       mapchar-lint/ (the project-file linter, see lint.md)
 ├── local-tools/         ui_screenshots.py, wiki_screenshots.py, readme_screenshots.py
@@ -126,6 +127,18 @@ mapchar/
   a fixed string per tilemap row.
   `tests/test_examples.py` reads every block and edits a record and a menu
   string.
+- **Mortal Kombat**: `tools/mk1_sample.py` derives the Game Boy sample's six
+  tables (`mk1`, `mk1-fight`, `mk1-hud`, `mk1-debug`, one per printer;
+  `mk1-picture` for the screens a picture overwrites four glyphs on;
+  `mk1-names` for what both fonts draw) and its 19 blocks, 81 strings, from
+  `gb_mk1_us.gb` (CRC32 `64F5460C`). The text is inline after each call to a
+  printer, so a block is a range over a screen's strings with skips over the
+  code between; the printer returns to the byte after the terminator, so the
+  inline blocks pad with `$00` (`nop`) and read it as the end token. Its
+  docstring cites each routine, and `NOTES` puts on each string what its edit
+  must keep that no table or slot enforces (a name's 1-8 letters, a blink's
+  blanking string). `tests/test_examples.py` reads every block and edits a
+  shortened string, a name and the initials.
 - **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's
   extraction with abcde's Cartographer dump of the synthetic ROM in
   `tests/fixtures/abcde/`. The fixtures are checked in, so the suite never runs
