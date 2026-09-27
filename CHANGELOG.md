@@ -7,6 +7,7 @@
 - Strings that end just before a skip range can be written again
 - Realign applies to every string type, so fixed-size records can be filled
 - A progress bar in the Captures dock while a capture is traced
+- Tell capture where the game's font is, so text can be captured long after it appears
 
 ## v0.1.6 - 2026-09-23
 

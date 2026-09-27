@@ -625,8 +625,21 @@ processors read text).
   GBA; **Emulator Path…** says where it is, and it is asked for the first time
   when it is not on the `PATH`. The emulator is the user's own install,
   started by mapchar and never linked into it. Play runs at full speed: the
-  script mapchar loads into it watches no memory, keeping only a ring of 16
-  savestates spaced over the last 30 seconds and the controller input.
+  script mapchar loads into it keeps a ring of 16 savestates spaced over the
+  last 30 seconds and the controller input, and watches no memory but the
+  font's, when one is given.
+- **Capture setup.** Play in Emulator first opens a window for what the user
+  already knows about the game, kept with the captures and filled in the next
+  time: the console it will be played as, and **where the font is** — in the
+  ROM (the offset range as mapchar shows it) or in RAM (the addresses as the
+  console's bus has them). Everything in it is optional; **Play** starts the
+  emulator with it. With a font given, the emulator watches that range as a
+  breakpoint: the first read after half a second without one marks the start
+  of a text, and the savestates of the 30 seconds before it are kept however
+  long play goes on — so the pause need not come within 30 seconds, only
+  while the text is on screen. A font that is in video memory, or copied there once, is
+  never read while text is drawn; a capture made with a font that was never
+  read says so.
 - **Pause to capture.** Pausing the emulator the usual way hands mapchar the
   moment — the savestates, the input, a screenshot — and opens the **capture
   window**: the screenshot and a text box. The user types what they see, all
@@ -636,7 +649,8 @@ processors read text).
   and a line too short to be found in one place (fewer than four letters)
   asks for more. The one condition is when the user pauses: within 30 seconds of the
   game starting to show the text — or, for a game that decodes a message
-  before it types it out, starting to decode it.
+  before it types it out, starting to decode it — or, with a font given, any
+  time the text drawn in it is on screen.
 - **Tracing** runs in the background, one capture at a time, in a second,
   hidden emulator: it replays the moment from the savestates, checks that it
   reproduced it exactly, and answers each question by changing ROM bytes and
@@ -661,7 +675,10 @@ processors read text).
   - a typed word that does not fit is underlined, to be corrected or dropped;
   - text that is not on screen matches nothing, and the capture says so;
   - text drawn before the 30 seconds is still read from memory, for its
-    codes, but not traced — the capture says to pause sooner next time;
+    codes, but not traced — the capture says to pause sooner next time, or
+    to give the font;
+  - a font given but never read before the pause is named, so its location
+    can be corrected;
   - text found in too many places to tell apart asks for more of the line;
   - a moment the replay could not reproduce keeps its screenshot and says so;
   - a character with no source found, or a pointer not confirmed, is marked

@@ -264,7 +264,8 @@ def find(ev: Evidence, text: str) -> Step[tuple[Occurrence | None, Finding | Non
             return None, Finding(
                 "before",
                 "The text is in RAM, but it was drawn before the replay began: "
-                "pause sooner after it appears next time.",
+                "pause sooner after it appears next time, or give its font in the "
+                "capture setup.",
                 words,
                 words,
                 where,

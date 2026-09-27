@@ -1,10 +1,10 @@
 -- mapchar capture: the probe server, run headless. It replays a capture once
 -- from a ring state, recording the reference — the writes to one observed
 -- range (CFG.obs, from frame value CFG.obsFrom to CFG.obsTo) — and a
--- savestate every CFG.spacing frames; then it answers probes: load the latest
--- state before a frame, write ROM bytes, run, undo the writes, and report how
--- the observed writes differ from the reference. Savestates do not hold ROM,
--- which is why the writes are undone.
+-- savestate every CFG.spacing frames but in the moment's gap (CFG.gap); then
+-- it answers probes: load the latest state before a frame, write ROM bytes,
+-- run, undo the writes, and report how the observed writes differ from the
+-- reference. Savestates do not hold ROM, which is why the writes are undone.
 --
 --   <- probe <id> <state> <first|full> <addr>:<value>,...
 --   -> res <id> same [v=…] [r=…]
@@ -206,7 +206,7 @@ emu.addEventCallback(function()
     end
   end
   if phase == "reference" then
-    if frame % CFG.spacing == 0 then
+    if frame % CFG.spacing == 0 and not inGap(frame) then
       local f, p = frame, polls
       oneShot(function() states[#states + 1] = { frame = f, poll = p, data = emu.createSavestate() } end)
     end

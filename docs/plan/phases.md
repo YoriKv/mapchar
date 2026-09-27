@@ -106,6 +106,8 @@ tested before the next:
 6. The session, `<project>.capture/`, combining and proposals.
 7. The UI: Play in Emulator, the capture window, the Captures dock with its
    Review tab and glyph labelling, Confirm in game.
+8. The capture setup: `capture/setup.py`, the setup window before Play, and
+   the recorder's font breakpoint with its pinned states and the replay's gap.
 
 - Complete when captures of Super Mario World, A Link to the Past,
   EarthBound, Yoshi's Island, Mother 3 and Dragon Warrior II — the text of

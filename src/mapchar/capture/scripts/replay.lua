@@ -3,7 +3,8 @@
 -- VRAM hash with the recorder's. With CFG.evidence it logs, in order, every
 -- ROM data read (E pc address value), every RAM write (W pc address value)
 -- and each frame's start (F n), and at the capture point saves every RAM and
--- which ROM bytes this replay read or executed.
+-- which ROM bytes this replay read or executed. In the moment's gap (CFG.gap)
+-- it logs nothing.
 
 local inputs = {}
 for p, k in slurp(CFG.input):gmatch("(%d+) ([^\n]*)") do inputs[tonumber(p)] = decInput(k) end
@@ -87,7 +88,8 @@ end, emu.eventType.inputPolled)
 emu.addEventCallback(function()
   if not loaded or done then return end
   frame = frame + 1
-  if ev then out("F " .. frame) end
+  hooksOff = inGap(frame)
+  if ev and not hooksOff then out("F " .. frame) end
   if frame == CFG.frame then
     if CFG.clock then
       -- The pause fell inside the next frame: the capture point is the

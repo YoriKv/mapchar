@@ -239,7 +239,7 @@ content even under other windows; `CopyFromScreen` grabs whatever is on top.
 Its design — the user's side, the bridge, the replay, the rules each result
 is decided by, and the build order — is in the plan
 ([architecture §9](plan/architecture.md#9-capture)), and it is built as
-`mapchar.capture` ([capture.md](capture.md) runs it). Experiments 10 to 17
+`mapchar.capture` ([capture.md](capture.md) runs it). Experiments 10 to 18
 below are the evidence for it.
 
 ## Unassisted ideas
@@ -377,7 +377,7 @@ Linux build, `EXTRA=` adds switches), `analyze.py`,
 `SHOTS=`. The feature's spikes: `live.lua`, `replay.lua`, `cap.sh` (Linux
 build; `cap.sh <lua> <game> <frames>`, output in `cap/<game>/`),
 `contact.py`, `locate.py`, `session.py`, `t_break.lua`, `t_overlay.lua`,
-`t_send.lua`, `shot.ps1`, `dw2_truth.py`, `bits.py`; causal probing: `probe_srv.lua`, `causal.py`, `effects.py`, `pipe.py` (`pipe.py <game> <capture> "<typed text>"`), `c_bits.py`, `t_typo.py`, `t_late.py`, `vpipe.py`, `replays.sh`, `run_all.sh`, `bench.py`; font watching: `fontwatch.lua`, `fontwatch.sh`, `fw_analyze.py`, `fontbreak.lua`, `fontbreak.sh`.
+`t_send.lua`, `shot.ps1`, `dw2_truth.py`, `bits.py`; causal probing: `probe_srv.lua`, `causal.py`, `effects.py`, `pipe.py` (`pipe.py <game> <capture> "<typed text>"`), `c_bits.py`, `t_typo.py`, `t_late.py`, `vpipe.py`, `replays.sh`, `run_all.sh`, `bench.py`; font watching: `fontwatch.lua`, `fontwatch.sh`, `fw_analyze.py`, `fontbreak.lua`, `fontbreak.sh`, `setup_e2e.py`.
 
 **Running them.**
 
@@ -1155,3 +1155,14 @@ the reads into episodes (30 quiet frames apart) and the episodes into glyphs.
   11 424, and 19 instead of 7257. The hit names the renderer; ALTTP's also
   names the first glyph (`$0E:80B0`, the top tile of `L`), YI's is the lone
   read of the table's first byte.
+- **A text may be decoded long before it is drawn.** ALTTP decodes the whole
+  prologue at frame 1526 (experiment 5) and draws page 2 from 2132: pinning
+  the two ring states before the first font read left the decode out, and the
+  capture failed as drawn before the replay. Pinning the ring as it stands at
+  the first read keeps the 30 seconds before the text.
+- **End to end** (`setup_e2e.py <pause> <keep> "<text>" [font|none]`: the
+  shipped recorder with a font setup, headless, paused by script, then the
+  session): ALTTP's page 1 paused at 2100 with a 2-state ring replays from the
+  pinned 1356 across the gap 1860–1920, matches its hash and traces 80/80
+  sources from `$E5968`; without the font the same pause fails as drawn before
+  the replay. Page 2 paused at 2760 traces 57/57.

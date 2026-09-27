@@ -3,8 +3,9 @@ hands over, and the work each one goes through.
 
 Captures live in ``<project>.capture/``, one folder each: the moment (ring,
 input, capture point, screenshot), the typed text, the evidence, and the
-results. A capture's state is *waiting* (for its text, or its turn),
-*replaying*, *finding*, *tracing*, *done* or *failed* with its reason.
+results; beside them, the setup the recorder is launched with. A capture's
+state is *waiting* (for its text, or its turn), *replaying*, *finding*,
+*tracing*, *done* or *failed* with its reason.
 
 :meth:`Session.advance` does a bounded step of work and returns; the UI calls
 it from a timer. Captures are traced one at a time, in the order their text
@@ -34,6 +35,7 @@ from mapchar.capture.evidence import (
 from mapchar.capture.occurrence import Finding, check_text, find
 from mapchar.capture.probe import ProbeServer
 from mapchar.capture.protocol import WAIT, CaptureError, Closed, Lines, Listener, Step
+from mapchar.capture.setup import Setup
 from mapchar.capture.trace import Result, Tracer
 
 WAITING = "waiting"
@@ -148,6 +150,7 @@ class Session:
         self.player = None
         self.messages: list[str] = []
         os.makedirs(os.path.join(self.root, INCOMING), exist_ok=True)
+        self.setup = Setup.load(self.root)
         self._load()
 
     def _load(self) -> None:
@@ -168,6 +171,11 @@ class Session:
 
     # -- playing
 
+    def set_setup(self, setup: Setup) -> None:
+        """What the user gives before playing, kept for the next time."""
+        self.setup = setup
+        setup.save(self.root)
+
     def play(self) -> None:
         """Launch the emulator on the ROM with the recorder."""
         if self.playing:
@@ -182,6 +190,7 @@ class Session:
             "prefix": prefix,
             "ring": RING_FRAMES,
             "keep": RING_KEEP,
+            **self.setup.recorder(self.console),
         }
         with open(script, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(build_script(RECORDER, self.console, settings))
@@ -229,17 +238,18 @@ class Session:
                 self.messages.append(f"The recorder failed: {line[4:]}")
 
     def _arrive(self, id: str) -> Capture:
-        folder = os.path.join(self.root, id)
-        ingest(os.path.join(self.root, INCOMING, id), folder)
-        cap = Capture(id, folder)
-        self.captures.append(cap)
-        self._changed(cap)
-        return cap
+        return self.add_moment(id, os.path.join(self.root, INCOMING, id))
 
     def add_moment(self, id: str, files: str) -> Capture:
-        """A moment recorded elsewhere, from its files' common prefix."""
+        """A moment, from its files' common prefix: the recorder's, or one
+        recorded elsewhere."""
         folder = os.path.join(self.root, id)
-        ingest(files, folder)
+        moment = ingest(files, folder)
+        if moment.font and moment.text is None:
+            self.messages.append(
+                "The font was not read before this pause: check where it is in "
+                "the capture setup."
+            )
         cap = Capture(id, folder)
         self.captures.append(cap)
         self._changed(cap)

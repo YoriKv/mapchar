@@ -117,12 +117,14 @@ class Game:
         return bytes(ram)
 
 
-def write_moment(folder: str) -> None:
-    """A moment as the recorder leaves it: one state at frame 0."""
+def write_moment(folder: str, extra: str = "") -> None:
+    """A moment as the recorder leaves it: one state at frame 0, and ``extra``
+    lines."""
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, "moment.txt"), "w") as fh:
         fh.write(
             f"capture frame={CAPTURE_FRAME} poll=10 hash=CAFE\nstate 1 frame=0 poll=0\n"
+            + extra
         )
     with open(os.path.join(folder, "s01.mss"), "wb") as fh:
         fh.write(b"state")

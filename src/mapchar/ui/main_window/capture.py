@@ -1,5 +1,5 @@
-"""Capture: Play in Emulator, the capture window, the Captures dock and its
-Review tab, and the timer that advances the session.
+"""Capture: Play in Emulator and its setup window, the capture window, the
+Captures dock and its Review tab, and the timer that advances the session.
 
 The session (:mod:`mapchar.capture.session`) does the work in emulator
 processes; a timer here advances it a bounded step at a time, so the window
@@ -37,7 +37,12 @@ from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import resolve_mapping
 from mapchar.project.formats.table_native import HEADER, format_entry, parse_native
 from mapchar.ui.block_dialog import NewBlockDialog
-from mapchar.ui.capture import CapturesPanel, CaptureWindow, ConfirmDialog
+from mapchar.ui.capture import (
+    CaptureSetupWindow,
+    CapturesPanel,
+    CaptureWindow,
+    ConfirmDialog,
+)
 from mapchar.ui.undo_commands import TableCommand
 
 EMULATOR_KEY = "capture/emulator"
@@ -159,6 +164,20 @@ class CaptureMixin:
         s = self._capture_open()
         if s is None:
             return
+        if s.playing:
+            self.statusBar().showMessage(f"Already playing in {s.emulator.name}.", 4000)
+            return
+        dialog = CaptureSetupWindow(
+            s.setup,
+            s.console,
+            len(s.rom),
+            self._capture_shift(),
+            self.address_spelling,
+            self,
+        )
+        if dialog.exec() != CaptureSetupWindow.DialogCode.Accepted:
+            return
+        s.set_setup(dialog.setup)
         try:
             s.play()
         except OSError as e:

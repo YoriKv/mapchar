@@ -974,7 +974,7 @@ through `_push_command`.
 | Raw view | `raw_view.py` |
 | Blocks and strings | `blocks.py`, `block_reading.py` (reading one block, or every block a project-wide surface goes over), `extraction.py` (cutting a block's bytes into strings, and the caches that spare it), `string_rows.py` (the Strings grid's rows), `strings_menu.py` (the grid's context menu, marks and steps), `string_edit.py`, `wrap.py`, `replacing.py` (Find and Replace over the strings' text: what is typed or the glossary's terms, one hit at a time or all), `project_strings.py` (the Project Strings window), `glossary.py` (the Glossary panel, its undo steps, and what is asked of a term) |
 | Search | `search.py`, `relative_search.py`, `pointers.py` |
-| Capture | `capture.py` (Play in Emulator, the Captures dock and its Review tab, applying proposals, Confirm in game, the timer that advances the session); the widgets are `ui/capture.py` (the capture window, the dock, the before-and-after) |
+| Capture | `capture.py` (Play in Emulator and its setup, the Captures dock and its Review tab, applying proposals, Confirm in game, the timer that advances the session); the widgets are `ui/capture.py` (the setup window, the capture window, the dock, the before-and-after) |
 | Exchange | `import_export.py` (mapChar's own script, translator tables and PO files), `legacy_exchange.py` (Cartographer command files and Atlas scripts, which address the file) |
 | Projects | `projects.py`, `relocate.py`, `autosave.py` |
 | Preview | `preview.py`, `hex_view.py` |
@@ -1293,6 +1293,7 @@ never guessed.
 | `occurrence.py` | Finding the typed text ([9.4](#94-finding-the-text)) |
 | `probe.py` | The probe server's client ([9.5](#95-probes)) |
 | `trace.py` | The rules ([9.6](#96-tracing)) |
+| `setup.py` | What the user gives before playing: the font's location ([9.2](#92-the-session)) |
 | `session.py` | The captures, the recorder and the queue ([9.2](#92-the-session)) |
 | `combine.py`, `proposals.py` | What the captures say together ([9.7](#97-combining-and-proposals)) |
 
@@ -1336,6 +1337,21 @@ pause (`codeBreak`) it writes the moment — with the master clock of the
 pause, which falls inside a frame — into the session's `incoming/` folder and
 says so over TCP; the session moves it into a capture folder.
 
+`setup.py` holds the **setup**, what the user gives before playing
+(`setup.json` in the captures' folder): the font's location, a range of the
+ROM image or of one RAM, which the setup window takes as mapchar's offsets or
+as bus addresses and the console profile maps. With a font, the recorder sets
+a **font breakpoint**: a read callback on the range, for every reader of the
+ROM or the main CPU for a RAM, that removes itself on its first hit and is set
+again at the next frame's end — at most one callback a frame while text is
+drawn, none otherwise ([experiment 18](../text-capture.md#18-watching-a-fonts-reads-from-launch--alttp-yoshis-island)).
+A hit 30 frames or more after the last starts a **text**: the recorder pins
+the ring as it stands — the 30 seconds before the text, in which it may have
+been decoded — so the ring's turning no longer drops those states or the input
+since them. The moment then carries the latest text's first and
+last hit, and the pinned states ahead of the ring's when the ring no longer
+reaches them.
+
 Long work is written as generator **steps**: a step yields `WAIT` while it
 waits on an emulator and returns its result. `Session.advance(budget)` resumes
 the current capture's step for at most `budget` seconds, and copies the
@@ -1350,13 +1366,16 @@ callback may run a second at most, so the replay's end is spread over several.
 
 ### 9.3 Evidence
 
-`evidence.py` runs the replay: a headless emulator loads the ring's oldest
+`evidence.py` runs the replay: a headless emulator loads the moment's oldest
 state, feeds the input back by poll, and at the capture point — the first
 instruction at the pause's master clock — checks the hash; a mismatch fails the
 capture. On the way it logs every ROM data read with its reading PC, every RAM
 write with its writing PC, and each frame; at the end it saves every RAM and
 which ROM bytes this replay read or executed (the access counters, reset as it
-starts). The log is read once into a list of events.
+starts). The log is read once into a list of events. A moment with pinned
+states has a **gap** — from 60 frames past the text's last font read to the
+ring's oldest state — where the replay logs nothing and the probe server
+keeps no savestates, so a pause long after the text costs only the running.
 
 ### 9.4 Finding the text
 

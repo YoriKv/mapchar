@@ -1,13 +1,15 @@
 """A capture's moment, and the evidence its replay records.
 
 A **moment** is what the recorder hands over at a pause: the ring of
-savestates, the input since the oldest, the capture point (the frame, the poll,
-the master clock) with its RAM and VRAM hash, and a screenshot. The **replay**
-runs it again headless from the ring's oldest state, checks the hash — a
+savestates (after any the font breakpoint pinned), the input since the oldest,
+the capture point (the frame, the poll, the master clock) with its RAM and
+VRAM hash, the latest text's first and last font read, and a screenshot. The
+**replay** runs it again headless from the oldest state, checks the hash — a
 mismatch fails the capture — and on the way records every ROM data read with
 its reading PC, every RAM write with its writing PC, every RAM at the capture
 point, and which ROM bytes the replay read or executed. The log is read once
-into a list of events.
+into a list of events. Between a pinned state and the ring lies a **gap**,
+where the replay logs nothing.
 """
 
 from __future__ import annotations
@@ -29,7 +31,11 @@ EVIDENCE = "evidence.log"
 
 REPLAY_SECONDS = 900
 """The longest a replay may take; a replay is 16 to 30 seconds of play, run
-several times faster than that."""
+several times faster than that — more after pinned states, but without its
+log."""
+
+GAP_TAIL = 60
+"""Frames past the text's last font read that are still logged."""
 
 Event = tuple[str, int, int, int, int]
 """``(kind, address, value, frame, pc)``: kind ``E`` is a ROM data read, its
@@ -41,6 +47,8 @@ class State:
     index: int
     frame: int
     poll: int
+    pinned: bool = False
+    """Kept from before the latest text, where the ring no longer reaches."""
 
 
 @dataclass(frozen=True)
@@ -52,6 +60,10 @@ class Moment:
     clock: int | None = None
     """The master clock of the pause, which falls inside the frame after
     :attr:`frame`; None when the capture point is that frame's end."""
+    font: bool = False
+    """Whether the recorder watched a font."""
+    text: tuple[int, int] | None = None
+    """The frames of the latest text's first and last font read."""
 
     @classmethod
     def parse(cls, text: str) -> Moment:
@@ -61,11 +73,33 @@ class Moment:
         if not head:
             raise CaptureError("the moment's description is unreadable")
         states = tuple(
-            State(int(i), int(f), int(p))
-            for i, f, p in re.findall(r"state (\d+) frame=(\d+) poll=(\d+)", text)
+            State(int(i), int(f), int(p), bool(pin))
+            for i, f, p, pin in re.findall(
+                r"state (\d+) frame=(\d+) poll=(\d+)( pinned)?", text
+            )
         )
         clock = int(head.group(3)) if head.group(3) else None
-        return cls(int(head.group(1)), int(head.group(2)), head.group(4), states, clock)
+        t = re.search(r"^text first=(\d+) last=(\d+)", text, re.M)
+        return cls(
+            int(head.group(1)),
+            int(head.group(2)),
+            head.group(4),
+            states,
+            clock,
+            bool(re.search(r"^font watched", text, re.M)),
+            (int(t.group(1)), int(t.group(2))) if t else None,
+        )
+
+    @property
+    def gap(self) -> tuple[int, int] | None:
+        """The frames between the text and the ring, logged by nothing: from
+        :data:`GAP_TAIL` past the text's last font read to the ring's oldest
+        state. None when there is no pinned state, or nothing between."""
+        ring = [s for s in self.states if not s.pinned]
+        if self.text is None or not ring or len(ring) == len(self.states):
+            return None
+        lo, hi = self.text[1] + GAP_TAIL, ring[0].frame
+        return (lo, hi) if lo < hi else None
 
     @classmethod
     def load(cls, folder: str) -> Moment:
@@ -108,6 +142,7 @@ def script_settings(moment: Moment, folder: str, emulator: Emulator, index=1) ->
         "input": emulator.native_path(os.path.join(folder, INPUT)),
         "frame": moment.frame,
         "hash": moment.hash,
+        "gap": list(moment.gap) if moment.gap else None,
     }
 
 

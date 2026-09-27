@@ -27,7 +27,7 @@ from capture_fake import (
     encode,
     write_moment,
 )
-from mapchar.capture import bitlayout, chains, consoles, evidence, occurrence
+from mapchar.capture import bitlayout, chains, consoles, evidence, occurrence, setup
 from mapchar.capture.combine import Sighting, combine
 from mapchar.capture.proposals import BLOCK, ENTRIES, GLYPH, propose
 from mapchar.capture.protocol import WAIT, Closed, Lines, Listener, Timeout, drive
@@ -254,6 +254,75 @@ def test_a_moment_reads_with_and_without_its_clock():
     assert evidence.Moment.parse("capture frame=5 poll=4 hash=X\n").clock is None
 
 
+def test_a_moment_reads_its_text_and_pinned_states():
+    m = evidence.Moment.parse(
+        "capture frame=5000 poll=4990 hash=X\nfont watched\n"
+        "text first=1564 last=1800\n"
+        "state 1 frame=1356 poll=1350 pinned\nstate 2 frame=1469 poll=1460 pinned\n"
+        "state 3 frame=3277 poll=3270\nstate 4 frame=3390 poll=3380\n"
+    )
+    assert m.font and m.text == (1564, 1800)
+    assert [s.pinned for s in m.states] == [True, True, False, False]
+    assert m.gap == (1800 + evidence.GAP_TAIL, 3277)
+    folder_settings = evidence.script_settings(m, ".", FakeEmulator(Game(b"")))
+    assert (
+        folder_settings["gap"] == [1860, 3277] and folder_settings["stateFrame"] == 1356
+    )
+    # No pinned state, or a ring that reaches back to the text: nothing between.
+    plain = evidence.Moment.parse(
+        "capture frame=5 poll=4 hash=X\nstate 1 frame=0 poll=0\n"
+    )
+    assert not plain.font and plain.text is None and plain.gap is None
+    near = evidence.Moment.parse(
+        "capture frame=2000 poll=1990 hash=X\ntext first=1564 last=1800\n"
+        "state 1 frame=1469 poll=1460 pinned\nstate 2 frame=1808 poll=1800\n"
+    )
+    assert near.gap is None
+
+
+# -- the setup
+
+
+def test_a_font_is_given_in_the_rom_or_in_ram(tmp_path):
+    f = setup.rom_font(0x70000, 0x71FFF, 0x100000)
+    assert (f.memory, f.start, f.end) == (setup.ROM, 0x70000, 0x71FFF)
+    with pytest.raises(ValueError):
+        setup.rom_font(0x10, 0x0F, 0x100000)
+    with pytest.raises(ValueError):
+        setup.rom_font(0xFFF00, 0x100000, 0x100000)
+    snes = consoles.SNES_LOROM
+    r = setup.ram_font(snes, 0x7F1200, 0x7F13FF)
+    assert (r.memory, r.start, r.end, r.bus) == (
+        "snesWorkRam",
+        0x11200,
+        0x113FF,
+        0x7F1200,
+    )
+    with pytest.raises(ValueError):
+        setup.ram_font(consoles.NES, 0x0700, 0x6100)  # internal RAM into save RAM
+    s = setup.Setup(r)
+    s.save(str(tmp_path))
+    assert setup.Setup.load(str(tmp_path)) == s
+    setup.Setup().save(str(tmp_path))
+    assert setup.Setup.load(str(tmp_path)).font is None
+    assert setup.Setup.load(str(tmp_path / "none")).font is None
+
+
+def test_the_recorder_breaks_on_the_font_for_its_readers():
+    yi = consoles.SNES_SUPERFX
+    rom = setup.Setup(setup.rom_font(0x4BD2F, 0x4C92E, 0x200000)).recorder(yi)
+    assert rom["font"] == {
+        "memory": "snesPrgRom",
+        "lo": 0x4BD2F,
+        "hi": 0x4C92E,
+        "cpus": ["snes", "gsu"],
+    }
+    assert rom["quiet"] == setup.QUIET
+    ram = setup.Setup(setup.ram_font(yi, 0x7F0000, 0x7F0FFF)).recorder(yi)
+    assert ram["font"]["memory"] == "snesWorkRam" and ram["font"]["cpus"] == ["snes"]
+    assert setup.Setup().recorder(yi) == {}
+
+
 @pytest.fixture
 def game():
     return Game(build_rom(), message=1)
@@ -421,9 +490,9 @@ def make_session(tmp_path, game, **kw):
     )
 
 
-def arrive(session, name="0001"):
+def arrive(session, name="0001", extra=""):
     src = os.path.join(session.root, "incoming", name)
-    write_moment(src + "_tmp")
+    write_moment(src + "_tmp", extra)
     for f, to in (
         ("moment.txt", ".txt"),
         ("s01.mss", "_s01.mss"),
@@ -432,6 +501,27 @@ def arrive(session, name="0001"):
     ):
         os.replace(os.path.join(src + "_tmp", f), src + to)
     return session.add_moment(name, src)
+
+
+def test_the_session_plays_with_its_setup(tmp_path, game):
+    s = make_session(tmp_path, game)
+    s.set_setup(setup.Setup(setup.rom_font(0x200, 0x2FF, len(game.rom))))
+    s.play()
+    with open(os.path.join(s.root, "_recorder.lua"), encoding="utf-8") as fh:
+        script = fh.read()
+    assert "font = { memory = [==[snesPrgRom]==], lo = 512, hi = 767" in script
+    assert "local function armFont" not in script and "armFont = function" in script
+    s.stop_playing()
+    again = Session(s.root, s.rom_path, CONSOLE, s.emulator)
+    assert again.setup.font.start == 0x200
+
+
+def test_a_font_never_read_is_said_when_a_capture_arrives(tmp_path, game):
+    s = make_session(tmp_path, game)
+    arrive(s, "0001", "font watched\n")
+    assert any("font was not read" in m for m in s.messages)
+    arrive(s, "0002", "font watched\ntext first=3 last=5\n")
+    assert sum("font was not read" in m for m in s.messages) == 1
 
 
 def test_a_session_traces_a_capture_to_done(tmp_path, game):

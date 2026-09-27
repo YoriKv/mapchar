@@ -1,10 +1,11 @@
-"""Capture's windows: the capture window, the Captures dock with its Review
-tab, and the before-and-after of Confirm in game.
+"""Capture's windows: the setup window before playing, the capture window,
+the Captures dock with its Review tab, and the before-and-after of Confirm in
+game.
 
 Presentation only: the main window hands them the session's captures and the
-proposals, and takes back what the user asks for — the text of a capture, a
-proposal accepted, edited or rejected, a glyph's label, a change to see in the
-game.
+proposals, and takes back what the user asks for — the setup to play with, the
+text of a capture, a proposal accepted, edited or rejected, a glyph's label, a
+change to see in the game.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,15 +27,23 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
 
+from mapchar.capture.consoles import Console
 from mapchar.capture.occurrence import Finding
 from mapchar.capture.proposals import BLOCK, CONFLICT, ENTRIES, GLYPH, Proposal
 from mapchar.capture.session import BUSY, DONE, FAILED, Capture
+from mapchar.capture.setup import ROM, Setup, ram_font, rom_font
+from mapchar.ui.number_fields import AddressEdit, AddressSpelling
+from mapchar.ui.widgets import ElidedLabel, ModeToggle
+
+SETUP_WIDTH = 380
+"""The setup window's width, which its note wraps to."""
 
 THUMB = 96
 """The width of a capture's thumbnail in the dock."""
@@ -69,6 +80,131 @@ def finding_html(text: str, finding: Finding | None) -> str:
                 html.escape(word), f"<u style='color:#d33'>{html.escape(word)}</u>"
             )
     return f"{message}<br>{out}"
+
+
+class CaptureSetupWindow(QDialog):
+    """What the user already knows about the game, given before playing:
+    where its font is, in the ROM or in RAM. Everything is optional; Play
+    starts the emulator with it, and :attr:`setup` holds it."""
+
+    def __init__(
+        self,
+        setup: Setup,
+        console: Console,
+        rom_size: int,
+        shift: int,
+        spelling: AddressSpelling | None = None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setup = setup
+        self.console, self.rom_size, self.shift = console, rom_size, shift
+        self.setWindowTitle("Capture Setup")
+        self.setMinimumWidth(SETUP_WIDTH)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.addRow("Console", QLabel(console.name))
+        layout.addLayout(form)
+
+        self.font_box = QGroupBox("Font")
+        self.font_box.setCheckable(True)
+        self.font_box.setToolTip(
+            "Where the game's font is: the first read of it after a pause in "
+            "its drawing marks the start of a text"
+        )
+        box = QFormLayout(self.font_box)
+        self.memory = ModeToggle((("ROM", ROM), ("RAM", "ram")))
+        self.memory.button(ROM).setToolTip("Offsets as mapchar shows them")
+        self.memory.button("ram").setToolTip(
+            "Addresses as the console's bus has them, as the game's code reads them"
+        )
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.memory)
+        mode_row.addStretch(1)
+        box.addRow("In", mode_row)
+        # A page of fields for each memory, one over the other, so switching
+        # moves nothing: ROM offsets spelled as the window spells addresses,
+        # RAM addresses always flat.
+        self.pages = QStackedWidget()
+        self.rom_start, self.rom_end = AddressEdit(spelling), AddressEdit(spelling)
+        flat = AddressSpelling(self)
+        self.ram_start, self.ram_end = AddressEdit(flat), AddressEdit(flat)
+        for start, end in (
+            (self.rom_start, self.rom_end),
+            (self.ram_start, self.ram_end),
+        ):
+            page = QWidget()
+            rows = QFormLayout(page)
+            rows.setContentsMargins(0, 0, 0, 0)
+            rows.addRow("Start", start)
+            rows.addRow("End", end)
+            self.pages.addWidget(page)
+        box.addRow(self.pages)
+        note = QLabel(
+            "Its first read after a pause in drawing marks where a text starts, "
+            "so the text can be captured long after it appears. A font in video "
+            "memory is never read this way."
+        )
+        note.setWordWrap(True)
+        box.addRow(note)
+        self.memory.chosen.connect(self._show_memory)
+        layout.addWidget(self.font_box)
+
+        self.message = ElidedLabel()
+        layout.addWidget(self.message)
+        buttons = QDialogButtonBox()
+        self.play_button = buttons.addButton(
+            "Play", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        self.play_button.clicked.connect(self._play)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._load(setup)
+
+    def _load(self, setup: Setup) -> None:
+        f = setup.font
+        self.font_box.setChecked(f is not None)
+        if f is None:
+            self._show_memory(ROM)
+            return
+        if f.memory == ROM:
+            self.rom_start.set_value(f.start + self.shift)
+            self.rom_end.set_value(f.end + self.shift)
+            self._show_memory(ROM)
+        else:
+            bus = f.start if f.bus is None else f.bus
+            self.ram_start.set_value(bus)
+            self.ram_end.set_value(bus + f.end - f.start)
+            self._show_memory("ram")
+
+    def _show_memory(self, memory: str) -> None:
+        self.memory.set_value(memory)
+        self.pages.setCurrentIndex(0 if memory == ROM else 1)
+
+    def read(self) -> Setup:
+        """The setup as the window has it; ``ValueError`` says what does not
+        read."""
+        if not self.font_box.isChecked():
+            return Setup()
+        rom = self.memory.value() == ROM
+        start, end = (
+            (self.rom_start, self.rom_end) if rom else (self.ram_start, self.ram_end)
+        )
+        a, b = start.value(), end.value()
+        if a is None or b is None:
+            raise ValueError("Give the font's start and end.")
+        if rom:
+            return Setup(rom_font(a - self.shift, b - self.shift, self.rom_size))
+        return Setup(ram_font(self.console, a, b))
+
+    def _play(self) -> None:
+        try:
+            self.setup = self.read()
+        except ValueError as e:
+            self.message.setText(str(e))
+            return
+        self.accept()
 
 
 class CaptureWindow(QDialog):

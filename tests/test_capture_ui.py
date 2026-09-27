@@ -6,11 +6,13 @@ from __future__ import annotations
 import time
 
 from capture_fake import CONSOLE, END, LETTERS, FakeEmulator, Game, build_rom
+from mapchar.capture.consoles import SNES_LOROM
 from mapchar.capture.proposals import BLOCK, ENTRIES
 from mapchar.capture.session import BUSY, DONE, FAILED, Session
+from mapchar.capture.setup import ROM, Setup, rom_font
 from mapchar.core.block import EndToken, PointerTableSource
 from mapchar.project.entry import EntryKind
-from mapchar.ui.capture import finding_html
+from mapchar.ui.capture import CaptureSetupWindow, finding_html
 from test_capture import arrive
 from window_helpers import open_rom_and_table
 
@@ -120,3 +122,47 @@ def test_a_word_that_does_not_fit_is_underlined():
     assert (
         "<u" in out and "wrold</u>" in out and "<u style='color:#d33'>Hello" not in out
     )
+
+
+# -- the setup window
+
+
+def test_the_setup_window_reads_a_font_in_rom_or_ram(qtbot):
+    given = Setup(rom_font(0x70000, 0x71FFF, 0x100000))
+    win = CaptureSetupWindow(given, SNES_LOROM, 0x100000, 0x200)
+    qtbot.addWidget(win)
+    # Shown as mapchar's offsets, past the copier header.
+    assert win.font_box.isChecked() and win.memory.value() == ROM
+    assert (win.rom_start.value(), win.rom_end.value()) == (0x70200, 0x721FF)
+    assert win.read() == given
+    win.memory.button("ram").click()
+    assert win.pages.currentIndex() == 1
+    win.ram_start.setText("7F1200")
+    win.ram_end.setText("7F13FF")
+    f = win.read().font
+    assert (f.memory, f.start, f.end) == ("snesWorkRam", 0x11200, 0x113FF)
+    win.ram_end.setText("7F11FF")
+    win.play_button.click()
+    assert "before its start" in win.message.text() and win.result() == 0
+    win.font_box.setChecked(False)
+    assert win.read() == Setup()
+
+
+def test_play_opens_the_setup_first(window, qtbot, tmp_path, monkeypatch):
+    s = start(window, tmp_path)
+
+    def accept(dialog):
+        dialog.font_box.setChecked(True)
+        dialog.rom_start.set_value(0x200)
+        dialog.rom_end.set_value(0x2FF)
+        dialog.play_button.click()
+        return dialog.result()
+
+    monkeypatch.setattr(CaptureSetupWindow, "exec", accept)
+    window._play_in_emulator()
+    assert s.setup.font == rom_font(0x200, 0x2FF, len(s.rom))
+    assert s.emulator.launched == ["recorder"]
+    s.stop_playing()
+    monkeypatch.setattr(CaptureSetupWindow, "exec", lambda dialog: 0)
+    window._play_in_emulator()
+    assert s.emulator.launched == ["recorder"]  # cancelled: nothing launched

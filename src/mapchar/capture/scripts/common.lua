@@ -137,6 +137,13 @@ local PCS = {
   nes = nesPc,
 }
 
+-- While true, the read and write hooks below drop everything at once: the
+-- replay's gap, where nothing is logged.
+local hooksOff = false
+
+-- Whether a frame lies in the moment's gap (CFG.gap = { from, to }).
+local function inGap(f) return CFG.gap ~= nil and f >= CFG.gap[1] and f < CFG.gap[2] end
+
 -- Every ROM data read of the profile's readers: fn(pc, address, value), the
 -- address as the console reports it (the bus address; a PRG offset for the
 -- NES). Each reader's filter drops what is not a data read of its own.
@@ -145,6 +152,7 @@ local function hookReads(fn)
   for _, r in ipairs(CFG.readers) do
     if r == "snes" then
       emu.addMemoryCallback(function(a, v)
+        if hooksOff then return end
         local st = emu.getCpuState(emu.cpuType.snes)
         fn((st.k << 16) | st.pc, a, v)
       end, emu.callbackType.read, 0, size - 1, emu.cpuType.snes, ROM)
@@ -154,6 +162,7 @@ local function hookReads(fn)
       -- dropped from then on before any state is asked for.
       local codePage = {}
       emu.addMemoryCallback(function(a, v)
+        if hooksOff then return end
         local page = a >> 8
         if codePage[page] then return end
         local st = emu.getCpuState(emu.cpuType.gsu)
@@ -167,6 +176,7 @@ local function hookReads(fn)
       -- past the PC is the 6502's dummy read after an implied opcode.
       local nc = emu.cpuType.nes
       emu.addMemoryCallback(function(a, v)
+        if hooksOff then return end
         local pc = emu.getCpuState(nc).pc
         if a >= pc - 1 and a <= pc + 3 then return end
         fn(nesPrg(pc), nesPrg(a), v)
@@ -174,6 +184,7 @@ local function hookReads(fn)
     elseif r == "gba" then
       -- ARM code loads its constants from just past itself: a literal pool.
       emu.addMemoryCallback(function(a, v)
+        if hooksOff then return end
         local pc = emu.getCpuState(emu.cpuType.gba)["pipeline.execute.address"]
         if math.abs((a | 0x08000000) - pc) < 0x1000 then return end
         fn(pc, a, v)
@@ -188,11 +199,12 @@ end
 local function hookWrites(fn)
   if CFG.console == "snes" then
     emu.addMemoryCallback(function(a, v)
+      if hooksOff then return end
       local st = emu.getCpuState(emu.cpuType.snes)
       fn((st.k << 16) | st.pc, a, v)
     end, emu.callbackType.write, 0, 0x1FFFF, emu.cpuType.snes, emu.memType.snesWorkRam)
   elseif CFG.console == "nes" then
-    local w = function(a, v) fn(nesPc(), a, v) end
+    local w = function(a, v) if hooksOff then return end fn(nesPc(), a, v) end
     emu.addMemoryCallback(w, emu.callbackType.write, 0x0000, 0x07FF, emu.cpuType.nes, emu.memType.nesMemory)
     emu.addMemoryCallback(w, emu.callbackType.write, 0x6000, 0x7FFF, emu.cpuType.nes, emu.memType.nesMemory)
   end
