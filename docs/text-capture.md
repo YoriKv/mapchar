@@ -377,7 +377,7 @@ Linux build, `EXTRA=` adds switches), `analyze.py`,
 `SHOTS=`. The feature's spikes: `live.lua`, `replay.lua`, `cap.sh` (Linux
 build; `cap.sh <lua> <game> <frames>`, output in `cap/<game>/`),
 `contact.py`, `locate.py`, `session.py`, `t_break.lua`, `t_overlay.lua`,
-`t_send.lua`, `shot.ps1`, `dw2_truth.py`, `bits.py`; causal probing: `probe_srv.lua`, `causal.py`, `effects.py`, `pipe.py` (`pipe.py <game> <capture> "<typed text>"`), `c_bits.py`, `t_typo.py`, `t_late.py`, `vpipe.py`, `replays.sh`, `run_all.sh`, `bench.py`; font watching: `fontwatch.lua`, `fontwatch.sh`, `fw_analyze.py`.
+`t_send.lua`, `shot.ps1`, `dw2_truth.py`, `bits.py`; causal probing: `probe_srv.lua`, `causal.py`, `effects.py`, `pipe.py` (`pipe.py <game> <capture> "<typed text>"`), `c_bits.py`, `t_typo.py`, `t_late.py`, `vpipe.py`, `replays.sh`, `run_all.sh`, `bench.py`; font watching: `fontwatch.lua`, `fontwatch.sh`, `fw_analyze.py`, `fontbreak.lua`, `fontbreak.sh`.
 
 **Running them.**
 
@@ -1147,3 +1147,11 @@ the reads into episodes (30 quiet frames apart) and the episodes into glyphs.
   7): about 25 ms in that frame, a dropped frame headed. The PC is not needed
   live — the replay has it — so a recorder logs address and clock only.
 - **The log is small**: 370 KB (ALTTP) and 230 KB (YI) as text.
+- **A breakpoint is enough.** `fontbreak.lua` (`fontbreak.sh <game> <tag> x x
+  [frames]`) hooks the same range but removes the callback on its first hit and
+  re-arms it at the next frame end, so a text costs at most one callback a
+  frame; a hit after 30 quiet frames starts a text. It finds the same starts
+  — ALTTP's five, YI's ten, at the same frames — from 357 callbacks instead of
+  11 424, and 19 instead of 7257. The hit names the renderer; ALTTP's also
+  names the first glyph (`$0E:80B0`, the top tile of `L`), YI's is the lone
+  read of the table's first byte.
