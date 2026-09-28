@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.7 - unreleased
+## v0.1.7 - 2026-09-27
 
 - Add chained blocks support
 
