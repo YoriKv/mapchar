@@ -325,7 +325,7 @@ below are the evidence for it.
 
 | Game | Console | Engine | Known answer |
 |---|---|---|---|
-| Super Mario World | SNES | fixed tiles, plain text, relative pointers | `tools/samples/Super Mario World/` |
+| Super Mario World | SNES | fixed tiles, plain text, relative pointers | `local-tools/samples/Super Mario World/` |
 | A Link to the Past (USA) | SNES | dictionary-compressed, buffered in WRAM, 8×16 proportional font | `../alttp-disassembly` |
 | Yoshi's Island (USA V1.0) | SNES + SuperFX | text read and plotted by the coprocessor, proportional font | `../yi-shiny` |
 | Mother 3 | GBA | 16-bit characters, pointer tables and archives | `sample-projects/Mother 3/` |

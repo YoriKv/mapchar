@@ -63,13 +63,12 @@ mapchar/
 │   └── resources/       package data
 ├── tests/               pytest, flat, one module per area
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
-├── tools/               regen_fixtures.py, make_sample_projects.py,
-│                       mother3_sample.py, mk2_sample.py, mk1_sample.py,
-│                       dump_script.py,
-│                       subset_icon_font.py, samples/,
+├── tools/               regen_fixtures.py, dump_script.py, subset_icon_font.py,
 │                       mapchar-lint/ (the project-file linter, see lint.md)
-├── local-tools/         ui_screenshots.py, wiki_screenshots.py, readme_screenshots.py
-│                       (gitignored, see ui.md)
+├── local-tools/         make_sample_projects.py, mother3_sample.py, mk2_sample.py,
+│                       mk1_sample.py, samples/, and ui_screenshots.py,
+│                       wiki_screenshots.py, readme_screenshots.py (see ui.md);
+│                       gitignored
 ├── screenshots/         the six PNGs README.md's gallery shows
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
@@ -87,11 +86,14 @@ mapchar/
   are the user's to change. The folders are the sample names —
   `Super Mario World`, `Mother 3`, `MK2`, `mk1`, `Dragon Warrior II` — each
   ROM the unmodified dump its sample module names.
-- **Example projects**: `tests/test_examples.py` runs the Super Mario World
-  sample whose tables and command file live in `tools/samples/Super Mario
-  World/` (the 22 message-box messages and the 57 level-name parts of the
-  unheadered USA ROM, located from the SMW disassembly). `uv run python
-  tools/make_sample_projects.py [game…]` copies each game's tables and
+- **Example projects**: the sample builders live in `local-tools/`
+  (gitignored), and a test that loads one through `conftest.local_tool`, or
+  a sample's files, skips without it. `tests/test_examples.py` runs the Super
+  Mario World sample whose tables and command file live in
+  `local-tools/samples/Super Mario World/` (the 22 message-box messages and
+  the 57 level-name parts of the unheadered USA ROM, located from the SMW
+  disassembly). `uv run python
+  local-tools/make_sample_projects.py [game…]` copies each game's tables and
   command file beside its ROM in `sample-projects/<game>/` (gitignored) and
   saves a `<game>.mapchar` project there, ready to open; named games are the
   only ones built. Its `build` makes one game's project in any folder holding
@@ -103,7 +105,7 @@ mapchar/
   checkout as well as the ROM. `tests/test_examples.py` covers neither. Dragon
   Quest IV is the project `local-tools/ui_screenshots.py` opens unless told
   another ([ui.md](ui.md)).
-- **Mother 3**: `tools/mother3_sample.py` derives the sample's tables (`m3`,
+- **Mother 3**: `local-tools/mother3_sample.py` derives the sample's tables (`m3`,
   `m3battle`, `saturn`) and its 20 blocks — 12,997 strings, 7,825 of them in
   **Script**, one block over the main script's nested offset tables — from
   `sample-projects/Mother 3/Mother 3 (Japan).gba`, since nothing extracted
@@ -114,7 +116,7 @@ mapchar/
   string of its own. A string commit in **Script** takes about a third of a
   second. The project reads every block as it opens, in
   about four seconds.
-- **Mortal Kombat II**: `tools/mk2_sample.py` derives the Game Boy sample's
+- **Mortal Kombat II**: `local-tools/mk2_sample.py` derives the Game Boy sample's
   six tables (`mk2`, `mk2-records`, `mk2-names`, `mk2-title`, one per routine
   that draws text, and `mk2-legal`, `mk2-credits` for two screens' tiles) and
   its 21 blocks, 201 strings, from `Mortal Kombat II (USA, Europe).gb` (CRC32
@@ -127,7 +129,7 @@ mapchar/
   a fixed string per tilemap row.
   `tests/test_examples.py` reads every block and edits a record and a menu
   string.
-- **Mortal Kombat**: `tools/mk1_sample.py` derives the Game Boy sample's six
+- **Mortal Kombat**: `local-tools/mk1_sample.py` derives the Game Boy sample's six
   tables (`mk1`, `mk1-fight`, `mk1-hud`, `mk1-debug`, one per printer;
   `mk1-picture` for the screens a picture overwrites four glyphs on;
   `mk1-names` for what both fonts draw) and its 19 blocks, 81 strings, from

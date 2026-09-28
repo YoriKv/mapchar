@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from conftest import game_rom, tool_module
+from conftest import game_rom, local_tool
 from helpers import ASCII_TABLE, table_set, texts
 from mapchar.core.block import BlockConfig, EndToken, Pascal, RangeSource
 from mapchar.core.table import TableSet
@@ -271,7 +271,7 @@ def test_the_mortal_kombat_ii_finishing_messages_scan_as_a_record_chain(registry
     """
     rom = game_rom("MK2", "Mortal Kombat II (USA, Europe).gb")
     data = rom.read_bytes()
-    mk2 = tool_module("mk2_sample")
+    mk2 = local_tool("mk2_sample")
     table = parse_native(mk2.table_files(data)["mk2.tbl"]).table
     apply_charset(table, registry)
     ts = TableSet.build(table, {table.id: table})

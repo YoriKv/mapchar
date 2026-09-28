@@ -24,7 +24,7 @@ from mapchar_lint.known import load_snapshot
 from mapchar_lint.linter import lint
 from mapchar_lint.snapshot import registry_body
 
-from conftest import ROOT, TEST_DATA, tool_module
+from conftest import ROOT, TEST_DATA, local_tool
 
 LINT = ROOT / "tools" / "mapchar-lint"
 SNAPSHOT = LINT / "src" / "mapchar_lint" / "data" / "registry.json"
@@ -47,7 +47,7 @@ def test_the_sample_projects_lint_without_errors(qtbot, monkeypatch, tmp_path):
     from window_helpers import make_window
 
     monkeypatch.setattr(dialogs.TextDialog, "exec", lambda self: 0)
-    samples = tool_module("make_sample_projects")
+    samples = local_tool("make_sample_projects")
     ids = load_snapshot()
     built = 0
     for game in [*samples.GAMES, *samples.DERIVED]:

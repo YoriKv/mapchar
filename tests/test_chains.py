@@ -11,7 +11,7 @@ from dataclasses import replace
 
 import pytest
 
-from conftest import game_rom, tool_module
+from conftest import game_rom, local_tool
 from helpers import ASCII_TABLE, relayout, table_set
 from mapchar.core.block import (
     Align,
@@ -53,7 +53,7 @@ GORO_OPERANDS = (0x1241, 0x124C, 0x1276, 0x128A, 0x1295)
 def mk2():
     """The original ROM and the record table the sample builds from it."""
     data = game_rom("MK2", ROM).read_bytes()
-    text = tool_module("mk2_sample").table_files(data)["mk2-records.tbl"]
+    text = local_tool("mk2_sample").table_files(data)["mk2-records.tbl"]
     table = parse_native(text).table
     return data, TableSet.build(table, {table.id: table})
 

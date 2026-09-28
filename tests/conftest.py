@@ -33,9 +33,16 @@ def game_rom(game: str, name: str) -> Path:
     return rom
 
 
-def tool_module(name: str):
-    """``tools/<name>.py``, which lives beside the tools, not in a package."""
-    path = ROOT / "tools" / f"{name}.py"
+LOCAL_TOOLS = ROOT / "local-tools"
+"""The sample builders and screenshot scripts (gitignored)."""
+
+
+def local_tool(name: str):
+    """``local-tools/<name>.py``, which is not in a package; the test skips
+    without it."""
+    path = LOCAL_TOOLS / f"{name}.py"
+    if not path.is_file():
+        pytest.skip(f"{name}.py not present in local-tools/")
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

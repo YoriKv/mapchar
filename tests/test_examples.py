@@ -6,7 +6,9 @@ Without them these tests skip.
 
 from __future__ import annotations
 
-from conftest import ROOT, game_rom, tool_module
+import pytest
+
+from conftest import LOCAL_TOOLS, game_rom, local_tool
 from helpers import (
     load_abcde_tables,
     relayout,
@@ -23,13 +25,15 @@ from mapchar.project.formats.table_native import parse_native
 
 SMW = "Super Mario World"
 SMW_ROM = "Super Mario World (USA).sfc"
-SAMPLES = ROOT / "tools" / "samples"
+SAMPLES = LOCAL_TOOLS / "samples"
 
 
 def test_super_mario_world(registry):
-    """The in-repo SMW sample: the message boxes and the level-name parts."""
+    """The SMW sample: the message boxes and the level-name parts."""
     rom = game_rom(SMW, SMW_ROM)
     folder = SAMPLES / SMW
+    if not folder.is_dir():
+        pytest.skip(f"{SMW} sample not present in local-tools/samples/")
     data = rom.read_bytes()
     assert registry.detect_container(data, str(rom)).info.id == "snes"  # no header
     cf = parse_command_file((folder / "Cartographer.txt").read_text(encoding="utf-8"))
@@ -78,7 +82,7 @@ def test_super_mario_world(registry):
 def test_mother_3(registry):
     """The Mother 3 sample, derived from the ROM: every block reads cleanly and
     lays out again, and edits through all three tables read back."""
-    m3 = tool_module("mother3_sample")
+    m3 = local_tool("mother3_sample")
     rom = game_rom("Mother 3", m3.ROM_NAME)
     data = rom.read_bytes()
     assert registry.detect_container(data, str(rom)).info.id == "gba"
@@ -191,7 +195,7 @@ def test_mortal_kombat_ii(registry):
     cleanly and lays out unchanged, records edit in place around their
     headers, a menu string moves with the code operand that loads it, and the
     legal screen and credits read out of their RNC streams."""
-    mk2 = tool_module("mk2_sample")
+    mk2 = local_tool("mk2_sample")
     rom = game_rom("MK2", mk2.ROM_NAME)
     data = rom.read_bytes()
     assert registry.detect_container(data, str(rom)).info.id == "gb"
@@ -269,7 +273,7 @@ def test_mortal_kombat(registry):
     it, padded with the ``nop`` the printer returns into; the names keep their
     9-byte slots and the characters both fonts draw, and a picture screen
     refuses the glyphs its picture overwrites."""
-    mk1 = tool_module("mk1_sample")
+    mk1 = local_tool("mk1_sample")
     rom = game_rom("mk1", mk1.ROM_NAME)
     data = rom.read_bytes()
     tables = {}

@@ -1251,10 +1251,11 @@ putting the factory arrangement back behind Panels ▸ Reset Panel Layout.
   [`../release.md`](../release.md).
 - **Tools** — `tools/` holds the development scripts
   [development.md](../development.md) describes: `regen_fixtures.py`,
-  `make_sample_projects.py`, `mother3_sample.py`, `mk2_sample.py`,
-  `dump_script.py`, `subset_icon_font.py`, and `samples/`, the tables and
-  command files of the games abcde has no examples for; the screenshot scripts
-  [ui.md](../ui.md) describes are in the gitignored `local-tools/`.
+  `dump_script.py` and `subset_icon_font.py`. The sample builders
+  (`make_sample_projects.py`, `mother3_sample.py`, `mk2_sample.py`,
+  `mk1_sample.py`, and `samples/`, the tables and command files of the games
+  abcde has no examples for) and the screenshot scripts [ui.md](../ui.md)
+  describes are in the gitignored `local-tools/`.
 - **The project-file linter** — `tools/mapchar-lint/` is a package of its own,
   with its own `pyproject.toml` and its tests in `pyproject.toml`'s
   `testpaths`, so `uv run pytest` runs them. It restates `projectfile.py`'s
