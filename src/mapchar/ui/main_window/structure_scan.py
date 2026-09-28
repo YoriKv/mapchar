@@ -87,10 +87,12 @@ class StructureScanMixin:
         finally:
             self._set_scan_ui(False)
         if result.found is not None:
-            self.statusBar().showMessage(f"Structure at {result.found:X}", 5000)
+            at = self._format_address(result.found)
+            self.statusBar().showMessage(f"Structure at {at}", 5000)
             self._go_to_structure(result.found)
         elif result.stopped:
-            self.statusBar().showMessage(f"Scan stopped at {result.end:X}", 5000)
+            at = self._format_address(result.end)
+            self.statusBar().showMessage(f"Scan stopped at {at}", 5000)
         else:
             self.statusBar().showMessage("No further structure found", 5000)
 

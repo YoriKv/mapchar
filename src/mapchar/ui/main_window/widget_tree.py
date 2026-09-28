@@ -278,7 +278,7 @@ class WidgetsMixin:
 
         self.search_window = SearchWindow(self)
         self.scan_window = ScanWindow(self)
-        self.decompress_window = DecompressWindow(self)
+        self.decompress_window = DecompressWindow(self.address_spelling, self)
         self.preview_window = PreviewWindow(self)
         self.table_editor = TableEditor(self)
         self.find_replace = FindReplaceDialog(self)

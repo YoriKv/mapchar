@@ -12,8 +12,6 @@ from mapchar.pipeline.structures import (
 )
 from mapchar.plugins.base import Stage
 from mapchar.project.entry import EntryKind
-from mapchar.ui import DUMP_WINDOW_BYTES
-from mapchar.ui.raw_cells import RowModel
 from mapchar.ui.widgets import fill_pick, select_data
 
 AUTOMATIC = None
@@ -245,7 +243,8 @@ class CompressionMixin:
             said = f" — {exc}"
         except Exception:  # noqa: BLE001 - one that fails otherwise says nothing
             pass
-        return f"Nothing decodes at {offset:X} through {plugin.info.name}{said}"
+        at = self._format_address(offset)
+        return f"Nothing decodes at {at} through {plugin.info.name}{said}"
 
     def _refresh_decompress_preview(self, doc: Document, tables) -> None:
         view = self.decompress_window
@@ -277,17 +276,20 @@ class CompressionMixin:
         # Where the structure sits in the file shows in the file: only a
         # complete one, since a prefix's length is the window's, not its own.
         self.raw.set_structure((offset, offset + consumed) if complete else None)
-        window = data[:DUMP_WINDOW_BYTES]
-        tokens = self._decode_window(window, tables).tokens
-        model = RowModel(0, window, tokens, set(), len(data))
-        status = f"{consumed:,} compressed bytes at {offset:X} → {len(data):,} bytes"
+        at = self._format_address(offset)
+        status = f"{consumed:,} compressed bytes at {at} → {len(data):,} bytes"
         if self._auto_armed:
             # Nothing else says which scheme recognised the bytes: the picker
             # says only that it was left to them.
             status = f"{self._scheme().info.name}  ·  {status}"
         if not complete:
             status += "  ·  no end marker before the window's edge"
-        view.show_result(model, tokens, status, complete)
+        view.show_result(
+            data,
+            lambda window, at: self._decode_window(window, tables, at).tokens,
+            status,
+            complete,
+        )
         view.show_armed()
 
     def _show_decompress(self) -> None:

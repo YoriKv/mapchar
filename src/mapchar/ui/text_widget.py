@@ -16,6 +16,9 @@ with it the window, and with it the content. The bar beside the box is the
 file's — or the stretch of it the view is confined to — as the Hex tab's is:
 its handle is the window, its arrows step a line, its trough a page, and a drag
 goes to the byte under the handle.
+
+A body small enough to be held whole — the Decompressed view's payload — is
+scrolled as an ordinary text box instead (:meth:`TextWidget.scroll_itself`).
 """
 
 from __future__ import annotations
@@ -77,6 +80,9 @@ class TextWidget(QWidget):
         self.bar.actionTriggered.connect(self._on_bar_action)
         self.bar.valueChanged.connect(self._on_bar_value)
         self._placing = False
+        self._self_scrolling = False
+        """Whether the box scrolls its whole body itself, the bar beside it
+        standing for the box's own (:meth:`scroll_itself`)."""
         self.wrap = setting_toggle(
             "Wrap",
             "Wrap long lines to the window's width",
@@ -136,7 +142,7 @@ class TextWidget(QWidget):
             elif kind == QEvent.Type.Wheel:
                 delta = event.angleDelta().y()
                 zooming = event.modifiers() & Qt.KeyboardModifier.ControlModifier
-                if delta and not zooming:
+                if delta and not zooming and not self._self_scrolling:
                     steps, self._wheel_rest = wheel_steps(self._wheel_rest, delta)
                     if steps:
                         self.scroll_requested.emit(-steps * 3)
@@ -150,6 +156,28 @@ class TextWidget(QWidget):
         return super().eventFilter(watched, event)
 
     # --- the scrollbar ------------------------------------------------------
+
+    def scroll_itself(self) -> None:
+        """Hold the whole body rather than a window of it, and scroll it as an
+        ordinary text box does: the wheel, the arrows, the trough and a drag
+        move the box, and the bar beside it stands for the box's own hidden one.
+        Nothing asks whoever feeds it to move the view, and nothing places the
+        bar (:meth:`set_position`)."""
+        self._self_scrolling = True
+        own = self.edit.verticalScrollBar()
+        own.rangeChanged.connect(self._follow_own_bar)
+        own.valueChanged.connect(self._follow_own_bar)
+        self._follow_own_bar()
+
+    def _follow_own_bar(self) -> None:
+        own, bar = self.edit.verticalScrollBar(), self.bar
+        self._placing = True
+        try:
+            bar.setRange(own.minimum(), own.maximum())
+            bar.setPageStep(own.pageStep())
+            bar.setValue(own.value())
+        finally:
+            self._placing = False
 
     def set_position(self, offset: int, bounds: tuple[int, int]) -> None:
         """Place the scrollbar: the window starts at ``offset`` of the bytes
@@ -171,6 +199,8 @@ class TextWidget(QWidget):
     def _on_bar_action(self, action: int) -> None:
         """The arrows and the trough step by lines and pages, which only the
         text knows, not by bytes: the handle stays until the view has moved."""
+        if self._self_scrolling:
+            return
         slider = QScrollBar.SliderAction
         steps = {
             slider.SliderSingleStepSub.value: (self.scroll_requested, -1),
@@ -184,7 +214,11 @@ class TextWidget(QWidget):
             signal.emit(direction)
 
     def _on_bar_value(self, value: int) -> None:
-        if not self._placing:
+        if self._placing:
+            return
+        if self._self_scrolling:
+            self.edit.verticalScrollBar().setValue(value)
+        else:
             self.offset_requested.emit(value)
 
     # --- the room for text ------------------------------------------------

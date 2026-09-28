@@ -28,7 +28,8 @@ def test_compressed_block_roundtrip(window, tmp_path, monkeypatch):
     file_entry = open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
     arm_scheme(window, "gba_lz77")
     window._go_to(16)
-    assert "compressed bytes at 10 → 90 bytes" in window.decompress_window.status.text()
+    status = window.decompress_window.status.text()
+    assert "compressed bytes at 000010 → 90 bytes" in status
     block = add_block(
         window,
         file_entry,
@@ -75,12 +76,53 @@ def test_the_compression_picker_arms_the_preview_and_turns_it_off(window, tmp_pa
     window._go_to(16)
     arm_scheme(window, "rnc2")
     assert window._preview_scheme == "rnc2" and view.isVisible()
-    assert f"{len(stream):,} compressed bytes at 10 →" in view.status.text()
+    assert f"{len(stream):,} compressed bytes at 000010 →" in view.status.text()
     # One decode, shown twice: the bytes and the text they read as.
     assert view.raw._model.data.startswith(b"HELLO")
     assert "HELLO HELLO HELLO" in view.text.edit.toPlainText()
     arm_scheme(window, "")
     assert window._preview_scheme is None and not view.isVisible()
+
+
+def test_the_decompressed_view_scrolls_over_the_whole_payload(window, tmp_path):
+    """The Hex tab counts from the payload's first byte and scrolls past its
+    first window; the Text tab scrolls its text as a text box does."""
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QApplication
+
+    payload = b"".join(b"LINE %04d\x0a" % i for i in range(800))
+    data, _stream = _rnc2_rom(payload)
+    open_rom_and_table(window, tmp_path, data, table=ASCII_TABLE)
+    view = window.decompress_window
+    window._go_to(16)
+    arm_scheme(window, "rnc2")
+    assert view.raw._model.offset == 0
+    bar = view.raw.verticalScrollBar()
+    bar.setValue(bar.maximum())
+    model = view.raw._model
+    assert model.offset > 4096 and model.offset == bar.maximum() * 16
+    assert model.data == payload[model.offset : model.offset + 4096]
+    assert model.total == len(payload) and window._offset == 16
+
+    view.tabs.setCurrentIndex(1)
+    own = view.text.edit.verticalScrollBar()
+    assert own.maximum() > 0 and view.text.bar.maximum() == own.maximum()
+    view.text.bar.setValue(5)
+    assert own.value() == 5
+    wheel = QWheelEvent(
+        QPointF(10, 10),
+        QPointF(10, 10),
+        QPoint(0, 0),
+        QPoint(0, -120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    QApplication.sendEvent(view.text.edit.viewport(), wheel)
+    assert own.value() > 5 and view.text.bar.value() == own.value()
+    assert window._offset == 16
 
 
 def test_a_signature_arms_the_preview_by_itself_and_leaving_hides_it(window, tmp_path):
@@ -165,9 +207,12 @@ def test_find_all_lists_the_structures_and_selecting_one_moves_the_view(
     assert "2 structure(s)" in view.found.text()
     assert view.results.rowCount() == 2
     assert [view.results.item(r, 0).text() for r in range(2)] == [
-        "10",
-        f"{at_second:X}",
+        "000010",
+        f"{at_second:06X}",
     ]
+    # Spelled as every other address the window shows, and again when that moves.
+    window.address_pick.setCurrentIndex(window.address_pick.findData("snes-lorom"))
+    assert view.results.item(0, 0).text() == window._format_address(16) != "000010"
     assert view.results.item(0, 1).text() == f"{len(first):,}"
     assert view.results.item(0, 2).text() == f"{len(RNC2_PAYLOAD):,}"
     # The payload reads as text, which is what the Text column scores.
@@ -212,14 +257,14 @@ def test_the_decompressed_view_opens_from_the_menu_away_from_a_structure(
     # A scheme picked by name reads nothing here either, and says why.
     arm_scheme(window, "rnc2")
     assert view.isVisible()
-    assert "Nothing decodes at 0" in view.status.text()
+    assert "Nothing decodes at 000000" in view.status.text()
     assert "no RNC magic" in view.hex_note.text()
     # Find All is in reach, and what it finds is what opens the structure.
     view.find_button.click()
     assert "1 structure(s)" in view.found.text()
     view.results.selectRow(0)
     assert window._offset == 0x400
-    assert f"{len(stream):,} compressed bytes at 400 →" in view.status.text()
+    assert f"{len(stream):,} compressed bytes at 000400 →" in view.status.text()
     # Leaving the structure no longer takes the window with it.
     window._select_bytes(0x401, 1)
     assert view.isVisible() and "Nothing decodes" in view.status.text()
@@ -266,7 +311,7 @@ def test_scan_under_automatic_walks_every_scheme_that_announces_itself(
     assert window._offset == 0x200 and window._selection == (0x200, 0x201)
     # Automatic arming names what answered, as it does wherever the view lands.
     assert window._preview_scheme == "rnc2"
-    assert f"{len(stream):,} compressed bytes at 200 →" in view.status.text()
+    assert f"{len(stream):,} compressed bytes at 000200 →" in view.status.text()
     # With nothing to walk for, the window says so rather than doing nothing.
     arm_scheme(window, "")
     view.scan.click()
@@ -327,20 +372,20 @@ def test_a_selection_never_pins_the_preview_where_a_jump_took_the_view(
     arm_scheme(window, "rnc2")
     # A click on the stream's first byte, as the documented way to pick it out.
     window._select_bytes(16, 1)
-    assert "compressed bytes at 10 →" in view.status.text()
+    assert "compressed bytes at 000010 →" in view.status.text()
     view.next.click()
     after = 16 + len(first)
     assert window._offset == after and window._selection == (after, after + 1)
     # And Scan continues from there rather than from the click.
     view.scan.click()
     assert window._offset == at_second and window._selection[0] == at_second
-    assert f"compressed bytes at {at_second:X} →" in view.status.text()
+    assert f"compressed bytes at {at_second:06X} →" in view.status.text()
     # A Structures row, with a selection somewhere else entirely.
     window._select_bytes(4, 3)
     view.find_button.click()
     view.results.selectRow(0)
     assert window._offset == 16 and window._selection == (16, 17)
-    assert view.isVisible() and "compressed bytes at 10 →" in view.status.text()
+    assert view.isVisible() and "compressed bytes at 000010 →" in view.status.text()
 
 
 def test_a_scan_and_find_all_refuse_to_run_inside_each_other(window, tmp_path):
@@ -468,7 +513,7 @@ def test_find_all_lists_every_structure_in_the_mk2_rom(window):
     view = window.decompress_window
     view.find_button.click()
     assert "29 structure(s)" in view.found.text()
-    assert view.results.item(0, 0).text() == "AC54"
+    assert view.results.item(0, 0).text() == "00AC54"
     assert view.results.item(0, 1).text() == "1,951"
     assert view.results.item(0, 2).text() == "3,056"
 

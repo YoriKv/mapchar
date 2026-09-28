@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -14,10 +16,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapchar.core.address import format_hex
 from mapchar.core.tokens import Token
 from mapchar.pipeline.structures import FoundStructure
 from mapchar.pipeline.text_view import text_model
-from mapchar.ui import setting_int, settings
+from mapchar.ui import DUMP_WINDOW_BYTES, setting_int, settings
+from mapchar.ui.number_fields import AddressSpelling
 from mapchar.ui.progress import CancellableRun
 from mapchar.ui.raw_cells import RowModel
 from mapchar.ui.raw_widget import RawWidget
@@ -35,8 +39,12 @@ class DecompressWindow(ToolWindow, CancellableRun):
 
     Three readings of the same slice, as tabs: the bytes, the text they decode
     to through the reading's table — the Hex and Text tabs the main window has
-    for a file, fed from one decode — and the list of every structure **Find
-    All** found in the file.
+    for a file — and the list of every structure **Find All** found in the
+    file. The Hex tab counts from the payload's first byte, since the payload
+    is nowhere in the file, and scrolls over all of it, a window at a time, each
+    read where it starts; the Text tab holds the first window's text whole and
+    scrolls it as a text box. The Structures tab's offsets are the file's, spelled
+    as every other address the window shows.
 
     Scan walks forward over the whole file one offset at a time and Find All
     over the whole of it once, which is long enough to need a way out:
@@ -60,7 +68,9 @@ class DecompressWindow(ToolWindow, CancellableRun):
     go_to = Signal(int)
     """A structure the list names: show the file there."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self, spelling: AddressSpelling | None = None, parent: QWidget | None = None
+    ):
         super().__init__(
             "Decompressed View",
             "decompress_window",
@@ -68,10 +78,16 @@ class DecompressWindow(ToolWindow, CancellableRun):
             parent,
             Qt.WindowType.Tool,
         )
+        self._spelling = spelling
         self._structures: list[FoundStructure] = []
+        self._note = ""
+        self._payload = b""
+        self._decode: Callable[[bytes, int], list[Token]] | None = None
+        """How a window of the payload reads, given its bytes and the byte of
+        the payload it starts at; the Hex tab asks it as it scrolls."""
         self._tokens: list[Token] = []
         self._window = b""
-        """The bytes the tabs show, kept so a switch of what the text shows
+        """The bytes the Text tab shows, kept so a switch of what the text shows
         re-renders them without another decode."""
         layout = QVBoxLayout(self)
         self.status = ElidedLabel("")
@@ -79,6 +95,7 @@ class DecompressWindow(ToolWindow, CancellableRun):
         self.tabs = QTabWidget()
         self.raw = RawWidget()
         self.text = TextWidget()
+        self.text.scroll_itself()
         hex_pane, self.hex_note = self._reading_tab(self.raw)
         text_pane, self.text_note = self._reading_tab(self.text)
         self._readings = (
@@ -113,6 +130,9 @@ class DecompressWindow(ToolWindow, CancellableRun):
         # The same tokens read to another text; nothing is decoded again.
         self.text.shown_changed.connect(self._show_text)
         self.text.fit_changed.connect(self._show_text)
+        self.raw.offset_requested.connect(self._show_rows)
+        if spelling is not None:
+            spelling.changed.connect(lambda _old: self._fill_structures())
         self.bind_run(self.scan, self.stop, self.status, "Scanning")
         self._scanning = False
         self._armed_open = False
@@ -201,28 +221,34 @@ class DecompressWindow(ToolWindow, CancellableRun):
 
     def show_result(
         self,
-        model: RowModel | None,
-        tokens: list[Token],
+        payload: bytes | None,
+        decode: Callable[[bytes, int], list[Token]] | None,
         status: str,
         complete: bool,
     ) -> None:
         """Show one decode: its bytes, the text they read as, and how it went.
 
-        ``tokens`` are the window's own, in step with ``model``'s bytes — one
-        decode of the payload, rendered twice, as the main window's Hex and
-        Text tabs are.
+        ``decode`` reads a window of ``payload`` — its bytes, and the byte of
+        the payload it starts at — as the main window's Hex tab reads one of the
+        file. The first window is read once, for both tabs.
         """
-        self.raw.set_model(model)
+        self._payload = payload or b""
+        self._decode = decode
+        self._window = self._payload[:DUMP_WINDOW_BYTES]
+        self._tokens = decode(self._window, 0) if decode and self._window else []
+        self.raw.set_model(
+            RowModel(0, self._window, self._tokens, set(), len(self._payload))
+            if payload is not None
+            else None
+        )
         # Another payload, so a Shift+click has nothing left to reach from.
         self.raw.clear_anchor()
-        self._tokens = tokens
-        self._window = model.data if model is not None else b""
         self._show_text()
         self.status.setText(status)
         self._show_notes(False)
         # A scan's own progress refreshes run through here; while one is running
         # the only live control is Stop.
-        live = model is not None and complete and not self._scanning
+        live = payload is not None and complete and not self._scanning
         self.block.setEnabled(live)
         self.next.setEnabled(live)
 
@@ -236,7 +262,7 @@ class DecompressWindow(ToolWindow, CancellableRun):
         """
         # An empty decode, which is what clears the two views and the buttons
         # over them, and then the message in the views' place.
-        self.show_result(None, [], message, False)
+        self.show_result(None, None, message, False)
         for _pane, _view, note in self._readings:
             note.setText(message)
         self._show_notes(True)
@@ -254,17 +280,32 @@ class DecompressWindow(ToolWindow, CancellableRun):
             return
         length = len(self._window)
         self.text.set_model(text_model(self._tokens, 0, length, self.text.shown()))
-        self.text.set_position(0, (0, length))
+
+    def _show_rows(self, offset: int) -> None:
+        """The Hex tab scrolled: hand it the payload's window from ``offset``,
+        read where it starts."""
+        if self._decode is None:
+            return
+        window = self._payload[offset : offset + DUMP_WINDOW_BYTES]
+        tokens = self._decode(window, offset) if window else []
+        self.raw.set_model(RowModel(offset, window, tokens, set(), len(self._payload)))
 
     # -- the structures ---------------------------------------------------------
 
     def set_structures(self, structures: list[FoundStructure], note: str) -> None:
         """Show what Find All found: one row per structure, ``note`` above them."""
         self._structures = list(structures)
-        self.found.setText(note)
+        self._note = note
+        self._fill_structures()
+
+    def _fill_structures(self) -> None:
+        """One row per structure, under the note: again when the address format
+        changes, since the offsets are spelled in it."""
+        spell = self._spelling.format if self._spelling is not None else format_hex
+        self.found.setText(self._note)
         self.results.fill(
             [
-                f"{s.offset:X}",
+                spell(s.offset),
                 f"{s.consumed:,}",
                 f"{s.size:,}",
                 f"{s.score:.2f}",

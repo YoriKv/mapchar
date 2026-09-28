@@ -1274,9 +1274,13 @@ The editing surface, opened on a block.
   the block's compression; what the scheme the Format bar's **Compression**
   picker arms reads from the current position — the selection's first byte, or
   the view's own — goes into the floating **Decompressed View**. Two of its
-  tabs read that payload, from one decode: a **Hex** dump, and the **Text** the
-  reading's table decodes it to. Which tab is in front is remembered like the
-  window's placement. **View ▸ Decompressed View…** (Ctrl+Shift+D) opens it
+  tabs read that payload: a **Hex** dump, and the **Text** the reading's table
+  decodes it to. The Hex dump's addresses count from the payload's first byte,
+  since the payload is nowhere in the file, and it scrolls over the whole
+  payload a window at a time; the Text tab holds its first window's text and
+  scrolls it as a text box. Every file offset the window names — the status
+  line's, the structure list's, a scan's — is spelled in the address format.
+  Which tab is in front is remembered like the window's placement. **View ▸ Decompressed View…** (Ctrl+Shift+D) opens it
   wherever the view is, which is how Scan and Find All are reached from a file
   that is not already sitting on a structure; a window opened that way stays
   open, its Hex and Text tabs saying that nothing decodes here and, where the

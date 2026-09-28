@@ -5,6 +5,7 @@
 - Fix pausing the emulator not capturing; pauses mapchar missed are picked up
 - Add record headers to pointer blocks
 - Project Strings jumps select the string in the Files panel
+- Fix scrolling in the Decompressed View; its offsets follow the address format
 
 ## v0.1.7 - 2026-09-27
 
