@@ -1,5 +1,7 @@
 /CLAUDE.md
-/tools/
+/tools/*
+!/tools/mapchar-lint/
+/tools/mapchar-lint/uv.lock
 /local-tools/
 /tmp/
 /sample-projects/

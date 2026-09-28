@@ -1252,7 +1252,8 @@ putting the factory arrangement back behind Panels ▸ Reset Panel Layout.
   [`../release.md`](../release.md).
 - **Tools** — `tools/` holds the development scripts
   [development.md](../development.md) describes: `regen_fixtures.py`,
-  `dump_script.py` and `subset_icon_font.py`. The sample builders,
+  `dump_script.py` and `subset_icon_font.py`, gitignored beside the tracked
+  linter. The sample builders,
   their tests and the screenshot scripts [ui.md](../ui.md)
   describes are in the gitignored `local-tools/`.
 - **The project-file linter** — `tools/mapchar-lint/` is a package of its own,

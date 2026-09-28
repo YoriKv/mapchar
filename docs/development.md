@@ -22,9 +22,10 @@ the editor, and the checks a change has to pass.
   PyCharm's inspections (`ide_diagnostics`) on the files a change touched,
   then `uv run pytest`, `uv run ruff check .` and
   `uv run ruff format --check .`,
-  are the checks. `tools/` is git-ignored, so ruff passes it over: a change
-  there runs `uv run ruff check tools/…` and `uv run ruff format tools/…`
-  on what it touched, and its new files go in with `git add -f`.
+  are the checks. `tools/` is git-ignored but for `tools/mapchar-lint/`, so
+  ruff passes the other scripts over: a change there runs
+  `uv run ruff check tools/…` and `uv run ruff format tools/…` on what it
+  touched.
 
 ## Git
 
@@ -63,8 +64,9 @@ mapchar/
 │   └── resources/       package data
 ├── tests/               pytest, flat, one module per area
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
-├── tools/               regen_fixtures.py, dump_script.py, subset_icon_font.py,
-│                       mapchar-lint/ (the project-file linter, see lint.md)
+├── tools/               mapchar-lint/ (the project-file linter, see lint.md), and
+│                       regen_fixtures.py, dump_script.py, subset_icon_font.py
+│                       (gitignored)
 ├── local-tools/         the sample builders, their tests and the screenshot
 │                       scripts (see ui.md); gitignored
 ├── screenshots/         the six PNGs README.md's gallery shows
