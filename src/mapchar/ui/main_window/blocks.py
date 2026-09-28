@@ -284,6 +284,8 @@ class BlocksMixin:
         a block edit and its undo."""
         entry.name = name
         scheme = entry.compression_id
+        was = source_span(entry.config.source if entry.config is not None else None)
+        span = source_span(config.source)
         # A compressed block's translations are in its payload and nowhere else,
         # so a re-reading keeps those bytes and reads the new configuration over
         # them. Only a change of scheme cannot: what the old scheme decoded is
@@ -319,6 +321,10 @@ class BlocksMixin:
         self.files_panel.refresh_labels()
         self._update_title()
         if entry is self._entry:
+            if span is not None and (was is None or span[0] != was[0]):
+                # A moved start is where the view goes: a position the old
+                # source left inside the new one would otherwise hold it there.
+                self._offset = span[0]
             self._reload_current_document()
         else:
             self._refresh_view()

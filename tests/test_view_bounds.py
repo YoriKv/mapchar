@@ -4,6 +4,8 @@ that confinement is asked for."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
@@ -174,6 +176,26 @@ def test_a_block_left_outside_its_source_reopens_on_it(window, tmp_path):
     window._move(BYTES_PER_ROW)
     window._activate_entry(file_entry)
     window._activate_entry(block)
+    assert window._offset == 0x110
+
+
+def test_a_moved_source_start_moves_the_view_to_it(window, tmp_path):
+    file_entry = open_rom_and_table(window, tmp_path, bytes(range(256)) * 4)
+    block = add_block(window, file_entry, "b", RangeSource(0x100, 0x180))
+    # Earlier by less than the range's length, the old start is still inside.
+    window._push_block_edit(
+        block, config=replace(block.config, source=RangeSource(0xF0, 0x170))
+    )
+    assert window._bounds == (0xF0, 0x170)
+    assert window._offset == 0xF0
+    window.undo_stack.undo()
+    assert window._bounds == (0x100, 0x180)
+    assert window._offset == 0x100
+    # Only the end moved: the position is kept.
+    window._move(BYTES_PER_ROW)
+    window._push_block_edit(
+        block, config=replace(block.config, source=RangeSource(0x100, 0x1C0))
+    )
     assert window._offset == 0x110
 
 
