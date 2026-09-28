@@ -183,6 +183,9 @@ class CaptureMixin:
         except OSError as e:
             self._error(f"The emulator could not be started: {e}")
             return
+        # The timer stops itself while the setup window is open, with nothing
+        # to watch yet: the recorder's connection is only read while it runs.
+        self._capture_timer.start()
         self.statusBar().showMessage(
             f"Playing in {s.emulator.name}: pause it to capture the text on screen.",
             8000,

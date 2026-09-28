@@ -159,9 +159,11 @@ def test_play_opens_the_setup_first(window, qtbot, tmp_path, monkeypatch):
         return dialog.result()
 
     monkeypatch.setattr(CaptureSetupWindow, "exec", accept)
+    window._capture_timer.stop()  # as it stops itself while the setup is open
     window._play_in_emulator()
     assert s.setup.font == rom_font(0x200, 0x2FF, len(s.rom))
     assert s.emulator.launched == ["recorder"]
+    assert window._capture_timer.isActive()  # the recorder is listened to
     s.stop_playing()
     monkeypatch.setattr(CaptureSetupWindow, "exec", lambda dialog: 0)
     window._play_in_emulator()
