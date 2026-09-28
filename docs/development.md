@@ -65,10 +65,8 @@ mapchar/
 │   └── fixtures/abcde/  synthetic ROM, tables, command file and abcde's dump of them
 ├── tools/               regen_fixtures.py, dump_script.py, subset_icon_font.py,
 │                       mapchar-lint/ (the project-file linter, see lint.md)
-├── local-tools/         make_sample_projects.py, mother3_sample.py, mk2_sample.py,
-│                       mk1_sample.py, samples/, and ui_screenshots.py,
-│                       wiki_screenshots.py, readme_screenshots.py (see ui.md);
-│                       gitignored
+├── local-tools/         the sample builders, their tests and the screenshot
+│                       scripts (see ui.md); gitignored
 ├── screenshots/         the six PNGs README.md's gallery shows
 ├── packaging/           build.py: the PyInstaller recipe (see release.md)
 ├── .github/workflows/   release.yml: the tag-driven release build
@@ -83,64 +81,14 @@ mapchar/
 - **Test ROMs**: a test that needs a game reads it from
   `test-data/<game>/<ROM>` (gitignored) through `conftest.game_rom`, and
   skips without it; no test reads `sample-projects/`, whose ROMs and projects
-  are the user's to change. The folders are the sample names —
-  `Super Mario World`, `Mother 3`, `MK2`, `mk1`, `Dragon Warrior II` — each
-  ROM the unmodified dump its sample module names.
-- **Example projects**: the sample builders live in `local-tools/`
-  (gitignored), and a test that loads one through `conftest.local_tool`, or
-  a sample's files, skips without it. `tests/test_examples.py` runs the Super
-  Mario World sample whose tables and command file live in
-  `local-tools/samples/Super Mario World/` (the 22 message-box messages and
-  the 57 level-name parts of the unheadered USA ROM, located from the SMW
-  disassembly). `uv run python
-  local-tools/make_sample_projects.py [game…]` copies each game's tables and
-  command file beside its ROM in `sample-projects/<game>/` (gitignored) and
-  saves a `<game>.mapchar` project there, ready to open; named games are the
-  only ones built. Its `build` makes one game's project in any folder holding
-  the ROM: `tests/test_lint_snapshot.py` builds every sample whose ROM is in
+  are the user's to change.
+- **Sample projects**: the sample builders live in `local-tools/`
+  (gitignored), their tests in `local-tools/tests/` (`uv run pytest
+  local-tools/tests`), and each sample's `README.md` in
+  `sample-projects/<game>/` documents it. A suite test that loads a builder
+  through `conftest.local_tool` skips without it:
+  `tests/test_lint_snapshot.py` builds every sample whose ROM is in
   `test-data/` into a scratch folder and lints it.
-- **Dragon Quest IV** and **Dragon Warrior II** are the two NES samples. Their
-  tables and Cartographer command file come from abcde's own examples in the
-  sibling checkout, `../abcde/eg/NES/<game>/`, so building one needs that
-  checkout as well as the ROM. `tests/test_examples.py` covers neither. Dragon
-  Quest IV is the project `local-tools/ui_screenshots.py` opens unless told
-  another ([ui.md](ui.md)).
-- **Mother 3**: `local-tools/mother3_sample.py` derives the sample's tables (`m3`,
-  `m3battle`, `saturn`) and its 20 blocks — 12,997 strings, 7,825 of them in
-  **Script**, one block over the main script's nested offset tables — from
-  `sample-projects/Mother 3/Mother 3 (Japan).gba`, since nothing extracted
-  from a ROM is checked in; its docstring says which ROM structure and routine
-  each fact comes from, and `FOLDERS` which Files panel folder each block goes
-  in. `tests/test_examples.py` reads every block and edits
-  through all three tables, and in a map of the script whose last page is a
-  string of its own. A string commit in **Script** takes about a third of a
-  second. The project reads every block as it opens, in
-  about four seconds.
-- **Mortal Kombat II**: `local-tools/mk2_sample.py` derives the Game Boy sample's
-  six tables (`mk2`, `mk2-records`, `mk2-names`, `mk2-title`, one per routine
-  that draws text, and `mk2-legal`, `mk2-credits` for two screens' tiles) and
-  its 21 blocks, 201 strings, from `Mortal Kombat II (USA, Europe).gb` (CRC32
-  `BFAEADD0`): each block from the
-  `ld hl,nn` before a call to a print routine, each table from that routine's
-  compares. Menu strings are list sources over those code operands; the
-  `[u16 screen offset][u8 length]` records are Pascal strings behind a
-  two-byte record header (`header=2`). Its docstring cites each routine; the
-  legal screen and the credits are blocks over two decompressed RNC streams,
-  a fixed string per tilemap row.
-  `tests/test_examples.py` reads every block and edits a record and a menu
-  string.
-- **Mortal Kombat**: `local-tools/mk1_sample.py` derives the Game Boy sample's six
-  tables (`mk1`, `mk1-fight`, `mk1-hud`, `mk1-debug`, one per printer;
-  `mk1-picture` for the screens a picture overwrites four glyphs on;
-  `mk1-names` for what both fonts draw) and its 19 blocks, 81 strings, from
-  `gb_mk1_us.gb` (CRC32 `64F5460C`). The text is inline after each call to a
-  printer, so a block is a range over a screen's strings with skips over the
-  code between; the printer returns to the byte after the terminator, so the
-  inline blocks pad with `$00` (`nop`) and read it as the end token. Its
-  docstring cites each routine, and `NOTES` puts on each string what its edit
-  must keep that no table or slot enforces (a name's 1-8 letters, a blink's
-  blanking string). `tests/test_examples.py` reads every block and edits a
-  shortened string, a name and the initials.
 - **Verification fixtures**: `tests/test_verify_abcde.py` compares mapchar's
   extraction with abcde's Cartographer dump of the synthetic ROM in
   `tests/fixtures/abcde/`. The fixtures are checked in, so the suite never runs

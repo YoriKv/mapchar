@@ -10,7 +10,7 @@ becomes a pass-through. The linter reports what a load would silently change.
 ## Running it
 
 ```bash
-PYTHONPATH=tools/mapchar-lint/src python3 -m mapchar_lint sample-projects/
+PYTHONPATH=tools/mapchar-lint/src python3 -m mapchar_lint path/to/projects/
 uv tool install ./tools/mapchar-lint && mapchar-lint my.mapchar   # as a command
 ```
 
