@@ -736,10 +736,11 @@ def test_a_version_1_project_s_fixed_strings_open_without_their_end_token(
     assert not block.fixed_ends_shown
 
 
-def test_a_header_is_a_range_block_s_setting(window, tmp_path):
+def test_a_header_reads_the_records_a_range_or_a_pointer_reaches(window, tmp_path):
     """Records of ``[2 bytes][length][text]`` read once the bar is told the
-    header, with no skip range per record; a pointer block has no such field."""
-    data = bytes.fromhex("05 CB 02 41 42  06 CB 01 42") + b"\xff" * 4
+    header, with no skip range per record, whether a range holds them or a
+    pointer reaches them header and all."""
+    data = bytes.fromhex("05 CB 02 41 42  06 CB 01 42  05 00") + b"\xff" * 4
     entry = open_rom_and_table(window, tmp_path, data)
     block = add_block(window, entry, "b", RangeSource(0, 9), Pascal(1))
     bar = window.reading_bar
@@ -750,10 +751,14 @@ def test_a_header_is_a_range_block_s_setting(window, tmp_path):
     assert bar.writing.write_mode.itemText(0) == "Automatic (slotted)"
     window.undo_stack.undo()
     assert block.config.header == 0 and bar.header.value() == 0
-    pointers = add_block(
-        window, entry, "p", PointerTableSource(0, 2, 2, 2, "little", "linear", 0)
-    )
-    assert pointers.config.header == 0 and not bar.header.isEnabled()
+    table = PointerTableSource(9, 11, 2, 2, "little", "linear", 0)
+    pointers = add_block(window, entry, "p", table, Pascal(1))
+    assert bar.header.isEnabled()
+    assert bar.writing.write_mode.itemText(0) == "Automatic (packed)"
+    bar.header.setValue(2)
+    assert pointers.config.header == 2
+    assert [s.current_text() for s in pointers.doc.strings] == ["B"]
+    assert bar.writing.write_mode.itemText(0) == "Automatic (slotted)"
 
 
 @pytest.mark.parametrize("width", (1920, 2560, 3000))

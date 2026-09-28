@@ -88,10 +88,9 @@ def test_a_view_steps_over_a_record_header_as_the_block_does():
     run = decode_strings(data, pascal, abc)
     assert render(run.tokens) == "[$05][$CB]AB[$06][$CB]B[$07][$CB]BA"
     assert run.starts == [16, 56, 88]
-    # A pointer reaches its string past any header, so none is stepped over.
+    # A pointer reaches the record, header and all, so it is stepped over alike.
     table = BlockConfig(PointerTableSource(0, 4, 2, 2), Pascal(1), "main", header=2)
-    # The 05 is the first string's count, not a header byte.
-    assert render(decode_strings(data, table, abc).tokens).startswith("[$CB][$02]AB")
+    assert decode_strings(data, table, abc).starts == [16, 56, 88]
 
 
 def test_a_view_passes_over_the_padding_between_strings_as_the_block_does():

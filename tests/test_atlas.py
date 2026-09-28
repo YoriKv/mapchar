@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from helpers import ABC_TABLE, pointer_rom, table_set, tables_from, translated
 from mapchar.core.block import (
     BlockConfig,
@@ -100,6 +102,22 @@ def test_atlas_addresses_are_file_offsets(registry):
     assert back.strings[0].insert_at - header == 0x10
     assert [tuple(a - header for a in x.pointers) for x in back.strings] == [(0,), (2,)]
     assert [x.text for x in back.strings] == [r.current_text() for r in ex.strings]
+
+
+def test_atlas_points_a_pointer_at_the_record_header_and_all(registry):
+    """Atlas points a pointer at where it writes the text, so a record header
+    counts in the offset the pointers are taken from."""
+    data = pointer_rom((0x10, 0x14), "05 CB 41 00  06 CB 42 00")
+    cfg = BlockConfig(
+        PointerTableSource(0, 4, 2, 2, "little", "linear", 0x100),
+        EndToken(),
+        "main",
+        header=2,
+    )
+    ex = extract(data, replace(cfg, source=replace(cfg.source, offset=0)), TS)
+    export = write_atlas("R", cfg, ex.strings, TS, {})
+    assert "#HDR($102)" in export.script
+    assert "#JMP($12, $13)\n#W16($0)\nA[end]" in export.script
 
 
 def test_cartographer_export_roundtrip():

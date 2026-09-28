@@ -552,8 +552,8 @@ class ReadingBar(WrapBar):
         self._sync()
 
     def _header(self) -> int:
-        """The bytes in front of every string that are not text; only a range
-        has them."""
+        """The bytes in front of every string that are not text, where they
+        count toward a range's records."""
         return self.header.value() if self.source_kind.currentData() == RANGE else 0
 
     def _show_count(self) -> None:
@@ -653,7 +653,7 @@ class ReadingBar(WrapBar):
             "inner_null": kind == NESTED,
             "string_type": True,
             "realign": True,
-            "header": block and kind == RANGE,
+            "header": block and not runs,
             "skips": block,
             "fixed_length": st == FIXED_LENGTH,
             "count": block and kind == RANGE and st == FIXED_LENGTH,
@@ -678,9 +678,7 @@ class ReadingBar(WrapBar):
                 )
             group.setEnabled(applying and not (self._string_view and name in _WHERE))
         self.pascal_endian.setVisible(self.pascal_width.value() > 1)
-        forced = bool(self.skips.value()) or (
-            kind == RANGE and bool(self.header.value())
-        )
+        forced = bool(self.skips.value()) or (not runs and bool(self.header.value()))
         self.writing.show_forced(self._pointers, forced)
         why = self._chain_refusal()
         self.chain.setToolTip(

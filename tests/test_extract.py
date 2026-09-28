@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from helpers import ABC_TABLE, pointer_rom, relayout, table_set, texts
+from mapchar.core.bits import Bits
 from mapchar.core.block import (
     BlockConfig,
     EndToken,
@@ -15,11 +16,13 @@ from mapchar.core.block import (
     WriteMode,
     fill_reads_as_padding,
 )
+from mapchar.core.tokens import render
 from mapchar.pipeline.extract import (
     extract,
     legacy_fixed_text,
     respell_fixed_end,
 )
+from mapchar.pipeline.view_read import target_string
 from mapchar.project.formats.blockspec import format_config, parse_config
 
 TS = table_set(ABC_TABLE, "main")
@@ -316,17 +319,50 @@ def test_a_record_header_is_stepped_over_before_every_string():
     assert not res.ok
 
 
-def test_a_header_is_a_range_s_and_goes_in_the_config_line():
+def test_a_header_goes_in_the_config_line():
     cfg = BlockConfig(RangeSource(0, 8), Pascal(1), "main", header=2)
     assert "header=2" in format_config(cfg)
     assert parse_config(format_config(cfg)) == cfg
     table = PointerTableSource(0, 4, 2, 2, "little", "linear", 0)
     pointers = replace(cfg, source=table)
-    assert pointers.record_header == 0
-    assert pointers.effective_write_mode is WriteMode.PACKED
-    # A block switched to pointers keeps the setting on screen and saves none
-    # of it: a pointer reaches its string past any header.
-    assert "header=" not in format_config(pointers)
+    assert pointers.record_header == 2
+    assert parse_config(format_config(pointers)) == pointers
+    # The game counts end tokens to a run's later strings, which no header
+    # stands in front of: a block that reads runs keeps the setting on screen
+    # and saves none of it.
+    runs = replace(pointers, string_type=EndToken(), strings_per_pointer=2)
+    assert runs.record_header == 0
+    assert runs.effective_write_mode is WriteMode.PACKED
+    assert "header=" not in format_config(runs)
+
+
+def test_a_pointer_reaches_the_record_in_front_of_its_string():
+    """``[2 bytes][length][text]`` records a pointer reaches header and all:
+    each string begins past its header, and the write is slotted, the headers
+    and the pointers left standing."""
+    body = "05 CB 02 41 42  06 CB 01 42  07 CB 02 42 41"
+    data = pointer_rom([0x10, 0x15, 0x19], body)
+    cfg = BlockConfig(
+        PointerTableSource(0, 6, 2, 2, "little", "linear", 0),
+        Pascal(1),
+        "main",
+        header=2,
+    )
+    ex = extract(data, cfg, TS)
+    assert [(s.start, s.current_text()) for s in ex.strings] == [
+        (0x12, "AB"),
+        (0x17, "B"),
+        (0x1B, "BA"),
+    ]
+    assert [p.address for p in ex.strings[1].pointers] == [2]
+    assert cfg.effective_write_mode is WriteMode.SLOTTED
+    res, out = relayout(data, cfg, TS, {0: "A"})
+    assert res.ok, res.problems
+    assert out == pointer_rom(
+        [0x10, 0x15, 0x19], "05 CB 01 41 FF  06 CB 01 42  07 CB 02 42 41"
+    )
+    tokens, cut = target_string(Bits(data), cfg, TS, 0x15)
+    assert render(tokens) == "B" and not cut
 
 
 def test_a_header_settles_the_write_mode_as_a_skip_range_does():

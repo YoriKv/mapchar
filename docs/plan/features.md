@@ -828,14 +828,14 @@ of end-token strings.
   list of `from` / `to` rows in hex, with Add and Remove, that applies as it is
   edited — a run of edits is one undo step — and the Hex tab's **Add Skip from
   Selection** adds one over the selected bytes.
-- **Header** — on a range, how many bytes in front of every string are not
-  text: a record's position, id or flags. Each string begins after its header
-  and no slot reaches into the next one's, so records of
-  `[header][length][text]` read as a **Length prefix** block with a header
-  and no skip range per record. After a shortened string its padding is passed
-  over first and the header after it, so a header should not begin with the
-  fill. A pointer reaches its string past any header, so a pointer source
-  has no such setting.
+- **Header** — how many bytes in front of every string are not text: a
+  record's position, id or flags. Each string begins after its header and no
+  slot reaches into the next one's, so records of `[header][length][text]`
+  read as a **Length prefix** block with a header and no skip range per
+  record. A pointer reaches the record, header and all. After a shortened
+  string its padding is passed over first and the header after it, so a
+  header should not begin with the fill. Greyed where pointers reach runs,
+  whose later strings the game finds by counting end tokens.
 - **Chained** — on a range of end-token or length-prefix strings, the game
   reads the strings **back to back**: it finishes one and starts the next at
   the very next byte, with no pointer of its own (a story screen drawn by one

@@ -25,7 +25,7 @@ from mapchar.core.block import (
 )
 from mapchar.core.table import TableSet
 from mapchar.core.tokens import Token
-from mapchar.engines.decode import DecodeRules, RunResult, decode_run
+from mapchar.engines.decode import DecodeRules, RunResult, advance, decode_run
 from mapchar.pipeline.extract import (
     decode_one,
     pad_run,
@@ -123,7 +123,7 @@ def _head(cut: BlockConfig, offset: int) -> tuple[int, FixedLength | None]:
     the length together: a Pascal count is read from the data, and a view that
     starts inside one of those cannot find the count that says how long it is;
     a pointer source's strings are each at their own target, which no phase
-    gives — and no header either.
+    gives.
     """
     header = cut.record_header
     string_type = cut.string_type
@@ -224,13 +224,18 @@ of the file, on a table that has none — and a view holds hundreds of pointers.
 def target_string(
     bits: Bits, config: BlockConfig, tables: TableSet, target: int
 ) -> tuple[list[Token], bool]:
-    """The string a pointer reaches, read by ``config``'s string rules for at
-    most :data:`PREVIEW_BYTES`, and whether that cut it short."""
-    tokens = string_at(bits, config, tables, target * 8, PREVIEW_BYTES * 8)
+    """The string a pointer reaches, past the record header in front of it,
+    read by ``config``'s string rules for at most :data:`PREVIEW_BYTES`, and
+    whether that cut it short."""
+    skips = sorted((a * 8, b * 8) for a, b in config.skips)
+    start = target * 8
+    if config.record_header:
+        start = advance(start, config.record_header * 8, skips)
+    tokens = string_at(bits, config, tables, start, PREVIEW_BYTES * 8)
     last = tokens[-1] if tokens else None
     cut = (
         last is not None
-        and last.bit_end >= (target + PREVIEW_BYTES) * 8
+        and last.bit_end >= start + PREVIEW_BYTES * 8
         and not last.is_end
     )
     return tokens, cut

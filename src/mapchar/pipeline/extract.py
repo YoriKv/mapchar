@@ -279,6 +279,8 @@ def _extract_pointers(
     st = config.string_type
     pad = padding_bits(config, tables) if isinstance(st, NextPointer) else None
     nested = isinstance(source, NestedPointerSource)
+    header = config.record_header * 8
+    skips = sorted((a * 8, b * 8) for a, b in config.skips)
     stops: dict[int | None, list[int]] = {}
     """The targets a run may stop at, in address order: the block's, or for a
     nested source those of the run's own group."""
@@ -290,6 +292,9 @@ def _extract_pointers(
         if limit is not None and len(strings) >= limit:
             break
         start = target * 8
+        if header:
+            # The pointer reaches the record; its string begins past the header.
+            start = advance(start, header, skips)
         if start >= bits.length:
             continue
         end_bit = stop_bit if stop_bit > start else bits.length

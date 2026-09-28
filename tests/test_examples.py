@@ -14,6 +14,7 @@ from helpers import (
     relayout,
     texts,
 )
+from mapchar.core.block import WriteMode
 from mapchar.core.table import TableSet
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import layout_block
@@ -245,6 +246,21 @@ def test_mortal_kombat_ii(registry):
     assert res.ok, res.problems
     assert out[0x853D:0x8545] == bytes.fromhex("07CB05") + b"RND 2"
     assert texts(extract(out, config, ts, registry))[1:3] == ["RND 2", "ROUND 3"]
+
+    # A winner message's pointer reaches its record, header and all, so the
+    # block writes slotted and a shorter message leaves the next header standing.
+    config, ts, ex = blocks["Winners"]
+    assert config.write_mode is None
+    assert config.effective_write_mode is WriteMode.SLOTTED
+    assert texts(ex)[:2] == ["LIU KANG WINS", "SUB ZERO WINS"]
+    res, out = relayout(data, config, ts, {0: "KANG WINS"}, registry)
+    assert res.ok, res.problems
+    assert out[0x8593:0x8596] == bytes.fromhex("03CB09")
+    assert out[0x85A3:0x85A6] == data[0x85A3:0x85A6]
+    assert texts(extract(out, config, ts, registry))[:2] == [
+        "KANG WINS",
+        "SUB ZERO WINS",
+    ]
 
     # The story screens are chains of records, one per line: a shorter line
     # is padded inside its record, so the next is where the game reads it.

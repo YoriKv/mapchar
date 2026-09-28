@@ -204,10 +204,9 @@ class BlockConfig:
     skips: tuple[tuple[int, int], ...] = ()
     """``(from, to)`` byte pairs: reading ``from`` continues at ``to``."""
     header: int = 0
-    """Bytes in front of every string of a range that are not text — a
-    record's position, id or flags — stepped over on the way to the string and
-    left standing by a write. A pointer reaches its string past any header, so
-    a pointer source has no use for it."""
+    """Bytes in front of every string that are not text — a record's position,
+    id or flags — stepped over on the way to the string and left standing by a
+    write. A pointer reaches the record, header and all."""
     line_length: int = 0
     """For fixed strings, split each into lines this long (0: off)."""
     bound: int | None = None
@@ -275,8 +274,9 @@ class BlockConfig:
 
     @property
     def record_header(self) -> int:
-        """:attr:`header` where it applies: over a range."""
-        return self.header if isinstance(self.source, RangeSource) else 0
+        """:attr:`header` where it applies: everywhere but where pointers reach
+        runs, whose later strings the game finds by counting end tokens."""
+        return 0 if self.reads_runs else self.header
 
     @property
     def chained(self) -> bool:

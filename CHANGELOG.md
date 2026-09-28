@@ -3,6 +3,7 @@
 ## v0.1.8 - unreleased
 
 - Fix pausing the emulator not capturing; pauses mapchar missed are picked up
+- Add record headers to pointer blocks
 
 ## v0.1.7 - 2026-09-27
 

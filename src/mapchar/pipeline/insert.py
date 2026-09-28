@@ -663,7 +663,7 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
         enc = result.encoded.get(rec.index)
         if enc.new_start is None:
             continue
-        # A range's pointer reaches its string's record, header and all.
+        # A pointer reaches its string's record, header and all.
         new_start = enc.new_start - config.record_header
         for ref in rec.pointers:
             if ref.mapping_id not in mappings:

@@ -146,8 +146,9 @@ in bytes, which is the unit their results are reported and selected in.
   `FixedLength(length, stop_at_end)`, `Pascal(width, counts_tokens, endian)`,
   `NextPointer`, `Lines(count)`), `table_id`, `strings_per_pointer` and
   `run_to_next` (the run a pointer reaches; `reads_runs`), `end_is_fill`,
-  `realign`, `skips`, `header` (bytes before each string of a range that are
-  not text, at most `MAX_RECORD_HEADER`), `line_length`, `bound`, `write_mode`
+  `realign`, `skips`, `header` (bytes before each string that are not text,
+  at most `MAX_RECORD_HEADER`; a pointer reaches the record, header and all,
+  and `record_header` is 0 where pointers reach runs), `line_length`, `bound`, `write_mode`
   (`PACKED`, `SLOTTED`; `effective_write_mode` is slotted whatever it holds
   once skip ranges or a header break the text up), `fill` (a byte pattern),
   the artificial codes a fixed string is shown with: `show_end`,

@@ -127,7 +127,8 @@ def write_atlas(
             out.append(f'#SMA("{ADDRESS_TYPES[mapping]}")')
         if getattr(src, "endian", "little") == "big":
             out.append('#ENDIANSWAP("TRUE")')
-        offset = getattr(src, "offset", 0)
+        # A pointer reaches the record, so the header counts as the offset does.
+        offset = getattr(src, "offset", 0) + config.record_header
         if offset:
             out.append(f"#HDR({format_num(offset)})")
     st = config.string_type
