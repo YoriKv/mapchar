@@ -570,6 +570,8 @@ def test_project_strings_lists_every_block_and_jumps(window, tmp_path):
     listing._jump()
     assert window._entry is second and window.strings.selected_indices() == [0]
     assert window._current_view() == "strings"
+    panel = window.files_panel
+    assert panel.string_of(panel.tree.currentItem()) == (second, 0)
     # The list follows an edit while it is open.
     listing.status_filter.setCurrentText("all")
     window._on_translation_edited(0, "A[end]")

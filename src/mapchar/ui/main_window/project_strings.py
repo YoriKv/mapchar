@@ -55,9 +55,11 @@ class ProjectStringsMixin:
         self.project_strings.set_strings(rows)
 
     def _jump_to_string(self, entry: Entry, index: int) -> None:
-        """Open the block on its Strings view with the string selected."""
+        """Open the block on its Strings view with the string selected, here
+        and on its row in the Files panel."""
         self._activate_entry(entry)
         self._show_view("strings")
         self.strings.select_index(index)
         self._on_string_row(index)
+        self.files_panel.select_string(entry, index)
         self.activateWindow()
