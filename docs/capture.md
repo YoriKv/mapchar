@@ -26,7 +26,7 @@ project is unsaved:
 | Path | What |
 |---|---|
 | `setup.json` | what the setup window was given: the font's memory and range |
-| `incoming/` | the recorder's moments before the session takes them |
+| `incoming/` | the recorder's moments before the session takes them; any left there — mapchar was not listening — are taken in when the session next opens |
 | `<id>/moment.txt` | the capture point (frame, poll, master clock, RAM + VRAM hash), the ring's states (pinned ones marked), and the latest text's first and last font read |
 | `<id>/sNN.mss`, `input.txt`, `screen.png` | the ring, every polled input since its oldest state, the screenshot |
 | `<id>/capture.json` | the typed text, the state, the result |

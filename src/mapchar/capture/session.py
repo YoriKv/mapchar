@@ -159,6 +159,21 @@ class Session:
             if name != INCOMING and os.path.isdir(folder):
                 if os.path.exists(os.path.join(folder, "moment.txt")):
                     self.captures.append(Capture.load(folder))
+        self._recover()
+
+    def _recover(self) -> None:
+        """Take in the moments the recorder left in ``incoming/`` unannounced:
+        mapchar was not listening when it said so. A moment's description is
+        written last, so one with a description is whole."""
+        incoming = os.path.join(self.root, INCOMING)
+        for name in sorted(os.listdir(incoming)):
+            id, ext = os.path.splitext(name)
+            if ext != ".txt" or id.endswith("_input") or self.capture(id):
+                continue
+            try:
+                self.add_moment(id, os.path.join(incoming, id))
+            except (OSError, CaptureError) as e:
+                self.messages.append(f"A pause left behind could not be read: {e}")
 
     def _changed(self, cap: Capture) -> None:
         cap.progress = None  # a new state starts uncounted

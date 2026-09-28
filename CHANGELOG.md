@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.8 - unreleased
+
+- Fix pausing the emulator not capturing; pauses mapchar missed are picked up
+
 ## v0.1.7 - 2026-09-27
 
 - Add chained blocks support

@@ -503,6 +503,29 @@ def arrive(session, name="0001", extra=""):
     return session.add_moment(name, src)
 
 
+def test_a_moment_left_unannounced_is_taken_in_on_opening(tmp_path, game):
+    s = make_session(tmp_path, game)
+    incoming = os.path.join(s.root, "incoming")
+    for name in ("0001", "0002"):
+        write_moment(os.path.join(incoming, name + "_tmp"))
+        for f, to in (("moment.txt", ".txt"), ("s01.mss", "_s01.mss")):
+            os.replace(
+                os.path.join(incoming, name + "_tmp", f),
+                os.path.join(incoming, name + to),
+            )
+    # Only 0001 is whole: 0002 has no input yet.
+    os.replace(
+        os.path.join(incoming, "0001_tmp", "input.txt"),
+        os.path.join(incoming, "0001_input.txt"),
+    )
+    again = Session(s.root, s.rom_path, CONSOLE, s.emulator)
+    assert [c.id for c in again.captures] == ["0001"]
+    assert again.captures[0].needs_text
+    assert not os.path.exists(os.path.join(incoming, "0001.txt"))
+    assert os.path.exists(os.path.join(incoming, "0002.txt"))
+    assert "0002_input.txt" in again.messages[-1]
+
+
 def test_the_session_plays_with_its_setup(tmp_path, game):
     s = make_session(tmp_path, game)
     s.set_setup(setup.Setup(setup.rom_font(0x200, 0x2FF, len(game.rom))))

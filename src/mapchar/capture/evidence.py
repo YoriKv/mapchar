@@ -120,10 +120,15 @@ def state_path(folder: str, index: int) -> str:
 def ingest(prefix: str, folder: str) -> Moment:
     """Move the recorder's files for one moment (``<prefix>.txt``,
     ``<prefix>_sNN.mss``, ``<prefix>_input.txt``, ``<prefix>.png``) into a
-    capture folder."""
+    capture folder. Nothing is moved unless every file it needs is there."""
+    with open(prefix + ".txt", encoding="utf-8") as fh:
+        moment = Moment.parse(fh.read())
+    needed = [f"{prefix}_s{s.index:02d}.mss" for s in moment.states]
+    missing = [p for p in [*needed, prefix + "_input.txt"] if not os.path.exists(p)]
+    if missing:
+        raise CaptureError(f"the moment is missing {os.path.basename(missing[0])}")
     os.makedirs(folder, exist_ok=True)
     shutil.move(prefix + ".txt", os.path.join(folder, MOMENT))
-    moment = Moment.load(folder)
     for s in moment.states:
         shutil.move(f"{prefix}_s{s.index:02d}.mss", state_path(folder, s.index))
     shutil.move(prefix + "_input.txt", os.path.join(folder, INPUT))

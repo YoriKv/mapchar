@@ -644,7 +644,8 @@ processors read text).
   moment — the savestates, the input, a screenshot — and opens the **capture
   window**: the screenshot and a text box. The user types what they see, all
   of it or part, and presses **Capture**, or **Skip**; there is no time limit,
-  and they may resume play at once. The typed text is what the capture is
+  and they may resume play at once. A pause mapchar missed — it was closed, or
+  not listening — is listed the next time the captures are opened. The typed text is what the capture is
   about, so a line with only kanji or symbols asks for kana or Latin letters,
   and a line too short to be found in one place (fewer than four letters)
   asks for more. The one condition is when the user pauses: within 30 seconds of the
