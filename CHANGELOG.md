@@ -2,13 +2,7 @@
 
 ## v0.1.7 - unreleased
 
-- Capture text from a running game: play it in Mesen 2, type what you see, and review the blocks, pointers and table entries it proposes
-- Research into capturing on-screen text from a running emulator, and refreshed screenshots
-- Strings that end just before a skip range can be written again
-- Realign applies to every string type, so fixed-size records can be filled
-- A progress bar in the Captures dock while a capture is traced
-- Tell capture where the game's font is, so text can be captured long after it appears
-- Chained blocks: strings the game reads back to back are padded or packed so the chain stays whole, and a broken chain can be repaired
+- Add chained blocks support
 
 ## v0.1.6 - 2026-09-23
 
