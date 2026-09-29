@@ -125,8 +125,8 @@ tooltip the control has of its own.
 
 - **Item views** — `show_elided_tooltips(view)` on the Files tree, the
   Strings table, every `ResultsTable`, the Table Editor grid, the
-  Preview's tables and the container's file list. A cell with room keeps the
-  view's usual tooltip.
+  Preview's tables, the container's file list and the Captures dock's two
+  lists. A cell with room keeps the view's usual tooltip.
 - **Labels** — `ElidedLabel`; `text()` and `toolTip()` still read back what
   was set.
 - **Pickers** — `CompactComboBox` spells out a current item it cuts.
@@ -173,7 +173,8 @@ Editor's grid is a `QTableView` over a model of the entries themselves
 - **A tool window that edits the project carries Undo and Redo itself.** A
   window shortcut reaches only the active top-level window, and a tool window
   is one of its own, so `widgets.carry_undo` puts the Edit menu's two actions
-  on the Table Editor, Find and Replace and the Glossary dock — a top-level
+  on the Table Editor, Find and Replace, the Glossary dock and the Captures
+  dock — a top-level
   window once it is floated — as well: Ctrl+Z means
   the same thing wherever the focus is. It means it inside their fields too —
   a text field, a text box and a spin box each claim the key for their own
@@ -195,6 +196,37 @@ Editor's grid is a `QTableView` over a model of the entries themselves
   are a stand-in screen's paper, ink and grid, not marks put on the text.
 - Icon-only buttons wear the bundled icon font's arrows and always have a
   tooltip naming their key.
+
+## Capture's surfaces
+
+`ui/capture.py` holds them; `ui/main_window/capture.py` drives them from the
+session.
+
+- **The Captures dock** lists the captures in place: a row is added or removed
+  only as a capture comes or goes, its words updated where it stands, and each
+  thumbnail is made once. While work runs and nothing else changes, only the
+  progress line under the list is redrawn. A capture that has just failed is
+  selected, and its row's tooltip underlines the words that did not fit. The
+  recorder's connection is a line with **Stop Playing** beside it; with no
+  captures open the dock says how to open some. Enter opens the selected
+  capture's window; Delete, like Remove, asks before it deletes the capture's
+  files. Enter and Delete here and in Review are in `help_dialogs.DISPLAY_ONLY`.
+- **The Review tab** gathers the glyphs to label under one collapsible row.
+  Whether a proposal is accepted is read from the project — what its
+  acceptance added, even after an edit, or else what it proposes, held as
+  proposed — so undo takes it back; an accepted row greys Accept, Edit… and
+  Label, and a rejected one offers Reset. A refresh brings the rows' marks up
+  to date in place, leaving the selection and a label being typed alone, and
+  waits while the dock is hidden.
+  The detail names the table the proposals read through and where a block's
+  strings start (**Go To**). Enter accepts (or opens a group, or the label
+  field), Delete rejects.
+- **Runs in the game** (Confirm in Game, Show Its Strings in Game) are one at
+  a time: while one runs its buttons are greyed and a line says what runs,
+  with a Stop beside it (the Captures tab's Stop stops it too); removing its
+  capture or closing the captures ends it and its emulator as well.
+  Their windows delete themselves on close; the strings window fills a grid as
+  the screenshots come, and closing it stops the run.
 
 ## Menus in code
 

@@ -181,7 +181,9 @@ def test_detect_and_image():
     assert consoles.NES.header(ines) == 16
     assert len(consoles.NES.image(ines)) == 0x8000
     gba = bytearray(0x200)
+    gba[4:12] = bytes.fromhex("24FFAE51699AA221")
     gba[0xB2] = 0x96
+    gba[0xBD] = (-(sum(gba[0xA0:0xBD]) + 0x19)) & 0xFF
     assert consoles.detect("x.bin", bytes(gba)) is consoles.GBA
     snes = bytearray(0x10000)
     snes[0x7FD5] = 0x20
@@ -194,7 +196,7 @@ def test_detect_and_image():
 
 def test_lua_literals():
     assert consoles.lua_value({"a": [1, None, True], "b": "p"}) == (
-        "{ a = { 1, nil, true }, b = [==[p]==] }"
+        "{ a = { 1, nil, true }, b = [[\np]] }"
     )
 
 
@@ -518,6 +520,9 @@ def test_a_moment_left_unannounced_is_taken_in_on_opening(tmp_path, game):
         os.path.join(incoming, "0001_tmp", "input.txt"),
         os.path.join(incoming, "0001_input.txt"),
     )
+    old = time.time() - 5  # written a while ago: no recorder is still at it
+    for f in os.listdir(incoming):
+        os.utime(os.path.join(incoming, f), (old, old))
     again = Session(s.root, s.rom_path, CONSOLE, s.emulator)
     assert [c.id for c in again.captures] == ["0001"]
     assert again.captures[0].needs_text
@@ -530,9 +535,9 @@ def test_the_session_plays_with_its_setup(tmp_path, game):
     s = make_session(tmp_path, game)
     s.set_setup(setup.Setup(setup.rom_font(0x200, 0x2FF, len(game.rom))))
     s.play()
-    with open(os.path.join(s.root, "_recorder.lua"), encoding="utf-8") as fh:
+    with open(s.recorder_script, encoding="utf-8") as fh:
         script = fh.read()
-    assert "font = { memory = [==[snesPrgRom]==], lo = 512, hi = 767" in script
+    assert "font = { memory = [[\nsnesPrgRom]], lo = 512, hi = 767" in script
     assert "local function armFont" not in script and "armFont = function" in script
     s.stop_playing()
     again = Session(s.root, s.rom_path, CONSOLE, s.emulator)

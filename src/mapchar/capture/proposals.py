@@ -4,14 +4,19 @@ Block configurations, table entries, glyphs to label and conflicts, each with
 the captures behind it and what is unconfirmed. Offsets here are the ROM
 image's; :func:`propose` shifts them by where the image starts in the payload
 the project reads. Nothing here changes a project: the UI applies an accepted
-proposal through its usual undoable edits.
+proposal through its usual undoable edits. A proposal's id is derived from
+what it proposes, so a review mark stays with the same proposal however the
+captures behind it are renumbered: a block's from its routine, output, kind
+and start, so a capture that extends it keeps the mark; the entries' from
+every entry, so a new code makes them a new proposal.
 """
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field, replace
 
-from mapchar.capture.combine import Combined, Conflict, Engine, Meaning
+from mapchar.capture.combine import MAX_PARAMS, Combined, Conflict, Engine, Meaning
 from mapchar.core.bits import bytes_to_bits
 from mapchar.core.block import (
     BlockConfig,
@@ -27,6 +32,8 @@ BLOCK = "block"
 ENTRIES = "entries"
 GLYPH = "glyph"
 CONFLICT = "conflict"
+
+END_LABEL = "end"
 
 
 @dataclass
@@ -51,6 +58,20 @@ class Proposal:
     and for showing it."""
 
 
+def _digest(value) -> str:
+    return hashlib.sha1(repr(value).encode()).hexdigest()[:8]
+
+
+def _anchor(e: Engine) -> tuple:
+    """What a block is known by however far later captures extend it: its
+    kind and where it starts — a table's first slot, pointer size and
+    mapping; a range's first byte — in the image's offsets."""
+    t = e.table
+    if t is not None:
+        return ("table", t.start, t.size, t.mapping_id)
+    return ("range", min(e.starts.values()), e.stream is not None)
+
+
 def code_bits(m: Meaning) -> str:
     return m.bits or bytes_to_bits(m.code.to_bytes(m.width, "little"))
 
@@ -66,9 +87,9 @@ def entry_for(m: Meaning, text: str | None = None) -> TableEntry | None:
     if m.kind == "text" or (m.kind == "glyph" and text):
         return TableEntry(bits, TokenKind.TEXT, text)
     if m.kind == "end":
-        return TableEntry(bits, TokenKind.END, "[end]")
+        return TableEntry(bits, TokenKind.END, f"[{END_LABEL}]")
     if m.kind == "command":
-        if m.params:
+        if 0 < m.params <= MAX_PARAMS:
             spec = {1: "u8", 2: "u16"}.get(m.params, str(m.params))
             return TableEntry(
                 bits, TokenKind.CODE, _label(m), operands=(OperandSpec.parse(spec),)
@@ -106,16 +127,18 @@ def relabelled(entries: list[TableEntry], table) -> list[TableEntry]:
 def _string_type(e: Engine):
     if e.end_code is not None:
         return EndToken()
-    if e.fixed_length is not None:
-        return FixedLength(e.fixed_length)
     if e.table is not None:
         return NextPointer()
+    if e.fixed_length is not None:
+        return FixedLength(e.fixed_length)
     return None
 
 
 def _source(e: Engine, shift: int):
     if e.table is not None:
         t = e.table
+        # Every mapping's target is an offset into the image; the payload
+        # holds the image ``shift`` bytes in.
         return PointerTableSource(
             t.start + shift,
             t.stop + shift,
@@ -123,10 +146,15 @@ def _source(e: Engine, shift: int):
             t.stride,
             t.endian,
             t.mapping_id,
-            t.offset + (shift if t.mapping_id == "linear" else 0),
+            t.offset + shift,
             t.bank,
+            t.null,
         )
-    return RangeSource(min(e.starts.values()) + shift, max(e.ends.values()) + 1 + shift)
+    start = min(e.starts.values())
+    stop = max(e.ends.values()) + 1
+    if e.fixed_length is not None:
+        stop = max(stop, max(e.starts.values()) + e.fixed_length)
+    return RangeSource(start + shift, stop + shift)
 
 
 def _block(n: int, e: Engine, table_id: str, shift: int) -> Proposal:
@@ -138,27 +166,48 @@ def _block(n: int, e: Engine, table_id: str, shift: int) -> Proposal:
         longest = max(e.ends[c] - e.starts[c] + 1 for c in e.starts)
         string_type = FixedLength(longest)
         unconfirmed.append("the string's end: its length as seen is assumed")
-    if e.table is not None and not e.table.confirmed:
+    t = e.table
+    if t is not None and not t.confirmed:
         unconfirmed.append(
             "the table's stride is assumed to be its pointer size: another "
             "capture of this engine confirms it"
         )
-    if e.table is not None:
-        ext = (e.table.stop - e.table.start) // e.table.stride
-        if ext > len(e.table.slots):
+    if t is not None:
+        ext = (t.stop - t.size - t.start) // t.stride + 1
+        between = (t.slots[-1] - t.slots[0]) // t.stride + 1 - len(t.slots)
+        if ext - len(t.slots) - between > 0:
             unconfirmed.append(
-                f"{ext - len(e.table.slots)} slots beyond those seen, read as the "
-                "same table because they point near its strings"
+                f"{ext - len(t.slots) - between} slots beyond those seen, read as "
+                "the same table because they point near its strings"
             )
+        if t.nulls:
+            unconfirmed.append(
+                f"{len(t.nulls)} slots between those seen hold ${t.null:X}, read "
+                "as no string"
+            )
+        if t.shared:
+            unconfirmed.append(
+                f"{len(t.shared)} slots between those seen point where another does"
+            )
+    for lo, hi in e.splits:
+        unconfirmed.append(
+            f"a split pointer: its low byte at ${lo + shift:X} and its high byte "
+            f"at ${hi + shift:X} each move the string"
+        )
+    if e.loose:
+        unconfirmed.append(
+            "bytes that move the string with no pointer around them confirmed: "
+            + ", ".join(f"${a + shift:X}" for a in sorted(e.loose))
+        )
     if e.layout is not None:
-        order, width, escapes, starts = e.layout
+        # BlockConfig has no start bit: a packed block starts on a byte.
+        order, width, escapes, _starts = e.layout
         unconfirmed.append(
             f"bit-packed: {order.upper()}-first {width}-bit codes, the top "
             f"{escapes} escaping to a second code; the table holds them as bits"
         )
     pointers = ""
-    if e.table is not None:
-        t = e.table
+    if t is not None:
         pointers = (
             f"pointer table at ${t.start + shift:X}–${t.stop + shift:X}, "
             f"{t.size}-byte {t.mapping_id} pointers every {t.stride} bytes"
@@ -166,12 +215,14 @@ def _block(n: int, e: Engine, table_id: str, shift: int) -> Proposal:
     elif e.single:
         held = sorted({a for addrs in e.single.values() for a in addrs})
         pointers = "pointers in code at " + ", ".join(f"${a + shift:X}" for a in held)
-    reader = f"reader {e.reader:X}" if e.reader is not None else "no single reader"
-    detail = "; ".join(x for x in (reader, pointers) if x)
+    role = "writer" if e.writer else "reader"
+    who = f"{role} {e.reader:X}" if e.reader is not None else f"no single {role}"
+    detail = "; ".join(x for x in (who, pointers) if x)
     config = BlockConfig(source=source, string_type=string_type, table_id=table_id)
     kind = "bitmap" if e.output == "vram" else "RAM"
+    reader = f"{e.reader:X}" if e.reader is not None else "none"
     return Proposal(
-        f"block:{n}",
+        f"block:{reader}:{e.output}:{_digest(_anchor(e))}",
         BLOCK,
         f"Block: {len(caps)} capture(s) of {kind} text",
         detail,
@@ -183,6 +234,23 @@ def _block(n: int, e: Engine, table_id: str, shift: int) -> Proposal:
     )
 
 
+def _entries(c: Combined) -> list[TableEntry]:
+    """Every meaning's entry, each end code's label its own: the first
+    ``[end]``, the rest ``[end-XX]``."""
+    out = []
+    ends = 0
+    for m in sorted(c.meanings.values(), key=lambda m: code_bits(m)):
+        x = entry_for(m)
+        if x is None:
+            continue
+        if m.kind == "end":
+            if ends:
+                x = replace(x, text=f"[{END_LABEL}-{m.key}]")
+            ends += 1
+        out.append(x)
+    return out
+
+
 def propose(c: Combined, table_id: str, shift: int = 0) -> list[Proposal]:
     """Every proposal, blocks first. ``shift`` is where the ROM image starts
     in the payload."""
@@ -190,17 +258,17 @@ def propose(c: Combined, table_id: str, shift: int = 0) -> list[Proposal]:
     for n, e in enumerate(c.engines):
         if e.starts:
             out.append(_block(n, e, table_id, shift))
-    entries = [entry_for(m) for m in c.meanings.values()]
-    kept = sorted((x for x in entries if x is not None), key=lambda x: x.bits)
+    kept = _entries(c)
     if kept:
         typed = sum(1 for m in c.meanings.values() if m.typed)
         caps = sorted({cap for m in c.meanings.values() for cap in m.captures})
         unconfirmed = [
             f"{m.key}: {m.note}" for m in c.meanings.values() if not m.confirmed
         ]
+        digest = _digest(sorted((x.bits, x.kind.name, x.text) for x in kept))
         out.append(
             Proposal(
-                "entries",
+                f"entries:{digest}",
                 ENTRIES,
                 f"Table entries: {len(kept)} codes",
                 f"{typed} typed, {len(kept) - typed} from what the engine did "

@@ -50,6 +50,7 @@ CONSOLE = Console(
     lambda bus: ("snesWorkRam", bus & 0x1FFFF),
     ("linear",),
     (2,),
+    ram_bus=lambda memory, off: 0x7E0000 | off,
 )
 
 
@@ -68,6 +69,56 @@ def build_rom() -> bytes:
     return bytes(rom)
 
 
+class Memory:
+    """What a probe's reads see: the ROM with its bytes changed, RAM as the
+    game wrote it, and the probe's read substitutes (``r:`` changes), counted
+    as the probe script counts them."""
+
+    def __init__(self, rom: bytes, subs=()):
+        self.rom = rom
+        self.ram: dict[int, int] = {}
+        self.subs = [dict(s, n=0, writes=0) for s in subs]
+
+    def read(self, pc: int, a: int, memory: str = "snesPrgRom") -> int:
+        v = self.rom[a] if memory == "snesPrgRom" else self.ram.get(a, 0)
+        for s in self.subs:
+            if s["mem"] != memory or s["addr"] != a:
+                continue
+            if s["after"] is not None and s["writes"] != s["after"]:
+                continue
+            if s["pc"] is not None and s["pc"] != pc:
+                continue
+            s["n"] += 1
+            if s["nth"] is None or s["n"] == s["nth"]:
+                v = s["value"]
+        return v
+
+    def read_access(self, pc: int, a: int, width: int) -> int:
+        """A GBA-style ROM read of ``width`` bytes at aligned ``a``, with the
+        probe script's rule: a substitute counts every access from its
+        byte's word start up to the byte, and changes the byte's lane."""
+        v = int.from_bytes(self.rom[a : a + width], "little")
+        for s in self.subs:
+            if s["mem"] != "snesPrgRom" or not s["addr"] & ~3 <= a <= s["addr"]:
+                continue
+            if s["after"] is not None and s["writes"] != s["after"]:
+                continue
+            if s["pc"] is not None and s["pc"] != pc:
+                continue
+            s["n"] += 1
+            if s["nth"] is not None and s["n"] != s["nth"]:
+                continue
+            shift = ((s["addr"] & 3) - (a & 3)) * 8
+            v = (v & ~(0xFF << shift)) | ((s["value"] & 0xFF) << shift)
+        return v
+
+    def write(self, a: int, v: int, memory: str = "snesWorkRam") -> None:
+        self.ram[a] = v
+        for s in self.subs:
+            if s["mem"] == memory and s["addr"] == a:
+                s["writes"] += 1
+
+
 class Game:
     """Shows message ``message`` at frame 3; the capture point is frame 10."""
 
@@ -75,27 +126,44 @@ class Game:
         self.rom = rom
         self.message = message
 
-    def run(self, rom: bytes | None = None) -> list[tuple]:
-        """Every event as ``(kind, pc, address, value, frame)``."""
+    def run(self, rom: bytes | None = None, subs=()) -> list[tuple]:
+        """Every event as ``(kind, pc, address, value, frame)``; ``subs``
+        the probe's read substitutes."""
         rom = self.rom if rom is None else rom
+        m = Memory(rom, subs)
         ev = []
         for a in range(0x800, 0x810):  # something else the game reads each frame
             ev.append(("E", NOISE_PC, a, rom[a], 1))
         slot = TABLE + 2 * self.message
-        ev.append(("E", POINTER_PC, slot, rom[slot], 3))
-        ev.append(("E", POINTER_PC, slot + 1, rom[slot + 1], 3))
-        at = int.from_bytes(rom[slot : slot + 2], "little")
+        lo, hi = m.read(POINTER_PC, slot), m.read(POINTER_PC, slot + 1)
+        ev.append(("E", POINTER_PC, slot, lo, 3))
+        ev.append(("E", POINTER_PC, slot + 1, hi, 3))
+        at = lo | hi << 8
+        ev += self.text(m, at)
+        for a in range(0x800, 0x810):
+            ev.append(("E", NOISE_PC, a, rom[a], 6))
+        return ev
+
+    def text(self, m: Memory, at: int) -> list[tuple]:
+        """The string at ``at`` read and copied into the buffer."""
+        ev = []
         for k in range(64):
-            if at + k >= len(rom):
+            if at + k >= len(m.rom):
                 break
-            v = rom[at + k]
+            v = m.read(READER_PC, at + k)
             ev.append(("E", READER_PC, at + k, v, 3))
             if v == END:
                 break
             ev.append(("W", WRITER_PC, BUFFER + k, v, 3))
-        for a in range(0x800, 0x810):
-            ev.append(("E", NOISE_PC, a, rom[a], 6))
         return ev
+
+    def vram(self, events, frame: int | None = None) -> dict[int, int]:
+        """The VRAM the events leave, up to ``frame``."""
+        return {
+            a: v
+            for kind, _, a, v, f in events
+            if kind == "V" and (frame is None or f <= frame)
+        }
 
     def log(self) -> str:
         lines, frame = [], 0
@@ -134,29 +202,67 @@ def write_moment(folder: str, extra: str = "") -> None:
         fh.write(b"\x89PNG")
 
 
+_LUA_STR = r"\[(?P<eq>=*)\[\n?(?P<body>.*?)\](?P=eq)\]"
+
+
+def _cfg(script: str) -> str:
+    """The generated ``CFG = ...`` of a script, however many lines it
+    spans."""
+    start = script.index("CFG = ")
+    end = script.find("\n-- mapchar capture:", start)
+    return script[start : end if end >= 0 else len(script)]
+
+
 def _str(script: str, key: str) -> str | None:
-    m = re.search(rf"\b{key} = \[==\[(.*?)\]==\]", script)
-    return m.group(1) if m else None
+    m = re.search(rf"\b{key} = {_LUA_STR}", script, re.S)
+    return m.group("body") if m else None
 
 
 def _num(script: str, key: str) -> int | None:
-    m = re.search(rf"\b{key} = (\d+)", script)
+    m = re.search(rf"\b{key} = (-?\d+)", script)
     return int(m.group(1)) if m else None
 
 
 def _list(script: str, key: str) -> list | None:
-    m = re.search(rf"\b{key} = \{{ (.*?) \}}", script)
+    m = re.search(rf"\b{key} = \{{ ((?:[^{{}}]|{_LUA_STR})*?) \}}", script, re.S)
     if not m:
         return None
     out = []
-    for part in m.group(1).split(", "):
-        if part.startswith("[==["):
-            out.append(part[4:-4])
-        elif part == "nil":
+    pat = rf"{_LUA_STR}|(?P<num>-?\d+)|(?P<nil>nil)|(?P<bool>true|false)"
+    for part in re.finditer(pat, m.group(1), re.S):
+        if part.group("num") is not None:
+            out.append(int(part.group("num")))
+        elif part.group("nil"):
             out.append(None)
+        elif part.group("bool"):
+            out.append(part.group("bool") == "true")
         else:
-            out.append(int(part))
+            out.append(part.group("body"))
     return out
+
+
+def _changes(text: str):
+    """A probe's changes: ROM writes and read substitutes."""
+    writes, subs = [], []
+    for item in text.split(","):
+        if not item:
+            continue
+        if item.startswith("r:"):
+            f = item[2:].split(":") + [""] * 3
+            subs.append(
+                {
+                    "mem": f[0],
+                    "addr": int(f[1], 16),
+                    "value": int(f[2], 16),
+                    "pc": int(f[3], 16) if f[3] else None,
+                    "nth": int(f[4]) if f[4] else None,
+                    "after": int(f[5]) if f[5] else None,
+                }
+            )
+        else:
+            a, v = item.split(":")
+            writes.append((int(a, 16), int(v, 16)))
+    return writes, subs
 
 
 class FakeProc:
@@ -165,12 +271,14 @@ class FakeProc:
     def __init__(self, target):
         self.returncode = None
         self.stopped = threading.Event()
+        self.killed = False
 
         def run():
             try:
                 target(self)
             finally:
-                self.returncode = 0
+                if self.returncode is None:
+                    self.returncode = 0
 
         self.thread = threading.Thread(target=run, daemon=True)
         self.thread.start()
@@ -179,12 +287,17 @@ class FakeProc:
         return self.returncode
 
     def kill(self):
+        self.killed = True
         self.stopped.set()
         self.thread.join(timeout=5)
         self.returncode = -9
 
     def wait(self, timeout=None):
         self.thread.join(timeout)
+        if self.thread.is_alive():
+            import subprocess
+
+            raise subprocess.TimeoutExpired("fake", timeout)
         return self.returncode
 
 
@@ -192,12 +305,28 @@ class FakeEmulator:
     id = "fake"
     name = "Fake"
 
-    def __init__(self, game: Game, match: bool = True, split: bool = True):
+    def __init__(
+        self,
+        game: Game,
+        match: bool = True,
+        split: bool = True,
+        fault: str | None = None,
+        replay_hang: bool = False,
+    ):
         self.game = game
         self.match = match
         self.split = split
         """Send every line in two pieces, as a socket may deliver them."""
+        self.fault = fault
+        """A probe server's fault: ``silent`` (never answers a probe), ``cut``
+        (its first run closes in the middle of its first answer), ``die``
+        (its first run ends after the reference)."""
+        self.replay_hang = replay_hang
+        """A replay that runs until it is killed."""
         self.launched: list[str] = []
+        self.procs: list[FakeProc] = []
+        self.runs = 0
+        """Probe servers started."""
 
     def consoles(self):
         return ("test",)
@@ -211,14 +340,24 @@ class FakeEmulator:
     def launch(self, rom, role, script, log=None):
         self.launched.append(role)
         with open(script, encoding="utf-8") as fh:
-            text = next(line for line in fh if line.startswith("CFG = "))
+            text = _cfg(fh.read())
         if role == "replay":
-            return FakeProc(lambda proc: self._replay(text, log))
-        if role == "probe":
-            return FakeProc(lambda proc: self._probe(text, proc))
-        return FakeProc(lambda proc: proc.stopped.wait())
+            proc = FakeProc(lambda proc: self._replay(text, log, proc))
+        elif role == "probe":
+            self.runs += 1
+            run = self.runs
+            proc = FakeProc(lambda proc: self._probe(text, proc, run))
+        else:
+            proc = FakeProc(lambda proc: proc.stopped.wait())
+        self.procs.append(proc)
+        return proc
 
-    def _replay(self, script: str, log: str) -> None:
+    def _replay(self, script: str, log: str, proc: FakeProc) -> None:
+        if self.replay_hang:
+            with open(log, "w") as fh:
+                fh.write("replaying\n")
+            proc.stopped.wait()
+            return
         path = _str(script, "evidence")
         if path:
             with open(path, "w") as fh:
@@ -232,16 +371,19 @@ class FakeEmulator:
                 f"match={1 if self.match else 0} events=1\n"
             )
 
-    def _probe(self, script: str, proc: FakeProc) -> None:
+    def _probe(self, script: str, proc: FakeProc, run: int = 1) -> None:
         port = _num(script, "port")
         obs = _list(script, "obs")
         robs = _list(script, "robs")
+        vobs = _list(script, "vobs")
         obs_from = _num(script, "obsFrom") or 0
         obs_to = _num(script, "obsTo")
         obs_to = 10**12 if obs_to is None else obs_to
         folder = _str(script, "dir")
         sock = socket.create_connection(("127.0.0.1", port))
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        game = self.game
+        st = {"vobs": vobs[1] if vobs else None, "win": None, "rfrom": None}
 
         def send(line: str) -> None:
             data = (line + "\n").encode()
@@ -261,9 +403,22 @@ class FakeEmulator:
                 if kind == "W" and lo <= (a & 0x1FFFF) <= hi and obs_from <= f <= obs_to
             ]
 
-        ref = observed(self.game.run())
+        def settle(events, lo, hi, until):
+            last = 0
+            before = {}
+            for kind, _, a, v, f in events:
+                if kind == "V" and lo <= a <= hi and f <= until and before.get(a) != v:
+                    before[a] = v
+                    last = f
+            return last + 1
+
+        base = game.run()
+        ref = observed(base)
         send(f"ref {len(ref)} {max((w[0] for w in ref), default=0)} 0,10")
         send("refw " + " ".join(f"{f}:{a:X}:{v:02X}" for f, a, v in ref))
+        if self.fault == "die" and run == 1:
+            sock.close()
+            return
         buf = b""
         while not proc.stopped.is_set():
             sock.settimeout(0.2)
@@ -271,6 +426,8 @@ class FakeEmulator:
                 chunk = sock.recv(65536)
             except TimeoutError:
                 continue
+            except OSError:
+                break
             if not chunk:
                 break
             buf += chunk
@@ -285,14 +442,36 @@ class FakeEmulator:
                         fh.write(b"\x89PNG" + line)
                     send(f"shot {words[2]}")
                     continue
+                if words[0] == "settle":
+                    lo, hi = int(words[2]), int(words[3])
+                    send(f"settled {settle(base, lo, hi, st['vobs'])}")
+                    continue
+                if words[0] == "vobs":
+                    st["vobs"] = int(words[2])
+                    send(f"vobs {words[2]}")
+                    continue
+                if words[0] == "vwin":
+                    st["win"] = [int(x) for x in words[1:]]
+                    send(f"vwin {words[1]} {words[2]}")
+                    continue
+                if words[0] == "rfrom":
+                    st["rfrom"] = int(words[1], 16)
+                    send(f"rfrom {words[1]}")
+                    continue
+                if self.fault == "silent":
+                    continue
+                if self.fault == "cut" and run == 1:
+                    sock.sendall(f"res {words[1]} sa".encode())
+                    sock.close()
+                    return
                 pid, si, mode = words[1], int(words[2]), words[3]
-                rom = bytearray(self.game.rom)
-                if len(words) > 4 and words[4]:
-                    for w in words[4].split(","):
-                        a, v = w.split(":")
-                        rom[int(a, 16)] = int(v, 16)
+                rom = bytearray(game.rom)
+                writes, subs = _changes(words[4] if len(words) > 4 else "")
+                for a, v in writes:
+                    rom[a] = v
                 start = (0, 10)[si - 1]
-                events = [e for e in self.game.run(bytes(rom)) if e[4] >= start]
+                full = game.run(bytes(rom), subs) if subs else game.run(bytes(rom))
+                events = [e for e in full if e[4] >= start]
                 got = observed(events)
                 k0 = next((i for i, w in enumerate(ref) if w[0] >= start), len(ref))
                 want = ref[k0:]
@@ -306,10 +485,36 @@ class FakeEmulator:
                         and lo <= a <= hi
                         and f >= frm
                         and (pc is None or epc == pc)
-                    ][:64]
+                    ]
+                    if st["rfrom"] is not None and st["rfrom"] in rs:
+                        rs = rs[rs.index(st["rfrom"]) :]
+                    elif st["rfrom"] is not None:
+                        rs = []
+                    rs = rs[:64]
                     if len(robs) > 5 and robs[5]:
                         rs = rs[: robs[5]]
                     reads = " r=" + ",".join(f"{a:X}" for a in rs)
+                if vobs:
+                    win = st["win"]
+                    lo, hi = (win[0], win[1]) if win else (0, 1 << 20)
+                    vref = game.vram(base, st["vobs"])
+                    if win:
+                        mine = game.vram(events)
+                        at = settle(events, lo, hi, 1 << 30)
+                    else:
+                        mine = game.vram(events, st["vobs"])
+                    keys = sorted(
+                        a
+                        for a in set(vref) | set(mine)
+                        if lo <= a <= hi and vref.get(a) != mine.get(a)
+                    )
+                    d = ",".join(f"{a:X}:{mine.get(a, 0):X}" for a in keys)
+                    reads += (
+                        f" v={len(keys)},{keys[0] if keys else -1},"
+                        f"{keys[-1] if keys else -1} d={d}"
+                    )
+                    if win:
+                        reads += f" s={at}"
                 if [(a, v) for _, a, v in got] == [(a, v) for _, a, v in want]:
                     send(f"res {pid} same{reads}")
                     continue

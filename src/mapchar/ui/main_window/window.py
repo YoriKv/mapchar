@@ -303,8 +303,9 @@ class MainWindow(
             return
         # A session ended on purpose leaves no copy to recover.
         self._discard_autosave()
-        # The headless emulators go with the window; the one being played stays.
-        self._capture_close()
+        # Capture's headless emulators are killed with the window; the one
+        # being played is the user's and stays open.
+        self._capture_reset()
         # The layout is written on a short delay, so a quit inside that delay
         # would otherwise lose the last drag.
         self._window_layout.save()

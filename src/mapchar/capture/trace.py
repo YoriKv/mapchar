@@ -24,7 +24,10 @@ what the text becomes.
   finds its layout.
 
 What the replay recorded only orders what is tried; a budget only bounds how
-long a search goes on, and past it a thing is reported not found.
+long a search goes on, and past it a thing is reported not found. A byte the
+game reads more than once has only the read in question changed (the probe
+substitutes what that read returns), and text the reader takes from a RAM
+buffer has its codes swept there.
 """
 
 from __future__ import annotations
@@ -41,7 +44,13 @@ from mapchar.capture.consoles import Console
 from mapchar.capture.emulator import Emulator
 from mapchar.capture.evidence import Evidence, Moment
 from mapchar.capture.occurrence import Occurrence
-from mapchar.capture.probe import ProbeServer, reader_cpu
+from mapchar.capture.probe import (
+    STABLE_DEADLINE,
+    STABLE_FRAMES,
+    ProbeServer,
+    ReadSub,
+    reader_cpu,
+)
 from mapchar.capture.protocol import CaptureError, Step
 
 WINDOWS = (1, 4, 16, None)
@@ -66,6 +75,14 @@ STEP = 8
 MOVES = (1, 2, 4, 256, 512, 1024)
 """How far a pointer change of 1 may move the string's first read."""
 
+EXTENT_FRAMES = 4
+"""How many frames the string's reader may take between two of its reads
+and still be reading the string."""
+
+RAM_CANDIDATES = 16
+"""Earlier RAM writes of an output's value tried as the buffer it is read
+from, when no ROM byte is its source."""
+
 
 # -- results
 
@@ -80,6 +97,9 @@ class Source:
     """``copied``, ``only-this`` or ``determines``; ``vram`` for bitmap text."""
     changed: list[int] = field(default_factory=list)
     """Reference positions its change alters."""
+    stream: bool = True
+    """Among the sources that advance through the string in order; False for
+    one read elsewhere — a dictionary's."""
 
 
 @dataclass
@@ -98,9 +118,10 @@ class Code:
     kind: str
     """RAM output: ``char``, ``string``, ``empty``, ``same``, ``line`` (the
     character in :attr:`out`, then the line ends) or the shape of a structural
-    change (``truncate``, ``extend``, ``shift``, ``rewrite``).
-    VRAM output: ``printable``, ``command`` or ``end``; ``stall`` when the
-    probe got no answer."""
+    change (``truncate``, ``extend``, ``substitute``, ``shift``,
+    ``rewrite``).
+    VRAM output: ``printable``, ``command`` or ``end``.
+    Either: ``stall`` when the probe got no answer."""
     out: list[int] = field(default_factory=list)
     """RAM output: the codes written in the output's place."""
     skip: int = 0
@@ -131,8 +152,14 @@ class Result:
     """The string's first read, as the pointer test measured it."""
     pointers: list[Pointer] = field(default_factory=list)
     stalls: list[int] = field(default_factory=list)
-    """Pointer candidates whose change stalled the game before the string."""
+    """Pointer candidates whose change stalled the game: no answer in time."""
+    strays: list[int] = field(default_factory=list)
+    """Pointer candidates after whose change the reader read nothing of the
+    string's neighbourhood: it moved out of reach, or was not shown."""
     code_byte: int | None = None
+    code_ram: tuple[str, int] | None = None
+    """``(memory type, offset)`` of the RAM byte the codes were swept at, for
+    text its reader takes from a RAM buffer."""
     codes: list[Code] = field(default_factory=list)
     packed: bool = False
     stream: tuple[int, int] | None = None
@@ -156,7 +183,7 @@ class Result:
         r.sources = [Source(**s) for s in d.get("sources", [])]
         r.pointers = [Pointer(**p) for p in d.get("pointers", [])]
         r.codes = [Code(**c) for c in d.get("codes", [])]
-        for key in ("region", "frames", "string", "stream"):
+        for key in ("region", "frames", "string", "stream", "code_ram"):
             if r.__dict__.get(key) is not None:
                 setattr(r, key, tuple(getattr(r, key)))
         r.typed = [tuple(t) for t in r.typed]
@@ -201,9 +228,9 @@ class Reads:
     read, most recent first; kept as the log is walked forward to each
     output."""
 
-    def __init__(self, evs):
+    def __init__(self, evs, frames: list[int] | None = None):
         self.evs = evs
-        self.frames = [e[3] for e in evs]
+        self.frames = [e[3] for e in evs] if frames is None else frames
         self.sorted = all(map(le, self.frames, self.frames[1:]))
         self.at = 0
         self.last: dict[int, int] = {}
@@ -213,7 +240,7 @@ class Reads:
         """``(same, other)``: the bytes read before ``evs[i]`` down to its
         frame less ``back`` (None: all), not in ``tried``, whose latest read
         gave ``value`` / did not (at most :data:`OTHER_BUDGET` of those), as
-        ``(byte, frame of that read)``."""
+        ``(byte, frame of that read, index of that read)``."""
         evs = self.evs
         if not self.sorted:
             return self._walk(i, back, tried, value)
@@ -240,7 +267,7 @@ class Reads:
             if j < lo:
                 break
             if b not in tried:
-                same.append((b, evs[j][3]))
+                same.append((b, evs[j][3], j))
         for b, j in reversed(last.items()):
             if j < lo:
                 break
@@ -248,12 +275,14 @@ class Reads:
                 continue
             e = evs[j]
             if e[2] != value:
-                other.append((b, e[3]))
+                other.append((b, e[3], j))
                 if len(other) == OTHER_BUDGET:
                     break
         return same, other
 
     def _walk(self, i, back, tried, value):
+        """:meth:`window` by walking back from ``evs[i]``: for a log whose
+        frames are out of order, and the tests' oracle."""
         evs = self.evs
         seen, same, other = set(), [], []
         for j in range(i - 1, -1, -1):
@@ -263,23 +292,39 @@ class Reads:
             if e[0] == "E" and e[1] not in seen:
                 seen.add(e[1])
                 if e[1] not in tried:
-                    (same if e[2] == value else other).append((e[1], e[3]))
+                    (same if e[2] == value else other).append((e[1], e[3], j))
         return same, other[:OTHER_BUDGET]
 
 
+def advancing_run(sources: list[int]) -> list[int]:
+    """The longest run of sources, in output order, each just past the one
+    before (within :data:`STEP`): the positions in ``sources`` of the
+    string's own bytes. A dictionary's bytes, read before, after or between
+    them, are left out."""
+    n = len(sources)
+    if not n:
+        return []
+    best, prev = [1] * n, [-1] * n
+    for i in range(n):
+        b = sources[i]
+        for j in range(i):
+            if sources[j] < b <= sources[j] + STEP and best[j] + 1 > best[i]:
+                best[i], prev[i] = best[j] + 1, j
+    i = max(range(n), key=lambda x: (best[x], -x))
+    run = []
+    while i >= 0:
+        run.append(i)
+        i = prev[i]
+    return run[::-1]
+
+
 def advancing(sources: list[int]) -> float:
-    """The share of outputs whose source lies just past the stream's last,
-    walking the outputs in order: near 1 for text read from one stream,
-    whatever it expands on the way; near 0 for text copied from a
-    dictionary."""
+    """The share of outputs whose source lies just past the one before along
+    the longest such run: near 1 for text read from one stream, whatever it
+    expands on the way; near 0 for text copied from a dictionary."""
     if len(sources) < 2:
         return 1.0
-    last, n = sources[0], 0
-    for b in sources[1:]:
-        if last < b <= last + STEP:
-            n += 1
-            last = b
-    return n / (len(sources) - 1)
+    return (len(advancing_run(sources)) - 1) / (len(sources) - 1)
 
 
 def edits_kind(ref: list[int], got: list[int]) -> str:
@@ -315,10 +360,13 @@ def replaced(ref: list[int], got: list[int], k: int) -> list[int] | None:
     if got[:k] != ref[:k]:
         return None
     rest = ref[k + 1 :]
+    if len(got) == len(ref) and got[k + 1 :] == rest:
+        return got[k : k + 1]  # one for one, whatever the rest repeats
+    need = min(3, len(rest))
     for n in range(0, len(got) - k + 1):
         tail = got[k + n :]
         m = min(len(tail), len(rest))
-        if m and tail[:m] == rest[:m]:
+        if m >= need and m and tail[:m] == rest[:m]:
             return got[k : k + n]
         if not rest and n == len(got) - k:
             return got[k:]
@@ -390,9 +438,11 @@ class Tracer:
         self.status = status
         self.progress = (done, total) if total else None
 
-    def close(self) -> None:
+    def close(self, wait: float = 5.0) -> None:
+        """End every probe server; with ``wait`` 0 or less, kill them at
+        once (see :meth:`ProbeServer.close`)."""
         for p in self._servers:
-            p.close()
+            p.close(wait)
         self._servers.clear()
 
     def _count(self) -> None:
@@ -400,15 +450,52 @@ class Tracer:
         self.result.no_answer = sum(p.no_answer for p in self._servers)
 
     def run(self) -> Step[Result]:
+        done = False
         try:
+            self._at("indexing the evidence")
+            yield from self.ev.index()
             if self.occ.kind == "ram":
                 yield from self._ram()
             else:
                 yield from self._vram()
+            done = True
         finally:
             self._count()
-            self.close()
+            # Stopped or failed: nothing is waited for.
+            self.close(5.0 if done else 0)
         return self.result
+
+    # -- what one byte's change is
+
+    def _only_read(self, p: ProbeServer, b: int, j: int) -> tuple[int, int] | None:
+        """``(pc, n)`` when ROM byte ``b`` is read more than once from the
+        savestate a probe of read ``j`` starts at: the read to change is the
+        n-th by that PC. None when changing the byte changes that read
+        alone."""
+        evs = self.ev.events
+        si = p.state_for(evs[j][3]) or 1
+        start = p.states[si - 1] if p.states else 0
+        # On the GBA a halfword or word read is logged at its aligned
+        # address: every read from the byte's word start up to the byte
+        # counts, as the probe script counts them.
+        lo = b & ~3 if self.console.lua == "gba" else b
+        reads = self.ev.reads_at
+        after = sorted(
+            i for a in range(lo, b + 1) for i in reads.get(a, ()) if evs[i][3] >= start
+        )
+        if len(after) <= 1:
+            return None
+        pc = evs[j][4]
+        return pc, sum(1 for i in after if i <= j and evs[i][4] == pc)
+
+    def _change(self, p: ProbeServer, b: int, j: int, v: int):
+        """``(writes, reads)`` that give read ``j`` of ROM byte ``b`` the value
+        ``v``: the byte written, or only that read's value substituted."""
+        once = self._only_read(p, b, j)
+        if once is None:
+            return [(b, v)], ()
+        pc, n = once
+        return [], (ReadSub(self.console.rom, b, v, pc, n),)
 
     # -- RAM output
 
@@ -426,16 +513,32 @@ class Tracer:
         r.region, r.frames = (mt, min(offs), max(offs)), (f0, f1)
         r.decoder, r.gaps = dict(occ.decoder), occ.gaps
         r.outputs = len(occ_w)
+        r.unit = getattr(occ, "unit", 1)
         self._at("starting the probe server")
+        pages = range(min(span) >> 8, (max(span) >> 8) + 1)
         p = self._server(
-            name="sources", obs=(mt, min(offs), max(offs)), obs_from=f0, obs_to=f1
+            name="sources",
+            obs=(mt, min(offs), max(offs)),
+            obs_from=f0,
+            obs_to=f1,
+            bulk=[b for b in self.ev.bulk if b[0] in pages] or None,
         )
         yield from p.start()
         widx, src = yield from self._sources(p, occ_w, span, f0)
         pos = {i: k for k, i in enumerate(widx)}
         order_pos = {i: n for n, i in enumerate(occ_w)}
+        firsts = sorted(src)
+        byte_of = [src[k][0] for k in firsts]
+        run = advancing_run(byte_of)
+        # Text the reader takes backwards through the ROM advances downwards;
+        # text found backwards (Occurrence.reverse) needs nothing more here.
+        back = advancing_run([-b for b in byte_of])
+        backwards = len(back) > len(run)
+        run = [firsts[x] for x in (back if backwards else run)]
+        in_run = set(run)
         r.sources = [
-            Source(order_pos[widx[k]], s[0], s[2], s[1]) for k, s in sorted(src.items())
+            Source(order_pos[widx[k]], s[0], s[2], s[1], k in in_run)
+            for k, s in sorted(src.items())
         ]
         typed_at = dict(occ.letters)
         for i in occ_w:
@@ -446,11 +549,18 @@ class Tracer:
                 )
         if not src:
             r.notes.append("no output was traced to a ROM byte")
+            yield from self._ram_stream(p, occ_w, widx, span)
             return
-        firsts = sorted(src)
-        r.packed = advancing([src[k][0] for k in firsts]) < PACKED
-        r.string = (src[firsts[0]][0], self._extent(src[firsts[-1]][0]))
-        first_src, reader = src[firsts[0]][0], None
+        r.packed = len(firsts) > 1 and (len(run) - 1) / (len(firsts) - 1) < PACKED
+        k_first, k_last = run[0], run[-1]
+        if backwards:
+            r.string = (src[k_last][0], src[k_first][0])
+        else:
+            r.string = (
+                src[k_first][0],
+                self._extent(src[k_last][0], at=src[k_last][3]),
+            )
+        first_src, reader = src[k_first][0], None
         if r.packed:
             yield from self._stream(p, widx, src, occ_w, f0, f1)
             if r.stream:
@@ -459,13 +569,13 @@ class Tracer:
         own = frozenset(s[0] for s in src.values())
         yield from self._pointers(first_src, own, reader)
         if not r.packed:
-            yield from self._ram_codes(p, src, widx)
+            yield from self._ram_codes(p, src)
 
     def _sources(self, p: ProbeServer, occ_w, span, f0) -> Step[tuple[list, dict]]:
         evs = self.ev.events
         lo, hi = min(span), max(span)
         f1 = evs[occ_w[-1]][3]
-        reads = Reads(evs)
+        reads = Reads(evs, self.ev.frames)
         if reads.sorted:
             a = bisect.bisect_left(reads.frames, f0)
             b = bisect.bisect_right(reads.frames, f1)
@@ -483,7 +593,7 @@ class Tracer:
                 f"evidence ({p.nref} writes against {len(widx)})"
             )
         pos = {i: k for k, i in enumerate(widx)}
-        src: dict[int, tuple[int, list[int], str]] = {}
+        src: dict[int, tuple[int, list[int], str, int]] = {}
         prev = None
         for n, i in enumerate(occ_w):
             self._at(f"sources: output {n + 1} of {len(occ_w)}", n, len(occ_w))
@@ -493,7 +603,9 @@ class Tracer:
                 same, other = reads.window(i, back, tried, evs[i][2])
                 cands = same + other
                 if prev is not None:
-                    cands.sort(key=lambda c, prev=prev: c[0] != prev + 1)
+                    cands.sort(
+                        key=lambda c, prev=prev: (c[0] != prev + 1, c[0] != prev - 1)
+                    )
                 tried |= {c[0] for c in cands}
                 best = yield from self._tier(p, cands, k, best)
                 if best:
@@ -501,6 +613,8 @@ class Tracer:
             if best:
                 src[k] = best
                 prev = best[0]
+                if p.control is None:
+                    p.control = ([(best[0], self.rom[best[0]] ^ 0x01)], evs[best[3]][3])
             else:
                 self.result.notes.append(f"output {n} has no source")
             self._count()
@@ -508,7 +622,7 @@ class Tracer:
 
     def _tier(self, p: ProbeServer, cands, k, best) -> Step:
         rom = self.rom
-        for b, fr in cands:
+        for b, fr, j in cands:
             nv = rom[b] ^ 0x01
             r = yield from p.effect([(b, nv)], fr)
             if r is None:
@@ -531,80 +645,150 @@ class Tracer:
                     if len(got) == len(refv)
                     else [k]
                 )
-                return (b, changed, "copied")
+                return (b, changed, "copied", j)
             if len(got) == len(refv):
                 changed = [x + off for x in range(len(got)) if got[x] != refv[x]]
                 if k in changed and (best is None or best[2] == "determines"):
-                    best = (b, changed, "only-this")
+                    best = (b, changed, "only-this", j)
             if best is None and first is not None and first + off == k:
-                best = (b, [k], "determines")
+                best = (b, [k], "determines", j)
         return best
 
-    def _extent(self, last: int, reader: int | None = None) -> int:
+    def _extent(
+        self, last: int, reader: int | None = None, at: int | None = None
+    ) -> int:
         """The string's last byte: the reader of its last source goes on
-        reading past it, in order, to the end token or the string's end."""
+        reading past it, in order, to the end token or the string's end.
+        Followed from read ``at`` (the one the source was confirmed with),
+        else the byte's first read; the reader's reads may be spread over
+        frames, :data:`EXTENT_FRAMES` apart at most."""
         evs = self.ev.events
-        j = max(
-            (
-                i
-                for i, e in enumerate(evs)
-                if e[0] == "E" and e[1] == last and (reader is None or e[4] == reader)
-            ),
-            default=None,
-        )
+        j = at if at is not None else self.ev.first_read(last, reader)
         if j is None:
             return last
-        pc, at = evs[j][4], last
-        for e in evs[j + 1 : j + 4096]:
-            if e[0] != "E" or e[4] != pc or e[1] == at:
-                continue
-            if at < e[1] <= at + 4:
-                at = e[1]
+        by = self.ev.reads_by.get(evs[j][4], [])
+        addr, fr = last, evs[j][3]
+        for i in by[bisect.bisect_right(by, j) :]:
+            e = evs[i]
+            if e[3] > fr + EXTENT_FRAMES:
+                break
+            if e[1] == addr:
+                fr = e[3]
+            elif addr < e[1] <= addr + 4:
+                addr, fr = e[1], e[3]
             else:
                 break
-        return at + (self.result.unit - 1)
+        return addr + (self.result.unit - 1)
 
     def _first_reader(self, offset: int) -> int | None:
-        for e in self.ev.events:
-            if e[0] == "E" and e[1] == offset:
-                return e[4]
-        return None
+        i = self.ev.first_read(offset)
+        return None if i is None else self.ev.events[i][4]
 
-    def _ram_codes(self, p: ProbeServer, src, widx) -> Step[None]:
+    def _ram_code(self, p: ProbeServer, v: int, k: int, res) -> Code:
+        """What replaced output ``k`` when a code became ``v``."""
+        if res is None:
+            return Code(v, "stall" if p.answer is None else "same")
+        refv, got = res
+        kk = k - (len(p.ref_values) - len(refv))
+        out = replaced(refv, got, kk)
+        line = line_break(refv, got, kk) if out is None else None
+        if line is not None:
+            return Code(v, "line", [line])
+        if out is None:
+            return Code(v, edits_kind(refv, got))
+        kind = "char" if len(out) == 1 else "empty" if not out else "string"
+        return Code(v, kind, list(out))
+
+    def _ram_codes(self, p: ProbeServer, src) -> Step[None]:
         """Every value of a source byte used once, and what the engine writes
         in its output's place."""
         evs, r = self.ev.events, self.result
         items = sorted(src.items())
-        used_once = [(k, v[0]) for k, v in items if v[2] == "copied" and v[1] == [k]]
-        copied = [(k, v[0]) for k, v in items if v[2] == "copied"]
-        k, b = (used_once or copied or [(items[0][0], items[0][1][0])])[0]
-        fr = next(e[3] for e in evs if e[0] == "E" and e[1] == b)
+        used_once = [(k, v) for k, v in items if v[2] == "copied" and v[1] == [k]]
+        copied = [(k, v) for k, v in items if v[2] == "copied"]
+        k, s = (used_once or copied or items)[0]
+        b, j = s[0], s[3]
+        fr = evs[j][3]
         r.code_byte = b
         for v in range(256):
             self._at(f"codes: value {v + 1} of 256", v, 256)
-            res = yield from p.effect([(b, v)], fr)
+            writes, subs = self._change(p, b, j, v)
+            res = yield from p.effect(writes, fr, subs)
+            r.codes.append(self._ram_code(p, v, k, res))
+            self._count()
+
+    def _ram_stream(self, p: ProbeServer, occ_w, widx, span) -> Step[None]:
+        """Text with no ROM source may be read from a RAM buffer the game
+        decoded it into: an earlier write outside the text — of the first
+        output's value first — whose reads decide that output. Its codes are then
+        swept there — each value substituted for what the reader reads."""
+        evs, r, console = self.ev.events, self.result, self.console
+        lo, hi = min(span), max(span)
+        i = occ_w[0]
+        k = widx.index(i)
+        value, f_out = evs[i][2], evs[i][3]
+        same, other, seen = [], [], {}
+        for j in range(i - 1, -1, -1):
+            e = evs[j]
+            if e[3] < f_out - WINDOWS[2] or len(seen) >= 16 * RAM_CANDIDATES:
+                break
+            if e[0] == "W" and not lo <= e[1] <= hi and e[1] not in seen:
+                seen[e[1]] = j
+                (same if e[2] == value else other).append(j)
+        # The text's first output is read from the start of a buffer: the
+        # first address of each run written comes before the rest.
+        starts = [j for j in other if evs[j][1] - 1 not in seen]
+        rest = [j for j in other if evs[j][1] - 1 in seen]
+        cands = (same + starts + rest)[:RAM_CANDIDATES]
+        for n, j in enumerate(cands):
+            self._at(f"RAM buffer: candidate {n + 1} of {len(cands)}", n, len(cands))
+            try:
+                mem, off = console.ram_of(evs[j][1])
+            except ValueError:
+                continue
+            nth = self._write_count(p, evs[j][1], j)
+
+            def sub(v, mem=mem, off=off, nth=nth):
+                return (ReadSub(mem, off, v, after=nth),)
+
+            res = yield from p.effect([], evs[j][3], sub((evs[j][2] ^ 0x01) & 0xFF))
+            self._count()
             if res is None:
-                r.codes.append(Code(v, "same"))
                 continue
             refv, got = res
             kk = k - (len(p.ref_values) - len(refv))
-            out = replaced(refv, got, kk)
-            line = line_break(refv, got, kk) if out is None else None
-            if line is not None:
-                r.codes.append(Code(v, "line", [line]))
-            elif out is None:
-                r.codes.append(Code(v, edits_kind(refv, got)))
-            else:
-                kind = "char" if len(out) == 1 else "empty" if not out else "string"
-                r.codes.append(Code(v, kind, list(out)))
-            self._count()
+            if not (0 <= kk < min(len(got), len(refv))):
+                continue
+            if got[:kk] != refv[:kk] or got[kk] == refv[kk]:
+                continue
+            r.code_ram = (mem, off)
+            r.notes.append(f"the text is read from a RAM buffer: {mem} ${off:X}")
+            for v in range(256):
+                self._at(f"codes: value {v + 1} of 256", v, 256)
+                res = yield from p.effect([], evs[j][3], sub(v))
+                r.codes.append(self._ram_code(p, v, k, res))
+                self._count()
+            return
+
+    def _write_count(self, p: ProbeServer, a: int, j: int) -> int:
+        """How many writes to RAM address ``a`` the run from the savestate a
+        probe of event ``j`` starts at makes, up to and with ``j``."""
+        evs = self.ev.events
+        si = p.state_for(evs[j][3]) or 1
+        start = p.states[si - 1] if p.states else 0
+        lo = bisect.bisect_left(self.ev.frames, start, 0, j)
+        return sum(1 for x in range(lo, j + 1) if evs[x][0] == "W" and evs[x][1] == a)
 
     def _stream(self, p: ProbeServer, widx, src, occ_w, f0, f1) -> Step[None]:
         """The packed stream and the bit layouts that fit it."""
         evs, rom, r = self.ev.events, self.rom, self.result
+        frames = self.ev.frames
         first: dict[int, int] = {}
-        for e in evs:
-            if e[0] == "E" and f0 - 1 <= e[3] <= f1 and e[1] not in first:
+        for x in range(
+            bisect.bisect_left(frames, f0 - 1), bisect.bisect_right(frames, f1)
+        ):
+            e = evs[x]
+            if e[0] == "E" and e[1] not in first:
                 first[e[1]] = e[3]
         self._at(f"stream: which of {len(first)} bytes change the text")
         dep = yield from self._find(p, list(first), first)
@@ -645,24 +829,33 @@ class Tracer:
         r.tokens = [list(t) if isinstance(t, tuple) else t for t in tokens]
         self._at("stream: fitting bit layouts")
         # The run and a byte either side.
-        lays = yield from bitlayout.iter_fits(
-            tokens, rom[s0 - 1 : s1 + 2], rom.__getitem__
-        )
-        r.layouts = [layout_json(lay) | {"from": s0 - 1} for lay in lays]
+        lo = max(0, s0 - 1)
+        lays = yield from bitlayout.iter_fits(tokens, rom[lo : s1 + 2], rom.__getitem__)
+        r.layouts = [layout_json(lay) | {"from": lo} for lay in lays]
+        if not lays:
+            r.notes.append(
+                "the layout search ran out of budget"
+                if getattr(lays, "exhausted", 0)
+                else "the stream fits no bit layout"
+            )
 
     def _find(self, p: ProbeServer, cands, first) -> Step[list[int]]:
         """Every candidate whose change alone changes the output, by halving:
-        a set that changes nothing holds none."""
+        a set that changes nothing holds none. A set whose probe got no
+        answer is halved all the same; a single byte of no answer is noted."""
         rom = self.rom
         found = []
         stack = [sorted(cands, key=lambda a: (first[a], a))]
         while stack:
             s = stack.pop()
             changed = yield from p.test([(a, rom[a] ^ 0x01) for a in s], first[s[0]])
-            if not changed:
+            if changed is False:
                 continue
             if len(s) == 1:
-                found.append(s[0])
+                if changed:
+                    found.append(s[0])
+                else:
+                    self.result.notes.append(f"the stream byte ${s[0]:X} got no answer")
             else:
                 h = len(s) // 2
                 stack += [s[h:], s[:h]]
@@ -676,9 +869,7 @@ class Tracer:
     ) -> Step[None]:
         """The bytes that hold the string's address, by the change-by-2 test."""
         evs, rom, r, console = self.ev.events, self.rom, self.result, self.console
-        i0 = next(
-            (i for i, e in enumerate(evs) if e[0] == "E" and e[1] == first_src), None
-        )
+        i0 = self.ev.first_read(first_src)
         if i0 is None:
             r.notes.append("the string's first byte was never read")
             return
@@ -697,44 +888,89 @@ class Tracer:
             e = evs[j]
             if e[0] == "E" and e[1] not in seen and e[1] not in own:
                 seen.add(e[1])
-                cands.append((e[1], e[3], "read before"))
+                cands.append((e[1], e[3], "read before", None))
             if len(cands) >= POINTER_READS:
                 break
-        start = evs[0][3]
-        for bus in console.to_bus(first_src):
-            pats = (
-                [bus.to_bytes(4, "little")]
-                if bus > 0xFFFFFF
-                else [bus.to_bytes(3, "little"), (bus & 0xFFFF).to_bytes(2, "little")]
-            )
-            for pat in pats:
-                k = rom.find(pat)
-                while k >= 0 and len(cands) < POINTER_BUDGET:
-                    if k not in seen and self.ev.touched(k):
-                        seen.add(k)
-                        cands.append((k, start, "holds the address"))
-                    k = rom.find(pat, k + 1)
+        cands += self._static_pointers(first_src, seen, evs[0][3])
         yield from p.effect([], rfrom)
         ans = p.answer
-        base = console.to_rom(ans.reads[0]) if ans and ans.reads else None
+        base = ans.offsets[0] if ans and ans.offsets else None
         r.first_read = base
         if base is None:
             r.notes.append("the string's first read could not be measured")
             return
-        for n, (b, fr, why) in enumerate(cands):
+        if r.string and 0 < r.string[0] - base <= STEP:
+            # The string's first byte came before its first traced source: a
+            # code whose output was a dictionary's.
+            r.string = (base, r.string[1])
+        probed = {c[0] for c in cands}
+        n = 0
+        while n < len(cands):
+            b, fr, why, bank = cands[n]
             self._at(f"pointers: candidate {n + 1} of {len(cands)}", n, len(cands))
-            c = (
-                2 if rom[b] < 0xFE else -2
-            )  # 2, so a halfword or word reader still moves
+            n += 1
+            # 2, so a halfword or word reader still moves.
+            c = 2 if rom[b] < 0xFE else -2
             yield from p.effect([(b, rom[b] + c)], fr)
             ans = p.answer
-            if ans is None or not ans.reads:
+            self._count()
+            if ans is None:
                 r.stalls.append(b)
                 continue
-            d = console.to_rom(ans.reads[0]) - base
-            if d in tuple(m * c for m in MOVES):
-                r.pointers.append(Pointer(b, d, why))
-            self._count()
+            if not ans.offsets:
+                r.strays.append(b)
+                continue
+            d = ans.offsets[0] - base
+            want = tuple(m * c for m in MOVES)
+            if why == "bank":
+                want = (bank,)
+            if d not in want or d == 0:
+                continue
+            static = why in ("holds the address", "above", "bank")
+            r.pointers.append(Pointer(b, d, "holds the address" if static else why))
+            if why == "holds the address" and len(cands) < POINTER_BUDGET:
+                # The byte above, and the bank byte after a 16-bit address.
+                if b + 1 not in probed and b + 1 < len(rom):
+                    probed.add(b + 1)
+                    cands.append((b + 1, fr, "above", None))
+                if bank is not None and b + 2 not in probed and b + 2 < len(rom):
+                    probed.add(b + 2)
+                    cands.append((b + 2, fr, "bank", bank))
+
+    def _static_pointers(self, first_src: int, seen: set, start: int) -> list:
+        """The places in the ROM holding the string's address that this
+        replay read or executed: its 4-byte form, or its low 16 bits once,
+        noting when the bank the address is in follows."""
+        rom, console = self.rom, self.console
+        buses = []
+        spelled = self.ev.bus_of.get(first_src)
+        for bus in ([spelled] if spelled is not None else []) + console.to_bus(
+            first_src
+        ):
+            if bus not in buses:
+                buses.append(bus)
+        pats: dict[bytes, dict[int, int]] = {}
+        for bus in buses:
+            if bus > 0xFFFFFF:
+                pats.setdefault(bus.to_bytes(4, "little"), {})
+            else:
+                banks = pats.setdefault((bus & 0xFFFF).to_bytes(2, "little"), {})
+                c = 2 if (bus >> 16) < 0xFE else -2
+                try:
+                    move = console.to_rom(bus + (c << 16)) - first_src
+                except (ValueError, IndexError):
+                    move = 0
+                banks[bus >> 16] = move
+        out = []
+        for pat, banks in pats.items():
+            k = rom.find(pat)
+            while k >= 0 and len(out) < POINTER_BUDGET:
+                if k not in seen and self.ev.touched(k):
+                    seen.add(k)
+                    nxt = rom[k + 2] if k + 2 < len(rom) else None
+                    out.append((k, start, "holds the address", banks.get(nxt) or None))
+                k = rom.find(pat, k + 1)
+        return out
 
     # -- VRAM output
 
@@ -754,7 +990,7 @@ class Tracer:
         lo = min(evs[i][1] for i, _ in chars)
         f_read = evs[chars[0][0]][3]
         r.frames = (f_read, self.moment.frame)
-        r.unit = 2 if any(evs[i][2] > 0xFF for i, _ in chars) else 1
+        r.unit = 2 if occ.unit == 2 or any(evs[i][2] > 0xFF for i, _ in chars) else 1
         cpu = reader_cpu(console, reader)
         self._at("starting the probe server")
         p = self._server(
@@ -777,33 +1013,47 @@ class Tracer:
             yield from p.effect([(b, rom[b] ^ 0x01)], fr)
             ans = p.answer
             if ans and ans.vram and ans.vram[0]:
-                cells.append((chr_, b, ans.vram[1], ans.vram[2]))
+                cells.append((chr_, b, ans.vram[1], ans.vram[2], fr, i))
                 r.sources.append(Source(n, b, "vram", [ans.vram[1], ans.vram[2]]))
                 r.typed.append((chr_, evs[i][2], b))
+                if p.control is None:
+                    p.control = ([(b, rom[b] ^ 0x01)], fr)
             else:
                 r.typed.append((chr_, evs[i][2], None))
             self._count()
         if not cells:
             r.notes.append("no typed character changed VRAM")
             return
-        r.string = (
-            min(c[1] for c in cells),
-            self._extent(max(c[1] for c in cells), reader),
-        )
+        last = max(cells, key=lambda c: c[1])
+        r.string = (min(c[1] for c in cells), self._extent(last[1], reader, at=last[5]))
         vlo, vhi = min(c[2] for c in cells), max(c[3] for c in cells)
         self._at("settling")
         r.settled = yield from p.settle(vlo, vhi, f_read)
         yield from p.move_vobs(r.settled)
+        # From here a probe compares the text's VRAM once it holds still, no
+        # sooner after the changed byte's read than the reference took.
+        wait = max(0, r.settled - cells[0][4])
+        yield from p.window(
+            vlo, vhi, STABLE_FRAMES, wait, max(STABLE_DEADLINE, 2 * wait)
+        )
         yield from self._pointers(lo, frozenset(evs[i][1] for i, _ in chars), None)
-        yield from self._vram_codes(p, cells)
+        yield from self._vram_codes(p, cells, vlo, vhi)
 
-    def _vram_codes(self, p: ProbeServer, cells) -> Step[None]:
-        evs, rom, r, console = self.ev.events, self.rom, self.result, self.console
-        _, b0, *_ = cells[0]
-        fr = next(e[3] for e in evs if e[0] == "E" and e[1] == b0)
-        yield from p.effect([], fr)
-        ref_reads = [console.to_rom(a) for a in (p.answer.reads if p.answer else [])]
-        j = ref_reads.index(b0) if b0 in ref_reads else 0
+    def _vram_codes(self, p: ProbeServer, cells, vlo: int, vhi: int) -> Step[None]:
+        rom, r = self.rom, self.result
+        # The reader's reads from its first read of the swept byte on: the
+        # read after it says what the code was.
+        cell = cells[0]
+        yield from p.reads_from(cell[1])
+        yield from p.effect([], cell[4])
+        ref_reads = p.answer.offsets if p.answer else []
+        if cell[1] not in ref_reads:
+            cell = next((c for c in cells[1:] if c[1] in ref_reads), None)
+            if cell is None:
+                r.notes.append("the reader's reads do not reach the typed text")
+                return
+        _, b0, _, _, fr, i0 = cell
+        j = ref_reads.index(b0)
 
         def nxt(rs):
             return next((a for a in rs[j + 1 :] if a != b0), None)
@@ -815,17 +1065,24 @@ class Tracer:
         def classify(code: int, ans) -> Code:
             if ans is None:
                 return Code(code, "stall")
-            rs = [console.to_rom(a) for a in ans.reads]
+            rs = ans.offsets
             n_ = nxt(rs) if len(rs) > j and rs[j] == b0 else None
             if n_ is None:
                 return Code(code, "end")
             if ref_next is not None and n_ != ref_next:
                 return Code(code, "command", skip=n_ - ref_next)
             d = ans.vram[3] if ans.vram else {}
+            d = {a: v for a, v in d.items() if vlo <= a <= vhi}
             digest = hashlib.md5(repr(sorted(d.items())).encode()).hexdigest()
             return Code(code, "printable", image=digest[:8])
 
-        base = int.from_bytes(rom[b0 : b0 + unit], "little")
+        # A wide code's bytes: low first, or (big-endian) high first.
+        order = getattr(self.occ, "endian", "little")
+
+        def shift(byte: int) -> int:
+            return 8 * (byte if order == "little" else unit - 1 - byte)
+
+        base = int.from_bytes(rom[b0 : b0 + unit], order)
         for byte in range(unit):
             for v in range(256):
                 self._at(
@@ -833,16 +1090,20 @@ class Tracer:
                     byte * 256 + v,
                     unit * 256,
                 )
-                code = (base & ~(0xFF << 8 * byte)) | (v << 8 * byte)
-                yield from p.effect([(b0 + byte, v)], fr)
+                code = (base & ~(0xFF << shift(byte))) | (v << shift(byte))
+                if unit == 1:
+                    writes, subs = self._change(p, b0, i0, v)
+                else:
+                    writes, subs = [(b0 + byte, v)], ()
+                yield from p.effect(writes, fr, subs)
                 r.codes.append(classify(code, p.answer))
                 self._count()
         # A code wider than a byte is swept a byte at a time; the one the
         # reader stopped at is tried whole.
         last = r.string[1] - unit + 1
-        term = int.from_bytes(rom[last : last + unit], "little")
+        term = int.from_bytes(rom[last : last + unit], order)
         if unit > 1 and all(c.value != term for c in r.codes):
             self._at("codes: the code the string ends with")
-            writes = [(b0 + k, (term >> 8 * k) & 0xFF) for k in range(unit)]
+            writes = [(b0 + k, (term >> shift(k)) & 0xFF) for k in range(unit)]
             yield from p.effect(writes, fr)
             r.codes.append(classify(term, p.answer))

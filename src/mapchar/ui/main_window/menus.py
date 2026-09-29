@@ -137,7 +137,12 @@ class MenuBarMixin:
         # two actions itself, so Ctrl+Z means the same thing wherever the focus
         # is — including inside its fields, which is what `carry_undo` settles.
         # Everything else on this bar is reached from the main window.
-        for window in (self.table_editor, self.find_replace, self.glossary_dock):
+        for window in (
+            self.table_editor,
+            self.find_replace,
+            self.glossary_dock,
+            self.captures_dock,
+        ):
             carry_undo(window, undo, redo)
         edit_menu.addSeparator()
         # Entry Cut/Copy/Paste are scoped to the Files panel rather than to the
@@ -275,6 +280,10 @@ class MenuBarMixin:
         capture_menu = bar.addMenu("&Capture")
         act(capture_menu, "&Play in Emulator…", self._play_in_emulator, "Ctrl+Shift+E")
         act(capture_menu, "&Captures", self._show_captures)
+        self.stop_playing_action = act(
+            capture_menu, "&Stop Playing", self._capture_stop_playing
+        )
+        self.stop_playing_action.setEnabled(False)  # while a game is played
         capture_menu.addSeparator()
         act(capture_menu, "&Emulator Path…", self._capture_choose_emulator)
 

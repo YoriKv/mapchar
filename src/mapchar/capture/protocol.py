@@ -53,18 +53,12 @@ def drive(step: Step[T], timeout: float | None = None) -> T:
             raise Timeout("the step did not finish in time")
 
 
-def wait_process(
-    proc: subprocess.Popen, deadline: float, quiet: bool = False
-) -> Step[int | None]:
-    """Wait for a process to end; at the deadline kill it and raise, or with
-    ``quiet`` just return None."""
+def wait_process(proc: subprocess.Popen, deadline: float) -> Step[int | None]:
+    """Wait for a process to end: its exit status, or None at the deadline
+    with the process left as it is — what ends it is the caller's to say."""
     while proc.poll() is None:
         if time.monotonic() > deadline:
-            if quiet:
-                return None
-            proc.kill()
-            proc.wait(timeout=10)
-            raise Timeout("the emulator did not finish in time")
+            return None
         yield WAIT
     return proc.returncode
 

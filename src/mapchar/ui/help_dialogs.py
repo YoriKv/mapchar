@@ -153,6 +153,15 @@ DISPLAY_ONLY: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Open a Project Strings row in its block", "Double-click, or Enter"),
         ),
     ),
+    (
+        "Captures Panel",
+        (
+            ("Open a capture's window", "Double-click, or Enter"),
+            ("Remove a capture", "Delete"),
+            ("Accept a proposal, or open the glyphs' row", "Enter in Review"),
+            ("Reject a proposal", "Delete in Review"),
+        ),
+    ),
 )
 """Keys and gestures no menu action carries, by the surface they belong to."""
 

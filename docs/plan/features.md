@@ -627,7 +627,12 @@ processors read text).
   started by mapchar and never linked into it. Play runs at full speed: the
   script mapchar loads into it keeps a ring of 16 savestates spaced over the
   last 30 seconds and the controller input, and watches no memory but the
-  font's, when one is given.
+  font's, when one is given. The emulator is asked for only to play or to
+  trace, never to look at the captures. **Stop Playing** closes the
+  emulator mapchar started; the Captures dock says whether the recorder is
+  connected, and when the emulator has closed. With a Mesen window already
+  open, Mesen hands it the game: the recorder then runs there, and mapchar
+  says so; a recorder that never connects is said too.
 - **Capture setup.** Play in Emulator first opens a window for what the user
   already knows about the game, kept with the captures and filled in the next
   time: the console it will be played as, and **where the font is** — in the
@@ -645,7 +650,9 @@ processors read text).
   window**: the screenshot and a text box. The user types what they see, all
   of it or part, and presses **Capture**, or **Skip**; there is no time limit,
   and they may resume play at once. A pause mapchar missed — it was closed, or
-  not listening — is listed the next time the captures are opened. The typed text is what the capture is
+  not listening — is taken in the next time the captures are opened, or
+  within a second while the game is played or captures are traced; one that
+  never reads is said once and set aside. The typed text is what the capture is
   about, so a line with only kanji or symbols asks for kana or Latin letters,
   and a line too short to be found in one place (fewer than four letters)
   asks for more. The one condition is when the user pauses: within 30 seconds of the
@@ -671,7 +678,10 @@ processors read text).
   playing meanwhile. Under the list, a progress bar follows the capture being
   worked on: it fills through each counted step of tracing — the characters,
   the pointer candidates, the code values — and runs busy through the rest. **Type Text…** or a double-click opens a capture's
-  window again; **Remove** drops it and its files.
+  window again (Enter, too); **Remove** (Delete) drops it and its files, once asked.
+  Typing a capture's text again while it is worked on starts it over with
+  the new text. A capture whose saved result does not read is listed failed,
+  with its text, for Retry.
 - **What can go wrong** is said on the capture itself, never guessed around:
   - a typed word that does not fit is underlined, to be corrected or dropped;
   - text that is not on screen matches nothing, and the capture says so;
@@ -700,19 +710,36 @@ processors read text).
     type what each stands for;
   - **conflicts** — two captures that disagree about a code, naming both.
 
+  Glyphs to label are gathered under one row.
+
   Each proposal is accepted, edited first (a block in the New Block dialog,
   entries as table lines), or rejected; an accepted one becomes an ordinary
   block or table entries through the usual undoable edits — into the
-  reading's table, or a new `captured` table — and an entry that would change
-  one the table has is shown first and kept only if the user says so. A
-  proposal lists the captures behind it and what is unconfirmed, and remembers
-  whether it was accepted or rejected.
+  reading's table, or a new `captured` table, which the proposed blocks read
+  through too — and an entry that would change one the table has is shown
+  first and kept only if the user says so. **Accept All Unreviewed** accepts
+  every block and entries proposal not yet reviewed, as one undo step. A
+  proposal lists the captures behind it, what is unconfirmed, the table it
+  reads through, and for a block where its strings start (**Go To**). A
+  proposal is accepted while the project has what accepting it added, as
+  edited — undo takes that back — and a rejection is remembered until
+  **Reset**.
 - **Confirm in game.** A block or a glyph can be shown in the game: mapchar
   changes the byte it names — the block's first character, or the glyph's
   code in place of a typed one — replays the capture, and shows the frame
   before and after.
+- **Show Its Strings in Game.** A block read through a pointer table, one of
+  whose captures confirmed its own slot in the table, shows every string of
+  the table in the captured text box, needing no message id of the game: the
+  capture is run again once per string with its slot holding that string's
+  pointer, from before the game read the slot to the frame its text settled,
+  and a screenshot of each fills a grid as it comes — 64 at a time, with
+  Stop and Show More. A string that waits for a button, or draws for
+  longer, is shown as it stands at that frame.
 - Captures are game data and live beside the project, in `<project>.capture/`
-  (beside the ROM while the project is unsaved), never in it.
+  (beside the ROM while the project is unsaved, moved beside it when it is
+  saved), never in it. A new or opened project closes the captures of the
+  one before.
 
 ## Blocks
 

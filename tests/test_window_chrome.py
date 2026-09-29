@@ -50,6 +50,7 @@ ALWAYS_ON = frozenset(
         "Project Strings…",
         "Play in Emulator…",
         "Captures",
+        "Stop Playing",  # enabled while a game is played, not by the entry
         "Emulator Path…",
         "Light Theme",
         "Dark Theme",

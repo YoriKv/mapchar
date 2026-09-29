@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from mapchar.capture.consoles import Console
 from mapchar.capture.emulator import REPLAY, Emulator, build_script
-from mapchar.capture.protocol import CaptureError, Step, wait_process
+from mapchar.capture.protocol import CaptureError, Step, Timeout, wait_process
 
 MOMENT = "moment.txt"
 INPUT = "input.txt"
@@ -39,7 +39,9 @@ GAP_TAIL = 60
 
 Event = tuple[str, int, int, int, int]
 """``(kind, address, value, frame, pc)``: kind ``E`` is a ROM data read, its
-address a ROM offset; ``W`` a RAM write, its address the bus's."""
+address a ROM offset; ``W`` a RAM write, its address the bus's in the one
+spelling :meth:`~mapchar.capture.consoles.Console.canon` gives each RAM
+byte."""
 
 
 @dataclass(frozen=True)
@@ -191,30 +193,42 @@ def replay(
     return ReplayResult(m.group(3) == "1", m.group(2), int(m.group(4)), int(m.group(1)))
 
 
+def end_process(proc) -> None:
+    """Kill a process if it still runs, and reap it; never raises."""
+    try:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+    except Exception:  # noqa: BLE001 - it is going regardless
+        pass
+
+
 def watch(proc, log: str, deadline: float) -> Step[str]:
     """Wait for a headless run to end, and its output. A script stopped by an
     error leaves the emulator running: the error in its output ends the wait,
-    and the emulator."""
-    seen = 0
-    while proc.poll() is None:
-        try:
-            with open(log, "rb") as fh:
-                fh.seek(seen)
-                chunk = fh.read()
-        except OSError:  # not written yet
-            chunk = b""
-        if re.search(rb"^! ", chunk, re.M):
-            proc.kill()
-            proc.wait(timeout=10)
-            break
-        seen += len(chunk)
-        yield from wait_process(
-            proc, min(deadline, time.monotonic() + 0.25), quiet=True
-        )
-        if time.monotonic() > deadline:
-            proc.kill()
-            proc.wait(timeout=10)
-            raise CaptureError("the emulator did not finish in time")
+    and the emulator. However the wait ends — done, failed, or the step
+    closed by Stop — the emulator does not outlive it."""
+    seen, line = 0, b""
+    try:
+        while proc.poll() is None:
+            try:
+                with open(log, "rb") as fh:
+                    fh.seek(seen)
+                    chunk = fh.read()
+            except OSError:  # not written yet
+                chunk = b""
+            seen += len(chunk)
+            # From the start of the last line not yet whole: a marker may
+            # arrive in two reads.
+            text = line + chunk
+            if re.search(rb"^! ", text, re.M):
+                break
+            line = text[text.rfind(b"\n") + 1 :]
+            yield from wait_process(proc, min(deadline, time.monotonic() + 0.25))
+            if time.monotonic() > deadline:
+                raise Timeout("the emulator did not finish in time")
+    finally:
+        end_process(proc)
     with open(log, encoding="utf-8", errors="replace") as fh:
         return fh.read()
 
@@ -233,51 +247,156 @@ def _chunks(text: str, start: int):
             yield start, lines
 
 
+INDEX_CHUNK = 200000
+"""Events indexed between two yields."""
+
+
+def parse_line(u: str, console: Console) -> tuple | None:
+    """One distinct log line as ``(kind, address, value, pc, bus)``; None for
+    a frame mark, or a line the log was cut in the middle of. A read's
+    address is its ROM offset — the emulator's where the line gives one, the
+    profile's formula otherwise — and ``bus`` the address it was read at; a
+    write's is its RAM byte's one spelling."""
+    t = u[:1]
+    if t != "E" and t != "W":
+        return None
+    f = u.split()
+    if len(f) not in (4, 5):
+        return None
+    try:
+        pc, a, v = int(f[1], 16), int(f[2], 16), int(f[3], 16)
+        if t == "E":
+            off = int(f[4], 16) if len(f) == 5 else console.to_rom(a)
+            return ("E", off, v, pc, a)
+        if len(f) == 5:
+            mem, _, off = f[4].partition(":")
+            if console.ram_bus is not None:
+                try:
+                    return ("W", console.ram_bus(mem, int(off, 16)), v, pc, a)
+                except ValueError:
+                    pass
+        return ("W", console.canon(a), v, pc, a)
+    except ValueError:
+        return None
+
+
 @dataclass
 class Evidence:
     folder: str
     console: Console
     events: list[Event] = field(default_factory=list)
     start: int = 0
-    _touched: bytes | None | bool = None
+    bus_of: dict[int, int] = field(default_factory=dict)
+    """ROM offset to the bus address a read of it was at, where the log gives
+    both and they differ: the spelling a pointer to it would use."""
+    bulk: list[tuple[int, int, int | None]] = field(default_factory=list)
+    """``(page, from, to)``: a RAM page (bus address >> 8) whose writes the
+    replay dropped from frame ``from`` to before ``to`` (None: to the end) —
+    a buffer rewritten whole every frame."""
+    _touched: bytes | None = None
+    _touched_read: bool = False
+    _reads_at: dict[int, list[int]] | None = None
+    _reads_by: dict[int, list[int]] | None = None
+    _frames: list[int] | None = None
 
     @classmethod
     def load(cls, folder: str, console: Console, start: int) -> Step[Evidence]:
-        """Read the replay's log: each distinct line parsed once."""
+        """Read the replay's log: each distinct line parsed once. Lines of
+        the old form (no ROM offset) and a line cut short are both read."""
         ev = cls(folder, console, start=start)
-        to_rom = console.to_rom
-        with open(os.path.join(folder, EVIDENCE), encoding="ascii") as fh:
+        with open(
+            os.path.join(folder, EVIDENCE), encoding="ascii", errors="replace"
+        ) as fh:
             text = fh.read()
+        if not text.endswith("\n"):  # cut in the middle of its last line
+            text = text[: text.rfind("\n") + 1]
         yield
         parsed: dict[str, tuple | None] = {}
-        events = ev.events
+        events, bus_of = ev.events, ev.bus_of
+        banning = "\nB " in text or text.startswith("B ")
+        open_bans: dict[int, int] = {}
         n = 0
         for frame, lines in _chunks(text, start):
-            for u in set(lines).difference(parsed):
-                t = u[:1]
-                if t == "E":
-                    _, pc, a, v = u.split()
-                    parsed[u] = ("E", to_rom(int(a, 16)), int(v, 16), int(pc, 16))
-                elif t == "W":
-                    _, pc, a, v = u.split()
-                    parsed[u] = ("W", int(a, 16), int(v, 16), int(pc, 16))
-                else:
-                    parsed[u] = None
+            ls = set(lines)
+            if banning:
+                for u in ls:
+                    if u[:2] in ("B ", "U "):
+                        page = int(u[2:], 16)
+                        if u[0] == "B":
+                            open_bans[page] = frame
+                        elif page in open_bans:
+                            ev.bulk.append((page, open_bans.pop(page), frame))
+            for u in ls.difference(parsed):
+                c = parsed[u] = parse_line(u, console)
+                if c and c[0] == "E" and c[4] != c[1]:
+                    bus_of[c[1]] = c[4]
             events += [
                 (c[0], c[1], c[2], frame, c[3])
                 for c in map(parsed.__getitem__, lines)
                 if c
             ]
             n += len(lines)
-            if n > 200000:
+            if n > INDEX_CHUNK:
                 n = 0
                 yield
+        ev.bulk += [(page, f, None) for page, f in open_bans.items()]
         return ev
 
     @classmethod
     def of(cls, folder: str, console: Console, events: list[Event]) -> Evidence:
         """Evidence built in memory, for tests."""
         return cls(folder, console, events, events[0][3] if events else 0)
+
+    # -- the index
+
+    def index(self) -> Step[None]:
+        """Index the reads by ROM offset and by PC, and every event's frame,
+        yielding as it goes; once."""
+        if self._reads_at is not None:
+            return
+        at: dict[int, list[int]] = {}
+        by: dict[int, list[int]] = {}
+        frames: list[int] = []
+        for i, e in enumerate(self.events):
+            frames.append(e[3])
+            if e[0] == "E":
+                at.setdefault(e[1], []).append(i)
+                by.setdefault(e[4], []).append(i)
+            if i % INDEX_CHUNK == INDEX_CHUNK - 1:
+                yield
+        self._reads_at, self._reads_by, self._frames = at, by, frames
+
+    def _indexed(self) -> None:
+        if self._reads_at is None:
+            for _ in self.index():
+                pass
+
+    @property
+    def reads_at(self) -> dict[int, list[int]]:
+        """ROM offset to the indices of the events that read it, in order."""
+        self._indexed()
+        return self._reads_at
+
+    @property
+    def reads_by(self) -> dict[int, list[int]]:
+        """PC to the indices of the reads it made, in order."""
+        self._indexed()
+        return self._reads_by
+
+    @property
+    def frames(self) -> list[int]:
+        """Every event's frame, in order."""
+        self._indexed()
+        return self._frames
+
+    def first_read(self, offset: int, pc: int | None = None) -> int | None:
+        """The index of the first read of a ROM byte, by ``pc`` if given."""
+        for i in self.reads_at.get(offset, ()):
+            if pc is None or self.events[i][4] == pc:
+                return i
+        return None
+
+    # -- the capture point
 
     def ram(self, name: str) -> bytes | None:
         """A memory as it was at the capture point."""
@@ -289,12 +408,13 @@ class Evidence:
 
     def touched(self, offset: int) -> bool:
         """Whether this replay read or executed a ROM byte; True when unknown."""
-        if self._touched is None:
+        if not self._touched_read:
+            self._touched_read = True
             try:
                 with open(os.path.join(self.folder, f"{EVIDENCE}.acc"), "rb") as fh:
                     self._touched = fh.read()
             except OSError:
-                self._touched = False
-        if self._touched is False:
+                self._touched = None
+        if self._touched is None:
             return True
         return offset < len(self._touched) and self._touched[offset] != 0

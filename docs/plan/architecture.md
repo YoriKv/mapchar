@@ -1319,6 +1319,7 @@ never guessed.
 | `trace.py` | The rules ([9.6](#96-tracing)) |
 | `setup.py` | What the user gives before playing: the font's location ([9.2](#92-the-session)) |
 | `session.py` | The captures, the recorder and the queue ([9.2](#92-the-session)) |
+| `tablesweep.py` | A pointer table's strings shown in the game ([9.2](#92-the-session)) |
 | `combine.py`, `proposals.py` | What the captures say together ([9.7](#97-combining-and-proposals)) |
 
 ### 9.1 The emulator bridge
@@ -1327,24 +1328,49 @@ A bridge (`emulator.py`) knows one emulator: how to launch it on a ROM with a
 script in one of three **roles** — the recorder (headed, the user's), the
 replay and the probe server (both headless) — and how a path is spelled for
 its scripts. The one bridge is Mesen 2: it passes every setting a launch needs
-as switches (`--testRunner`, `--enablestdout`, `--doNotSaveSettings`, the
-script window's I/O and network switches, a longer script timeout) and never
-edits the user's settings; a Windows `Mesen.exe` run from WSL gets Windows
-paths. A script is generated per launch: `CFG`, the console's facts and the
-role's settings as a Lua table, then `scripts/common.lua` (the connection, the
-callback guard, the hash, the read and write hooks per processor), then the
-role's own script. mapchar never links an emulator.
+as switches (`--doNotSaveSettings`, the script window's I/O and network
+switches; for the recorder a 30-second script timeout, since its pause writes
+the whole moment in one callback; for a headless run `--testRunner`,
+`--enablestdout` and a timeout a little past mapchar's own deadline — a
+replay's 30 minutes, a probe server's 6 hours — so a lost emulator ends by
+itself) and never edits the user's settings. A headless run keeps Mesen's
+one-second script timeout whatever it is passed, so its scripts spread long
+work over several callbacks. A Windows `Mesen.exe` run from WSL gets Windows
+paths (`wslpath`, once per folder; a failure is a capture error). A script is
+generated per launch: `CFG`, the console's facts and the role's settings as a
+Lua table (strings in long brackets of a level they do not close), then
+`scripts/common.lua` (the connection, the callback guard — which passes a
+memory callback's return value on —, the hash, the read and write hooks per
+processor), then the role's own script. mapchar never links an emulator.
 
 A **console profile** (`consoles.py`) states the per-console facts, and nothing
-else does: how a logged address maps to a ROM offset and a ROM offset to the
-addresses a pointer may hold, which memory a RAM write lands in, the memory
-types of the ROM, the RAMs and the VRAM, which processors read text, and the
-pointer mappings a table is tried with. Profiles: the SNES as LoROM, HiROM or
-LoROM with the SuperFX, the NES (whose PRG offsets the emulator converts) and
-the GBA. The scripts' read filters — the 6502's dummy read at the PC, the
+else does: how a logged address maps to a ROM offset (the fallback where the
+emulator gave none) and a ROM offset to the addresses a pointer may hold,
+which memory a RAM write lands in and the one bus address each RAM byte is
+spelled as (the SNES's WRAM mirrors as `$7E`, the NES's internal RAM mirrors
+as `$0000-$07FF`), the memory types of the ROM, the RAMs and the VRAM and the
+extra memories hashed after them (save RAM, a coprocessor's RAM — after, so a
+moment hashed without them still compares), which processors read text, the
+**write hooks** — per processor, a memory type and range whose writes are
+RAM writes — and the pointer mappings a table is tried with. Profiles: the
+SNES as LoROM, HiROM, ExHiROM, LoROM with the SuperFX (its writes watched on
+its own bus, `gsuMemory` `$70-$71`) or with the SA-1 (its CPU a reader and a
+writer of I-RAM and BW-RAM; banks `$80-$BF` the ROM's upper half, not a
+mirror), the NES (its PRG offsets converted by the emulator; the work RAM
+taken for a save RAM the cartridge lacks) and the GBA (both work RAMs; a page
+nearly wholly rewritten three frames running — a framebuffer, a tile being
+drawn — dropped while that goes on, and the same writes dropped by the probe
+server). A save-RAM offset the profile works out itself repeats at the size
+the ROM's header gives (`for_rom`, `locate`); the scripts have the emulator
+place every write outside the main CPU's own RAM. A profile says which
+pointers its mappings cannot resolve (`limits`): ExHiROM's upper 4 MiB, and
+the SA-1's banks `$80-$BF` and switched-in ROM, have no mapping yet. The
+extension decides the console; a file's magic only when the extension says
+nothing. The scripts' read filters — the 6502's dummy read at the PC, the
 SuperFX's instruction fetches, the ARM's literal pools — only prune reports.
-ROM offsets in capture are the emulator's, without a copier or iNES header;
-proposals shift them to where the image starts in the payload.
+ROM offsets in capture are the emulator's, without a copier or iNES header
+(the PRG size an iNES or NES 2.0 header gives); proposals shift them to where
+the image starts in the payload.
 
 ### 9.2 The session
 
@@ -1356,10 +1382,30 @@ VRAM hash, the screenshot, the typed text, the evidence, and the results
 *replaying*, *finding*, *tracing*, *done* or *failed* with its reason.
 
 The recorder keeps the ring (a savestate every 113 frames, 16 kept, taken by a
-one-shot execution callback) and every port's polled input. On the emulator's
-pause (`codeBreak`) it writes the moment — with the master clock of the
+one-shot execution callback) and every port's polled input; a savestate the
+user loads, or a rewind (the master clock going back), starts them afresh. On
+the emulator's pause (`codeBreak`) — once per pause: a break within a few
+frames of the last moment's is the same — it writes the moment, under a number
+no moment of the session has, — with the master clock of the
 pause, which falls inside a frame — into the session's `incoming/` folder and
-says so over TCP; the session moves it into a capture folder.
+says so over TCP; the session moves it into a capture folder, under an id of
+its own when a capture has that one. A moment id is a file name, never a path;
+a line the session cannot read is said, never raised. When it opens, and
+about once a second of `advance` — which the UI's timer calls while the game
+is played, captures are traced or a run in the game goes on — the session also
+takes in what `incoming/` holds unannounced (a description under a second old
+waits, as a recorder, its own or one left running, may still be writing it),
+says once what does not read, and sets it aside in `incoming/rejected/` once
+it is five minutes old. The folder moves beside a project saved for the first
+time only by a rename on the same drive; otherwise it stays, and says so.
+
+Each Play writes its recorder script under a name of its own, so a Mesen
+window left open with script auto-reload never runs a later one. Mesen reads
+its switches after looking for a window already open, and hands that window
+the game: an emulator that exits within seconds of launch while its recorder
+connects is taken as having done so, and the session plays through that
+connection. The session says when the recorder never said hello, and when the
+emulator played has closed, which ends its listening.
 
 `setup.py` holds the **setup**, what the user gives before playing
 (`setup.json` in the captures' folder): the font's location, a range of the
@@ -1387,16 +1433,39 @@ whole in both directions (a partial line is kept until its newline), and the
 scripts wrap their callbacks so that an error reaches the session as a
 message; a replay whose script stops is killed rather than waited out. A
 callback may run a second at most, so the replay's end is spread over several.
+A capture's evidence counts only once its replay finished and matched
+(`replayed` in `capture.json`): a replay stopped, failed or not matching
+removes the log and the files beside it, so Retry replays again. Stop, Skip,
+retyping a capture being worked on, and closing the session end the job at
+once, its emulators killed rather than waited for. Messages go to the UI as
+they are said (`on_message`). The session's emulator may be unset: viewing
+captures needs none, and work waits for one.
+
+`tablesweep.py` shows a pointer table's strings in the game: for a capture
+whose trace confirmed its own slot in the table, it replays from the last
+state before the game read the slot, with the slot holding each string's
+pointer in turn, and screenshots the frame the text settled — a step that
+yields each screenshot as it is taken, a run of strings at a time.
 
 ### 9.3 Evidence
 
 `evidence.py` runs the replay: a headless emulator loads the moment's oldest
-state, feeds the input back by poll, and at the capture point — the first
-instruction at the pause's master clock — checks the hash; a mismatch fails the
-capture. On the way it logs every ROM data read with its reading PC, every RAM
-write with its writing PC, and each frame; at the end it saves every RAM and
-which ROM bytes this replay read or executed (the access counters, reset as it
-starts). The log is read once into a list of events. A moment with pinned
+state, feeds the input back (the buttons pressed; setting the rest false too
+broke a replay) by poll, and at the capture point — the first instruction at the pause's master
+clock — checks the hash; a mismatch fails the capture. On the way it logs every
+ROM data read with its reading PC, the bus address and the ROM offset the
+emulator converts it to (kept per 4 KiB page; the SA-1's bank registers, in
+any bank, forget them), every RAM write the profile's hooks see with its
+writing PC (outside the main CPU's own RAM with the memory and offset the
+emulator puts it at), each frame, and each GBA page whose writes it starts or
+stops dropping; at the
+end it saves every memory and which ROM bytes this replay read or executed
+(the access counters, reset as it starts). The log is read once into a list of
+events — a line of the older form without the offset, and a line cut short,
+are read too — each write at its RAM byte's one address; the reads are
+indexed by byte and by PC in steps that yield. However the replay's wait ends
+— finished, failed, past its deadline or stopped — its emulator is killed and
+reaped. A moment with pinned
 states has a **gap** — from 60 frames past the text's last font read to the
 ring's oldest state — where the replay logs nothing and the probe server
 keeps no savestates, so a pause long after the text costs only the running.
@@ -1404,38 +1473,74 @@ keeps no savestates, so a pause long after the text costs only the running.
 ### 9.4 Finding the text
 
 `chains.py` matches typed text against a sequence of codes: the text is cut
-into words at anything that is not a letter, digit or kana; each word of four
-or more letters anchors a chain, and the other words follow in order, each at
-its nearest fit under the bases the chain has fixed, found through the
-sequence's values or its neighbour differences as byte strings. A chain counts
-only when every word is in it, the tightest wins, and what sits between two
-words is kept, so the separators the user typed become table entries. Kana are
-tried in gojūon order and in Shift-JIS order.
+into words at anything that is not a letter, digit or kana; the six longest
+words of four or more letters each anchor chains (the longest word does when
+none has four), and the other words follow in order, each at its nearest fit
+under the bases the chain has fixed and at most 40 codes from the word before
+(128 when that leaves every chain a word short: a tilemap two rows a line),
+found through the sequence's values or its neighbour differences as byte
+strings. A chain counts only when every word is in it, and of those the
+tightest wins however many places hold the text; what sits between two words
+is kept, so the separators the user typed become table entries — a separator
+standing on several codes is the one most often under it, and the others (a
+line break where a space was typed) are left to the code sweep. Kana are tried
+in gojūon order, where a voiced kana is its plain kana and a mark code (after
+it or before it, one code for every kana it voices, decoded as the combining
+mark), and in Shift-JIS order, where it is one code. A sequence can be searched
+backwards, for text stored reversed.
 
 `occurrence.py` looks in two kinds of place: the RAM writes — per writing PC,
 and the final contents of each run of addresses — and the ROM reads per reading
-PC, repeated reads of a byte once. Of the places that hold all of it, the one
-holding it earliest is nearest the ROM and is the occurrence; RAM writes come
-before ROM reads, which are for text drawn straight into VRAM. What ends a
-capture is said exactly: no letters to search for, too few, no chain (with the
-words the best partial chain holds, so the capture window underlines the
-rest), chains at too many addresses to tell apart, or the text in RAM at the
-capture point but produced before the replay began.
+PC, repeated reads of a byte once. RAM writes come before ROM reads, which are
+for text drawn straight into VRAM. Of the RAM places that hold all of it, the
+one holding it earliest is nearest the ROM and is the occurrence; of the ROM
+readers, the one reading it in the fewest events, then the earliest. Every kind
+of place is searched a code an event first, RAM before ROM, then — only when
+that found nothing anywhere — as 16-bit codes: every other write (a tile and
+its attribute) and pairs of neighbouring events at consecutive addresses, both
+phases and both byte orders, since a byte-wide bus logs a 16-bit access as two;
+the occurrence records the code's width, the stride and the byte order. So a
+place holding the text only every other write — a coprocessor writing each
+character twice to one variable — comes after a reader that reads it whole. A
+bus as wide as the access logs a 16-bit write as one event, its value wider
+than a byte: RAM holding the text so gives way to a reader reading it as a
+string (its letters in order, a few bytes apart — not a dictionary's entries),
+since a reader's trace sets every byte of a wide code and the code the string
+ends with whole; RAM holding it a byte a code comes first, the earliest place
+of all, which for packed text is the variable a decoder writes each character
+to. Only when every kind of place fails is each searched backwards. What ends
+a capture is said exactly: no letters to search for, too few, no chain (with
+the words the best partial chain holds, so the capture window underlines the
+rest, a word typed twice counted twice), chains at too many addresses to tell
+apart, or the text in a RAM saved at the capture point — the save and
+coprocessor RAMs too — but produced before the replay began.
 
 ### 9.5 Probes
 
 `probe.py` drives the probe server. The server replays once, keeping a
 savestate every 10 frames and the reference output — the occurrence's writes
-from its first frame to its last, or VRAM at a chosen frame; then each probe
-loads the latest state before a given frame, writes ROM bytes, runs, undoes
-the writes and reports the output's difference and, when asked, a reader's
-first reads. *Settle* finds the earliest frame after which the text's VRAM
-holds what the user saw, and the VRAM comparison moves there. A probe's cost is
-the frames it runs, so it starts at the read in question and stops at the last
-output it compares. A probe not answered by a deadline its frames set is
-counted as *no answer*, the server is restarted, and the tracing goes on
-without it. The same server takes a screenshot with bytes changed, for Confirm
-in game.
+(through every write hook landing in its memory) from its first frame to its
+last, or VRAM at a chosen frame; then each probe loads the latest state before
+a given frame, changes ROM bytes — or what reads of one byte return (a read
+callback's return value), on every read, those by one PC, the n-th of them, or
+those after the n-th write to it — runs, undoes the changes and reports the
+output's difference and, when asked, a reader's first reads (from its first
+read of a given byte, once told), as bus address and ROM offset. A ROM byte
+that does not take its new value is an error, not a run of no sources.
+*Settle* finds the earliest frame after which the text's VRAM holds what the
+user saw, and the VRAM comparison moves there; from then on the server
+compares VRAM by event, within the text's range: from the changed byte's first
+read, once the range has held still 8 frames and no sooner than the reference
+took. A probe's cost is the frames it runs, so it starts at the read in
+question and stops at the last output it compares. A probe not answered by a
+deadline its frames set is counted as *no answer*, the server is restarted,
+and the tracing goes on without it; a server that died between two other
+requests is restarted and asked again, and an answer to an earlier probe is
+passed over. Once a change is known to alter the output, every restarted
+server must show it still does. The same server takes a screenshot with bytes
+changed, for Confirm in game. Closing a server asks it to quit and waits a
+few seconds; one mid-request, or closed with no wait (Stop, Skip, the app
+closing), is killed at once.
 
 ### 9.6 Tracing
 
@@ -1451,26 +1556,39 @@ in game.
   them), *determines* (this output is the first to change). For VRAM output,
   a typed character's read is confirmed when its change reaches VRAM, which
   also says where its glyph lands.
-- **Extent.** The reader of the last source goes on reading in order past it;
+- **The string's own bytes.** The longest run of sources, in output order,
+  each just past the one before (up or down the ROM), is the string's; the
+  others are marked as read elsewhere (a dictionary's) and bound nothing.
+- **Extent.** From the read its last source was confirmed with, that source's
+  reader goes on reading in order past it, at most 4 frames between reads;
   where it stops is the string's last byte, its end token included.
-- **Packed.** Text is packed when fewer than a third of its outputs have a
-  source just past the last one's, walking the outputs in order: its outputs
-  come from a dictionary, not from the stream.
+- **Packed.** Text is packed when fewer than a third of its outputs lie on
+  that run: its outputs come from a dictionary, not from the stream.
+- **A RAM buffer.** Text with no ROM source may be read from a buffer the
+  game decoded it into: an earlier write outside the text (of the first
+  output's value, then the first address of each run written) whose value,
+  substituted where it is read, changes the first output; the codes are then
+  swept there.
 - **Pointers.** A byte holds the string's address when changing it by 2 moves
   the string's first read by 2 × 1, 2 or 4, or 256 times that for the byte
   above. The first read is the earliest read of the string's first byte, by
   whichever routine; of a packed string, the stream's. Candidates are the reads
   before it (all but the string's own bytes), and every place in the ROM
-  holding its address that this replay read or executed. The probe answers as
-  soon as the reader's first reads are in, so a change that then stalls the
-  game still counts; one that stalls it before the string is read is reported
-  as a stall.
-- **Codes.** Every value of a source byte used once — every byte of it, for a
-  wider code, and then the code the string ended with whole. With RAM output,
+  holding its address — as the game's own read spelled it, or the profile's
+  forms — that this replay read or executed; a place found so has its byte
+  above tried too, and the bank byte after it when that follows. The probe
+  answers as soon as the reader's first reads are in, so a change that then
+  stalls the game still counts; one with no answer is a *stall*, one after
+  which the reader read nothing near the string a *stray*.
+- **Codes.** Every value of a source byte used once, from the read that
+  confirmed it — every byte of it, for a wider code, in its byte order, and
+  then the code the string ended with whole; a byte the game reads more than
+  once has only that read changed. With RAM output,
   what replaces the output is a character, a string (a dictionary entry),
   nothing, or a structural change (the text cut short is an end); with VRAM
-  output, the reader's next reads say printable, a command skipping *n* bytes,
-  or the end, and the VRAM left groups the printable codes by glyph.
+  output, the reader's next reads from its read of the swept byte say
+  printable, a command skipping *n* bytes, or the end, and the VRAM left in
+  the text's range groups the printable codes by glyph.
 - **Streams.** For packed text, the stream is the run of consecutive bytes,
   read during the text, whose change alters the output (found by halving) and
   whose first changed output moves forward with the address. `bitlayout.py`
@@ -1478,26 +1596,64 @@ in game.
   many of the top codes escape to a second code, the start bit — and aligns
   the codes with the outputs by backtracking: a code is one dictionary entry
   (a run of consecutive addresses, the same run every time, no two codes the
-  same run) or produces nothing. A scheme outside the model fits nothing.
+  same run) or produces nothing. A scheme outside the model fits nothing; a
+  search that ran out of its budget is said as such.
+- A probe with no answer never counts as *no change*: halving splits the set,
+  and a code swept is a *stall*.
 
 ### 9.7 Combining and proposals
 
-`combine.py` works over every finished capture: captures read by one routine
-are one engine; code meanings merge — a typed reading outweighs an inferred
-one, and two readings otherwise are a conflict; a code that writes a character
-and pads its line is that character and a line break; a bit layout is decided
-when one fits every sighting with one code table (layouts that read them into
-the same table are one). An end is the end token the strings agree on, a fixed
-length when they start a constant stride apart, or the next pointer. Pointer
-slots give the pointer's size and byte order (the bytes that moved it by
-powers of 256), the mapping that turns its value into the string's address —
-the console's own, or a constant added — and, from two or more, the table's
-stride; the table is extended both ways while each neighbour still points
-near the strings seen. `proposals.py` states the results as the model states
-them — block configurations, table entries, glyphs to label and conflicts —
-each with the captures behind it and what is unconfirmed. `ui/` applies an
-accepted proposal through the usual undo commands, relabelling an entry whose
-label the table already gives other bits.
+`combine.py` works over every finished capture: the captures one routine
+produced — the writing PC of RAM text, the reading PC of text drawn into VRAM —
+are one engine; code meanings merge, a command's with its parameter bytes (a
+reader stepping more than 8 bytes has jumped, and its code is a command with
+none, unconfirmed). A reading read off the alphabet around a chain's matched
+letters gives way to any other; past that, two readings are a conflict, typed
+or not, except a typed character and a reading of it followed by more — a code
+that writes a character and pads its line is that character and a line break,
+typed or not. A typed character names its ROM code only through a source the
+output follows (copied, or only this output changing — a lookup table), never
+one that merely determines it. A code standing where
+the user typed a separator the decoder gives another code is unconfirmed, a
+line-break candidate. A bit layout is decided when one fits every sighting with
+one code table (layouts that read them into the same table are one; sightings
+merge one at a time). An end is the end token the strings agree on, the next
+pointer when a table reaches them, or a fixed length when the strings start a
+constant stride apart that reads as a record — the bytes after each all one
+padding value in a record of 256 bytes at most, or, with three strings or more,
+under twice the longest — unconfirmed. Pointer slots give the pointer's size
+and byte order (the bytes that moved it by powers of 256), and the mapping that
+turns its value into the string's address — the console's own, or a constant
+added. A reading is read wider only when, for every sure slot of it, the bytes
+above are not zero and a console mapping reads the wider value as the string's
+address exactly whatever bank it is told: the value carries its bank. A
+pointer the tracer found by its value, with its byte above ([9.6](#96-tracing)),
+is a pointer in code — an operand — unless three or more are evenly spaced, a
+pointer or a record of 16 bytes at most apart. A table is sure slots or a
+reading two captures share; two bytes apart that moved the string by the unit
+and 256 times it are a split pointer, reported, not read. Each capture gives a
+table one slot, and slots of two or more give its stride; between the slots
+seen, a slot may hold a null (0 or all ones) or another slot's string; beyond
+them the table is extended while each neighbour points near the strings seen,
+somewhere no slot points, never over a captured string's own bytes, and a null
+ends it. Of readings equally supported, the one with the lowest slot is the
+table.
+`proposals.py` states the results as the model states them — block
+configurations, table entries (each end code labelled apart), glyphs to label
+and conflicts (with each reading's meaning) — each with the captures behind it
+and what is unconfirmed, at the payload's offsets for every mapping. A
+proposal's id is derived from what it proposes, so a review mark follows it
+when captures are renumbered: a block's from its routine, output, kind and
+start (a table's first slot, pointer size and mapping), so a capture that
+extends it keeps the mark; the entries' from every entry. `ui/` applies an accepted proposal through the
+usual undo commands, relabelling an entry whose label the table already gives
+other bits; blocks and entries go through one target table, the reading's or a
+new `captured` one. Whether a proposal is accepted is read from the project,
+so undo takes it back: an acceptance records what it added (`review.json`) —
+the block's source, as edited, or the table entries as they stood after — and
+counts while the project still holds it; failing that, a proposal is accepted
+when the project already has it as proposed — a block with its source, every
+entry equal, a glyph's code, a conflict settled with one of its readings.
 
 ### 9.8 Tests
 

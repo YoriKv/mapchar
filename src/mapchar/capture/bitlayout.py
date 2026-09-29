@@ -9,12 +9,12 @@ consecutive addresses, the same run every time it recurs, no two codes the
 same run) or produces nothing. Each sighting gives the layouts that fit it;
 :func:`combine` keeps those that fit every sighting with one code table, and a
 layout is decided only when one is left. A scheme outside the model — a
-Huffman tree — fits nothing, and says so.
+Huffman tree — fits nothing, and says so; a search that ran out of its budget
+is counted apart (:attr:`Fits.exhausted`), since it may have fitted.
 """
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 
@@ -105,13 +105,14 @@ class _Outputs:
         ]
         # What an entry can still start with, from each position on.
         self.rest = [set(outputs[ps:]) for ps in range(n + 1)]
+        self.exhausted = 0  # alignments that gave up at their budget
 
 
 def align(codes: list[int], o: _Outputs, budget: int = BUDGET) -> dict | None:
     """The code table under which ``codes`` spell the outputs, or None: a
     depth-first search one code at a time over what an unknown code means (the
     longest entry first, then shorter ones, then nothing), giving up after
-    ``budget`` alternatives.
+    ``budget`` alternatives, which it counts in ``o.exhausted``.
 
     A decision whose whole search failed is remembered with the alternatives it
     took: met again in the same state as far as the rest can tell (the same
@@ -183,6 +184,7 @@ def align(codes: list[int], o: _Outputs, budget: int = BUDGET) -> dict | None:
                 if got is not None:  # failed before, after this many alternatives
                     nodes += got
                     if nodes > budget:
+                        o.exhausted += 1
                         return None
                     ok = False
                     break
@@ -219,6 +221,7 @@ def align(codes: list[int], o: _Outputs, budget: int = BUDGET) -> dict | None:
                 used.discard(x)
         nodes += 1
         if nodes > budget:
+            o.exhausted += 1
             return None
         m[c] = e
         trail.append(c)
@@ -228,14 +231,22 @@ def align(codes: list[int], o: _Outputs, budget: int = BUDGET) -> dict | None:
             ps += e[1]
 
 
+class Fits(list):
+    """The layouts that fit, and how many searches gave up at their budget:
+    with none fitting, a nonzero count says the search ran out, not that the
+    scheme is outside the model."""
+
+    exhausted: int = 0
+
+
 def iter_fits(
     outputs: list[Output], data: bytes, value_at: Callable[[int], int]
-) -> Generator[None, None, list[Layout]]:
+) -> Generator[None, None, Fits]:
     """Every layout under which ``data``'s codes each mean one dictionary
     entry or nothing; yields between layouts so a caller can pace it."""
     o = _Outputs(outputs, value_at)
     done: dict[tuple, dict | None] = {}
-    found: list[Layout] = []
+    found = Fits()
     for order in ORDERS:
         for w in WIDTHS:
             for k in ESCAPES:
@@ -248,12 +259,11 @@ def iter_fits(
                     if m is not None:
                         found.append(Layout(order, w, k, st, dict(m)))
     found.sort(key=lambda f: len(f.table))
+    found.exhausted = o.exhausted
     return found
 
 
-def fits(
-    outputs: list[Output], data: bytes, value_at: Callable[[int], int]
-) -> list[Layout]:
+def fits(outputs: list[Output], data: bytes, value_at: Callable[[int], int]) -> Fits:
     gen = iter_fits(outputs, data, value_at)
     while True:
         try:
@@ -300,7 +310,9 @@ class Decision:
 
 
 def combine(per_sighting: list[list[Layout]]) -> Decision:
-    """The layouts that fit every sighting with one code table."""
+    """The layouts that fit every sighting with one code table: merged a
+    sighting at a time, a start bit that merges with none of the partial
+    tables dropping out before the next sighting is tried."""
     by_key: dict[tuple, list[list[Layout]]] = {}
     for n, layouts in enumerate(per_sighting):
         for lay in layouts:
@@ -310,8 +322,15 @@ def combine(per_sighting: list[list[Layout]]) -> Decision:
     for key, slots in by_key.items():
         if any(not s for s in slots):
             continue
-        for combo in itertools.product(*slots):
-            t = merge([lay.table for lay in combo])
-            if t is not None:
-                alive.append((key, [lay.start for lay in combo], t))
+        partial: list[tuple[list[int], dict]] = [([], {})]
+        for layouts in slots:
+            partial = [
+                (starts + [lay.start], t)
+                for starts, table in partial
+                for lay in layouts
+                if (t := merge([table, lay.table])) is not None
+            ]
+            if not partial:
+                break
+        alive += [(key, starts, t) for starts, t in partial]
     return Decision(alive)

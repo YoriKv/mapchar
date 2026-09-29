@@ -163,6 +163,7 @@ class ProjectMixin:
     def _new_project(self) -> None:
         if not self._confirm_discard("start a new project"):
             return
+        self._capture_reset()  # the captures were the old project's
         self._entry = None
         self._doc = None
         self._load_project_plugins(None)  # drop the old project's plugins/ folder
@@ -203,6 +204,7 @@ class ProjectMixin:
         except ProjectError as exc:
             self._error(str(exc))
             return False
+        self._capture_reset()  # the captures were the old project's
         self._entry = None
         self._doc = None
         self._load_project_plugins(path)  # its plugins/ folder, before anything reads
@@ -316,6 +318,7 @@ class ProjectMixin:
         self._discard_autosave()
         self.project_path = path
         self._discard_autosave()
+        self._capture_rehome()  # the captures live beside the project
         self._saved_snapshot = self._snapshot()
         self._add_recent(path)
         self._remember_dir(path)

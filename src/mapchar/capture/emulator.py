@@ -17,16 +17,27 @@ import subprocess
 from importlib import resources
 from typing import Protocol
 
-from mapchar.capture.consoles import Console, lua_value
+from mapchar.capture.consoles import CONSOLES, Console, lua_value
+from mapchar.capture.protocol import CaptureError
 
 RECORDER = "recorder"
 REPLAY = "replay"
 PROBE = "probe"
 ROLES = (RECORDER, REPLAY, PROBE)
 
-HEADLESS_TIMEOUT = 100000
-"""Seconds a headless run may take before the emulator gives up on its own;
-mapchar's own deadlines are far shorter."""
+HEADLESS_TIMEOUT = 1800
+"""Seconds a replay may run before the emulator gives up on its own: a little
+over mapchar's longest deadline for one (900), so an emulator mapchar lost
+track of does not run on for long."""
+
+PROBE_TIMEOUT = 6 * 3600
+"""The same for a probe server, which lives as long as a capture's tracing."""
+
+SCRIPT_TIMEOUT = 30
+"""Seconds one callback of the recorder may run: its pause writes the moment
+(every RAM hashed, up to 32 savestates, the screenshot and the input) in one.
+Headless runs ignore the switch (``--testRunner`` keeps the default second),
+so their scripts spread long work over several callbacks."""
 
 
 def script_source(name: str) -> str:
@@ -81,6 +92,8 @@ class Mesen:
 
     def __init__(self, path: str | None = None):
         self.path = path or self.find()
+        self._native: dict[str, str] = {}
+        """Windows spellings of WSL folders, from ``wslpath``."""
 
     @staticmethod
     def find() -> str | None:
@@ -91,7 +104,7 @@ class Mesen:
         return None
 
     def consoles(self) -> tuple[str, ...]:
-        return ("snes-lorom", "snes-hirom", "snes-superfx", "nes", "gba")
+        return tuple(CONSOLES)
 
     def available(self) -> bool:
         return bool(self.path) and os.path.isfile(self.path)
@@ -102,11 +115,25 @@ class Mesen:
 
     def native_path(self, path: str) -> str:
         path = os.path.abspath(path)
-        if self.windows_from_wsl:
-            return subprocess.run(
-                ["wslpath", "-w", path], capture_output=True, text=True, check=True
-            ).stdout.strip()
-        return path
+        if not self.windows_from_wsl:
+            return path
+        folder, name = os.path.split(path)
+        win = self._native.get(folder)
+        if win is None:
+            try:
+                done = subprocess.run(
+                    ["wslpath", "-w", folder], capture_output=True, text=True
+                )
+            except OSError as e:
+                raise CaptureError(f"wslpath could not be run: {e}") from e
+            win = done.stdout.strip()
+            if done.returncode != 0 or not win:
+                raise CaptureError(
+                    f"wslpath could not spell {folder} for Windows: "
+                    + (done.stderr.strip() or f"exit status {done.returncode}")
+                )
+            self._native[folder] = win
+        return win.rstrip("\\") + "\\" + name if name else win
 
     def arguments(self, rom: str, role: str, script: str) -> list[str]:
         args = [
@@ -118,14 +145,13 @@ class Mesen:
         ]
         if role == RECORDER:
             # A second launch would otherwise hand its ROM to a window already open.
-            args.append("--preferences.singleInstance=false")
-        else:
             args += [
-                "--testRunner",
-                "--enablestdout",
-                f"--timeout={HEADLESS_TIMEOUT}",
-                "--debug.scriptWindow.scriptTimeout=30",
+                "--preferences.singleInstance=false",
+                f"--debug.scriptWindow.scriptTimeout={SCRIPT_TIMEOUT}",
             ]
+        else:
+            timeout = PROBE_TIMEOUT if role == PROBE else HEADLESS_TIMEOUT
+            args += ["--testRunner", "--enablestdout", f"--timeout={timeout}"]
         return [self.path or "mesen", *args]
 
     def launch(
@@ -138,7 +164,7 @@ class Mesen:
             # Headless: nothing may reach a display, WSLg's included.
             env.pop("DISPLAY", None)
             env.pop("WAYLAND_DISPLAY", None)
-        out = open(log, "w") if log else subprocess.DEVNULL  # noqa: SIM115
+        out = open(log, "w", encoding="utf-8") if log else subprocess.DEVNULL  # noqa: SIM115
         kwargs = {}
         if os.name == "nt" and role != RECORDER:
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW

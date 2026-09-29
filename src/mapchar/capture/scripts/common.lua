@@ -10,6 +10,12 @@ local function save(path, data)
   local fh = assert(io.open(path, "wb")); fh:write(data); fh:close()
 end
 
+local function exists(path)
+  local fh = io.open(path, "rb")
+  if fh then fh:close(); return true end
+  return false
+end
+
 -- The connection to mapchar: whole lines both ways. A send blocks until all
 -- of it is out, and a line that arrives in pieces is kept until its newline
 -- (LuaSocket hands a non-blocking receive's partial line back as its third
@@ -30,10 +36,17 @@ local function send(s)
 end
 
 -- The next whole line from mapchar, or nil; "closed" as the second result
--- when mapchar has gone.
-local function receive()
+-- when mapchar has gone. With `wait`, a receive that finds nothing waits up
+-- to that many seconds for a line before it gives up.
+local function receive(wait)
   if not conn then return nil end
   local line, err, part = conn:receive("*l", pending)
+  if not line and err == "timeout" and wait then
+    pending = part or pending
+    conn:settimeout(wait)
+    line, err, part = conn:receive("*l", pending)
+    conn:settimeout(0)
+  end
   if not line then
     pending = part or pending
     return nil, err
@@ -43,15 +56,19 @@ local function receive()
 end
 
 -- A callback that errors or overruns stops the script with the error only in
--- the script window: report it on stdout and to mapchar instead.
+-- the script window: report it on stdout and to mapchar instead. What the
+-- callback returns is passed on: a memory callback's integer replaces the
+-- value read or written.
+local function report(err)
+  print("! " .. tostring(err)); io.stdout:flush()
+  pcall(send, "err " .. tostring(err):gsub("%s+", " "))
+end
+local function passOn(ok, ...)
+  if ok then return ... end
+  report((...))
+end
 local function guard(fn)
-  return function(...)
-    local ok, err = pcall(fn, ...)
-    if not ok then
-      print("! " .. tostring(err)); io.stdout:flush()
-      pcall(send, "err " .. tostring(err):gsub("%s+", " "))
-    end
-  end
+  return function(...) return passOn(pcall(fn, ...)) end
 end
 local addMemoryCallback, addEventCallback = emu.addMemoryCallback, emu.addEventCallback
 emu.addMemoryCallback = function(fn, ...) return addMemoryCallback(guard(fn), ...) end
@@ -61,11 +78,39 @@ local MEM = function(name) return emu.memType[name] end
 local CPU = emu.cpuType[CFG.cpu]
 local ROM = MEM(CFG.rom)
 
--- Adler-32 of every RAM of the profile, VRAM last.
+-- Memory type names by value.
+local MEM_NAMES = {}
+for name, v in pairs(emu.memType) do if v < 0x100 then MEM_NAMES[v] = name end end
+
+-- Each processor's own address space, for converting its addresses.
+local REL = { snes = "snesMemory", sa1 = "sa1Memory", gsu = "gsuMemory", nes = "nesMemory", gba = "gbaMemory" }
+
+-- A memory of the profile, or its stand-in when the cartridge has none (the
+-- NES's work RAM for its save RAM).
+local function ramType(name)
+  local mt = MEM(name)
+  local alias = CFG.aliases and CFG.aliases[name]
+  if alias and emu.getMemorySize(mt) == 0 then return MEM(alias) end
+  return mt
+end
+
+-- Every memory hashed and saved: the profile's RAMs (the VRAM last), then
+-- the extra ones. A hash taken with fewer is a prefix of one taken with more.
+local function allRams()
+  local list = {}
+  for _, name in ipairs(CFG.rams) do list[#list + 1] = name end
+  for _, name in ipairs(CFG.extraRams or {}) do list[#list + 1] = name end
+  return list
+end
+
+-- Adler-32 of every memory, in allRams order: the profile's RAMs as they
+-- are named (an empty one hashes as empty, as it always has), the extras with
+-- their stand-ins.
 local function hash()
   local h = {}
-  for _, name in ipairs(CFG.rams) do
-    local mt = MEM(name)
+  local nrams = #CFG.rams
+  for i, name in ipairs(allRams()) do
+    local mt = i <= nrams and MEM(name) or ramType(name)
     local a, b = 1, 0
     for i = 0, emu.getMemorySize(mt) - 1 do
       a = (a + emu.read(i, mt, false)) % 65521; b = (b + a) % 65521
@@ -75,8 +120,14 @@ local function hash()
   return table.concat(h, ":")
 end
 
+-- Whether a hash is the one wanted: equal, or wanted's memories a prefix.
+local function hashMatches(h, want)
+  if not want then return false end
+  return h == want or h:sub(1, #want + 1) == want .. ":"
+end
+
 local function dump(name)
-  local mt, parts = MEM(name), {}
+  local mt, parts = ramType(name), {}
   for i = 0, emu.getMemorySize(mt) - 1 do parts[#parts + 1] = string.char(emu.read(i, mt, false)) end
   return table.concat(parts)
 end
@@ -92,6 +143,8 @@ local function oneShot(fn)
 end
 
 -- Input: every port's buttons, encoded "a+start" per port, "|" between ports.
+-- A replay sets only the buttons pressed: setting the others false as well
+-- (which Mesen honours) broke Dragon Warrior II's replay.
 local PORTS = 2
 local function encInput()
   local ports = {}
@@ -129,13 +182,53 @@ end
 
 local function nesPc() return nesPrg(emu.getCpuState(emu.cpuType.nes).pc) end
 
--- The PC a reader's read is logged with, per processor.
+-- The PC a reader's read is logged with, per processor: the SuperFX's
+-- marked with bit 24, the SA-1's with bit 25.
 local PCS = {
   snes = function() local st = emu.getCpuState(emu.cpuType.snes); return (st.k << 16) | st.pc end,
+  -- The SA-1's state is its chip's, the CPU's registers under "cpu.".
+  sa1 = function()
+    local st = emu.getCpuState(emu.cpuType.sa1)
+    return 0x2000000 | ((st.k or st["cpu.k"]) << 16) | (st.pc or st["cpu.pc"])
+  end,
   gsu = function() local st = emu.getCpuState(emu.cpuType.gsu); return 0x1000000 | (st.programBank << 16) | st.r15 end,
   gba = function() return emu.getCpuState(emu.cpuType.gba)["pipeline.execute.address"] end,
   nes = nesPc,
 }
+
+-- A bus address as a ROM offset, as the emulator maps it: nil where it is
+-- not ROM. Kept per processor and 4 KiB page; the SA-1's bank registers
+-- ($2220-$2223) forget what was kept. The NES's banks change too often:
+-- nesPrg converts every address.
+local romPages = {}
+local function forgetPages() romPages = {} end
+local function romOffset(cpu, a)
+  if cpu == "nes" then
+    local off = nesPrg(a)
+    return off < 0x1000000 and off or nil
+  end
+  local pages = romPages[cpu]
+  if not pages then pages = {}; romPages[cpu] = pages end
+  local page = a >> 12
+  local base = pages[page]
+  if base == nil then
+    local ok, c = pcall(emu.convertAddress, a, MEM(REL[cpu]), emu.cpuType[cpu])
+    base = ok and c and c.memType == ROM and c.address - (a & 0xFFF) or false
+    pages[page] = base
+  end
+  return base and base + (a & 0xFFF) or nil
+end
+for _, r in ipairs(CFG.readers) do
+  if r == "sa1" then
+    -- Every bank the registers are visible in.
+    for bank = 0x00, 0xBF do
+      if bank < 0x40 or bank >= 0x80 then
+        emu.addMemoryCallback(forgetPages, emu.callbackType.write, (bank << 16) | 0x2220,
+          (bank << 16) | 0x2223, emu.cpuType.snes, emu.memType.snesMemory)
+      end
+    end
+  end
+end
 
 -- While true, the read and write hooks below drop everything at once: the
 -- replay's gap, where nothing is logged.
@@ -144,18 +237,19 @@ local hooksOff = false
 -- Whether a frame lies in the moment's gap (CFG.gap = { from, to }).
 local function inGap(f) return CFG.gap ~= nil and f >= CFG.gap[1] and f < CFG.gap[2] end
 
--- Every ROM data read of the profile's readers: fn(pc, address, value), the
--- address as the console reports it (the bus address; a PRG offset for the
--- NES). Each reader's filter drops what is not a data read of its own.
+-- Every ROM data read of the profile's readers: fn(pc, address, value, rom),
+-- the address as the reader's bus has it (the PRG offset for the NES) and rom
+-- its ROM offset as the emulator maps it, nil when it could not. Each
+-- reader's filter drops what is not a data read of its own.
 local function hookReads(fn)
   local size = emu.getMemorySize(ROM)
   for _, r in ipairs(CFG.readers) do
-    if r == "snes" then
+    if r == "snes" or r == "sa1" then
+      local ct, pcOf = emu.cpuType[r], PCS[r]
       emu.addMemoryCallback(function(a, v)
         if hooksOff then return end
-        local st = emu.getCpuState(emu.cpuType.snes)
-        fn((st.k << 16) | st.pc, a, v)
-      end, emu.callbackType.read, 0, size - 1, emu.cpuType.snes, ROM)
+        fn(pcOf(), a, v, romOffset(r, a))
+      end, emu.callbackType.read, 0, size - 1, ct, ROM)
     elseif r == "gsu" then
       -- The SuperFX filling its instruction cache is reported as data reads:
       -- a read of the program bank near R15 is a code fetch, and its page is
@@ -169,7 +263,7 @@ local function hookReads(fn)
         if (a >> 16) == st.programBank and math.abs((a & 0xFFFF) - st.r15) < 0x200 then
           codePage[page] = true; return
         end
-        fn(0x1000000 | (st.programBank << 16) | st.r15, a, v)
+        fn(0x1000000 | (st.programBank << 16) | st.r15, a, v, romOffset("gsu", a))
       end, emu.callbackType.read, 0, size - 1, emu.cpuType.gsu, ROM)
     elseif r == "nes" then
       -- Bank-switched: addresses and PCs as PRG ROM offsets. A read at or just
@@ -179,7 +273,8 @@ local function hookReads(fn)
         if hooksOff then return end
         local pc = emu.getCpuState(nc).pc
         if a >= pc - 1 and a <= pc + 3 then return end
-        fn(nesPrg(pc), nesPrg(a), v)
+        local off = nesPrg(a)
+        fn(nesPrg(pc), off, v, off < 0x1000000 and off or nil)
       end, emu.callbackType.read, 0, size - 1, nc, ROM)
     elseif r == "gba" then
       -- ARM code loads its constants from just past itself: a literal pool.
@@ -187,25 +282,90 @@ local function hookReads(fn)
         if hooksOff then return end
         local pc = emu.getCpuState(emu.cpuType.gba)["pipeline.execute.address"]
         if math.abs((a | 0x08000000) - pc) < 0x1000 then return end
-        fn(pc, a, v)
+        fn(pc, a, v, romOffset("gba", a))
       end, emu.callbackType.read, 0, size - 1, emu.cpuType.gba, ROM)
     end
   end
 end
 
+-- The profile's write hooks (CFG.writes: { cpu, memory type, lo, hi, RAM, by
+-- bus }), each with its memory type resolved and its range's end: nil for a
+-- memory the cartridge does not have.
+local function writeHooks()
+  local list = {}
+  for _, h in ipairs(CFG.writes or {}) do
+    local cpuName, mem, lo, hi, ram, byBus = h[1], h[2], h[3], h[4], h[5], h[6]
+    local mt = (mem == ram) and ramType(mem) or MEM(mem)
+    local size = emu.getMemorySize(mt)
+    if hi < 0 then hi = size - 1 end
+    if size > 0 and hi >= lo then
+      list[#list + 1] = { cpu = cpuName, mt = mt, lo = lo, hi = hi, ram = ram, byBus = byBus }
+    end
+  end
+  return list
+end
 
--- Every RAM write by the main CPU: fn(pc, address, value), the address as
--- the bus has it.
-local function hookWrites(fn)
-  if CFG.console == "snes" then
+-- A GBA RAM page (256 bytes) nearly wholly rewritten — BULK_WORDS of its 64
+-- words or more — BULK_FRAMES frames running is a buffer being filled every
+-- frame (a framebuffer, a tile being drawn): its writes are dropped while
+-- that goes on, and logged again from the frame after it stops. A menu that
+-- redraws its string every frame rewrites a few words, and stays. onBulk
+-- (kind, page) hears of each ban ("B") and lifting ("U"), which take effect
+-- from the next frame: the probe server drops the same writes.
+local BULK_WORDS, BULK_FRAMES = 50, 3
+
+-- Every RAM write the profile's hooks see: fn(pc, address, value[, memory,
+-- offset]), the address as the writer's bus has it. A write outside the main
+-- CPU's own RAM also carries the memory and offset the emulator puts it at —
+-- a save RAM's mirrors, a bank register's choice, a coprocessor's view.
+local function hookWrites(fn, onBulk)
+  local bulk = CFG.console == "gba"
+  local words, streak, banned = {}, {}, {}
+  if bulk then
+    emu.addEventCallback(function()
+      for page, set in pairs(words) do
+        if set.n >= BULK_WORDS then
+          streak[page] = (streak[page] or 0) + 1
+          if streak[page] >= BULK_FRAMES and not banned[page] then
+            banned[page] = true
+            if onBulk then onBulk("B", page) end
+          end
+        else
+          streak[page] = nil
+        end
+      end
+      for page in pairs(banned) do
+        local set = words[page]
+        if not set or set.n < BULK_WORDS then
+          banned[page], streak[page] = nil, nil
+          if onBulk then onBulk("U", page) end
+        end
+      end
+      for page in pairs(streak) do if not words[page] then streak[page] = nil end end
+      words = {}
+    end, emu.eventType.endFrame)
+  end
+  for _, h in ipairs(writeHooks()) do
+    local cpuName = h.cpu
+    local cpu, pcOf = emu.cpuType[cpuName], PCS[cpuName]
+    local convert = CFG.console ~= "gba" and not (cpuName == CFG.cpu and h.ram == CFG.rams[1])
+    local rel = convert and MEM(REL[cpuName])
     emu.addMemoryCallback(function(a, v)
       if hooksOff then return end
-      local st = emu.getCpuState(emu.cpuType.snes)
-      fn((st.k << 16) | st.pc, a, v)
-    end, emu.callbackType.write, 0, 0x1FFFF, emu.cpuType.snes, emu.memType.snesWorkRam)
-  elseif CFG.console == "nes" then
-    local w = function(a, v) if hooksOff then return end fn(nesPc(), a, v) end
-    emu.addMemoryCallback(w, emu.callbackType.write, 0x0000, 0x07FF, emu.cpuType.nes, emu.memType.nesMemory)
-    emu.addMemoryCallback(w, emu.callbackType.write, 0x6000, 0x7FFF, emu.cpuType.nes, emu.memType.nesMemory)
+      if bulk then
+        local page = a >> 8
+        local set = words[page]
+        if not set then set = { n = 0 }; words[page] = set end
+        local w = (a >> 2) & 0x3F
+        if not set[w] then set[w] = true; set.n = set.n + 1 end
+        if banned[page] then return end
+      end
+      local pc = pcOf()
+      if convert then
+        local c = emu.convertAddress(a, rel, cpu)
+        if c then fn(pc, a, v, MEM_NAMES[c.memType], c.address); return end
+      end
+      fn(pc, a, v)
+    end, emu.callbackType.write, h.lo, h.hi, cpu, h.mt)
   end
 end

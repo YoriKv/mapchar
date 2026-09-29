@@ -1,10 +1,12 @@
 -- mapchar capture: the replay, run headless. It loads a ring state, feeds the
 -- recorded input back by poll, and at the capture point compares the RAM and
 -- VRAM hash with the recorder's. With CFG.evidence it logs, in order, every
--- ROM data read (E pc address value), every RAM write (W pc address value)
--- and each frame's start (F n), and at the capture point saves every RAM and
--- which ROM bytes this replay read or executed. In the moment's gap (CFG.gap)
--- it logs nothing.
+-- ROM data read (E pc address value [ROM offset]), every RAM write the
+-- profile's hooks see (W pc address value [memory:offset]) and each frame's
+-- start (F n), a GBA RAM page's writes dropped or logged again (B page, U
+-- page), and at the capture point saves every RAM and which ROM bytes
+-- this replay read or executed. In the moment's gap (CFG.gap) it logs
+-- nothing.
 
 local inputs = {}
 for p, k in slurp(CFG.input):gmatch("(%d+) ([^\n]*)") do inputs[tonumber(p)] = decInput(k) end
@@ -36,8 +38,10 @@ local function finish()
   if ev then
     if #buf > 0 then ev:write(table.concat(buf, "\n"), "\n") end
     ev:close()
-    for _, name in ipairs(CFG.rams) do
-      tail[#tail + 1] = function() save(CFG.evidence .. "." .. name, dump(name)) end
+    for _, name in ipairs(allRams()) do
+      if emu.getMemorySize(ramType(name)) > 0 then
+        tail[#tail + 1] = function() save(CFG.evidence .. "." .. name, dump(name)) end
+      end
     end
     -- The ROM bytes this replay read or executed: the counters were reset
     -- at its start, where the emulator's own code log spans every run.
@@ -61,7 +65,7 @@ local function finish()
   end
   tail[#tail + 1] = function()
     print(string.format("replay frame=%d poll=%d hash=%s match=%d events=%d",
-      frame, polls, h, h == CFG.hash and 1 or 0, events))
+      frame, polls, h, hashMatches(h, CFG.hash) and 1 or 0, events))
     io.stdout:flush()
     emu.stop(0)
   end
@@ -73,8 +77,14 @@ oneShot(function()
   frame, polls, loaded = CFG.stateFrame, CFG.statePoll, true
   if CFG.evidence then
     ev = assert(io.open(CFG.evidence, "w"))
-    hookReads(function(pc, a, v) out(string.format("E %X %X %X", pc, a, v)) end)
-    hookWrites(function(pc, a, v) out(string.format("W %X %X %X", pc, a, v)) end)
+    hookReads(function(pc, a, v, off)
+      if off then out(string.format("E %X %X %X %X", pc, a, v, off))
+      else out(string.format("E %X %X %X", pc, a, v)) end
+    end)
+    hookWrites(function(pc, a, v, mem, off)
+      if mem then out(string.format("W %X %X %X %s:%X", pc, a, v, mem, off))
+      else out(string.format("W %X %X %X", pc, a, v)) end
+    end, function(kind, page) out(string.format("%s %X", kind, page)) end)
   end
   emu.resetAccessCounters()
 end)

@@ -10,6 +10,10 @@
 -- end. A hit CFG.quiet frames or more after the last starts a text, and pins
 -- the ring as it stands — the states of the 30 seconds before the text, in
 -- which it may have been decoded — so the ring's turning no longer drops them.
+--
+-- A savestate the user loads, or a rewind, starts a new timeline: what was
+-- kept describes the old one, so it is dropped. A debugger break close after
+-- the last pause is the same pause, and writes no second moment.
 
 local frame, polls = 0, 0
 local inputs = {}              -- poll index -> encoded input
@@ -19,13 +23,16 @@ local pins = {}                -- the ring as it stood when the latest text star
 local text = nil               -- { first, last }: the latest text's font reads
 local moments = 0
 local armed = false
+local lastClock = nil          -- the master clock at the latest frame end
+local lastMoment = nil         -- the master clock of the latest moment written
+local SAME_PAUSE = 4           -- frames within which a break is the same pause
 
 connect()
 send("hello recorder")
 
 local function snapshot()
   armed = false
-  ring[#ring + 1] = { frame = frame, poll = polls, state = emu.createSavestate() }
+  ring[#ring + 1] = { frame = frame, poll = polls, clock = emu.getMasterClock(), state = emu.createSavestate() }
   if #ring > CFG.keep then table.remove(ring, 1) end
 end
 
@@ -42,7 +49,7 @@ end
 local armFont, fontSet = nil, {}
 if CFG.font then
   local f = CFG.font
-  local mt = MEM(f.memory)
+  local mt = ramType(f.memory)
   local function disarm()
     for _, c in ipairs(fontSet) do
       emu.removeMemoryCallback(c[1], emu.callbackType.read, f.lo, f.hi, c[2], mt)
@@ -80,32 +87,61 @@ emu.addEventCallback(function()
   end
 end, emu.eventType.inputPolled)
 
+-- A new timeline: nothing kept reaches it.
+local function restart()
+  ring, pins, text, inputs = {}, {}, nil, {}
+  pruned, armed = polls, false
+  lastMoment = nil
+end
+
+emu.addEventCallback(restart, emu.eventType.stateLoaded)
+
 emu.addEventCallback(function()
+  -- The master clock only runs forward in one timeline: a rewind sets it back.
+  local clock = emu.getMasterClock()
+  if lastClock and clock < lastClock then restart() end
+  lastClock = clock
   frame = frame + 1
   if frame % CFG.ring == 0 and not armed then
     armed = true
     oneShot(snapshot)
   end
   if armFont and #fontSet == 0 then armFont() end
-  local line, err = receive()
-  while line do
-    if line == "quit" then emu.stop(0) end
-    line, err = receive()
-  end
 end, emu.eventType.endFrame)
+
+-- A moment's id: the session's prefix and a number no moment of this
+-- session has, the script reloaded or not.
+local function nextId()
+  local root = CFG.out .. "/../"
+  while true do
+    moments = moments + 1
+    local id = string.format("%s%04d", CFG.prefix, moments)
+    if not exists(CFG.out .. "/" .. id .. ".txt") and not exists(root .. id .. "/moment.txt") then
+      return id
+    end
+  end
+end
 
 -- The emulator's pause: the one event scripts get before it sleeps.
 emu.addEventCallback(function()
+  local clock = emu.getMasterClock()
+  if lastMoment and lastClock and clock >= lastMoment then
+    -- A frame's length in master clocks, from the ring's spacing; without
+    -- it, only the very same clock is the same pause.
+    local r1, r2 = ring[#ring - 1], ring[#ring]
+    local perFrame = r1 and r2 and r2.frame > r1.frame and (r2.clock - r1.clock) / (r2.frame - r1.frame) or 0
+    if clock - lastMoment <= SAME_PAUSE * perFrame then return end
+  end
   local list = states()
   if #list == 0 then
     send("early")                -- nothing to replay from yet
     return
   end
-  moments = moments + 1
-  local id = string.format("%s%04d", CFG.prefix, moments)
+  lastMoment = clock
+  local id = nextId()
   local base = CFG.out .. "/" .. id
   local meta = {
-    string.format("capture frame=%d poll=%d clock=%d hash=%s", frame, polls, emu.getMasterClock(), hash()),
+    string.format("capture frame=%d poll=%d clock=%d hash=%s", frame, polls, clock, hash()),
   }
   if CFG.font then
     meta[#meta + 1] = "font watched"

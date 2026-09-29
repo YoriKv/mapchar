@@ -17,5 +17,6 @@ entries. Qt-free: :mod:`mapchar.ui.capture` is the only UI.
 - :mod:`.probe` — the probe server's client;
 - :mod:`.trace` — the rules each result is decided by;
 - :mod:`.session` — the captures, the recorder and the queue;
+- :mod:`.tablesweep` — a pointer table's strings shown in the game;
 - :mod:`.combine` and :mod:`.proposals` — what the captures say together.
 """

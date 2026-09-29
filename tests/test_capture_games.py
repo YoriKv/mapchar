@@ -75,7 +75,8 @@ def session_for(game: str, frames: list[int], texts: list[str], tmp_path) -> Ses
     if not emu.available():
         pytest.skip("Mesen 2 not found")
     data = rom.read_bytes()
-    s = Session(str(tmp_path / "captures"), str(rom), detect(str(rom), data), emu)
+    console = detect(str(rom), data).for_rom(data)
+    s = Session(str(tmp_path / "captures"), str(rom), console, emu)
     for frame, text in zip(frames, texts, strict=True):
         src = CAPTURES / game / f"cap{frame:05d}"
         if not Path(f"{src}.txt").exists():

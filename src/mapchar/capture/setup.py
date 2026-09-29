@@ -47,10 +47,20 @@ def ram_font(console: Console, start: int, end: int) -> Font:
     """A font in RAM, from the bus addresses of its first and last byte."""
     if end < start:
         raise ValueError("The font's end comes before its start.")
-    first, last = console.ram_of(start), console.ram_of(end)
+    first, last = console.locate(start), console.locate(end)
     if first[0] != last[0] or last[1] - first[1] != end - start:
         raise ValueError("The font must lie in one RAM, in one run of addresses.")
     return Font(first[0], first[1], last[1], start)
+
+
+def write_json_atomic(path: str, data) -> None:
+    """Write ``data`` as JSON to ``path`` whole or not at all: into a
+    neighbour first, then moved over it, so a crash mid-write leaves the old
+    file."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(data, fh, ensure_ascii=False)
+    os.replace(tmp, path)
 
 
 @dataclass(frozen=True)
@@ -59,13 +69,20 @@ class Setup:
 
     @classmethod
     def load(cls, root: str) -> Setup:
+        """The setup kept in ``root``; an empty one when there is none, or it
+        does not read."""
         try:
             with open(os.path.join(root, SETUP), encoding="utf-8") as fh:
                 data = json.load(fh)
-        except (OSError, ValueError):
+            f = data.get("font")
+            font = (
+                Font(str(f["memory"]), int(f["start"]), int(f["end"]), f.get("bus"))
+                if f
+                else None
+            )
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
             return cls()
-        f = data.get("font")
-        return cls(Font(f["memory"], f["start"], f["end"], f.get("bus")) if f else None)
+        return cls(font)
 
     def save(self, root: str) -> None:
         os.makedirs(root, exist_ok=True)
@@ -75,8 +92,7 @@ class Setup:
             if f
             else None
         )
-        with open(os.path.join(root, SETUP), "w", encoding="utf-8", newline="\n") as fh:
-            json.dump({"font": font}, fh)
+        write_json_atomic(os.path.join(root, SETUP), {"font": font})
 
     def recorder(self, console: Console) -> dict:
         """The recorder's settings for this setup: the font breakpoint's

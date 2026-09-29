@@ -148,7 +148,15 @@ memory, so it suits a query on demand, not every frame.
   `--timeout=N` says otherwise. `--debug.scriptWindow.scriptTimeout=N` does
   not reach the core under `--testRunner` (the Linux build stopped at 1 s
   with it passed), so keep each callback short, and wrap handlers in `pcall`
-  to see errors on stdout.
+  to see errors on stdout. A headed run takes the switch.
+- A memory callback that returns an integer replaces the value read or
+  written (`ScriptingContext::InternalCallMemoryCallback`); its address
+  argument is the CPU's bus address even when the callback is set on an
+  absolute memory type such as the ROM. `convertAddress(address, memType,
+  cpuType)` turns a bus address into `{address, memType}` of the memory
+  behind it.
+- `stateLoaded` fires for a savestate loaded from a file or slot, not for a
+  rewind; a rewind shows as the master clock going back.
 - `getAccessCounters` on a 32 MB GBA ROM builds a 32 M-entry table: over the
   callback limit on its own.
 - An exec callback over a CPU's whole address space fires on the next
