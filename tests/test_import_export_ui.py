@@ -9,7 +9,13 @@ from pathlib import Path
 from conftest import ROOT
 from helpers import texts
 from mapchar.core.block import RangeSource, Status
-from window_helpers import ABCDE_TABLE, ab_ba_rom, add_block, open_rom_and_table
+from window_helpers import (
+    ABCDE_TABLE,
+    ab_ba_rom,
+    add_block,
+    menu_state,
+    open_rom_and_table,
+)
 
 
 def test_import_export_and_find_replace(window, tmp_path):
@@ -117,8 +123,8 @@ def test_an_unreadable_script_reports_nothing_read(window, tmp_path):
 def test_importing_is_live_on_a_file_because_it_creates_blocks(window, tmp_path):
     entry = open_rom_and_table(window, tmp_path, b"AB\x00")
     window._activate_entry(entry)
-    assert window.import_action.isEnabled()
-    assert window.export_action.isEnabled()
+    assert all(a.isEnabled() for a in window.import_actions)
+    assert all(a.isEnabled() for a in window.export_actions)
 
 
 # --- an import says what it will do, and waits -------------------------------
@@ -264,4 +270,128 @@ def test_the_block_bar_s_export_button_shows_the_file_menu_s_export_menu(
         "PO…",
         "Cartographer Command File…",
         "Atlas Script…",
+        "All Blocks",
     ]
+
+
+# --- every block at once ------------------------------------------------------
+
+
+def _two_files(window, tmp_path):
+    """A block over each of two ROMs, both edited — ``A`` over ``a.bin`` and
+    ``B`` over ``b.bin`` — with ``B`` current."""
+    a_file = open_rom_and_table(window, tmp_path, ab_ba_rom(0), rom_name="a.bin")
+    a = add_block(window, a_file, "A", RangeSource(0, 6))
+    window._on_translation_edited(0, "B[end]")
+    rom = tmp_path / "b.bin"
+    rom.write_bytes(ab_ba_rom(0))
+    b = add_block(window, window.open_rom(str(rom)), "B", RangeSource(0, 6))
+    window._on_translation_edited(1, "A[end]")
+    return a, b
+
+
+def _revert(window, a, b) -> None:
+    window._activate_entry(a)
+    window._on_translation_edited(0, "")
+    window._activate_entry(b)
+    window._on_translation_edited(1, "")
+    assert not a.doc.strings[0].edited and not b.doc.strings[1].edited
+
+
+def _reports(window, monkeypatch) -> list[tuple[str, list[str]]]:
+    """What the window reports from here on, as ``(message, notices)``."""
+    seen: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        window,
+        "_report",
+        lambda _title, message, notices=(): seen.append((message, list(notices))),
+    )
+    return seen
+
+
+def test_all_blocks_export_and_import_every_file_s_blocks(window, tmp_path):
+    a, b = _two_files(window, tmp_path)
+    for kind in ("tsv", "csv", "po"):
+        window.export_all_file(str(tmp_path / f"all.{kind}"), kind)
+        text = (tmp_path / f"all.{kind}").read_text(encoding="utf-8")
+        assert all(i in text for i in ("A/0", "A/1", "B/0", "B/1"))
+    po = (tmp_path / "all.po").read_text(encoding="utf-8")
+    assert "#: a.bin:$0" in po and "#: b.bin:$3" in po
+    _revert(window, a, b)
+    for kind in ("tsv", "csv", "po"):
+        path = str(tmp_path / f"all.{kind}")
+        how = "po" if kind == "po" else "delimited"
+        window.import_file(path, how, confirm=False, whole_project=True)
+        assert a.doc.strings[0].current_text() == "B[end]"
+        assert b.doc.strings[1].current_text() == "A[end]"
+        # One step for the lot, across both files.
+        window.undo_stack.undo()
+        assert not a.doc.strings[0].edited and not b.doc.strings[1].edited
+
+
+def test_only_all_blocks_reaches_past_the_current_file(window, tmp_path, monkeypatch):
+    a, b = _two_files(window, tmp_path)
+    tsv = str(tmp_path / "all.tsv")
+    window.export_all_file(tsv, "tsv")
+    _revert(window, a, b)
+    reports = _reports(window, monkeypatch)
+    window._activate_entry(a)
+    window.import_file(tsv, "delimited", confirm=False)
+    assert a.doc.strings[0].current_text() == "B[end]"
+    assert not b.doc.strings[1].edited
+    assert "B/1: no such block" in reports[-1][1]
+    window.import_file(tsv, "delimited", confirm=False, whole_project=True)
+    assert b.doc.strings[1].current_text() == "A[end]"
+    assert window._entry is a
+
+
+def test_all_blocks_imports_with_nothing_current(window, tmp_path):
+    a, b = _two_files(window, tmp_path)
+    tsv = str(tmp_path / "all.tsv")
+    window.export_all_file(tsv, "tsv")
+    _revert(window, a, b)
+    window._activate_entry(None)
+    window.import_file(tsv, "delimited", confirm=False, whole_project=True)
+    assert a.doc.strings[0].current_text() == "B[end]"
+    assert b.doc.strings[1].current_text() == "A[end]"
+
+
+def test_all_blocks_export_says_what_it_left_out(window, tmp_path, monkeypatch):
+    out = tmp_path / "all.tsv"
+    window.export_all_file(str(out), "tsv")
+    assert window.errors == ["The project has no blocks to export."]
+    assert not out.exists()
+
+    a, b = _two_files(window, tmp_path)
+    window._activate_entry(a)
+    # B's file is gone from disk and from memory, so B cannot be read again.
+    (tmp_path / "b.bin").unlink()
+    b.parent.doc = b.doc = None
+    reports = _reports(window, monkeypatch)
+    window.export_all_file(str(out), "tsv")
+    text = out.read_text(encoding="utf-8")
+    assert "A/0" in text and "B/0" not in text
+    message, notices = reports[-1]
+    assert message == f"Exported 2 string(s) of 1 block(s) to {out}"
+    assert [n.split(":")[0] for n in notices] == ["B"]
+
+
+def test_all_blocks_is_live_whatever_is_on_screen(window, tmp_path):
+    """The rows over the current entry are gated with it; All Blocks reads the
+    project, so it stays live with nothing open — the one state a table, a
+    folder or a bookmark leaves the window in."""
+    from mapchar.ui.help_dialogs import submenus
+
+    file_entry = open_rom_and_table(window, tmp_path, ab_ba_rom(0))
+    add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._activate_entry(None)
+    below = {a.text(): m for a, m in submenus(window.menuBar()).items()}
+    for parent in (below["&Import"], below["E&xport"]):
+        assert parent.menuAction().isEnabled()
+        all_blocks = next(
+            m for a, m in submenus(parent).items() if a.text() == "All &Blocks"
+        )
+        assert all(menu_state(all_blocks).values())
+    assert not any(a.isEnabled() for a in window.import_actions)
+    assert not any(a.isEnabled() for a in window.export_actions)
+    assert not window.block_export.isEnabled()

@@ -68,28 +68,53 @@ class MenuBarMixin:
             file_menu, "Reloa&d from Disk", self._reload_current_file
         )
         file_menu.addSeparator()
+        # The rows over the current entry are gated; All Blocks, below them,
+        # reads the whole project and is live whatever is on screen.
         import_menu = file_menu.addMenu("&Import")
-        self.import_action = import_menu.menuAction()
-        act(import_menu, "&Script…", lambda: self._import("script"))
-        act(import_menu, "&TSV / CSV…", lambda: self._import("delimited"))
-        act(import_menu, "&PO…", lambda: self._import("po"))
+        own = [
+            act(import_menu, "&Script…", lambda: self._import("script")),
+            act(import_menu, "&TSV / CSV…", lambda: self._import("delimited")),
+            act(import_menu, "&PO…", lambda: self._import("po")),
+        ]
         import_menu.addSeparator()
+        own += [
+            act(
+                import_menu,
+                "&Cartographer Command File…",
+                self._import_cartographer_dialog,
+            ),
+            act(import_menu, "&Atlas Script…", self._import_atlas_dialog),
+        ]
+        self.import_actions = tuple(own)
+        import_menu.addSeparator()
+        import_all = import_menu.addMenu("All &Blocks")
+        # A translator file only: a script creates its blocks in the current
+        # file, so it has no whole-project reading.
         act(
-            import_menu,
-            "&Cartographer Command File…",
-            self._import_cartographer_dialog,
+            import_all,
+            "&TSV / CSV…",
+            lambda: self._import("delimited", whole_project=True),
         )
-        act(import_menu, "&Atlas Script…", self._import_atlas_dialog)
+        act(import_all, "&PO…", lambda: self._import("po", whole_project=True))
         # Kept on the window: the Block bar's Export button shows this very
         # menu, so neither surface can offer a format the other does not.
         export_menu = self.export_menu = file_menu.addMenu("E&xport")
-        self.export_action = export_menu.menuAction()
-        act(export_menu, "&TSV…", lambda: self._export("tsv"))
-        act(export_menu, "C&SV…", lambda: self._export("csv"))
-        act(export_menu, "&PO…", lambda: self._export("po"))
+        own = [
+            act(export_menu, "&TSV…", lambda: self._export("tsv")),
+            act(export_menu, "C&SV…", lambda: self._export("csv")),
+            act(export_menu, "&PO…", lambda: self._export("po")),
+        ]
         export_menu.addSeparator()
-        act(export_menu, "&Cartographer Command File…", self._export_cartographer)
-        act(export_menu, "&Atlas Script…", self._export_atlas)
+        own += [
+            act(export_menu, "&Cartographer Command File…", self._export_cartographer),
+            act(export_menu, "&Atlas Script…", self._export_atlas),
+        ]
+        self.export_actions = tuple(own)
+        export_menu.addSeparator()
+        export_all = export_menu.addMenu("All &Blocks")
+        act(export_all, "&TSV…", lambda: self._export_all("tsv"))
+        act(export_all, "C&SV…", lambda: self._export_all("csv"))
+        act(export_all, "&PO…", lambda: self._export_all("po"))
         file_menu.addSeparator()
         act(file_menu, "Open &Plugins Folder…", self._open_plugins_folder)
         act(file_menu, "Refresh Pl&ugins", self._refresh_plugins, "F5")

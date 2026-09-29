@@ -1240,9 +1240,15 @@ The editing surface, opened on a block.
 - **Export ▸** — the Block bar's **Export…** button and the File menu's
   **Export ▸** show the same menu, so the two cannot offer different formats.
 - **Translator files** — **Export ▸ TSV / CSV** and **Export ▸ PO** write one
-  row or entry per string; **Import** reads them back by id. Rows whose
-  original no longer matches are skipped, and **Force** on the import dialog
-  is what takes them anyway.
+  row or entry per string of the current block; **Import** reads them back by
+  id over the current file's blocks. Rows whose original no longer matches are
+  skipped, and **Force** on the import dialog is what takes them anyway.
+- **All Blocks** — **Export ▸ All Blocks ▸** writes one translator file
+  holding every readable block of the project, across files, in project
+  order; a block that cannot be read is left out and named afterwards.
+  **Import ▸ All Blocks ▸** reads a translator file over every block of the
+  project. Both are live whatever is on screen; the menus' other rows act on
+  the entry on screen and are greyed without one.
 - **Import script** reads a native script: strings are matched by block and
   index and the text goes into the bytes as an edit. A block the script
   carries and the project lacks is created, and the script is planned again

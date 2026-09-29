@@ -75,6 +75,18 @@ def test_po_roundtrip():
     }
 
 
+def test_a_po_reference_names_each_record_s_own_rom():
+    """An export over the whole project spans files, so a record that knows
+    its ROM names it; one that does not falls back on the file's."""
+    recs = records_for("Dialogue", strings(), "one.nes")
+    recs += records_for("Menu", strings())
+    text = write_po(recs, "game.nes")
+    assert "#: one.nes:$0" in text and "#: one.nes:$4" in text
+    assert "#: game.nes:$0" in text and "#: game.nes:$4" in text
+    assert [r.id for r in read_po(text)] == [r.id for r in recs]
+    assert "#: rom:$0" in write_po(records_for("Dialogue", strings()))
+
+
 def test_po_reads_every_entry_but_the_header():
     """The header has neither a context nor an original. Every other entry is
     a record: one whose original is empty, and one with no context — which has

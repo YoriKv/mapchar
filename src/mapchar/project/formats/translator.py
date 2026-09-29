@@ -22,9 +22,14 @@ class Record:
     translation: str
     status: str
     notes: str
+    rom: str = ""
+    """The file the record's block reads, for a PO reference; empty leaves it
+    to the whole export's."""
 
 
-def records_for(block_name: str, strings: list[StringRecord]) -> list[Record]:
+def records_for(
+    block_name: str, strings: list[StringRecord], rom: str = ""
+) -> list[Record]:
     return [
         Record(
             f"{block_name}/{s.index}",
@@ -33,6 +38,7 @@ def records_for(block_name: str, strings: list[StringRecord]) -> list[Record]:
             s.shown_text() if s.edited or s.unwritten is not None else "",
             s.status.value,
             s.notes,
+            rom,
         )
         for s in strings
     ]
@@ -133,6 +139,8 @@ flag for it, that survives the tools that keep such comments."""
 
 
 def write_po(records: list[Record], rom: str = "rom") -> str:
+    """The records as a PO file; each reference names the record's own ROM,
+    else ``rom``."""
     lines = [
         'msgid ""',
         'msgstr ""',
@@ -143,7 +151,7 @@ def write_po(records: list[Record], rom: str = "rom") -> str:
         if r.notes:
             for note in r.notes.split("\n"):
                 lines.append(f"#. {note}")
-        lines.append(f"#: {rom}:{format_num(r.address)}")
+        lines.append(f"#: {r.rom or rom}:{format_num(r.address)}")
         if r.status == "review":
             lines.append("#, fuzzy")
         elif r.status == "done":

@@ -110,11 +110,12 @@ by `id`.
   byte-order mark, which is what a spreadsheet needs to read it as UTF-8; TSV
   and PO are written without one, and an import accepts either.
 - **PO** — one entry per string: `msgctxt "id"`, `msgid` original, `msgstr`
-  translation, `#: rom:address` reference, `#. notes` as extracted comment,
-  `#, fuzzy` when the status is *review*, and a `# done` translator comment
-  when it is *done*, PO having no flag for that. Multi-line strings use PO's
+  translation, `#: rom:address` reference naming the ROM the record's block
+  reads, `#. notes` as extracted comment, `#, fuzzy` when the status is
+  *review*, and a `# done` translator comment when it is *done*, PO having no
+  flag for that. Multi-line strings use PO's
   standard continuation. Plural forms are not used.
-- **Import rules** — a record whose `id` names no string of the project is
+- **Import rules** — a record whose `id` names no string the import reads is
   skipped and listed, and so is one with no `id` at all — a row with an empty
   `id` cell, or a PO entry with no `msgctxt`; the only PO entry that is not a
   record is the header, which has neither a `msgctxt` nor a `msgid`. A record

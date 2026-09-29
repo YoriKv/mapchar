@@ -14,7 +14,8 @@ from window_helpers import add_block, menu_actions, open_rom_and_table
 # shortcut has to be classified rather than quietly joining the crowd.
 
 # The rows that apply whatever is on screen, so no capability gates them: the
-# project and plugin rows, the panels, the themes, the help, the visit trail
+# project and plugin rows, Import and Export ▸ All Blocks (whose rows are the
+# TSV, CSV and PO labels here), the panels, the themes, the help, the visit trail
 # (armed by the trail), the undo pair (armed by the stack) and the entry
 # clipboard (scoped to the Files panel, which has a selection of its own).
 # Capture's rows say for themselves when there is no ROM to play.
@@ -29,11 +30,8 @@ ALWAYS_ON = frozenset(
         "New Project",
         "Open Project…",
         "Locate Missing Files…",
-        "Script…",
         "TSV / CSV…",
         "PO…",
-        "Cartographer Command File…",
-        "Atlas Script…",
         "TSV…",
         "CSV…",
         "Save Project",
@@ -90,8 +88,7 @@ def test_every_menu_action_is_gated_or_always_on(window):
     ungated = [
         label
         for label, action in menu_actions(window)
-        # A row that only opens a submenu is not itself a row that acts, unless
-        # the table gates it (Import and Export are gated on their whole menu).
+        # A row that only opens a submenu is not itself a row that acts.
         if action.menu() is None and id(action) not in gated and label not in ALWAYS_ON
     ]
     assert ungated == []

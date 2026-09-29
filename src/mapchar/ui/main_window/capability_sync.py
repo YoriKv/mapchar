@@ -62,7 +62,7 @@ _GATES: dict[Capability, tuple[str, ...]] = {
     Capability.FIND_REPLACE: ("find_replace_action", "glossary_replace_action"),
     Capability.PREVIEW: ("preview_action",),
     Capability.COMPRESSION_SCAN: ("decompress_action",),
-    Capability.IMPORT_EXPORT: ("import_action", "export_action", "block_export"),
+    Capability.IMPORT_EXPORT: ("import_actions", "export_actions", "block_export"),
     Capability.WRITE: ("write_action",),
     Capability.RELOAD: ("reload_action",),
 }
