@@ -137,21 +137,19 @@ pos     len  LIU KANG WINS
 ```
 
 Each pointer points to the start of its record, so the first position byte is
-read as the length. A range block skips these bytes with **Header**. A pointer
-block has no **Header** setting. Use **Offset** instead: set **Offset** to 2.
-mapchar adds the offset to every pointer value, so each pointer now points to
-its length byte.
+read as the length. Skip the position bytes as in Finishes: set **Header** to
+2. Each pointer still points to its record, and each string now begins after
+the header.
 
-| End token | Length prefix | Offset 2 |
+| End token | Length prefix | Header 2 |
 |:-:|:-:|:-:|
-| [![Read to the end token](images/adv-3-no-offset.png)](images/adv-3-no-offset.png) | [![The position read as a length](images/adv-3-length-prefix.png)](images/adv-3-length-prefix.png) | [![Landing on the length byte](images/adv-3-offset.png)](images/adv-3-offset.png) |
+| [![Read to the end token](images/adv-3-no-offset.png)](images/adv-3-no-offset.png) | [![The position read as a length](images/adv-3-length-prefix.png)](images/adv-3-length-prefix.png) | [![Winners, read correctly](images/adv-3-winners.png)](images/adv-3-winners.png) |
 
-Change one more setting. A pointer block is written **packed** by default.
-Packing writes each string directly after the previous one, which overwrites
-the position bytes between them. Open **Writing** and set **Write** to
-**Slotted**. Each string then keeps its address and its own space:
+A header also changes how the block is written. Packing writes each string
+directly after the previous one, which would overwrite the position bytes
+between them, so a block with a header is always written **slotted**:
+**Writing** shows **Automatic (slotted)**, and **Packed** cannot be chosen.
+Each string keeps its address and its own space.
 
-![Winners, slotted](images/adv-3-winners.png)
-
-**Bytes** now shows `14 / 14` instead of space shared with the other records. A
+**Bytes** shows `14 / 14` instead of space shared with the other records. A
 translation can be shorter than the original, but not longer.
