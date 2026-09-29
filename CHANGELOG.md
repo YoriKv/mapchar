@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.8 - unreleased
+## v0.1.8 - 2026-09-29
 
 - Add record headers to pointer blocks
 - Project Strings jumps select the string in the Files panel
