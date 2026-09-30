@@ -75,8 +75,19 @@ if CFG.font then
   end
 end
 
+-- Headless (tests): CFG.press = { { from, to, "a+start" }, ... } holds port
+-- 0's buttons over those frames, and CFG.pauseAt writes the moment at that
+-- frame's end, as a pause would, and stops.
+local function pressed()
+  for _, p in ipairs(CFG.press or {}) do
+    if frame >= p[1] and frame <= p[2] then return p[3] end
+  end
+  return nil
+end
+
 emu.addEventCallback(function()
   polls = polls + 1
+  if CFG.press then setInputs(decInput(pressed() or "")) end
   inputs[polls] = encInput()
   -- Only what the oldest state still reaches is kept.
   local oldest = ring[1]
@@ -86,6 +97,8 @@ emu.addEventCallback(function()
     pruned = math.max(pruned, oldest.poll)
   end
 end, emu.eventType.inputPolled)
+
+local pause                    -- the moment's writing, below
 
 -- A new timeline: nothing kept reaches it.
 local function restart()
@@ -107,6 +120,14 @@ emu.addEventCallback(function()
     oneShot(snapshot)
   end
   if armFont and #fontSet == 0 then armFont() end
+  if CFG.pauseAt and frame == CFG.pauseAt then
+    -- At the next instruction, as a pause falls between two.
+    oneShot(function()
+      pause()
+      print("paused"); io.stdout:flush()
+      emu.stop(0)
+    end)
+  end
 end, emu.eventType.endFrame)
 
 -- A moment's id: the session's prefix and a number no moment of this
@@ -123,7 +144,7 @@ local function nextId()
 end
 
 -- The emulator's pause: the one event scripts get before it sleeps.
-emu.addEventCallback(function()
+pause = function()
   local clock = emu.getMasterClock()
   if lastMoment and lastClock and clock >= lastMoment then
     -- A frame's length in master clocks, from the ring's spacing; without
@@ -158,4 +179,5 @@ emu.addEventCallback(function()
   save(base .. ".png", emu.takeScreenshot())
   save(base .. ".txt", table.concat(meta, "\n") .. "\n")
   send("moment " .. id)
-end, emu.eventType.codeBreak)
+end
+emu.addEventCallback(pause, emu.eventType.codeBreak)

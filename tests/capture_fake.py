@@ -312,6 +312,7 @@ class FakeEmulator:
         split: bool = True,
         fault: str | None = None,
         replay_hang: bool = False,
+        replay_error: str | None = None,
     ):
         self.game = game
         self.match = match
@@ -319,10 +320,15 @@ class FakeEmulator:
         """Send every line in two pieces, as a socket may deliver them."""
         self.fault = fault
         """A probe server's fault: ``silent`` (never answers a probe), ``cut``
-        (its first run closes in the middle of its first answer), ``die``
-        (its first run ends after the reference)."""
+        (its first run closes in the middle of its first answer), ``stall``
+        (its first run's probes hit the script watchdog), ``stall-always``
+        (every run's probes do), ``stall-start`` (its first run stalls before
+        its reference), ``die`` (its first run ends after the reference)."""
         self.replay_hang = replay_hang
         """A replay that runs until it is killed."""
+        self.replay_error = replay_error
+        """A line the replay's script prints as an error (``! …``) and runs
+        on past, as Mesen does when a callback fails."""
         self.launched: list[str] = []
         self.procs: list[FakeProc] = []
         self.runs = 0
@@ -366,6 +372,8 @@ class FakeEmulator:
                 fh.write(self.game.ram())
         h = _str(script, "hash") if self.match else "BEEF"
         with open(log, "w") as fh:
+            if self.replay_error:
+                fh.write(f"! {self.replay_error}\n")
             fh.write(
                 f"replay frame={CAPTURE_FRAME} poll=10 hash={h} "
                 f"match={1 if self.match else 0} events=1\n"
@@ -414,6 +422,11 @@ class FakeEmulator:
 
         base = game.run()
         ref = observed(base)
+        if self.fault == "stall-start" and run == 1:
+            send("stall Maximum execution time (1 seconds) exceeded.")
+            proc.stopped.wait()
+            sock.close()
+            return
         send(f"ref {len(ref)} {max((w[0] for w in ref), default=0)} 0,10")
         send("refw " + " ".join(f"{f}:{a:X}:{v:02X}" for f, a, v in ref))
         if self.fault == "die" and run == 1:
@@ -459,6 +472,9 @@ class FakeEmulator:
                     send(f"rfrom {words[1]}")
                     continue
                 if self.fault == "silent":
+                    continue
+                if (self.fault == "stall" and run == 1) or self.fault == "stall-always":
+                    send("stall Maximum execution time (1 seconds) exceeded.")
                     continue
                 if self.fault == "cut" and run == 1:
                     sock.sendall(f"res {words[1]} sa".encode())
@@ -533,3 +549,43 @@ class FakeEmulator:
                     + reads
                 )
         sock.close()
+
+
+class StubProbe:
+    """A probe server for the tracer's pointer stage alone: each probe
+    answers where the string's first read lands, by ``where`` over the ROM as
+    changed."""
+
+    n = no_answer = 0
+
+    def __init__(self, rom: bytes, where):
+        self.rom, self.where, self.answer = rom, where, None
+
+    def start(self):
+        yield from ()
+
+    def effect(self, writes, frame, subs=None):
+        from types import SimpleNamespace
+
+        rom = bytearray(self.rom)
+        for a, v in writes:
+            rom[a] = v & 0xFF
+        at = self.where(bytes(rom))
+        self.answer = SimpleNamespace(offsets=[] if at is None else [at])
+        yield from ()
+
+
+def pointer_stage(folder: str, console: Console, rom, evs, first: int, where):
+    """The tracer's pointer stage over synthetic evidence and a stub probe
+    server: its Result."""
+    from mapchar.capture import evidence
+    from mapchar.capture.protocol import drive
+    from mapchar.capture.trace import Result, Tracer
+
+    t = object.__new__(Tracer)
+    t.ev = evidence.Evidence.of(folder, CONSOLE, evs)
+    t.result = Result()
+    t.rom, t.console, t._servers = bytes(rom), console, []
+    t._server = lambda **kw: StubProbe(bytes(rom), where)
+    drive(t._pointers(first, frozenset(), None))
+    return t.result

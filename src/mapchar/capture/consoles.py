@@ -81,11 +81,13 @@ def _hirom_bus(off: int) -> list[int]:
 
 
 def _exhirom_bus(off: int) -> list[int]:
+    """Banks ``$7E-$7F`` are the work RAM: the last 128 KiB is reachable
+    only through ``$3E-$3F:8000-FFFF``."""
     low = off & 0xFFFF
     if off < 0x400000:
         return [((0xC0 + (off >> 16)) << 16) | low]
     bank = (off - 0x400000) >> 16
-    out = [((0x40 + bank) << 16) | low]
+    out = [((0x40 + bank) << 16) | low] if 0x40 + bank < 0x7E else []
     if low >= 0x8000:
         out.append((bank << 16) | low)
     return out
@@ -255,6 +257,153 @@ def _gba_ram_bus(memory: str, off: int) -> int:
     raise _not_ram(off)
 
 
+def _gb_rom(bus: int) -> int:
+    """Bank 0 is fixed at ``$0000-$3FFF``; the switched window
+    ``$4000-$7FFF`` holds the bank above bit 16 (``$05:4123``), bank 1 when
+    none is given."""
+    bank, addr = bus >> 16, bus & 0xFFFF
+    if addr < 0x4000:
+        return addr
+    return max(bank, 1) * 0x4000 + (addr & 0x3FFF)
+
+
+def _gb_bus(off: int) -> list[int]:
+    """Bank 0 as itself; any other byte in the window, plain and with its
+    bank above bit 16."""
+    if off < 0x4000:
+        return [off]
+    window = 0x4000 | (off & 0x3FFF)
+    return [window, ((off >> 14) << 16) | window]
+
+
+def _gb_ram(bus: int) -> tuple[str, int]:
+    """Work RAM at ``$C000-$DFFF`` and its echo at ``$E000-$FDFF``, the
+    cartridge's RAM at ``$A000-$BFFF``, high RAM at ``$FF80-$FFFE``; the
+    banks past the first of a Game Boy Color's work RAM, or of a cartridge
+    RAM, are spelled past ``$10000`` / ``$20000``."""
+    if 0xC000 <= bus < 0xFE00:
+        return "gbWorkRam", (bus - 0xC000) & 0x1FFF
+    if 0xA000 <= bus < 0xC000:
+        return "gbCartRam", bus - 0xA000
+    if 0xFF80 <= bus < 0xFFFF:
+        return "gbHighRam", bus - 0xFF80
+    if 0x10000 <= bus < 0x20000:
+        return "gbWorkRam", bus - 0x10000
+    if 0x20000 <= bus < 0x40000:
+        return "gbCartRam", bus - 0x20000
+    raise _not_ram(bus)
+
+
+def _gb_ram_bus(memory: str, off: int) -> int:
+    if memory == "gbWorkRam":
+        return 0xC000 + off if off < 0x2000 else 0x10000 + off
+    if memory == "gbCartRam":
+        return 0xA000 + off if off < 0x2000 else 0x20000 + off
+    if memory == "gbHighRam":
+        return 0xFF80 + off
+    raise _not_ram(off)
+
+
+def _sms_rom(bus: int) -> int:
+    """A slot address with its bank above bit 16 (``$05:8123``); without
+    one, the slots' power-on banks 0, 1 and 2."""
+    bank, addr = bus >> 16, bus & 0xFFFF
+    if bank:
+        return bank * 0x4000 + (addr & 0x3FFF)
+    return addr
+
+
+def _sms_bus(off: int) -> list[int]:
+    """The byte through each 16 KiB slot it can be paged into (slot 0's
+    first KiB is always bank 0), plain and with its bank above bit 16."""
+    bank, low = off >> 14, off & 0x3FFF
+    out = []
+    for slot in (0x0000, 0x4000, 0x8000):
+        if slot == 0 and bank and low < 0x400:
+            continue
+        a = slot | low
+        out.append(a)
+        if bank:
+            out.append((bank << 16) | a)
+    return out
+
+
+def _sms_ram(bus: int) -> tuple[str, int]:
+    """Work RAM at ``$C000-$DFFF``, mirrored at ``$E000-$FFFF``; the
+    cartridge's RAM in slot 2 (``$8000-$BFFF``), banks past the first
+    spelled past ``$20000``."""
+    if 0xC000 <= bus < 0x10000:
+        return "smsWorkRam", bus & 0x1FFF
+    if 0x8000 <= bus < 0xC000:
+        return "smsCartRam", bus - 0x8000
+    if 0x20000 <= bus < 0x40000:
+        return "smsCartRam", bus - 0x20000
+    raise _not_ram(bus)
+
+
+def _sms_ram_bus(memory: str, off: int) -> int:
+    if memory == "smsWorkRam":
+        return 0xC000 + (off & 0x1FFF)
+    if memory == "smsCartRam":
+        return 0x8000 + off if off < 0x4000 else 0x20000 + off
+    raise _not_ram(off)
+
+
+def _pce_bank_rom(bank: int, split: bool = False) -> int:
+    """Where a bank (a page register's value) starts in the image. A 384 KiB
+    card (``split``) is wired 256 KiB + 128 KiB: the game reaches its last
+    128 KiB through banks ``$40-$7F`` (as through ``$20-$3F``, which Mesen
+    maps there too), each 16 banks a mirror."""
+    if split and bank >= 0x20:
+        return 0x40000 + (bank & 0x0F) * 0x2000
+    return bank * 0x2000
+
+
+def _pce_rom(bus: int, split: bool = False) -> int:
+    """A logical address with its bank above bit 16 (``$05:4123``); without
+    one, the address within its page."""
+    return _pce_bank_rom(bus >> 16, split) + (bus & 0x1FFF)
+
+
+def _pce_bus(off: int, split: bool = False) -> list[int]:
+    """The byte through any 8 KiB page a game maps ROM at (``$4000-$FFFF``;
+    ``$0000`` is I/O and ``$2000`` the work RAM), plain and with its bank
+    above bit 16 — for a 384 KiB card's last 128 KiB, the bank the game
+    uses, ``$40`` up."""
+    bank, low = off >> 13, off & 0x1FFF
+    if split and off >= 0x40000:
+        bank = 0x40 + ((off - 0x40000) >> 13)
+    out = []
+    for page in range(2, 8):
+        a = (page << 13) | low
+        out += [a, (bank << 16) | a] if bank else [a]
+    return out
+
+
+def _pce_split_rom(bus: int) -> int:
+    return _pce_rom(bus, True)
+
+
+def _pce_split_bus(off: int) -> list[int]:
+    return _pce_bus(off, True)
+
+
+def _pce_ram(bus: int) -> tuple[str, int]:
+    """The work RAM through page 1 (``$2000-$3FFF``), where games map it; a
+    SuperGrafx's 32 KiB past the first 8 KiB spelled past ``$10000``."""
+    if 0x2000 <= bus < 0x4000:
+        return "pceWorkRam", bus - 0x2000
+    if 0x10000 <= bus < 0x18000:
+        return "pceWorkRam", bus - 0x10000
+    raise _not_ram(bus)
+
+
+def _pce_ram_bus(memory: str, off: int) -> int:
+    if memory == "pceWorkRam":
+        return 0x2000 + off if off < 0x2000 else 0x10000 + off
+    raise _not_ram(off)
+
+
 # -- the profiles
 
 
@@ -311,7 +460,12 @@ class Console:
     :meth:`for_rom` read it: a save-RAM offset repeats past it. 0: unknown."""
 
     def for_rom(self, data: bytes) -> Console:
-        """This profile with the save RAM's size a ROM's header gives."""
+        """This profile with what a ROM's header or size says: the save RAM's
+        size; a 384 KiB PC Engine card's split layout."""
+        if self.lua == "pce":
+            if len(self.image(data)) == 0x60000:
+                return replace(self, to_rom=_pce_split_rom, to_bus=_pce_split_bus)
+            return self
         if self.lua != "snes":
             return self
         rom = data[copier_header_size(len(data)) :]
@@ -346,7 +500,12 @@ class Console:
             return bus
 
     def header(self, data: bytes) -> int:
-        """Where the ROM image starts in the file."""
+        """Where the ROM image starts in the file: past an iNES header, or a
+        copier's 512 bytes, the way the emulator skips them."""
+        if self.lua == "sms":
+            return 512 if len(data) % 0x400 == 0x200 else 0
+        if self.lua == "pce":
+            return 512 if len(data) % 0x2000 == 512 else 0
         if self.lua == "nes":
             if data[:4] == b"NES\x1a":
                 return 16 + (512 if data[6] & 4 else 0)
@@ -444,13 +603,11 @@ SNES_EXHIROM = Console(
     _exhirom,
     _exhirom_bus,
     _hirom_ram,
-    ("hirom",),
+    ("exhirom",),
     extensions=_SNES_EXTS,
     extra_rams=("snesSaveRam",),
     writes=(_WRAM_HOOK, _SRAM_HOOK),
     ram_bus=_hirom_ram_bus,
-    limits="Pointers into the upper 4 MiB are not resolved: the HiROM mapping "
-    "reads 4 MiB.",
 )
 SNES_SUPERFX = Console(
     "snes-superfx",
@@ -488,7 +645,8 @@ SNES_SA1 = Console(
     _sa1,
     _sa1_bus,
     _sa1_ram,
-    ("lorom", "hirom"),
+    # HiROM after it: a short pointer below $8000 read through a $Cx bank.
+    ("sa1", "hirom"),
     extensions=_SNES_EXTS,
     extra_rams=("sa1InternalRam", "snesSaveRam"),
     writes=(
@@ -499,8 +657,8 @@ SNES_SA1 = Console(
         ("sa1", "snesSaveRam", 0, -1, "snesSaveRam", False),
     ),
     ram_bus=_sa1_ram_bus,
-    limits="Pointers into banks $80-$BF, and into ROM the game's bank registers "
-    "switch in, are not resolved: the LoROM mapping mirrors $80-$BF.",
+    limits="A game that reprograms the Super MMC switches other ROM into its "
+    "banks: pointers into it are not resolved.",
 )
 NES = Console(
     "nes",
@@ -548,9 +706,90 @@ GBA = Console(
     ram_bus=_gba_ram_bus,
 )
 
+GB = Console(
+    "gb",
+    "Game Boy / Game Boy Color",
+    "gb",
+    "gameboy",
+    0xFFFF,
+    "gbPrgRom",
+    ("gbWorkRam", "gbHighRam", "gbVideoRam"),
+    ("gameboy",),
+    _gb_rom,
+    _gb_bus,
+    _gb_ram,
+    ("gb",),
+    (2,),
+    extensions=(".gb", ".gbc"),
+    extra_rams=("gbCartRam",),
+    writes=(
+        ("gameboy", "gbWorkRam", 0, -1, "gbWorkRam", False),
+        ("gameboy", "gbHighRam", 0, -1, "gbHighRam", False),
+        ("gameboy", "gbCartRam", 0, -1, "gbCartRam", False),
+    ),
+    ram_bus=_gb_ram_bus,
+    limits="On an MBC1 cartridge of 1 MiB or more, banks $20, $40 and $60 never "
+    "sit in the $4000 window, though the fallback spells them there.",
+)
+SMS = Console(
+    "sms",
+    "Master System / Game Gear",
+    "sms",
+    "sms",
+    0xFFFF,
+    "smsPrgRom",
+    ("smsWorkRam", "smsVideoRam"),
+    ("sms",),
+    _sms_rom,
+    _sms_bus,
+    _sms_ram,
+    ("linear", "banked:8000:4000", "banked:4000:4000"),
+    (2,),
+    extensions=(".sms", ".gg"),
+    extra_rams=("smsCartRam",),
+    writes=(
+        ("sms", "smsWorkRam", 0, -1, "smsWorkRam", False),
+        ("sms", "smsCartRam", 0, -1, "smsCartRam", False),
+    ),
+    ram_bus=_sms_ram_bus,
+    limits="A pointer into a bank paged in at $0000-$3FFF is not resolved "
+    "past the bank's first window.",
+)
+PCE = Console(
+    "pce",
+    "PC Engine",
+    "pce",
+    "pce",
+    0xFFFF,
+    "pcePrgRom",
+    ("pceWorkRam", "pceVideoRam"),
+    ("pce",),
+    _pce_rom,
+    _pce_bus,
+    _pce_ram,
+    tuple(f"banked:{page << 13:X}:2000" for page in range(2, 8)),
+    (2,),
+    extensions=(".pce", ".sgx"),
+    writes=(("pce", "pceWorkRam", 0, -1, "pceWorkRam", False),),
+    ram_bus=_pce_ram_bus,
+    limits="A pointer is resolved only with the page a mapping names; which "
+    "page register a game used is not known.",
+)
+
 CONSOLES: dict[str, Console] = {
     c.id: c
-    for c in (SNES_LOROM, SNES_HIROM, SNES_EXHIROM, SNES_SUPERFX, SNES_SA1, NES, GBA)
+    for c in (
+        SNES_LOROM,
+        SNES_HIROM,
+        SNES_EXHIROM,
+        SNES_SUPERFX,
+        SNES_SA1,
+        NES,
+        GBA,
+        GB,
+        SMS,
+        PCE,
+    )
 }
 
 _GSU_CHIPS = {0x13, 0x14, 0x15, 0x1A}
@@ -587,6 +826,7 @@ def _snes_profile(rom: bytes) -> Console:
 
 
 _GBA_LOGO = bytes.fromhex("24FFAE51699AA221")
+_GB_LOGO = bytes.fromhex("CEED6666CC0D000B")
 
 
 def _is_gba(data: bytes) -> bool:
@@ -608,10 +848,18 @@ def detect(path: str, data: bytes) -> Console | None:
         return GBA
     if ext in _SNES_EXTS:
         return _snes_profile(data[copier_header_size(len(data)) :])
+    for c in (GB, SMS, PCE):
+        if ext in c.extensions:
+            return c
     if data[:4] == b"NES\x1a":
         return NES
     if _is_gba(data):
         return GBA
+    if data[0x104:0x10C] == _GB_LOGO:
+        return GB
+    body = data[SMS.header(data) :]
+    if any(body[at : at + 8] == b"TMR SEGA" for at in (0x7FF0, 0x3FF0, 0x1FF0)):
+        return SMS
     return None
 
 

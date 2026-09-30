@@ -151,6 +151,10 @@ if robs then
     if phase == "probe" and (probe.mode == "first" or probe.mode == "full")
         and #probe.reads < 64 and frame >= (robs[4] or 0) then
       if robs[3] and pcOf() ~= robs[3] then return end
+      if rcpu == "pce" then  -- the HuC6280's dummy read at the PC (common.lua)
+        local pc = emu.getCpuState(emu.cpuType.pce).pc
+        if a >= pc - 1 and a <= pc + 3 then return end
+      end
       local off = romOffset(rcpu, a)
       if rfrom and not probe.counting then
         if (off or a) ~= rfrom then return end
@@ -355,9 +359,16 @@ local function serve()
   end
 end
 
-local function sameWindow(a, b)
-  for i = vwin[1] & ~3, vwin[2], 4 do if a[i] ~= b[i] then return false end end
-  return true
+-- A checksum of the window, a word at a time (modulo a prime above 2^32, so
+-- no two words are alike to it): holding still is compared
+-- frame to frame without a table made each frame, whose garbage once cost a
+-- callback its second.
+local function windowSum()
+  local mt, a, b = MEM(vobs[1]), 1, 0
+  for i = vwin[1] & ~3, vwin[2], 4 do
+    a = (a + emu.read32(i, mt, false)) % 4294967311; b = (b + a) % 4294967311
+  end
+  return a .. ":" .. b
 end
 
 emu.addEventCallback(function()
@@ -390,15 +401,15 @@ emu.addEventCallback(function()
     end
   elseif phase == "probe" and vwin and probe.trig then
     -- Compared by event: once the window holds still.
-    local t = vsnap(vwin[1], vwin[2])
-    if probe.prev and sameWindow(t, probe.prev) then
+    local sum = windowSum()
+    if probe.prev == sum then
       probe.still = probe.still + 1
     else
       probe.still = 0
     end
-    probe.prev = t
+    probe.prev = sum
     if (probe.still >= vwin[3] and frame >= probe.trig + vwin[4]) or frame >= probe.trig + vwin[5] then
-      vdiff = vdiffOf(t)
+      vdiff = vdiffOf(vsnap(vwin[1], vwin[2]))
       probe.settled = frame
     end
   elseif vobs and frame == vobs[2] then

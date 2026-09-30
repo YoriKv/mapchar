@@ -52,6 +52,15 @@ STABLE_DEADLINE = 600
 latest, still or not."""
 
 
+STALLS_IN_A_ROW = 3
+"""Stalls of the probe script, one probe after another, that end the tracing
+as an error: a stall that comes back every time is not the machine's."""
+
+
+class Stall(Timeout):
+    """The probe script's callback ran past Mesen's one-second watchdog."""
+
+
 class _Unsent(Closed):
     """The server was gone before a request went out."""
 
@@ -62,7 +71,7 @@ def reader_cpu(console: Console, pc: int) -> str:
         if pc >= 0x2000000 and "sa1" in console.readers:
             return "sa1"
         return "gsu" if pc >= 0x1000000 else "snes"
-    return console.lua
+    return console.cpu
 
 
 @dataclass(frozen=True)
@@ -159,6 +168,8 @@ class ProbeServer:
         self.n = 0
         self.seconds = 0.0
         self.no_answer = 0
+        self.stalls = 0
+        """Probes in a row that stalled the script."""
         self.proc = None
         self.conn: Lines | None = None
         self.log: str | None = None
@@ -203,6 +214,19 @@ class ProbeServer:
         return s
 
     def start(self) -> Step[None]:
+        """Launch the server and wait for its reference; one that stalls or
+        dies starting is tried once more."""
+        for attempt in (0, 1):
+            if attempt:
+                self.kill()
+            try:
+                yield from self._start_once()
+                return
+            except (Timeout, Closed):
+                if attempt:
+                    raise
+
+    def _start_once(self) -> Step[None]:
         listener = Listener()
         try:
             script = os.path.join(self.folder, f"_{self.name}.lua")
@@ -252,6 +276,10 @@ class ProbeServer:
         self.awaiting = False
         if line.startswith("err "):
             raise CaptureError(f"the probe script failed: {line[4:]}")
+        if line.startswith("stall "):
+            # The script's callback ran past its second: no answer, and a
+            # fresh server for the next request.
+            raise Stall(f"the probe script stalled: {line[6:]}")
         return line
 
     def _send(self, line: str) -> None:
@@ -276,10 +304,18 @@ class ProbeServer:
                 pass
 
     def restart(self) -> Step[None]:
-        self.kill()
-        yield from self.start()
-        if self.control is not None:
-            yield from self.check()
+        """A fresh server, its positive control checked; one that stalls or
+        dies starting, or during the control, is tried once more."""
+        for attempt in (0, 1):
+            self.kill()
+            try:
+                yield from self._start_once()
+                if self.control is not None:
+                    yield from self.check()
+                return
+            except (Timeout, Closed):
+                if attempt:
+                    raise
 
     def close(self, wait: float = 5.0) -> None:
         """Ask the server to quit and give it ``wait`` seconds; one still
@@ -327,17 +363,22 @@ class ProbeServer:
         t0 = time.monotonic()
         try:
             try:
-                return (yield from self._probe(writes, first_frame, mode, reads))
+                ans = yield from self._probe(writes, first_frame, mode, reads)
             except _Unsent:
                 # The server had died before the probe was out: its change
                 # never ran, so it is asked again, of a fresh server.
                 yield from self.restart()
-                return (yield from self._probe(writes, first_frame, mode, reads))
-        except (Timeout, Closed):
+                ans = yield from self._probe(writes, first_frame, mode, reads)
+        except (Timeout, Closed) as e:
             self.no_answer += 1
             self.seconds += time.monotonic() - t0
+            self.stalls = self.stalls + 1 if isinstance(e, Stall) else 0
+            if self.stalls >= STALLS_IN_A_ROW:
+                raise CaptureError(f"{e}, on every probe") from e
             yield from self.restart()
             return None
+        self.stalls = 0
+        return ans
 
     def _probe(self, writes, first_frame: int, mode: str, reads=()) -> Step[Answer]:
         if not self.states:

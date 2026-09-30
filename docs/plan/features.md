@@ -947,7 +947,9 @@ of end-token strings.
 
 ## Pointers
 
-- **Mappings** — LINEAR, LoROM, HiROM, GB, GBA, **Relative** (the value is
+- **Mappings** — LINEAR, LoROM, HiROM, ExHiROM (the second 4 MiB at banks
+  `$40-$7D`), SA-1 (the Super MMC as it powers on: banks `$80-$BF` the third
+  and fourth MiB, not a mirror), GB, GBA, **Relative** (the value is
   the distance from the pointer to its target) and **Banked** (bank size, bank
   base address, bank number taken from the block or a field), which the two
   NES layouts `nes_c000` and `nes_8000_2000` are ready-made settings of. Each

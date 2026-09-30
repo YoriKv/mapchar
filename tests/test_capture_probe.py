@@ -215,3 +215,26 @@ def test_a_substitute_changes_its_lane_of_a_wider_read(folder):
     )
     assert got[5] == 0 and got[:5] == ref[:5] and got[6:] == ref[6:]
     p.close()
+
+
+def test_a_stalled_script_is_no_answer_and_a_fresh_server(folder):
+    p, emu = server(folder, fault="stall")
+    assert drive(p.run([(START, 0)], 3), 30) is None
+    assert p.no_answer == 1 and emu.runs == 2
+    assert drive(p.test([(START, 0)], 3), 30) is True
+    p.close()
+
+
+def test_a_start_that_stalls_is_tried_again(folder):
+    p, emu = server(folder, fault="stall-start")
+    assert emu.runs == 2 and p.nref
+    p.close()
+
+
+def test_a_stall_on_every_probe_is_an_error(folder):
+    p, emu = server(folder, fault="stall-always")
+    for _ in range(2):
+        assert drive(p.run([(START, 0)], 3), 30) is None
+    with pytest.raises(CaptureError, match="on every probe"):
+        drive(p.run([(START, 0)], 3), 30)
+    p.close(0)

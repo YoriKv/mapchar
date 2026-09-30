@@ -539,6 +539,9 @@ class Session:
                 )
             elif kind == "err":
                 self._say(f"The recorder failed: {rest}")
+            elif line.strip():
+                # A line of a kind mapchar does not know is said, not dropped.
+                self._say(f"The recorder said: {line.strip()}")
 
     def _moment_said(self, id: str) -> None:
         if not ID.fullmatch(id):

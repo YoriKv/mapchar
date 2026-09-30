@@ -217,11 +217,15 @@ A **`Mapping`** converts `offset ↔ value` given a bank number and, for a
 relative mapping, the address the pointer itself sits at. Mappings are
 plugins ([5](#5-the-plugin-system)), so the protocol is declared with the
 other stage protocols in `plugins/base.py` and the built-ins — `linear`,
-`lorom`, `hirom`, `gb`, `gba`, `banked(bank_size, bank_base)` and the two NES
+`lorom`, `hirom`, `exhirom`, `sa1` (its Super MMC as it powers on), `gb`,
+`gba`, `banked(bank_size, bank_base)` and the two NES
 bank layouts it is also registered under (`nes_c000`, `nes_8000_2000`), and
 `relative` (value = target − pointer address) — live in
 `plugins/builtins/mappings.py`. Each implements both directions and declares
-which pointer sizes it supports.
+which pointer sizes it supports, and may say it applies only to some payloads
+(`applies`): `exhirom` to an image past 4 MiB, `sa1` to one whose header names
+the chip. Pointer discovery skips a mapping that does not apply, where it would
+only tie with HiROM or LoROM; choosing it by hand is still offered.
 
 Looking one up by id is the registry's: `resolve_mapping(registry, id)` and
 `mapping_for(source)` in `plugins/registry.py`, which also build the
@@ -1360,16 +1364,34 @@ mirror), the NES (its PRG offsets converted by the emulator; the work RAM
 taken for a save RAM the cartridge lacks) and the GBA (both work RAMs; a page
 nearly wholly rewritten three frames running — a framebuffer, a tile being
 drawn — dropped while that goes on, and the same writes dropped by the probe
-server). A save-RAM offset the profile works out itself repeats at the size
+server), the Game Boy and Game Boy Color, the Master System and Game Gear, and
+the PC Engine. The last three bank their ROM, so the scripts have the emulator
+convert every address and log a reader's PC as a ROM offset, as for the NES;
+the profile's fallbacks spell a banked byte with its bank above bit 16
+(`$05:4123`) besides the plain window address, and fold work-RAM mirrors (the
+Game Boy's echo at `$E000-$FDFF`, the Master System's `$E000-$FFFF`, a
+SuperGrafx's 32 KiB of work RAM spelled past `$10000`); a 384 KiB PC Engine
+card's last 128 KiB is spelled with the banks the game uses, `$40` up. Their
+VRAM is compared by polling, never through a VRAM callback — which was seen
+never to fire on the Game Boy and the Master System, and on the PC Engine is
+taken from notes, not seen. A
+save-RAM offset the profile works out itself repeats at the size
 the ROM's header gives (`for_rom`, `locate`); the scripts have the emulator
-place every write outside the main CPU's own RAM. A profile says which
-pointers its mappings cannot resolve (`limits`): ExHiROM's upper 4 MiB, and
-the SA-1's banks `$80-$BF` and switched-in ROM, have no mapping yet. The
-extension decides the console; a file's magic only when the extension says
-nothing. The scripts' read filters — the 6502's dummy read at the PC, the
-SuperFX's instruction fetches, the ARM's literal pools — only prune reports.
+place every write outside the main CPU's own RAM. Each profile tries its own
+pointer mappings first — `exhirom` for ExHiROM, `sa1` for the SA-1 — and says
+which pointers they cannot resolve (`limits`): the SA-1's ROM that a game
+switches in by reprogramming the Super MMC; a Master System byte paged in at
+`$0000-$3FFF`; a PC Engine pointer, whose page register is not known. The
+extension decides the console (`.gb`, `.gbc`, `.sms`, `.gg`, `.pce` among
+them); a file's magic only when the extension says nothing, and then the
+emulator — which knows a console by its extension alone — is launched on a
+link to the file named with the console's own. The scripts' read filters —
+the 6502's and the HuC6280's dummy reads at the PC, the SuperFX's instruction
+fetches, the ARM's literal pools — only prune reports; the Game Boy's and the
+Master System's reads need none.
 ROM offsets in capture are the emulator's, without a copier or iNES header
-(the PRG size an iNES or NES 2.0 header gives); proposals shift them to where
+(the PRG size an iNES or NES 2.0 header gives; the 512 bytes a Master System
+or PC Engine copier adds, skipped as the emulator skips them); proposals shift them to where
 the image starts in the payload.
 
 ### 9.2 The session
@@ -1533,7 +1555,10 @@ compares VRAM by event, within the text's range: from the changed byte's first
 read, once the range has held still 8 frames and no sooner than the reference
 took. A probe's cost is the frames it runs, so it starts at the read in
 question and stops at the last output it compares. A probe not answered by a
-deadline its frames set is counted as *no answer*, the server is restarted,
+deadline its frames set — or whose script callback ran past Mesen's
+one-second watchdog, a *stall* — is counted as *no answer*, the server is
+restarted (a server that stalls or dies starting is tried once more; three
+stalls in a row end the tracing as an error),
 and the tracing goes on without it; a server that died between two other
 requests is restarted and asked again, and an answer to an earlier probe is
 passed over. Once a change is known to alter the output, every restarted
@@ -1579,7 +1604,21 @@ closing), is killed at once.
   above tried too, and the bank byte after it when that follows. The probe
   answers as soon as the reader's first reads are in, so a change that then
   stalls the game still counts; one with no answer is a *stall*, one after
-  which the reader read nothing near the string a *stray*.
+  which the reader read nothing near the string a *stray*. On the GBA every
+  other 4-aligned word holding a confirmed pointer's value is listed — compiled
+  code keeps a pointer in a literal pool and in initialised data — as read by
+  this replay, in reach of a Thumb or ARM `ldr rX, [pc, #imm]` (one this
+  replay ran; not knowing that, one not inside a run of text), or neither,
+  those with no pointer within four words either side last: none is confirmed.
+  On the Game Boy an address in `$4000-$7FFF` is the switched bank's, so a
+  place holding it counts only in bank 0, in the string's own bank, or with a
+  byte naming the string's bank after it (a far pointer); there and on the
+  Master System (a Z80) a place found by its value that is the operand of
+  `ld hl`/`ld de`/`ld bc,nn` (on the Z80 also `ld ix`/`ld iy,nn`) is named so.
+  On the Game Boy a string whose first byte comes at most two bytes after the
+  end of a `call` (`$CD`, or `$C4`/`$CC`/`$D4`/`$DC`), read by that call's
+  routine, *follows the call*: the routine reads it from its return address,
+  and the call site is its reference — said once no pointer is found.
 - **Codes.** Every value of a source byte used once, from the read that
   confirmed it — every byte of it, for a wider code, in its byte order, and
   then the code the string ended with whole; a byte the game reads more than
@@ -1641,7 +1680,15 @@ table.
 `proposals.py` states the results as the model states them — block
 configurations, table entries (each end code labelled apart), glyphs to label
 and conflicts (with each reading's meaning) — each with the captures behind it
-and what is unconfirmed, at the payload's offsets for every mapping. A
+and what is unconfirmed, at the payload's offsets for every mapping: the other
+words holding a confirmed GBA pointer's value, which a repoint must rewrite too
+where the game uses them, and a pointer in code's instruction. Pointers in
+code make a block of a pointer list, written slotted — packing would rewrite
+whatever lies between its strings — when one reading of them reaches every
+capture's string; otherwise the block is the range the strings span. A block
+whose strings follow calls says it has no pointer. A mapping
+id a profile names that the registry builds on demand (`banked:<base>:<size>`)
+is built so here too. A
 proposal's id is derived from what it proposes, so a review mark follows it
 when captures are renumbered: a block's from its routine, output, kind and
 start (a table's first slot, pointer size and mapping), so a capture that

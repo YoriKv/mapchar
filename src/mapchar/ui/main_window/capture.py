@@ -219,8 +219,9 @@ class CaptureMixin:
         console = detect(file_entry.path, data)
         if console is None:
             self._error(
-                "Capture knows the SNES, NES and Game Boy Advance; this file is "
-                "none of them."
+                "Capture knows the SNES, NES, Game Boy, Game Boy Color, Game Boy "
+                "Advance, Master System, Game Gear and PC Engine; this file is none "
+                "of them."
             )
             return None
         console = console.for_rom(data)

@@ -185,11 +185,12 @@ def replay(
     m = re.search(
         r"replay frame=(\d+) poll=\d+ hash=(\S+) match=(\d) events=(\d+)", out
     )
+    err = re.search(r"^! (.*)$", out, re.M)
+    if err:
+        # A callback that failed left out what it would have logged.
+        raise CaptureError(f"the replay's script failed: {err.group(1)}")
     if not m:
-        err = re.search(r"^! (.*)$", out, re.M)
-        raise CaptureError(
-            "the replay did not finish" + (f": {err.group(1)}" if err else "")
-        )
+        raise CaptureError("the replay did not finish")
     return ReplayResult(m.group(3) == "1", m.group(2), int(m.group(4)), int(m.group(1)))
 
 
@@ -405,6 +406,13 @@ class Evidence:
                 return fh.read()
         except OSError:
             return None
+
+    @property
+    def touched_known(self) -> bool:
+        """Whether this replay's ROM access counts were saved, so
+        :meth:`touched` says more than True."""
+        self.touched(0)
+        return self._touched is not None
 
     def touched(self, offset: int) -> bool:
         """Whether this replay read or executed a ROM byte; True when unknown."""

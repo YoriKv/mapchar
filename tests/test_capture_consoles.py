@@ -218,4 +218,146 @@ def test_sa1_and_exhirom_pointer_forms_round_trip():
             for b in con.to_bus(off):
                 assert con.to_rom(b) == off, (con.id, hex(off), hex(b))
     assert consoles.SNES_SA1.to_bus(0x401104) == []
-    assert consoles.SNES_SA1.limits and consoles.SNES_EXHIROM.limits
+    assert consoles.SNES_SA1.limits and not consoles.SNES_EXHIROM.limits
+
+
+# -- Game Boy, Master System, PC Engine
+
+
+def test_gb_sms_and_pce_are_known_by_extension_and_magic():
+    assert consoles.detect("x.gb", b"") is consoles.GB
+    assert consoles.detect("x.gbc", b"") is consoles.GB
+    assert consoles.detect("x.sms", b"") is consoles.SMS
+    assert consoles.detect("x.gg", b"") is consoles.SMS
+    assert consoles.detect("x.pce", b"") is consoles.PCE
+    gb = bytearray(0x8000)
+    gb[0x104:0x10C] = bytes.fromhex("CEED6666CC0D000B")
+    assert consoles.detect("x.bin", bytes(gb)) is consoles.GB
+    for at in (0x7FF0, 0x3FF0, 0x1FF0):
+        sms = bytearray(0x8000)
+        sms[at : at + 8] = b"TMR SEGA"
+        assert consoles.detect("x.bin", bytes(sms)) is consoles.SMS
+        assert consoles.detect("x.bin", bytes(512) + bytes(sms)) is consoles.SMS
+    assert consoles.detect("x.bin", bytes(0x8000)) is None
+
+
+def test_copier_headers_are_skipped_as_the_emulator_skips_them():
+    assert consoles.SMS.header(bytes(0x8000 + 512)) == 512
+    assert consoles.SMS.header(bytes(0x8000)) == 0
+    assert consoles.PCE.header(bytes(0x60000 + 512)) == 512  # 384 KiB and a header
+    assert consoles.PCE.header(bytes(0x60000)) == 0
+    assert consoles.GB.header(bytes(0x8000 + 512)) == 0
+
+
+@pytest.mark.parametrize(
+    ("con", "bank", "banks"),
+    [
+        (consoles.GB, 0x4000, 256),
+        (consoles.SMS, 0x4000, 64),
+        (consoles.PCE, 0x2000, 128),
+    ],
+)
+def test_banked_pointer_forms_round_trip_over_every_bank(con, bank, banks):
+    for n in range(banks):
+        for low in (0, 0x123, bank - 1):
+            off = n * bank + low
+            buses = con.to_bus(off)
+            assert buses, (con.id, hex(off))
+            # A spelling that carries its bank above bit 16 names the byte; a
+            # plain one only in its power-on slot (the PC Engine has none),
+            # and otherwise the right place within a window.
+            for b in buses:
+                if b > 0xFFFF or (b == off and con is not consoles.PCE):
+                    assert con.to_rom(b) == off, (con.id, hex(off), hex(b))
+                assert b & (bank - 1) == low
+
+
+def test_banked_ram_mirrors_are_one_byte():
+    gb, sms, pce = consoles.GB, consoles.SMS, consoles.PCE
+    assert gb.ram_of(0xE123) == gb.ram_of(0xC123) == ("gbWorkRam", 0x123)
+    assert gb.canon(0xE123) == 0xC123
+    assert gb.ram_of(0xFF90) == ("gbHighRam", 0x10)
+    assert gb.ram_of(0xA010) == ("gbCartRam", 0x10)
+    assert gb.ram_bus("gbWorkRam", 0x3456) == 0x13456  # a Game Boy Color bank
+    assert gb.ram_of(0x13456) == ("gbWorkRam", 0x3456)
+    with pytest.raises(ValueError):
+        gb.ram_of(0x8000)  # VRAM
+    assert sms.ram_of(0xE123) == sms.ram_of(0xC123) == ("smsWorkRam", 0x123)
+    assert sms.canon(0xFFFC) == 0xDFFC  # the mapper registers' RAM
+    assert pce.ram_of(0x2010) == ("pceWorkRam", 0x10)
+    with pytest.raises(ValueError):
+        pce.ram_of(0x0000)
+
+
+def test_banked_readers_are_their_own_processors():
+    from mapchar.capture.probe import reader_cpu
+
+    assert reader_cpu(consoles.GB, 0x1234) == "gameboy"
+    assert reader_cpu(consoles.SMS, 0x1234) == "sms"
+    assert reader_cpu(consoles.PCE, 0x1234) == "pce"
+    for con in (consoles.GB, consoles.SMS, consoles.PCE):
+        assert con.readers == (con.cpu,) and con.vram in con.rams
+        assert not any(h[1].endswith("VideoRam") for h in con.writes)
+
+
+def test_exhirom_never_spells_rom_as_work_ram_banks():
+    ex = consoles.SNES_EXHIROM
+    for off in range(0x7E0000, 0x800000, 0x1000):
+        for b in ex.to_bus(off):
+            assert (b >> 16) not in (0x7E, 0x7F) and ex.to_rom(b) == off
+    assert ex.to_bus(0x7E1234) == []  # no bank shows that half
+    assert ex.to_bus(0x7E9234) == [0x3E9234]
+
+
+def test_a_384k_pc_engine_card_reaches_its_last_128k_from_bank_40():
+    card = bytes(0x60000)
+    pce = consoles.PCE.for_rom(card)
+    assert pce.to_rom(0x404000) == 0x40000
+    assert pce.to_rom(0x4F5FFF) == 0x5FFFF
+    assert pce.to_rom(0x204000) == 0x40000  # Mesen maps $20-$3F there too
+    assert 0x404000 in pce.to_bus(0x40000)
+    for off in range(0, 0x60000, 0x777):
+        for b in pce.to_bus(off):
+            if b > 0xFFFF:
+                assert pce.to_rom(b) == off, hex(off)
+    assert consoles.PCE.for_rom(bytes(0x80000)).to_rom(0x404000) == 0x80000
+
+
+def test_supergrafx_work_ram_past_8k_is_its_own_byte():
+    pce = consoles.PCE
+    assert pce.ram_bus("pceWorkRam", 0x10) == 0x2010
+    assert pce.ram_bus("pceWorkRam", 0x2010) == 0x12010
+    assert pce.ram_of(0x12010) == ("pceWorkRam", 0x2010)
+    assert pce.canon(0x12010) != pce.canon(0x2010)
+    assert consoles.detect("x.sgx", b"") is pce
+
+
+def test_mesen_is_launched_on_a_name_it_knows(tmp_path):
+    from mapchar.capture.emulator import runnable_rom
+
+    gb = bytearray(0x8000)
+    gb[0x104:0x10C] = bytes.fromhex("CEED6666CC0D000B")
+    rom = tmp_path / "game.bin"
+    rom.write_bytes(bytes(gb))
+    cap = tmp_path / "cap"
+    cap.mkdir()
+    link = runnable_rom(str(rom), str(cap))
+    assert link == str(cap / "_rom.gb") and open(link, "rb").read() == bytes(gb)
+    assert runnable_rom(str(rom), str(cap)) == link  # made once
+    named = tmp_path / "game.gb"
+    named.write_bytes(bytes(gb))
+    assert runnable_rom(str(named), str(cap)) == str(named)
+    assert consoles.detect("x.sgb", bytes(gb)) is consoles.GB  # by its logo
+    assert ".sgb" not in consoles.GB.extensions
+
+
+def test_hidden_emulators_are_silent(tmp_path):
+    # --testRunner starts Mesen's core with no audio device and no window:
+    # it is what keeps the replay and probe emulators silent and unseen. The
+    # emulator the user plays in has neither switch.
+    exe = tmp_path / "mesen"
+    exe.write_text("")
+    m = Mesen(str(exe))
+    for role in (REPLAY, PROBE):
+        assert "--testRunner" in m.arguments("r.sfc", role, "s.lua")
+    assert "--testRunner" not in m.arguments("r.sfc", RECORDER, "s.lua")

@@ -333,6 +333,18 @@ def _find_all(data: bytes, needle: bytes) -> list[int]:
     return out
 
 
+def _applies(mapping, data: bytes) -> bool:
+    """Whether a mapping can hold for ``data`` at all, by its optional
+    ``applies``: one it rules out would only tie with a plainer mapping."""
+    applies = getattr(mapping, "applies", None)
+    if applies is None:
+        return True
+    try:
+        return bool(applies(data))
+    except Exception:  # noqa: BLE001 - a mapping is a plugin, and may raise
+        return True
+
+
 def discover(
     data: bytes,
     starts: list[int],
@@ -355,10 +367,12 @@ def discover(
     that needs a bank and has no ``bank_of`` is left with that fallback, which
     is a guess, so its values are taken as found rather than checked back
     against it. A mapping that raises loses its own combination and no more.
+    A mapping whose ``applies`` says it cannot hold for ``data`` is not tried.
     """
     combos = [
         (mid, m, size, endian, off)
         for mid, m in mappings.items()
+        if _applies(m, data)
         for size in sizes
         if size in getattr(m, "sizes", sizes)
         for endian in endians

@@ -149,3 +149,18 @@ def test_pages_the_replay_dropped_are_read(folder):
     ev = drive(evidence.Evidence.load(folder, consoles.GBA, 0))
     assert ev.bulk == [(0x20000, 2, 4), (0x20001, 5, None)]
     assert [e[1] for e in ev.events] == [0x2000010]
+
+
+def test_a_replay_whose_script_failed_fails(folder):
+    emu = FakeEmulator(
+        Game(build_rom()), replay_error="read: Maximum execution time exceeded."
+    )
+    with pytest.raises(CaptureError, match="script failed"):
+        drive(evidence.replay(emu, "rom.bin", CONSOLE, folder), 30)
+
+
+def test_touched_known_says_whether_counts_were_saved(folder):
+    assert not evidence.Evidence.of(folder, CONSOLE, []).touched_known
+    with open(os.path.join(folder, evidence.EVIDENCE + ".acc"), "wb") as fh:
+        fh.write(b"\1")
+    assert evidence.Evidence.of(folder, CONSOLE, []).touched_known

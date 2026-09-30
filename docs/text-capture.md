@@ -157,6 +157,29 @@ memory, so it suits a query on demand, not every frame.
   behind it.
 - `stateLoaded` fires for a savestate loaded from a file or slot, not for a
   rewind; a rewind shows as the master clock going back.
+- On the Game Boy and the Master System a read callback on the ROM sees no
+  opcode or operand fetch (none of 20,000 and 111,000 reads fell at the PC or
+  the three bytes after it): unlike the 6502's, their reads need no filter.
+  The PC Engine's HuC6280 does make one (`PceCpu::FetchOperand` issues a
+  dummy read at the PC after an implied instruction, on a taken branch, at a
+  block transfer's start), which Mesen reports as a read: filtered as the
+  6502's. Their CPU states name the PC `pc` (the PC Engine's from its source).
+- Mesen chooses the console by the file's extension alone (a `.bin` Game Boy
+  ROM exits with status 255 before any script runs). It pads a 384 KiB PC
+  Engine card to 512 KiB and maps banks `$20-$3F` and `$40-$7F` onto its last
+  128 KiB, at `$40000`.
+- A script error in the replay or the recorder leaves Mesen running on: the
+  callback that failed is lost, and nothing else says so but the `!` line.
+- A Game Boy moment written from the `endFrame` event did not match its
+  replay (which stops at the first instruction at the pause's master clock,
+  and had counted one more input poll); written at the next instruction, it
+  does. The recorder's headless pause waits for that instruction.
+- The one-second callback limit is wall-clock time. A headless probe server
+  on EarthBound stalled 2.7–2.9 s, now and then, inside a frame handler that
+  otherwise takes a millisecond (7,800 `read32` calls; no Lua garbage
+  collected, no lock in the read path), so a callback can be stopped however
+  little it does. The scripts report that as a stall, not an error, and the
+  probe client takes it as no answer.
 - `getAccessCounters` on a 32 MB GBA ROM builds a 32 M-entry table: over the
   callback limit on its own.
 - An exec callback over a CPU's whole address space fires on the next

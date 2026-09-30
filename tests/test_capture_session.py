@@ -280,8 +280,9 @@ def test_the_recorders_lines_never_raise(tmp_path, game):
         "what is this",
         "",
     )
-    until(s, lambda: len(said) >= 6)
+    until(s, lambda: len(said) >= 7)
     assert s.hello and s.recorder_state == "connected"
+    assert any("what is this" in m for m in said)  # an unknown line is said
     assert not s.captures
     text = "\n".join(said)
     assert "cannot read: ''" in text and "'../escape'" in text and "'..'" in text

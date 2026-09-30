@@ -270,6 +270,11 @@ class Mapping(Protocol):
     #     Which bank an offset is reached in, for a mapping that needs one.
     #     Absent, pointer discovery has only the bank it was given, so it takes
     #     a value it finds rather than checking it back against that guess.
+    # applies: Callable[[bytes], bool]
+    #     Whether the mapping can hold for a payload at all (ExHiROM only past
+    #     4 MiB, the SA-1 only when the header names it). Pointer discovery
+    #     skips one that does not; choosing it by hand is still offered.
+    #     Absent, it always applies.
 
 
 REQUIRED_METHODS: dict[Stage, tuple[str, ...]] = {

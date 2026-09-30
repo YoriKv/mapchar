@@ -59,9 +59,18 @@ end
 -- the script window: report it on stdout and to mapchar instead. What the
 -- callback returns is passed on: a memory callback's integer replaces the
 -- value read or written.
+-- In the probe server, a callback stopped by the one-second watchdog is a
+-- "stall", not an error: a headless run's thread can stall for seconds in a
+-- callback doing a millisecond's work, and the server is restarted for the
+-- next request. Anywhere else it is an error: a replay missing what the
+-- stopped callback would have logged, or a pause that wrote no moment, is
+-- not to be trusted.
 local function report(err)
-  print("! " .. tostring(err)); io.stdout:flush()
-  pcall(send, "err " .. tostring(err):gsub("%s+", " "))
+  local msg = tostring(err):gsub("%s+", " ")
+  local stall = CFG.role == "probe" and msg:find("Maximum execution time", 1, true)
+  local kind = stall and "stall " or "err "
+  print((kind == "err " and "! " or "~ ") .. msg); io.stdout:flush()
+  pcall(send, kind .. msg)
 end
 local function passOn(ok, ...)
   if ok then return ... end
@@ -83,7 +92,13 @@ local MEM_NAMES = {}
 for name, v in pairs(emu.memType) do if v < 0x100 then MEM_NAMES[v] = name end end
 
 -- Each processor's own address space, for converting its addresses.
-local REL = { snes = "snesMemory", sa1 = "sa1Memory", gsu = "gsuMemory", nes = "nesMemory", gba = "gbaMemory" }
+local REL = {
+  snes = "snesMemory", sa1 = "sa1Memory", gsu = "gsuMemory", nes = "nesMemory", gba = "gbaMemory",
+  gameboy = "gameboyMemory", sms = "smsMemory", pce = "pceMemory",
+}
+
+-- Processors whose ROM is banked in and out too often to keep a conversion.
+local BANKED = { nes = true, gameboy = true, sms = true, pce = true }
 
 -- A memory of the profile, or its stand-in when the cartridge has none (the
 -- NES's work RAM for its save RAM).
@@ -182,6 +197,16 @@ end
 
 local function nesPc() return nesPrg(emu.getCpuState(emu.cpuType.nes).pc) end
 
+-- A banked processor's address as a ROM offset under its banks now, or with
+-- bit 24 set where it is not ROM (code running from RAM).
+local function bankedOffset(cpu, a)
+  local ok, c = pcall(emu.convertAddress, a, MEM(REL[cpu]), emu.cpuType[cpu])
+  if ok and c and c.memType == ROM then return c.address end
+  return 0x1000000 | a
+end
+local function bankedPc(cpu)
+  return function() return bankedOffset(cpu, emu.getCpuState(emu.cpuType[cpu]).pc) end
+end
 -- The PC a reader's read is logged with, per processor: the SuperFX's
 -- marked with bit 24, the SA-1's with bit 25.
 local PCS = {
@@ -194,6 +219,10 @@ local PCS = {
   gsu = function() local st = emu.getCpuState(emu.cpuType.gsu); return 0x1000000 | (st.programBank << 16) | st.r15 end,
   gba = function() return emu.getCpuState(emu.cpuType.gba)["pipeline.execute.address"] end,
   nes = nesPc,
+  -- Banked: the PC as a ROM offset, like the NES's.
+  gameboy = bankedPc("gameboy"),
+  sms = bankedPc("sms"),
+  pce = bankedPc("pce"),
 }
 
 -- A bus address as a ROM offset, as the emulator maps it: nil where it is
@@ -203,8 +232,8 @@ local PCS = {
 local romPages = {}
 local function forgetPages() romPages = {} end
 local function romOffset(cpu, a)
-  if cpu == "nes" then
-    local off = nesPrg(a)
+  if BANKED[cpu] then
+    local off = cpu == "nes" and nesPrg(a) or bankedOffset(cpu, a)
     return off < 0x1000000 and off or nil
   end
   local pages = romPages[cpu]
@@ -284,6 +313,22 @@ local function hookReads(fn)
         if math.abs((a | 0x08000000) - pc) < 0x1000 then return end
         fn(pc, a, v, romOffset("gba", a))
       end, emu.callbackType.read, 0, size - 1, emu.cpuType.gba, ROM)
+    elseif BANKED[r] then
+      -- The Game Boy, Master System and PC Engine: opcode and operand
+      -- fetches are exec, not read. The PC Engine's HuC6280 also makes a
+      -- dummy read of the byte at the PC (after an implied instruction, a
+      -- taken branch, a block transfer's start), dropped as the 6502's is;
+      -- the Game Boy and Master System were seen to make none.
+      local ct, pcOf = emu.cpuType[r], PCS[r]
+      local dummy = r == "pce"
+      emu.addMemoryCallback(function(a, v)
+        if hooksOff then return end
+        if dummy then
+          local pc = emu.getCpuState(ct).pc
+          if a >= pc - 1 and a <= pc + 3 then return end
+        end
+        fn(pcOf(), a, v, romOffset(r, a))
+      end, emu.callbackType.read, 0, size - 1, ct, ROM)
     end
   end
 end
@@ -348,7 +393,12 @@ local function hookWrites(fn, onBulk)
   for _, h in ipairs(writeHooks()) do
     local cpuName = h.cpu
     local cpu, pcOf = emu.cpuType[cpuName], PCS[cpuName]
-    local convert = CFG.console ~= "gba" and not (cpuName == CFG.cpu and h.ram == CFG.rams[1])
+    -- The main CPU's own RAM is spelled by its bus on the SNES and the NES
+    -- (their formulas are exact) and on the GBA; everything else, banked or
+    -- mirrored, is placed by the emulator.
+    local plain = (CFG.console == "snes" or CFG.console == "nes") and cpuName == CFG.cpu
+      and h.ram == CFG.rams[1]
+    local convert = CFG.console ~= "gba" and not plain
     local rel = convert and MEM(REL[cpuName])
     emu.addMemoryCallback(function(a, v)
       if hooksOff then return end

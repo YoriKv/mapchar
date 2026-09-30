@@ -20,7 +20,10 @@ from mapchar.capture.trace import Code, Pointer, Result, Source
 from mapchar.plugins.registry import default_registry, resolve_mapping
 
 REG = default_registry()
-MAPPINGS = {i: resolve_mapping(REG, i) for i in ("linear", "lorom", "hirom", "gba")}
+MAPPINGS = {
+    i: resolve_mapping(REG, i)
+    for i in ("linear", "lorom", "hirom", "exhirom", "sa1", "gba")
+}
 READ = "read before"
 
 
@@ -340,6 +343,29 @@ def test_a_gba_pointer_is_read_whole():
     assert (t.size, t.mapping_id, t.offset) == (4, "gba", 0)
 
 
+def test_pointers_past_hirom_and_lorom_resolve():
+    # ExHiROM: a 24-bit pointer into the second 4 MiB.
+    rom = rom_of(0x600000)
+    pointers = slot(rom, 0x200, 0x512340, size=3)[:2]
+    r = result(0x512340, 0x512345, pointers=pointers)
+    (e,) = combine([sight("a", r)], bytes(rom), consoles.SNES_EXHIROM, MAPPINGS).engines
+    t = e.table
+    assert (t.size, t.mapping_id, t.offset) == (3, "exhirom", 0)
+    # SA-1: a 24-bit pointer into bank $80, the third MiB — no mirror.
+    rom = rom_of(0x300000)
+    pointers = slot(rom, 0x200, 0x808010, size=3)[:2]
+    r = result(0x200010, 0x200015, pointers=pointers)
+    (e,) = combine([sight("a", r)], bytes(rom), consoles.SNES_SA1, MAPPINGS).engines
+    t = e.table
+    assert (t.size, t.mapping_id, t.offset) == (3, "sa1", 0)
+    # A 16-bit one there takes the bank the string is in.
+    rom = rom_of(0x300000)
+    r = result(0x200010, 0x200015, pointers=slot(rom, 0x200, 0x8010))
+    (e,) = combine([sight("a", r)], bytes(rom), consoles.SNES_SA1, MAPPINGS).engines
+    t = e.table
+    assert (t.size, t.mapping_id, t.bank) == (2, "sa1", 0x40)
+
+
 def test_a_zero_after_a_pointer_is_no_bank_byte():
     # LoROM records of a 16-bit pointer and two zero bytes, strings in bank 1.
     rom = rom_of(0x20000)
@@ -503,3 +529,14 @@ def test_a_dictionary_s_bytes_bound_no_string():
     r.sources.append(d)
     assert _bounds(r) == (0x100, 0x180)
     assert _bounds(replace(r, sources=r.sources[:2])) == (0x100, 0x500)
+
+
+def test_an_sa1_short_pointer_below_8000_reads_as_hirom():
+    # Read through a $Cx data bank: $E4:1234 is image $241234.
+    rom = rom_of(0x400000, 0x00)
+    ss = []
+    for n, t in enumerate((0x241234, 0x241240)):
+        r = result(t, t + 5, pointers=slot(rom, 0x200 + 2 * n, t & 0xFFFF))
+        ss.append(sight("ab"[n], r))
+    t = combine(ss, bytes(rom), consoles.SNES_SA1, MAPPINGS).engines[0].table
+    assert (t.mapping_id, t.offset, t.bank) == ("hirom", 0, 0x24)

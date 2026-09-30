@@ -17,6 +17,9 @@ evidence it rests on is [text-capture.md](text-capture.md).
   opens a window even under `--testRunner`.
 - Every launch passes its settings as switches; the user's `settings.json` is
   never written.
+- The replay and probe emulators have no window and no sound (`--testRunner`
+  starts Mesen's core with neither); only the emulator the user plays in has
+  either.
 
 ## Files
 
@@ -38,6 +41,7 @@ are.
 | `<id>/capture.json` | the typed text, the state, whether the replay finished and matched (`replayed`), the result; one that does not read leaves the capture failed, its text kept when that much reads |
 | `<id>/evidence.log` and `.<memory>`, `.acc` | the replay's log (`E pc bus value [ROM offset]`, `W pc bus value [memory:offset]`, `F frame`, `B page` / `U page` for a GBA page's writes dropped / logged again), every memory at the capture point, the ROM bytes it touched — removed whenever a replay is stopped, fails or does not match |
 | `<id>/_*.lua`, `_*.out` | each launch's generated script and output, removed once the capture is done |
+| `<id>/_rom.<ext>` | for a ROM whose file name Mesen does not know (its console found from its content), a hard link to it — a copy where none can be made — named as Mesen needs; game data |
 | `<id>/confirm_*.png`, `sweep_NNNN.png` | Confirm in game's two frames; Show Its Strings in Game's frame per string |
 | `review.json` | the proposals marked accepted or rejected, and what each acceptance added (a block's source, the entries as they stood), which counts as accepted while the project holds it |
 
@@ -77,4 +81,7 @@ All of it is game data: it never enters the repository.
   `MAPCHAR_ROMS` lists folders holding the ROMs (besides `test-data/*/`),
   `MAPCHAR_CAPTURES` the recorded moments (default `tmp/capture-spike/cap`,
   `<game>/capNNNNN.txt` and its files), `MAPCHAR_MESEN` the emulator. A game
-  with any of them missing skips.
+  with any of them missing skips. The Game Boy and Master System games need
+  no recorded moment: the recorder, run headless, plays them from power-on
+  with the buttons the test gives (`CFG.press`) and writes the moment at a
+  set frame (`CFG.pauseAt`). No PC Engine game is tested.

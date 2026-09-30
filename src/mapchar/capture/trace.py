@@ -12,7 +12,12 @@ what the text becomes.
 - **Pointers.** A byte holds the string's address when changing it by 2 moves
   the string's first read by 2 × 1, 2 or 4 (the code unit), or 256 times that
   for the byte above. Candidates are the reads before the first read, and every
-  place in the ROM holding its address that this replay read or executed.
+  place in the ROM holding its address that this replay read or executed — on
+  the Game Boy only in bank 0 or the string's own bank; there and on the
+  Master System an ``ld rr,nn`` operand is named so. On the GBA every other
+  word holding a confirmed pointer's value is listed and classed; on the Game
+  Boy a string that follows a ``call`` read by the called routine has the call
+  site for its reference.
 - **Codes.** Every byte of a source's code unit is set to each value: with RAM
   output, what replaces the output is a character, a string, nothing, or a
   structural change; with VRAM output, the reader's next reads say printable,
@@ -83,6 +88,33 @@ RAM_CANDIDATES = 16
 """Earlier RAM writes of an output's value tried as the buffer it is read
 from, when no ROM byte is its source."""
 
+COPIES_MAX = 64
+"""Other words holding a confirmed GBA pointer's value listed at most."""
+
+TEXT_RUN = 8
+"""Printable bytes around a would-be ``ldr`` that make it text instead."""
+
+COPY_NEAR = 4
+"""Words either side of a copy looked at for another pointer: with none, the
+copy sits among graphics or data and most likely holds the bytes by chance."""
+
+GB_OPERANDS = {0x21: "ld hl,nn", 0x11: "ld de,nn", 0x01: "ld bc,nn"}
+"""Game Boy (and Z80: Master System) instructions whose 16-bit operand is
+commonly a string's address."""
+
+OPERAND_CONSOLES = ("gb", "sms")
+"""The profiles whose pointers in code are named by :data:`GB_OPERANDS`."""
+
+GB_CALLS = (0xCD, 0xC4, 0xCC, 0xD4, 0xDC)
+"""Game Boy ``call nn`` and its conditional forms."""
+
+CALL_GAP = 2
+"""Bytes at most between a call's end and a string that follows it."""
+
+CALL_REACH = 0x100
+"""How far past a call's target its reader PC may lie and still be the called
+routine."""
+
 
 # -- results
 
@@ -110,6 +142,25 @@ class Pointer:
     """How far changing it moved the string's first read."""
     why: str
     """``read before`` or ``holds the address``."""
+    note: str = ""
+    """What the byte is, when that says more: the instruction a pointer in
+    code is the operand of (``ld hl,nn``)."""
+
+
+@dataclass
+class Copy:
+    """Another word holding a confirmed pointer's value: compiled code keeps a
+    pointer in a literal pool and in initialised data, sometimes twice, and a
+    repoint must rewrite each copy the game uses. Never itself confirmed."""
+
+    address: int
+    """ROM offset of the 4-aligned word."""
+    of: int
+    """ROM offset of the confirmed pointer it copies."""
+    kind: str
+    """``touched`` (this replay read it), ``literal`` (an ``ldr`` reaches it),
+    ``other``, or ``data`` (other, with no pointer in the words around it:
+    most likely graphics or data holding the same bytes by chance)."""
 
 
 @dataclass
@@ -170,6 +221,12 @@ class Result:
     probes: int = 0
     no_answer: int = 0
     notes: list[str] = field(default_factory=list)
+    copies: list[Copy] = field(default_factory=list)
+    """Other words holding a confirmed GBA pointer's value."""
+    follows_call: int | None = None
+    """ROM offset of the ``call`` the string follows, on the Game Boy: the
+    called routine reads the string from its return address, so the call
+    site is the string's reference and no pointer holds it."""
 
     def to_json(self) -> dict:
         d = asdict(self)
@@ -182,6 +239,7 @@ class Result:
         r.decoder = {int(k): v for k, v in d.get("decoder", {}).items()}
         r.sources = [Source(**s) for s in d.get("sources", [])]
         r.pointers = [Pointer(**p) for p in d.get("pointers", [])]
+        r.copies = [Copy(**c) for c in d.get("copies", [])]
         r.codes = [Code(**c) for c in d.get("codes", [])]
         for key in ("region", "frames", "string", "stream", "code_ram"):
             if r.__dict__.get(key) is not None:
@@ -296,6 +354,13 @@ class Reads:
         return same, other[:OTHER_BUDGET]
 
 
+def vram_unit(occ_unit: int, values: list[int]) -> int:
+    """The width of a code read straight into VRAM: the occurrence's, or 2
+    when a read gave more than a byte (a halfword read of a 1-byte-coded
+    occurrence)."""
+    return max(occ_unit, 2 if any(v > 0xFF for v in values) else 1)
+
+
 def advancing_run(sources: list[int]) -> list[int]:
     """The longest run of sources, in output order, each just past the one
     before (within :data:`STEP`): the positions in ``sources`` of the
@@ -401,6 +466,124 @@ def line_break(ref: list[int], got: list[int], k: int) -> int | None:
     if i + 1 < len(ops) and ops[i + 1][1] < ops[i][1] + LINE_REST:
         return None
     return got[k]
+
+
+# -- what the pointer stage reads off the ROM itself
+
+
+def _gba_pointer(v: int) -> bool:
+    return 0x08000000 <= v < 0x0A000000
+
+
+def _in_text(rom: bytes, i: int) -> bool:
+    """Whether the bytes around ``i`` are a run of printable ASCII: text,
+    whose ``H``-``O`` look like a Thumb ``ldr``'s opcode byte."""
+    run = rom[max(0, i - TEXT_RUN // 2) : i + TEXT_RUN // 2 + 2]
+    return len(run) >= TEXT_RUN and all(0x20 <= b < 0x7F for b in run)
+
+
+def ldr_reaches(rom: bytes, k: int, executed=None) -> bool:
+    """Whether a PC-relative load reaches the 4-aligned word at ``k``: a Thumb
+    ``ldr rX, [pc, #imm]`` (``$48-$4F``, up to 1020 bytes on) or an ARM
+    ``ldr rX, [pc, #±imm]`` (4095 bytes either way). The instruction must be
+    code this replay ran, by ``executed(i)``; not knowing that, it must at
+    least not sit in a run of text. Reached is not read: the bytes may still
+    be data that decodes as one."""
+
+    def code(i: int) -> bool:
+        return executed(i) if executed is not None else not _in_text(rom, i)
+
+    for imm in range(256):
+        for i in (k - 4 * imm - 4, k - 4 * imm - 2):
+            if i >= 0 and rom[i] == imm and rom[i + 1] >> 3 == 0x09 and code(i):
+                return True
+    for imm in range(0, 4096, 4):
+        for i, up in ((k - 8 - imm, 0x00800000), (k - 8 + imm, 0)):
+            if 0 <= i <= len(rom) - 4:
+                w = int.from_bytes(rom[i : i + 4], "little")
+                if (
+                    w >> 28 != 0xF
+                    and w & 0x0FFF0000 == 0x051F0000 | up
+                    and w & 0xFFF == imm
+                    and code(i)
+                ):
+                    return True
+    return False
+
+
+def gba_copies(rom: bytes, at: int, touched) -> Step[list[Copy]]:
+    """The other 4-aligned words holding the 32-bit value at ``at``, each
+    classed: read by this replay (``touched(k)``; None when not known), in
+    reach of an ``ldr``, or neither — and among neither, those with no
+    pointer within :data:`COPY_NEAR` words marked ``data``, listed last."""
+    value = rom[at : at + 4]
+    found = []
+    k = rom.find(value)
+    while k >= 0 and len(found) < COPIES_MAX:
+        if k != at and k % 4 == 0:
+            found.append(k)
+        k = rom.find(value, k + 1)
+    yield
+    out = []
+    for n, k in enumerate(found):
+        if touched is not None and touched(k):
+            kind = "touched"
+        elif ldr_reaches(rom, k, touched):
+            kind = "literal"
+        else:
+            near = [
+                int.from_bytes(rom[x : x + 4], "little")
+                for x in range(k - 4 * COPY_NEAR, k + 4 * COPY_NEAR + 4, 4)
+                if x != k and 0 <= x <= len(rom) - 4
+            ]
+            kind = "other" if any(map(_gba_pointer, near)) else "data"
+        out.append(Copy(k, at, kind))
+        if n % 8 == 7:
+            yield
+    order = ("touched", "literal", "other", "data")
+    return sorted(out, key=lambda c: (order.index(c.kind), c.address))
+
+
+def gb_operand(rom: bytes, k: int, z80: bool = False) -> str:
+    """The Game Boy or Z80 instruction the 16-bit operand at ``k`` belongs
+    to, when it is one that loads an address into a register pair; else
+    empty. On the Z80 a ``$DD``/``$FD`` prefix makes ``$21`` load ``ix`` or
+    ``iy``."""
+    if k < 1:
+        return ""
+    if z80 and k >= 2 and rom[k - 1] == 0x21 and rom[k - 2] in (0xDD, 0xFD):
+        return "ld ix,nn" if rom[k - 2] == 0xDD else "ld iy,nn"
+    return GB_OPERANDS.get(rom[k - 1], "")
+
+
+def gb_bank_fits(rom: bytes, k: int, target: int) -> bool:
+    """Whether the 16-bit address at ``k`` can reach ``target``: read from
+    bank 0, or from the switched bank the target is in, or followed by a byte
+    naming the target's bank (a far pointer: address, then bank); a target in
+    bank 0 is reached from anywhere."""
+    bank = target // 0x4000
+    if not bank or k < 0x4000 or k // 0x4000 == bank:
+        return True
+    return k + 2 < len(rom) and rom[k + 2] == bank
+
+
+def gb_follows_call(rom: bytes, first: int, reader: int | None) -> int | None:
+    """The offset of a ``call`` the string at ``first`` follows, when the
+    reading PC is that call's routine: it pops its return address and reads
+    the string from there. ``reader`` is the PC as the Game Boy profile logs
+    it, a ROM offset (bit 24 set for code running from RAM, which no call
+    into ROM names)."""
+    if reader is None or reader >> 24:
+        return None
+    pc = reader if reader < 0x4000 else 0x4000 | (reader & 0x3FFF)
+    for gap in range(CALL_GAP + 1):
+        at = first - 3 - gap
+        if at < 0 or rom[at] not in GB_CALLS:
+            continue
+        target = rom[at + 1] | rom[at + 2] << 8
+        if 0 <= pc - target < CALL_REACH:
+            return at
+    return None
 
 
 # -- the tracer
@@ -710,6 +893,8 @@ class Tracer:
         b, j = s[0], s[3]
         fr = evs[j][3]
         r.code_byte = b
+        if r.unit > 1:
+            r.notes.append(f"only the first byte of each {r.unit}-byte code was swept")
         for v in range(256):
             self._at(f"codes: value {v + 1} of 256", v, 256)
             writes, subs = self._change(p, b, j, v)
@@ -874,6 +1059,8 @@ class Tracer:
             r.notes.append("the string's first byte was never read")
             return
         reader = evs[i0][4] if reader is None else reader
+        if console.id == "gb":
+            r.follows_call = gb_follows_call(rom, first_src, reader)
         lo, hi = max(0, first_src - 0x8000), min(len(rom) - 1, first_src + 0x8000)
         rfrom = evs[i0][3]
         self._at("pointers: starting the probe server")
@@ -898,6 +1085,7 @@ class Tracer:
         r.first_read = base
         if base is None:
             r.notes.append("the string's first read could not be measured")
+            self._call_note()
             return
         if r.string and 0 < r.string[0] - base <= STEP:
             # The string's first byte came before its first traced source: a
@@ -927,7 +1115,12 @@ class Tracer:
             if d not in want or d == 0:
                 continue
             static = why in ("holds the address", "above", "bank")
-            r.pointers.append(Pointer(b, d, "holds the address" if static else why))
+            # Only the address's own low byte follows the instruction.
+            named = why == "holds the address" and console.id in OPERAND_CONSOLES
+            note = gb_operand(rom, b, console.id == "sms") if named else ""
+            r.pointers.append(
+                Pointer(b, d, "holds the address" if static else why, note)
+            )
             if why == "holds the address" and len(cands) < POINTER_BUDGET:
                 # The byte above, and the bank byte after a 16-bit address.
                 if b + 1 not in probed and b + 1 < len(rom):
@@ -936,6 +1129,36 @@ class Tracer:
                 if bank is not None and b + 2 not in probed and b + 2 < len(rom):
                     probed.add(b + 2)
                     cands.append((b + 2, fr, "bank", bank))
+        self._call_note()
+        if console.id == "gba":
+            yield from self._copies()
+
+    def _call_note(self) -> None:
+        """Say the string follows a call, once no pointer was found."""
+        r = self.result
+        if r.follows_call is not None and not r.pointers:
+            r.notes.append(
+                f"the string follows a call at ${r.follows_call:X}: the call site "
+                "is its reference, and no pointer holds it"
+            )
+
+    def _copies(self) -> Step[None]:
+        """Every other word holding a confirmed GBA pointer's value."""
+        r, rom = self.result, self.rom
+        known = self.ev.touched_known
+        done = set()
+        for p in r.pointers:
+            b = p.address
+            if abs(p.moves) not in (2, 4, 8) or b % 4 or b + 4 > len(rom):
+                continue
+            value = rom[b : b + 4]
+            if value in done or not _gba_pointer(int.from_bytes(value, "little")):
+                continue
+            done.add(value)
+            self._at("pointers: other copies of the pointer")
+            r.copies += yield from gba_copies(
+                rom, b, self.ev.touched if known else None
+            )
 
     def _static_pointers(self, first_src: int, seen: set, start: int) -> list:
         """The places in the ROM holding the string's address that this
@@ -965,7 +1188,11 @@ class Tracer:
         for pat, banks in pats.items():
             k = rom.find(pat)
             while k >= 0 and len(out) < POINTER_BUDGET:
-                if k not in seen and self.ev.touched(k):
+                # On the Game Boy an address in $4000-$7FFF means the bank
+                # switched in: only code in bank 0 or in the string's own
+                # bank reaches the string by it.
+                fits = console.id != "gb" or gb_bank_fits(rom, k, first_src)
+                if fits and k not in seen and self.ev.touched(k):
                     seen.add(k)
                     nxt = rom[k + 2] if k + 2 < len(rom) else None
                     out.append((k, start, "holds the address", banks.get(nxt) or None))
@@ -990,7 +1217,7 @@ class Tracer:
         lo = min(evs[i][1] for i, _ in chars)
         f_read = evs[chars[0][0]][3]
         r.frames = (f_read, self.moment.frame)
-        r.unit = 2 if occ.unit == 2 or any(evs[i][2] > 0xFF for i, _ in chars) else 1
+        r.unit = vram_unit(occ.unit, [evs[i][2] for i, _ in chars])
         cpu = reader_cpu(console, reader)
         self._at("starting the probe server")
         p = self._server(
@@ -1052,8 +1279,15 @@ class Tracer:
             if cell is None:
                 r.notes.append("the reader's reads do not reach the typed text")
                 return
-        _, b0, _, _, fr, i0 = cell
+        _, b0, clo, chi, fr, i0 = cell
         j = ref_reads.index(b0)
+        # Text drawn a cell a character: each typed character's change landed
+        # in a span of its own, all as wide. There a printable code changes
+        # its own cell and nothing else.
+        spans = sorted((c[2], c[3]) for c in cells)
+        fixed = len({hi - lo for lo, hi in spans}) == 1 and all(
+            a[1] < b[0] for a, b in zip(spans, spans[1:], strict=False)
+        )
 
         def nxt(rs):
             return next((a for a in rs[j + 1 :] if a != b0), None)
@@ -1073,6 +1307,11 @@ class Tracer:
                 return Code(code, "command", skip=n_ - ref_next)
             d = ans.vram[3] if ans.vram else {}
             d = {a: v for a, v in d.items() if vlo <= a <= vhi}
+            if fixed and any(not clo <= a <= chi for a in d):
+                # The reader went on as before, but what was drawn after the
+                # character changed: the text ended there, and the caller
+                # drew on from the next byte (or drew nothing more).
+                return Code(code, "end")
             digest = hashlib.md5(repr(sorted(d.items())).encode()).hexdigest()
             return Code(code, "printable", image=digest[:8])
 

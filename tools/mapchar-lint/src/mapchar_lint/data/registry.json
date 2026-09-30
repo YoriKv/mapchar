@@ -12,6 +12,10 @@
       3,
       4
     ],
+    "exhirom": [
+      2,
+      3
+    ],
     "gb": [
       2,
       3
@@ -48,6 +52,10 @@
       2,
       3,
       4
+    ],
+    "sa1": [
+      2,
+      3
     ]
   },
   "plugins": {
@@ -98,6 +106,7 @@
     ],
     "mappings": [
       "banked",
+      "exhirom",
       "gb",
       "gba",
       "hirom",
@@ -105,7 +114,8 @@
       "lorom",
       "nes_8000_2000",
       "nes_c000",
-      "relative"
+      "relative",
+      "sa1"
     ]
   },
   "project_version": 3,

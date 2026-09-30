@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from mapchar.capture import bitlayout
 from mapchar.capture.consoles import Console
 from mapchar.capture.trace import Result, layout_from_json
+from mapchar.plugins.builtins.mappings import parse_banked
 
 LINE_FILL = " "
 """What a line's padding decodes to when a code ends a line."""
@@ -156,6 +157,11 @@ class Engine:
     table: PointerTable | None = None
     single: dict[str, list[int]] = field(default_factory=dict)
     """Capture to the bytes holding its string's address outside a table."""
+    held: tuple[tuple, list[int]] | None = None
+    """A reading — ``(size, endian, mapping id, offset, bank)`` — that pointers
+    in code of every capture share, and those pointers' slots: what a list of
+    them is read with. None when no one reading reaches every capture's
+    string."""
     stream: tuple[int, int] | None = None
     layout: tuple | None = None
     """Packed text: ``(order, width, escapes, start bit per capture)``."""
@@ -166,6 +172,15 @@ class Engine:
     loose: list[int] = field(default_factory=list)
     """Bytes that moved the string by one code unit with no pointer around
     them confirmed."""
+    copies: dict[int, list] = field(default_factory=dict)
+    """A confirmed GBA pointer's ROM offset to the other words holding its
+    value (:class:`~mapchar.capture.trace.Copy`), from every capture."""
+    calls: dict[str, int] = field(default_factory=dict)
+    """Capture to the ``call`` its string follows, where the call site is the
+    string's reference and no pointer holds it (the Game Boy)."""
+    operands: dict[int, str] = field(default_factory=dict)
+    """A pointer in code's ROM offset to the instruction it is the operand
+    of, where the tracer named it."""
 
     @property
     def writer(self) -> bool:
@@ -506,6 +521,17 @@ def _group(sightings: list[Sighting]) -> list[Engine]:
         units = Counter(s.result.unit for s in ss)
         unit = units.most_common(1)[0][0]
         e = Engine(reader, output, ss, starts, ends, unit=unit)
+        for s in ss:
+            r = s.result
+            for c in getattr(r, "copies", []):
+                have = e.copies.setdefault(c.of, [])
+                if all(x.address != c.address for x in have):
+                    have.append(c)
+            if getattr(r, "follows_call", None) is not None:
+                e.calls[s.capture] = r.follows_call
+            for p in r.pointers:
+                if getattr(p, "note", ""):
+                    e.operands[p.address] = p.note
         if len(units) > 1:
             e.notes.append(
                 "the captures read codes of different widths ("
@@ -618,9 +644,17 @@ def _slots(r: Result, console: Console) -> tuple[list[_Slot], list[tuple[int, in
     return out, splits
 
 
+def _lookup(mappings: dict, mid: str):
+    """The mapping of an id: from ``mappings``, or built as the registry
+    builds a parameterised ``banked:<base>:<size>`` id, which a listing of
+    the registry's ids does not hold."""
+    m = mappings.get(mid)
+    return m if m is not None else parse_banked(mid)
+
+
 def _mappings(console: Console, mappings: dict, size: int):
     for mid in console.mapping_ids:
-        m = mappings.get(mid)
+        m = _lookup(mappings, mid)
         if m is not None and size in getattr(m, "sizes", (size,)):
             yield mid, m
 
@@ -730,6 +764,7 @@ def _tables(e: Engine, rom: bytes, console: Console, mappings: dict) -> None:
     # A table is sure slots, or one reading several captures share. Pointers
     # found by their value are operands in code unless evenly spaced.
     tables = {}
+    held_by: dict[tuple, dict[str, list[int]]] = {}
     for key, hits in sorted(found.items()):
         held = [h for h in hits if h.why == HOLDS]
         read = [h for h in hits if h.why != HOLDS]
@@ -739,12 +774,22 @@ def _tables(e: Engine, rom: bytes, console: Console, mappings: dict) -> None:
             got = e.single.setdefault(h.capture, [])
             if h.slot not in got:
                 got.append(h.slot)
+            slots = held_by.setdefault(key, {}).setdefault(h.capture, [])
+            if h.slot not in slots:
+                slots.append(h.slot)
         if not read:
             continue
         if any(h.sure for h in read) or len({h.capture for h in read}) >= 2:
             tables[key] = read
             continue
         e.loose += [h.slot for h in read if h.slot not in e.loose]
+    # A list of them is read with one reading: only when one reads every
+    # capture's string, else the strings are proposed as the range they span.
+    every = set(e.starts)
+    whole = [(k, caps) for k, caps in sorted(held_by.items()) if every <= set(caps)]
+    if whole:
+        key, caps = max(whole, key=lambda kc: sum(map(len, kc[1].values())))
+        e.held = (key, sorted({a for addrs in caps.values() for a in addrs}))
     if not tables:
         if not e.single:
             for s in e.sightings:
@@ -792,7 +837,7 @@ def _table(e: Engine, rom: bytes, key: tuple, hits: list[_Hit], mappings: dict):
         g = math.gcd(*[b - a for a, b in zip(slots, slots[1:], strict=False)])
         if g >= size:
             stride, confirmed = g, True
-    m = mappings.get(mid)
+    m = _lookup(mappings, mid)
     targets = [e.starts[c] for c in chosen]
     lo_t, hi_t = min(targets) - TABLE_REACH, max(targets) + TABLE_REACH
     spans = [(e.starts[c], e.ends[c]) for c in e.starts]

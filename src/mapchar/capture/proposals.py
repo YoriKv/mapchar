@@ -23,8 +23,10 @@ from mapchar.core.block import (
     EndToken,
     FixedLength,
     NextPointer,
+    PointerListSource,
     PointerTableSource,
     RangeSource,
+    WriteMode,
 )
 from mapchar.core.table import OperandSpec, TableEntry, TokenKind
 
@@ -60,6 +62,34 @@ class Proposal:
 
 def _digest(value) -> str:
     return hashlib.sha1(repr(value).encode()).hexdigest()[:8]
+
+
+COPY_KINDS = {
+    "touched": "read this run",
+    "literal": "in reach of an ldr",
+    "other": "",
+    "data": "no pointer near it: likely graphics or data",
+}
+"""How each kind of copy (:class:`~mapchar.capture.trace.Copy`) is said."""
+
+
+def _copies_text(at: int, copies: list, shift: int) -> str:
+    """The other words holding a confirmed pointer's value, in the order the
+    tracer ranked them: a repoint that rewrites only the confirmed one leaves
+    each the game uses pointing at the old string."""
+    words = []
+    for c in copies:
+        how = COPY_KINDS.get(c.kind, "")
+        words.append(f"${c.address + shift:X}" + (f" ({how})" if how else ""))
+    return (
+        f"{len(copies)} other words hold the address the pointer at "
+        f"${at + shift:X} holds: " + ", ".join(words)
+    )
+
+
+def _operand(e: Engine, a: int, shift: int) -> str:
+    note = e.operands.get(a)
+    return f"${a + shift:X}" + (f" ({note})" if note else "")
 
 
 def _anchor(e: Engine) -> tuple:
@@ -150,6 +180,17 @@ def _source(e: Engine, shift: int):
             t.bank,
             t.null,
         )
+    if e.held is not None:
+        # Pointers in code: each string through its own, in a list.
+        (size, endian, mid, off, bank), slots = e.held
+        return PointerListSource(
+            tuple(a + shift for a in sorted(slots)),
+            size,
+            endian,
+            mid,
+            off + shift,
+            bank,
+        )
     start = min(e.starts.values())
     stop = max(e.ends.values()) + 1
     if e.fixed_length is not None:
@@ -194,6 +235,8 @@ def _block(n: int, e: Engine, table_id: str, shift: int) -> Proposal:
             f"a split pointer: its low byte at ${lo + shift:X} and its high byte "
             f"at ${hi + shift:X} each move the string"
         )
+    for at, copies in sorted(e.copies.items()):
+        unconfirmed.append(_copies_text(at, copies, shift))
     if e.loose:
         unconfirmed.append(
             "bytes that move the string with no pointer around them confirmed: "
@@ -214,11 +257,39 @@ def _block(n: int, e: Engine, table_id: str, shift: int) -> Proposal:
         )
     elif e.single:
         held = sorted({a for addrs in e.single.values() for a in addrs})
-        pointers = "pointers in code at " + ", ".join(f"${a + shift:X}" for a in held)
+        if e.held is not None:
+            listed = set(e.held[1])
+            others = [a for a in held if a not in listed]
+            held = [a for a in held if a in listed]
+            if others:
+                unconfirmed.append(
+                    "pointers in code read another way, left out of the list: "
+                    + ", ".join(_operand(e, a, shift) for a in others)
+                )
+            unconfirmed.append(
+                "written slotted: its strings lie apart, and packing them would "
+                "rewrite whatever lies between them"
+            )
+        pointers = "pointers in code at " + ", ".join(
+            _operand(e, a, shift) for a in held
+        )
+    elif e.calls:
+        calls = ", ".join(f"${a + shift:X}" for a in sorted(set(e.calls.values())))
+        pointers = (
+            f"no pointer: each string follows a call ({calls}), and the call "
+            "site is its reference"
+        )
     role = "writer" if e.writer else "reader"
     who = f"{role} {e.reader:X}" if e.reader is not None else f"no single {role}"
     detail = "; ".join(x for x in (who, pointers) if x)
-    config = BlockConfig(source=source, string_type=string_type, table_id=table_id)
+    config = BlockConfig(
+        source=source,
+        string_type=string_type,
+        table_id=table_id,
+        # A list of pointers in code reaches strings with other bytes between
+        # them: each keeps its own slot.
+        write_mode=WriteMode.SLOTTED if isinstance(source, PointerListSource) else None,
+    )
     kind = "bitmap" if e.output == "vram" else "RAM"
     reader = f"{e.reader:X}" if e.reader is not None else "none"
     return Proposal(
