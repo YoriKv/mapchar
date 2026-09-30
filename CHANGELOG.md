@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.9 - unreleased
+## v0.1.9 - 2026-09-30
 
 - Packed edits no longer overwrite other blocks' strings
 - Bunch of capture fixes and improvements
