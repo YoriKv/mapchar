@@ -125,9 +125,7 @@ ENDIANS = ("little", "big")
 MAX_HEADER = 255
 #: The words each source reads. Anything else a source is handed is ignored.
 SOURCE_KEYS = {
-    # `header` is a range's record header: a pointer reaches its string past
-    # any header, so no other source reads one.
-    "range": ("start", "stop", "header"),
+    "range": ("start", "stop"),
     "pointers": (
         "start",
         "stop",
@@ -169,6 +167,9 @@ STRING_KEYS_CONFIG = (
     "spp",
     "realign",
     "skips",
+    # A pointer reaches the record, header and all; only where pointers reach
+    # runs is it not read (``BlockConfig.record_header``).
+    "header",
     "lines",
     "bound",
     "mode",

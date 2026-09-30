@@ -2,20 +2,8 @@
 
 ## v0.1.9 - unreleased
 
-- Capture works on Game Boy, Game Boy Color, Master System, Game Gear and PC Engine games
-- SNES ExHiROM and SA-1 pointer mappings, offered by discovery only where they apply
-- Captured pointers in code are proposed as a slotted pointer list that names its mapping
-- Capture lists every other word holding a captured GBA pointer's address
-- Capture recognises a Game Boy string that follows a call and has no pointer
-- A capture no longer fails when a probe's script briefly stalls
-- Capture works on SA-1 and ExHiROM games, and finds text in save RAM and GBA work RAM
-- Capture finds 16-bit codes, voiced kana spelled with a mark code, and text stored backwards
-- Captured pointer tables read SNES and GBA pointers whole and cross null and shared slots
-- Show every string of a captured pointer table in the game's own text box
-- Accept All Unreviewed in capture review, and undo takes back an accepted proposal
-- Stop Playing, and the recorder's connection shown in the Captures dock
-- Captures follow the project on its first save
-- Bunch of capture fixes
+- Packed edits no longer overwrite other blocks' strings
+- Bunch of capture fixes and improvements
 
 ## v0.1.8 - 2026-09-29
 

@@ -1196,7 +1196,12 @@ The editing surface, opened on a block.
     never as far as the next inner table or text that table points at, nor
     past the block's bound.
     Only the groups an edit touches are laid out and read again, and only
-    their inner pointers are rewritten;
+    their inner pointers are rewritten. The gaps between scattered strings
+    are rewritten too, so a packed edit — of a block or of a group — that
+    would write over bytes another block's strings hold, and none of its own
+    do, is refused, naming the address range: write the block slotted, or
+    split it into blocks whose strings lie together. Another block reading
+    the block's own strings is not in the way;
   - **Slotted** (default without pointers, and always with skip ranges or a
     record header) —
     every string stays at its address and may use up to its slot, padded with

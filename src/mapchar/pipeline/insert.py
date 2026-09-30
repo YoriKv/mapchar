@@ -9,7 +9,7 @@ the decompressed buffer; nothing is written here.
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
@@ -397,6 +397,7 @@ def layout_block(
     strings: list[StringRecord],
     registry=None,
     room: int | None = None,
+    foreign: Iterable[tuple[int, int]] = (),
 ) -> LayoutResult:
     """Lay the block out with every replacement in place.
 
@@ -406,6 +407,12 @@ def layout_block(
     costs its group, not the block. ``room`` is what the block remembers
     giving up, which its bound takes back
     (:func:`~mapchar.core.block.block_bound`).
+
+    ``foreign`` is the bytes other blocks' records hold in ``data``, as
+    ``(start, end)`` spans. A packed group rewrites everything from its first
+    string to its bound, so one whose splice would reach a foreign byte that
+    none of the block's own strings holds is refused (:func:`_foreign_clash`):
+    the text between scattered strings may be another block's.
     """
     result = LayoutResult()
     if not strings:
@@ -419,6 +426,7 @@ def layout_block(
     else:
         bounds = [block_bound(config, strings, room)]
     slotted = config.effective_write_mode is WriteMode.SLOTTED
+    foreign = list(foreign)
     for group, bound in zip(groups, bounds, strict=True):
         if config.chained and config.chain is ChainMode.PAD:
             _layout_chain_pad(data, config, tables, group, bound, result)
@@ -433,7 +441,7 @@ def layout_block(
         elif slotted:
             _layout_slotted(data, config, group, bound, result)
         else:
-            _layout_packed(data, config, group, bound, result, registry)
+            _layout_packed(data, config, group, bound, result, registry, foreign)
     if not result.ok:
         result.splices.clear()
     return result
@@ -529,6 +537,7 @@ def _layout_packed(
     bound: int,
     result: LayoutResult,
     registry,
+    foreign: list[tuple[int, int]],
 ) -> None:
     """End to end from the first string, up to ``bound``, pointers rewritten.
 
@@ -537,6 +546,9 @@ def _layout_packed(
     bytes still end that string's: its pointers reach into that string where
     its bytes are now. Only pointers reach into a string, and no two strings
     may start at one address, which would make them one.
+
+    The splice covers the gaps between the strings too, so it is refused where
+    it would reach bytes another block's records hold (``foreign``).
     """
     fill = config.fill
     fixed_len = config.fixed_length
@@ -591,8 +603,60 @@ def _layout_packed(
     result.available += bound - first
     if result.ok:
         _fill_tail(data, fill, strings, first, pos, bound, out)
+        clash = _foreign_clash(foreign, strings, first, first + len(out))
+        if clash is not None:
+            a, b = clash
+            # Named by the string the layout puts over the first of them.
+            placed = [
+                (result.encoded[rec.index].new_start, rec.index) for rec in strings
+            ]
+            before = [p for p in placed if p[0] is not None and p[0] <= a]
+            result.problems.append(
+                Problem(
+                    max(before)[1] if before else strings[0].index,
+                    f"packing the block writes over ${a:X}–${b - 1:X}, which "
+                    "another block's strings hold; write the block slotted, or "
+                    "split it into blocks whose strings lie together",
+                )
+            )
+            return
         result.splices.append(Splice(first, bytes(out)))
         result.splices.extend(_pointer_splices(config, strings, result, registry))
+
+
+def _foreign_clash(
+    foreign: list[tuple[int, int]], strings: list[StringRecord], lo: int, hi: int
+) -> tuple[int, int] | None:
+    """The first stretch of ``lo``–``hi`` that a span of ``foreign`` covers
+    and none of ``strings`` holds, or ``None``.
+
+    Another block that reads the block's own strings — the same string at the
+    same span, or a piece of one — holds nothing the layout does not already
+    rewrite as the block's, so only the bytes outside every string of the
+    block count: a gap between scattered strings that another block reads.
+    """
+    if not foreign:
+        return None
+    held: list[list[int]] = []
+    for start, end in sorted((r.start, r.end) for r in strings):
+        if held and start <= held[-1][1]:
+            held[-1][1] = max(held[-1][1], end)
+        else:
+            held.append([start, end])
+    starts = [start for start, _ in held]
+    first: tuple[int, int] | None = None
+    for a, b in foreign:
+        a, b = max(a, lo), min(b, hi)
+        i = bisect_right(starts, a) - 1
+        if i >= 0 and held[i][1] > a:
+            a = held[i][1]
+        if a >= b:
+            continue
+        # Past the held span ``a`` is in, the next one starts beyond it.
+        stop = min(b, held[i + 1][0]) if i + 1 < len(held) else b
+        if first is None or a < first[0]:
+            first = (a, stop)
+    return first
 
 
 def _fill_tail(

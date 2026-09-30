@@ -445,6 +445,17 @@ def test_a_nested_block_lays_out_each_group_over_its_own_text(registry):
     assert res.ok, res.problems
 
 
+def test_a_nested_group_is_refused_only_where_its_own_write_reaches(registry):
+    """Each group packs over its own text, so another block's strings count
+    against the groups whose splice reaches them and no other."""
+    cfg = BlockConfig(NESTED, EndToken(), "main", fill=b"\xff")
+    edit = {0: "ABCABC[end]"}
+    res, _ = relayout(NESTED_ROM, cfg, TS, edit, registry, foreign=[(0x24, 0x27)])
+    assert res.ok, res.problems
+    res, _ = relayout(NESTED_ROM, cfg, TS, edit, registry, foreign=[(0x1C, 0x1E)])
+    assert not res.ok and "$1C–$1D" in res.problems[0].message
+
+
 def test_a_nested_edit_lays_out_only_its_own_group(registry):
     cfg = BlockConfig(NESTED, EndToken(), "main")
     ex = extract(NESTED_ROM, cfg, TS, registry)

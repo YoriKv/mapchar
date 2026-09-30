@@ -586,7 +586,13 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   Nothing outside a slot is written, so a splice never touches bytes no string
   owns and never runs past the buffer. The layout runs per group
   (`string_groups`): a nested block lays out only the groups holding a
-  replacement, each up to its own bound (`group_bounds`). A packed layout
+  replacement, each up to its own bound (`group_bounds`). A packed splice
+  covers the gaps between its strings, so `layout_block` takes the spans
+  other blocks' records hold in the buffer (`foreign`; the window's
+  `_foreign_spans`, from the strings the blocks sharing the bytes already
+  hold) and refuses a packed group whose splice reaches a byte one of them
+  holds and none of the block's own strings does (`_foreign_clash`); with none
+  passed, nothing is refused on that account. A packed layout
   writes a string that is the tail of the one before it once
   (`_is_tail`), and rewrites every pointer its strings carry — a pointer
   source's own and the ones **Attach** put on a range block's strings —

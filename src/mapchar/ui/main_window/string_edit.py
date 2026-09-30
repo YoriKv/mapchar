@@ -24,6 +24,7 @@ from mapchar.pipeline.insert import (
     apply_splices,
     layout_block,
     reads_back,
+    record_start,
     room_for,
 )
 from mapchar.project.entry import Entry, EntryKind
@@ -363,7 +364,13 @@ class StringEditMixin:
             for i, t in edits.items():
                 by_index[i].replacement = t
             result = layout_block(
-                doc.data, cfg, tables, doc.strings, self.registry, entry.room
+                doc.data,
+                cfg,
+                tables,
+                doc.strings,
+                self.registry,
+                entry.room,
+                self._foreign_spans(entry),
             )
         finally:
             for i in edits:
@@ -379,6 +386,20 @@ class StringEditMixin:
             cfg, tables, doc.strings, new_data, edits, self.registry, (lo, hi)
         )
         return edits, new_data, lo, hi, back
+
+    def _foreign_spans(self, entry: Entry) -> list[tuple[int, int]]:
+        """The records of every other block over ``entry``'s bytes, as
+        ``(start, end)`` spans, from the strings each already holds: what a
+        packed layout of ``entry`` may not write over
+        (:func:`~mapchar.pipeline.insert.layout_block`)."""
+        spans = []
+        for other in self.workspace.entries_sharing(entry):
+            if other is entry or other.kind is not EntryKind.BLOCK:
+                continue
+            if other.config is None or other.doc is None:
+                continue
+            spans += [(record_start(r, other.config), r.end) for r in other.doc.strings]
+        return spans
 
     def _edit_strings_now(
         self, entry: Entry, doc: Document, texts: dict[int, str]

@@ -13,11 +13,11 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from mapchar.core.block import RangeSource
+from mapchar.core.block import PointerListSource, RangeSource, WriteMode
 from mapchar.core.context import PipelineContext
 from mapchar.plugins.builtins.compression import GbaLz77
 from mapchar.project.entry import EntryKind
-from window_helpers import add_block, gba_packed_rom, open_rom_and_table
+from window_helpers import ABC_TABLE, add_block, gba_packed_rom, open_rom_and_table
 
 PAYLOAD = bytes.fromhex("41 42 00 42 41 00 41 41 00") + b"\xee" * 7
 """Three end-terminated strings — ``AB``, ``BA``, ``AA`` — and fill after them."""
@@ -287,3 +287,24 @@ def test_a_compressed_file_shares_its_buffer_with_its_plain_blocks(window, tmp_p
     assert [e for e in window.workspace.of_kind(EntryKind.FILE) if e.dirty] == [
         file_entry
     ]
+
+
+def test_a_packed_edit_is_refused_over_another_block_s_strings(window, tmp_path):
+    """A packed block whose strings lie apart rewrites the gap between them,
+    so the window hands the layout what the other blocks over its bytes hold,
+    from the strings they have already read."""
+    data = bytes.fromhex("04 00 08 00 41 00 42 00 43 00") + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data, table=ABC_TABLE)
+    other = add_block(window, file_entry, "between", RangeSource(6, 8))
+    packed = add_block(
+        window,
+        file_entry,
+        "scattered",
+        PointerListSource((0, 2), 2, "little", "linear"),
+        write_mode=WriteMode.PACKED,
+    )
+    assert window._foreign_spans(packed) == [(6, 8)]
+    problems = window._set_translation(packed, 0, "AA[end]")
+    assert len(problems) == 1 and "$6–$7" in problems[0]
+    assert packed.doc.data == data
+    assert [r.current_text() for r in other.doc.strings] == ["B[end]"]

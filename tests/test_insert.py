@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from helpers import ABC_TABLE, relayout, table_set, texts
 from mapchar.core.block import (
     BlockConfig,
@@ -302,3 +304,62 @@ def test_fill_words_pad_slots_and_packed_tails_from_where_the_room_starts():
     )
     res, out = relayout(data, packed, TS, {0: "A[end]"})
     assert res.ok and out == bytes.fromhex("41 00 42 00 EE DD")
+
+
+# Pointers to A[end] at $4 and C[end] at $8; B[end] between them is not theirs.
+SCATTERED = bytes.fromhex("04 00 08 00 41 00 42 00 43 00")
+SCATTERED_CFG = BlockConfig(
+    PointerListSource((0, 2), 2, "little", "linear"),
+    EndToken(),
+    "main",
+    write_mode=WriteMode.PACKED,
+    fill=b"\xee",
+)
+
+
+def test_a_packed_layout_is_refused_over_another_block_s_strings(registry):
+    res, out = relayout(
+        SCATTERED, SCATTERED_CFG, TS, {0: "AA[end]"}, registry, foreign=[(6, 8)]
+    )
+    assert out is None and len(res.problems) == 1
+    problem = res.problems[0]
+    assert problem.index == 0 and "$6–$7" in problem.message
+    assert "slotted" in problem.message and not res.splices
+
+
+def test_without_foreign_spans_a_packed_layout_writes_over_the_gaps(registry):
+    """What a caller that names no other block gets: the layout as it was."""
+    res, out = relayout(SCATTERED, SCATTERED_CFG, TS, {0: "AA[end]"}, registry)
+    assert res.ok and out == bytes.fromhex("04 00 07 00 41 41 00 43 00 EE")
+
+
+def test_a_gap_no_other_block_reads_is_the_packed_block_s(registry):
+    elsewhere = [(0, 2), (10, 12)]  # a pointer table, and past the block
+    expected = relayout(SCATTERED, SCATTERED_CFG, TS, {0: "AA[end]"}, registry)[1]
+    res, out = relayout(
+        SCATTERED, SCATTERED_CFG, TS, {0: "AA[end]"}, registry, foreign=elsewhere
+    )
+    assert res.ok and out == expected
+
+
+def test_a_string_another_block_shares_is_not_in_the_way(registry):
+    """Two blocks reading one string, whole or in part, is the block's own
+    text: packing rewrites it as the block's either way."""
+    shared = [(4, 6), (8, 10), (9, 10)]
+    res, out = relayout(
+        SCATTERED, SCATTERED_CFG, TS, {1: "C[end]"}, registry, foreign=shared
+    )
+    assert res.ok
+    # A span reaching past the shared string into the gap still stops it.
+    res, _ = relayout(
+        SCATTERED, SCATTERED_CFG, TS, {1: "C[end]"}, registry, foreign=[(4, 7)]
+    )
+    assert not res.ok and "$6–$6" in res.problems[0].message
+
+
+def test_a_slotted_layout_ignores_foreign_spans(registry):
+    slotted = replace(SCATTERED_CFG, write_mode=WriteMode.SLOTTED)
+    res, out = relayout(
+        SCATTERED, slotted, TS, {0: "C[end]"}, registry, foreign=[(6, 8)]
+    )
+    assert res.ok and out == bytes.fromhex("04 00 08 00 43 00 42 00 43 00")

@@ -233,14 +233,29 @@ def test_config_words_that_are_ignored_or_misread(project, doc, files):
     assert "W612" in project(doc(block={"config": config() + " size=3"}), files)
     range_next = "source=range start=$100 stop=$120 type=next table=main"
     assert "W625" in project(doc(block={"config": range_next}), files)
-    # A header is a range's; on any other source it is ignored and dropped.
-    assert "W611" in project(doc(block={"config": config(header="2")}), files)
+    # A header is read on every source, but not where pointers reach runs:
+    # the game counts end tokens to find a run's later strings.
+    for line in (
+        config(header="2"),
+        LIST_BLOCK.replace("spp=2 mode=packed", "header=2"),
+    ):
+        assert project(doc(block={"config": line}), files) == [], line
+    for spp in ("2", "next", "next:3"):
+        line = config(header="2", spp=spp)
+        assert "W611" in project(doc(block={"config": line}), files), line
+    assert project(doc(block={"config": config(spp="2", header="0")}), files) == []
     assert "E626" in project(doc(block={"config": RECORDS + " header=300"}), files)
     # Skip ranges and a header both make the text non-contiguous, so the
     # block is written slotted whatever mode= says.
     headed = "source=range start=$8533 stop=$857B type=pascal:1 table=main header=2"
-    for line in (RECORDS + " mode=packed", headed + " mode=packed"):
+    for line in (
+        RECORDS + " mode=packed",
+        headed + " mode=packed",
+        config(header="2", mode="packed"),
+    ):
         assert "W627" in project(doc(block={"config": line}), files), line
+    runs = config(header="2", spp="2", mode="packed")
+    assert "W627" not in project(doc(block={"config": runs}), files)
 
 
 CHAINED = "source=range start=$8533 stop=$857B type=pascal:1 table=main header=2"

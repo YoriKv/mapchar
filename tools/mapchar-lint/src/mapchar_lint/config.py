@@ -253,7 +253,27 @@ def _string_type(out: ConfigReading, fields: dict) -> None:
         )
 
 
+def _record_header(out: ConfigReading, fields: dict) -> int:
+    """The header the block reads (``BlockConfig.record_header``):
+    ``header=``, but none where pointers reach runs of end-token strings,
+    whose later strings the game finds by counting end tokens."""
+    if out.source != "range" and out.string_type == "end":
+        head = fields.get("spp", "1").partition(":")[0]
+        if head == "next" or int(head) > 1:
+            return 0
+    return int(fields.get("header", "0"))
+
+
 def _writing(out: ConfigReading, fields: dict) -> None:
+    header = _record_header(out, fields)
+    if int(fields.get("header", "0")) and not header:
+        out.add(
+            "W611",
+            "warning",
+            f"header={fields['header']} is not read where pointers reach runs",
+            "The game finds a run's later strings by counting end tokens. "
+            "Ignored, and dropped by the next save.",
+        )
     mode = fields.get("mode")
     if mode is not None and mode not in WRITE_MODES:
         out.drop("E608", f"mode={mode} is not a write mode ({', '.join(WRITE_MODES)})")
@@ -261,7 +281,7 @@ def _writing(out: ConfigReading, fields: dict) -> None:
         breaks = []
         if fields.get("skips"):
             breaks.append("skip ranges")
-        if out.source == "range" and int(fields.get("header", "0")):
+        if header:
             breaks.append("a record header")
         if breaks:
             out.add(

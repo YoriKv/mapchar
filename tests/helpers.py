@@ -78,17 +78,19 @@ class Doubler:
         return bytes(b for byte in data for b in (byte, byte))
 
 
-def relayout(data: bytes, cfg, ts, edits: dict[int, str], registry=None, room=None):
+def relayout(
+    data: bytes, cfg, ts, edits: dict[int, str], registry=None, room=None, foreign=()
+):
     """Extract ``data``, translate ``{index: text}``, lay the block out again.
 
-    ``room`` is what the block remembers giving up to an earlier shortening.
-    Returns the layout result and the spliced bytes, ``None`` when the layout
-    refused the edits.
+    ``room`` is what the block remembers giving up to an earlier shortening,
+    ``foreign`` the spans other blocks' records hold. Returns the layout result
+    and the spliced bytes, ``None`` when the layout refused the edits.
     """
     ex = extract(data, cfg, ts, registry)
     for i, text in edits.items():
         ex.strings[i].replacement = text
-    res = layout_block(data, cfg, ts, ex.strings, registry, room)
+    res = layout_block(data, cfg, ts, ex.strings, registry, room, foreign)
     return res, (apply_splices(data, res.splices) if res.ok else None)
 
 
