@@ -33,6 +33,49 @@ class PointerRef:
     value: int
 
 
+LENGTH_TYPES = {"u8": 1, "u16": 2, "u32": 4}
+"""The length field's types, as ``length=`` names them, by their width in
+bytes."""
+
+
+@dataclass(frozen=True)
+class LengthField:
+    """A number in every record of a pointer table that says how many bytes
+    the string its pointer reaches holds: ``N × {pointer, length}`` tables,
+    whose game copies ``length`` bytes rather than reading to the end token.
+
+    It is ``width`` bytes at ``offset`` into the record, in the pointers' byte
+    order, and counts from where the pointer lands to the end of the string —
+    the end token included, or with ``counts_end`` off, only what comes before
+    it. A read checks it against where the string ends, and a write sets it
+    from the bytes it lays out (:mod:`mapchar.pipeline.insert`).
+    """
+
+    width: int
+    offset: int
+    counts_end: bool = True
+
+    @property
+    def type_name(self) -> str:
+        return next(k for k, v in LENGTH_TYPES.items() if v == self.width)
+
+
+def length_refusal(size: int, stride: int, length: LengthField) -> str | None:
+    """Why ``length`` cannot be a field of records ``stride`` bytes long whose
+    ``size``-byte pointer is at offset 0, or ``None`` when it can: it lies in
+    the stride's span around the pointer — after it, or before it at a
+    negative offset — and clear of it."""
+    if length.width not in LENGTH_TYPES.values():
+        return f"a length field is 1, 2 or 4 bytes, not {length.width}"
+    if length.offset + length.width > stride or length.offset < size - stride:
+        return (
+            f"a length field at {length.offset} lies outside the {stride}-byte record"
+        )
+    if length.offset < size and length.offset + length.width > 0:
+        return f"a length field at {length.offset} overlaps the {size}-byte pointer"
+    return None
+
+
 @dataclass(frozen=True)
 class PointerTableSource:
     start: int
@@ -45,6 +88,9 @@ class PointerTableSource:
     bank: int = 0
     null: int | None = None
     """A raw pointer value that means "no string": not read, never rewritten."""
+    length: LengthField | None = None
+    """The record's length field, when its records carry one beside the
+    pointer."""
 
 
 @dataclass(frozen=True)

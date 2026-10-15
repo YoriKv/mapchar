@@ -24,6 +24,7 @@ from mapchar.core.block import (
     Lines,
     NestedPointerSource,
     Pascal,
+    PointerTableSource,
     StringRecord,
     WriteMode,
     block_bound,
@@ -43,7 +44,7 @@ from mapchar.pipeline.extract import (
     reextract,
     strip_artificial,
 )
-from mapchar.pipeline.pointers import nested_records
+from mapchar.pipeline.pointers import length_address, nested_records, string_length
 from mapchar.plugins.registry import default_registry, resolve_mapping
 
 
@@ -442,9 +443,62 @@ def layout_block(
             _layout_slotted(data, config, group, bound, result)
         else:
             _layout_packed(data, config, group, bound, result, registry, foreign)
+    if result.ok:
+        result.splices.extend(_length_splices(config, tables, strings, result))
     if not result.ok:
         result.splices.clear()
     return result
+
+
+def _length_splices(
+    config: BlockConfig,
+    tables: TableSet,
+    strings: list[StringRecord],
+    result: LayoutResult,
+) -> list[Splice]:
+    """Set the length field of every record whose pointer reaches a laid-out
+    string (:class:`~mapchar.core.block.LengthField`) from the bytes the layout
+    gave it, wherever it now stands: packed or slotted, edited or not, so no
+    record keeps a length its string no longer has. A length too big for its
+    field is a problem."""
+    source = config.source
+    if not isinstance(source, PointerTableSource) or source.length is None:
+        return []
+    field = source.length
+    header = config.record_header
+    fixed_len = config.fixed_length
+    splices = []
+    for rec in strings:
+        enc = result.encoded.get(rec.index)
+        if enc is None or enc.problem is not None or not rec.pointers:
+            continue
+        size = len(enc.data) if fixed_len is None else fixed_len
+        if rec.replacement is None:
+            tokens, at = rec.tokens, rec.start
+        else:
+            # Only what comes before the end token needs the tokens.
+            tokens = []
+            if not field.counts_end:
+                tokens = decode(Bits(enc.data), tables, 0, DecodeRules()).tokens
+            at = 0
+        length = header + string_length(at, at + size, tokens, field.counts_end)
+        for ref in rec.pointers:
+            where = length_address(source, ref.address)
+            if where is None:
+                continue
+            if length >= 1 << (8 * field.width):
+                result.problems.append(
+                    Problem(
+                        rec.index,
+                        f"its length, {length}, does not fit the "
+                        f"{field.type_name} at ${where:X}",
+                    )
+                )
+                continue
+            splices.append(
+                Splice(where, pointer_bytes(length, field.width, source.endian))
+            )
+    return splices
 
 
 def _layout_slotted(

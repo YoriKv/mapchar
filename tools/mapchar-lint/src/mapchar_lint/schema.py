@@ -120,6 +120,10 @@ WRITE_MODES = ("packed", "slotted")
 #: How a chained block is written (``chain=``).
 CHAIN_MODES = ("pad", "pack")
 ENDIANS = ("little", "big")
+#: A pointer table's length field (``length=``), by its width in bytes
+#: (``mapchar.core.block.LENGTH_TYPES``), and what it counts (``length_counts=``).
+LENGTH_TYPES = {"u8": 1, "u16": 2, "u32": 4}
+LENGTH_COUNTS = ("terminator", "text")
 #: The largest record header ``parse_config`` reads, as the Header control sets
 #: it (``mapchar.core.block.MAX_RECORD_HEADER``).
 MAX_HEADER = 255
@@ -136,6 +140,9 @@ SOURCE_KEYS = {
         "offset",
         "bank",
         "null",
+        "length",
+        "length_offset",
+        "length_counts",
     ),
     "list": ("addresses", "size", "endian", "mapping", "offset", "bank", "null"),
     "nested": (

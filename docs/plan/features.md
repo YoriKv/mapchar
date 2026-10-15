@@ -759,7 +759,7 @@ scan settled how it is read. From then on the bars are its settings (see
 [Reading the bytes](#reading-the-bytes)). The Reading bar
 holds the settings below in three framed sections, always there and always in
 this order: **Source** (the kind, start, stop, and **Writing**), **Pointers**
-(size, stride, endian, mapping, offset, null, bank) and **Strings** (string
+(size, stride, endian, mapping, offset, null, bank, length) and **Strings** (string
 type, realign, header, skip ranges, chained). A setting the entry on screen has no use
 for is greyed where it stands — a file has no addresses of its own, so its
 Source and Writing are; a range reads no pointers, so its Pointers section is
@@ -798,6 +798,19 @@ of end-token strings.
   pointer is not read, reaches no string, is not listed as a string's pointer
   and is never rewritten. A nested record either of whose pointers holds the
   null value is skipped. Blank is none.
+- **Length** — on a pointer table, a number each record holds beside its
+  pointer saying how many bytes its string has: `N × {offset, length}` tables,
+  whose game copies `length` bytes. **none**, `u8`, `u16` or `u32` in the
+  pointers' byte order; **at**, its byte offset in the record (by default just
+  after the pointer, negative before it), which must lie in the stride and
+  clear of the pointer; and whether it counts **with end** token or the **text
+  only** before it. It counts from where the pointer lands to the string's
+  end, the record header included. Greyed on the other sources, and its two
+  fields while it is **none**. Reading, a string that ends at an end token
+  still ends there, and a record whose length says otherwise is a notice on
+  the block; one read to the **Next pointer** ends at its length instead. Every
+  write sets the length of each record whose string it lays out
+  ([Writing](#writing-back-to-disk)).
 - **String type** — how a string ends:
   - **End token** — at the first end token of the table set;
   - **Fixed length** — after `length` bytes, or earlier at an end token when
@@ -1196,7 +1209,11 @@ The editing surface, opened on a block.
     never as far as the next inner table or text that table points at, nor
     past the block's bound.
     Only the groups an edit touches are laid out and read again, and only
-    their inner pointers are rewritten. The gaps between scattered strings
+    their inner pointers are rewritten. A pointer table's records with a
+    **Length** have it set from the bytes each string is laid out as, in
+    either mode — a length too big for its field refuses the write — so no
+    record keeps the length of a string that moved, shrank or grew; a pointer
+    **Attach** added outside the table has no length to set. The gaps between scattered strings
     are rewritten too, so a packed edit — of a block or of a group — that
     would write over bytes another block's strings hold, and none of its own
     do, is refused, naming the address range: write the block slotted, or

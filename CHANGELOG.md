@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.10 - unreleased
+
+- Pointer tables can carry a length field per record, kept right on write
+
 ## v0.1.9 - 2026-09-30
 
 - Packed edits no longer overwrite other blocks' strings

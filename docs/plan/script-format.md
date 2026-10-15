@@ -56,7 +56,12 @@ done well.[end]
   to two pointers. `header=2` is a range's record header, 0 to 255 bytes.
   `fill=$FFFF` is a fill pattern, a byte for every two hex digits, and
   `end_is_fill=1` reads a fill that is the end token as padding.
-  `chain=pad` or `chain=pack` reads the strings as chains, `breaks=1,5` the
+  A pointer table's `length=u8`, `u16` or `u32` is the length field beside
+  each pointer, in the pointers' `endian`: `length_offset=4` its byte offset
+  in the record (absent: the pointer's `size`; negative before the pointer),
+  and `length_counts=text` a length that leaves the end token out (absent:
+  `terminator`, counting it). A field outside the stride or over the pointer
+  is refused. `chain=pad` or `chain=pack` reads the strings as chains, `breaks=1,5` the
   indices that begin a chain of their own, `pad=$20` what pads them (absent:
   the table's space) and `align=centre` where a padded text sits. `spp=3` is
   three strings a pointer, and `spp=next` or `spp=next:3` each run to the
@@ -64,6 +69,7 @@ done well.[end]
 
   ```
   @block "Script" source=nested start=$136A6F8 stop=$136C640 size=4 stride=8 endian=little mapping=linear offset=20358900 bank=0 null=$0 inner_size=2 inner_endian=little inner_null=$0 type=end table=m3
+  @block "3978" source=pointers start=$0 stop=$1A0 size=4 stride=8 endian=little mapping=linear offset=0 bank=0 length=u32 type=end table=sigma
   @block "Item names" source=range start=$D22294 stop=$D23494 type=fixed:18:stop table=m3 fill=$FFFF
   ```
 - **`@string N at $start-$end ptr $addr…`** — one string: its index in the

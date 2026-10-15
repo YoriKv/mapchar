@@ -227,6 +227,42 @@ def pointer_addresses(
     return out
 
 
+def length_address(source: PointerSource, address: int) -> int | None:
+    """Where the length field of the record whose pointer sits at ``address``
+    is, or ``None``: the source is no pointer table with one
+    (:class:`~mapchar.core.block.LengthField`), or ``address`` is no pointer of
+    its table — one **Attach** put on a string, say."""
+    if not isinstance(source, PointerTableSource) or source.length is None:
+        return None
+    if not source.start <= address < source.stop:
+        return None
+    if (address - source.start) % max(source.stride, 1):
+        return None
+    return address + source.length.offset
+
+
+def read_length(data: bytes, source: PointerTableSource, address: int) -> int | None:
+    """The length the record whose pointer sits at ``address`` holds, or
+    ``None`` where it has none or the data ends first."""
+    at = length_address(source, address)
+    if at is None or at < 0 or source.length is None:
+        return None
+    return read_pointer(data, at, source.length.width, source.endian)
+
+
+def string_length(target: int, end: int, tokens, counts_end: bool) -> int:
+    """What a length field says of a string the pointer reaches at byte
+    ``target`` and that ends before byte ``end``, read as ``tokens`` (bit
+    positions in the same data): every byte, or with ``counts_end`` off, those
+    before its last end token."""
+    if not counts_end:
+        for tok in reversed(tokens):
+            if tok.is_end:
+                end = -(-tok.bit_start // 8)
+                break
+    return end - target
+
+
 def _outside(slot: PointerSlot) -> Notice:
     return Notice(f"pointer ${slot.value:X} maps outside the data", offset=slot.address)
 

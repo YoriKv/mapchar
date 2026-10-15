@@ -258,6 +258,28 @@ def test_config_words_that_are_ignored_or_misread(project, doc, files):
     assert "W627" not in project(doc(block={"config": runs}), files)
 
 
+def test_a_pointer_table_s_length_field(project, doc, files):
+    rom = {**files, "rom.nes": 0x40000}
+    for words in (
+        {"stride": "4", "length": "u16"},
+        {"stride": "8", "length": "u32", "length_counts": "text"},
+        {"stride": "4", "length": "u8", "length_offset": "-1"},
+    ):
+        line = config(**words)
+        assert project(doc(block={"config": line}), rom) == [], line
+    for code, words in (
+        ("E632", {"stride": "4", "length": "u24"}),
+        ("E632", {"stride": "4", "length": "u16", "length_counts": "all"}),
+        ("E632", {"stride": "4", "length": "u16", "length_offset": "1"}),
+        ("E632", {"stride": "2", "length": "u16"}),
+        ("E606", {"stride": "4", "length": "u16", "length_offset": "x"}),
+        ("W611", {"stride": "4", "length_offset": "2"}),
+    ):
+        line = config(**words)
+        assert code in project(doc(block={"config": line}), rom), line
+    assert "W611" in project(doc(block={"config": LIST_BLOCK + " length=u16"}), rom)
+
+
 CHAINED = "source=range start=$8533 stop=$857B type=pascal:1 table=main header=2"
 
 

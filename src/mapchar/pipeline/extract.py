@@ -46,7 +46,13 @@ from mapchar.engines.decode import (
     decode,
     follow_skips,
 )
-from mapchar.pipeline.pointers import nested_records, read_pointers
+from mapchar.pipeline.pointers import (
+    length_address,
+    nested_records,
+    read_length,
+    read_pointers,
+    string_length,
+)
 
 
 def artificial(label: str, bit: int) -> Token:
@@ -288,9 +294,13 @@ def _extract_pointers(
         for target in ordered:
             key = by_target[target][0].offset if nested else None
             stops.setdefault(key, []).append(target)
+    lengths = _stored_lengths(bits.data, source, by_target)
+    reached: dict[int, int] = {}
+    """The target each string a pointer reaches was reached at, by index."""
     for i, target in enumerate(ordered):
         if limit is not None and len(strings) >= limit:
             break
+        reached[len(strings)] = target
         start = target * 8
         if header:
             # The pointer reaches the record; its string begins past the header.
@@ -321,6 +331,12 @@ def _extract_pointers(
         ):
             # The next group's first string is not where this group's last ends.
             nxt = None
+        if isinstance(st, NextPointer) and target in lengths:
+            # A string with no end token of its own ends where its record's
+            # length says, whatever the next pointer reaches.
+            cap = min(end_bit, (target + lengths[target]) * 8)
+            if cap > start and (nxt is None or nxt > cap):
+                nxt = cap
         if isinstance(st, NextPointer) and nxt is not None and nxt > start:
             # The string owns every bit up to the next pointer's target, and
             # keeps them whatever it says: the padding a shorter replacement
@@ -344,7 +360,64 @@ def _extract_pointers(
                 notices=res_notices,
             )
         )
+    if lengths:
+        notices += _length_notices(bits.data, config, source, strings, reached)
     return Extraction(strings, notices, inner_tables)
+
+
+def _stored_lengths(
+    data: bytes, source: PointerSource, by_target: dict[int, list[PointerRef]]
+) -> dict[int, int]:
+    """The length each target's first table record holds, by target: empty
+    for a source with no length field."""
+    if not isinstance(source, PointerTableSource) or source.length is None:
+        return {}
+    out = {}
+    for target, refs in by_target.items():
+        for ref in refs:
+            stored = read_length(data, source, ref.address)
+            if stored is not None:
+                out[target] = stored
+                break
+    return out
+
+
+def _length_notices(
+    data: bytes,
+    config: BlockConfig,
+    source: PointerTableSource,
+    strings: list[StringRecord],
+    reached: dict[int, int],
+) -> list[Notice]:
+    """A notice for every record whose length field disagrees with where its
+    string ends. The string stays as the reading cut it — at its end token,
+    where it has one — since that is what the bytes say; the length is what a
+    write puts right."""
+    assert source.length is not None
+    out = []
+    for index, target in reached.items():
+        if index >= len(strings):
+            continue
+        rec = strings[index]
+        holds = string_length(target, rec.end, rec.tokens, source.length.counts_end)
+        for ref in rec.pointers:
+            at = length_address(source, ref.address)
+            if at is None:
+                continue
+            stored = read_length(data, source, ref.address)
+            if stored is None:
+                out.append(Notice("length field past the end of the data", offset=at))
+            elif stored != holds:
+                out.append(
+                    Notice(
+                        f"string #{rec.index}: the record's length says {stored} "
+                        f"byte(s), the string holds {holds}",
+                        offset=at,
+                        detail="The string is read to where it ends; a write "
+                        "sets the length from it.",
+                    )
+                )
+    return out
 
 
 def _read_run(

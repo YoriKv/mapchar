@@ -353,6 +353,11 @@ def write_command_file(
                 f"a null pointer value has no Cartographer form; pointers holding "
                 f"{format_num(src.null)} are read as pointers"
             )
+        if src.length is not None:
+            notes.append(
+                "a record's length field has no Cartographer form; a write "
+                "leaves the lengths as they are"
+            )
         if src.mapping_id == "relative":
             lines.append("#METHOD: POINTER_RELATIVE_PC")
             lines.append(f"#BASE POINTER: {format_num(src.offset)}")

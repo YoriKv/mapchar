@@ -28,10 +28,12 @@ from PySide6.QtWidgets import (
 )
 
 from mapchar.core.block import (
+    LENGTH_TYPES,
     MAX_RECORD_HEADER,
     BlockConfig,
     EndToken,
     FixedLength,
+    LengthField,
     Lines,
     NestedPointerSource,
     NextPointer,
@@ -41,6 +43,7 @@ from mapchar.core.block import (
     RangeSource,
     StringType,
     chain_refusal,
+    length_refusal,
 )
 from mapchar.ui.addresses_picker import AddressesPicker
 from mapchar.ui.bars import ROW_BREAK, WrapBar
@@ -94,6 +97,7 @@ SECTIONS = {
         "ptr_offset",
         "ptr_null",
         "ptr_bank",
+        "ptr_length",
         "inner",
         "inner_null",
     ),
@@ -153,6 +157,7 @@ _WHERE = frozenset(
         "ptr_offset",
         "ptr_null",
         "ptr_bank",
+        "ptr_length",
         "inner",
         "inner_null",
     }
@@ -235,6 +240,21 @@ class ReadingBar(WrapBar):
             "An inner pointer holding this value reaches no string"
         )
         self.ptr_addresses = AddressesPicker(self.spelling)
+        self.ptr_length = QComboBox()
+        self.ptr_length.addItem("none", None)
+        for name, width in LENGTH_TYPES.items():
+            self.ptr_length.addItem(name, width)
+        self.length_offset = number_spin(-4095, 4095, 2)
+        self.length_offset.setPrefix("at ")
+        self.length_offset.setToolTip(
+            "Where the length sits in the record, in bytes from the pointer"
+        )
+        self.length_counts = QComboBox()
+        self.length_counts.addItem("with end", True)
+        self.length_counts.addItem("text only", False)
+        self.length_counts.setToolTip(
+            "Whether the length counts the end token or only the text before it"
+        )
 
         self.string_type = QComboBox()
         for data, cls in _STRING_TYPE_CLASSES.items():
@@ -305,6 +325,13 @@ class ReadingBar(WrapBar):
                 "Null",
                 (self.ptr_null,),
                 "Pointer value meaning no string, in hex",
+            ),
+            (
+                "ptr_length",
+                "Length",
+                (self.ptr_length, self.length_offset, self.length_counts),
+                "A length beside each pointer in its record, in the pointers' "
+                "byte order: a read checks it, a write sets it from the string",
             ),
             (
                 "inner",
@@ -381,6 +408,8 @@ class ReadingBar(WrapBar):
             ("inner_endian", self.inner_endian),
             ("string_type", self.string_type),
             ("pascal_endian", self.pascal_endian),
+            ("ptr_length", self.ptr_length),
+            ("length_counts", self.length_counts),
         ):
             combo.currentIndexChanged.connect(lambda _=0, n=name: self._edited(n))
         self.ptr_mapping.activated.connect(lambda _=0: self._edited("ptr_mapping"))
@@ -392,6 +421,7 @@ class ReadingBar(WrapBar):
             ("ptr_size", self.ptr_size),
             ("ptr_stride", self.ptr_stride),
             ("ptr_bank", self.ptr_bank),
+            ("length_offset", self.length_offset),
             ("inner_size", self.inner_size),
             ("fixed_length", self.fixed_length),
             ("pascal_width", self.pascal_width),
@@ -510,6 +540,14 @@ class ReadingBar(WrapBar):
                 self.ptr_offset.set_value(s.offset)
                 self.ptr_bank.setValue(s.bank)
                 self.ptr_null.set_value(s.null)
+                length = getattr(s, "length", None)
+                self.ptr_length.setCurrentIndex(
+                    max(self.ptr_length.findData(length and length.width), 0)
+                )
+                self.length_offset.setValue(s.size if length is None else length.offset)
+                self.length_counts.setCurrentIndex(
+                    0 if length is None or length.counts_end else 1
+                )
                 if isinstance(s, NestedPointerSource):
                     self.inner_size.setValue(s.inner_size)
                     self.inner_endian.setCurrentIndex(
@@ -649,6 +687,7 @@ class ReadingBar(WrapBar):
             "ptr_offset": pointers,
             "ptr_null": pointers,
             "ptr_bank": pointers and self._needs_bank(),
+            "ptr_length": kind == TABLE,
             "inner": kind == NESTED,
             "inner_null": kind == NESTED,
             "string_type": True,
@@ -678,6 +717,9 @@ class ReadingBar(WrapBar):
                 )
             group.setEnabled(applying and not (self._string_view and name in _WHERE))
         self.pascal_endian.setVisible(self.pascal_width.value() > 1)
+        has_length = self.ptr_length.currentData() is not None
+        self.length_offset.setEnabled(has_length)
+        self.length_counts.setEnabled(has_length)
         forced = bool(self.skips.value()) or (not runs and bool(self.header.value()))
         self.writing.show_forced(self._pointers, forced)
         why = self._chain_refusal()
@@ -739,7 +781,11 @@ class ReadingBar(WrapBar):
         }
         if kind == TABLE:
             source = PointerTableSource(
-                start, stop, stride=self.ptr_stride.value(), **pointer
+                start,
+                stop,
+                stride=self.ptr_stride.value(),
+                length=self._length(old, pointer["size"], self.ptr_stride.value()),
+                **pointer,
             )
         elif kind == NESTED:
             source = NestedPointerSource(
@@ -780,6 +826,25 @@ class ReadingBar(WrapBar):
                 "fill": base.fill if fill is None else fill,
             }
         return replace(base, **changes)
+
+    def _length(self, old, size: int, stride: int) -> LengthField | None:
+        """The length field the controls show, for records ``stride`` bytes
+        long with a ``size``-byte pointer. One that cannot be there — it would
+        overlap the pointer or leave the record — keeps the old source's where
+        that one still fits, else none, so a reading is never one the project
+        file cannot read back."""
+        width = self.ptr_length.currentData()
+        if width is None:
+            return None
+        field = LengthField(
+            width, self.length_offset.value(), self.length_counts.currentData()
+        )
+        if length_refusal(size, stride, field) is None:
+            return field
+        was = getattr(old, "length", None)
+        if was is not None and length_refusal(size, stride, was) is None:
+            return was
+        return None
 
     def _string_type(self) -> StringType:
         st = self.string_type.currentData()

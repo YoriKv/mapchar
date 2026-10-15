@@ -22,6 +22,8 @@ from mapchar_lint.schema import (
     CHAIN_MODES,
     CONFIG_KEYS,
     ENDIANS,
+    LENGTH_COUNTS,
+    LENGTH_TYPES,
     MAX_HEADER,
     REQUIRED_SOURCE_KEYS,
     SOURCE_KEYS,
@@ -397,6 +399,8 @@ def _pointers(out: ConfigReading, fields: dict, source: str) -> None:
                     f"stride={stride} is less than size={size}",
                     "Each pointer overlaps the next.",
                 )
+        if source == "pointers":
+            _length(out, fields, size, stride)
         start, stop = parse_num(fields["start"]), parse_num(fields["stop"])
         if start >= stop:
             out.add(
@@ -407,3 +411,39 @@ def _pointers(out: ConfigReading, fields: dict, source: str) -> None:
             )
     if source == "list" and not any(k == "addresses" for k, _ in out.addresses):
         out.add("W619", "warning", "addresses= lists none", "The block reads nothing.")
+
+
+def _length(out: ConfigReading, fields: dict, size: int, stride: int) -> None:
+    """A pointer table's ``length=``, ``length_offset=`` and ``length_counts=``,
+    read as ``blockspec._length`` reads them: a field that is no type, counts
+    nothing it knows, or does not fit its record beside the pointer raises."""
+    kind = fields.get("length")
+    if not kind:
+        for key in ("length_offset", "length_counts"):
+            if key in fields:
+                out.add(
+                    "W611",
+                    "warning",
+                    f"{key}={fields[key]} is not read without length=",
+                    "Ignored, and dropped by the next save.",
+                )
+        return
+    if kind not in LENGTH_TYPES:
+        out.drop("E632", f"length={kind} is not {', '.join(LENGTH_TYPES)}")
+        return
+    counts = fields.get("length_counts", "terminator")
+    if counts not in LENGTH_COUNTS:
+        out.drop("E632", f"length_counts={counts} is not {' or '.join(LENGTH_COUNTS)}")
+    try:
+        offset = int(fields.get("length_offset", str(size)))
+    except ValueError:
+        out.drop("E606", f"length_offset={fields['length_offset']} is not a number")
+        return
+    width = LENGTH_TYPES[kind]
+    if offset + width > stride or offset < size - stride:
+        out.drop(
+            "E632",
+            f"length={kind} at {offset} lies outside the {stride}-byte record",
+        )
+    elif offset < size and offset + width > 0:
+        out.drop("E632", f"length={kind} at {offset} overlaps the {size}-byte pointer")

@@ -12,12 +12,14 @@ reading holds one of its own. A field left out is the default
 from __future__ import annotations
 
 from mapchar.core.block import (
+    LENGTH_TYPES,
     MAX_RECORD_HEADER,
     Align,
     BlockConfig,
     ChainMode,
     EndToken,
     FixedLength,
+    LengthField,
     Lines,
     NestedPointerSource,
     NextPointer,
@@ -28,6 +30,7 @@ from mapchar.core.block import (
     Source,
     StringType,
     WriteMode,
+    length_refusal,
 )
 from mapchar.core.fill import DEFAULT_FILL, format_fill, parse_fill
 from mapchar.core.numbers import format_num, parse_num
@@ -79,6 +82,12 @@ def format_config(config: BlockConfig) -> str:
     null = getattr(s, "null", None)
     if null is not None:
         parts.append(f"null={format_num(null)}")
+    if isinstance(s, PointerTableSource) and s.length is not None:
+        parts.append(f"length={s.length.type_name}")
+        if s.length.offset != s.size:
+            parts.append(f"length_offset={s.length.offset}")
+        if not s.length.counts_end:
+            parts.append("length_counts=text")
     if isinstance(s, NestedPointerSource):
         parts += [f"inner_size={s.inner_size}", f"inner_endian={s.inner_endian}"]
         if s.inner_null is not None:
@@ -150,16 +159,19 @@ def parse_config(spec: str) -> BlockConfig:
     if kind == "range":
         source = RangeSource(parse_num(fields["start"]), parse_num(fields["stop"]))
     elif kind == "pointers":
+        size = int(fields["size"])
+        stride = int(fields.get("stride", fields["size"]))
         source = PointerTableSource(
             parse_num(fields["start"]),
             parse_num(fields["stop"]),
-            int(fields["size"]),
-            int(fields.get("stride", fields["size"])),
+            size,
+            stride,
             fields.get("endian", "little"),
             fields.get("mapping", "linear"),
             int(fields.get("offset", "0")),
             int(fields.get("bank", "0")),
             _null(fields, "null"),
+            _length(fields, size, stride),
         )
     elif kind == "list":
         source = PointerListSource(
@@ -259,3 +271,32 @@ def _breaks(text: str) -> tuple[int, ...]:
 def _null(fields: dict[str, str], key: str) -> int | None:
     """A null pointer value the fields name, or ``None``."""
     return parse_num(fields[key]) if fields.get(key) else None
+
+
+LENGTH_COUNTS = ("terminator", "text")
+"""What ``length_counts=`` says a length field counts: the string with its end
+token, or only the text before it."""
+
+
+def _length(fields: dict[str, str], size: int, stride: int) -> LengthField | None:
+    """A pointer table's length field, from ``length=``, ``length_offset=``
+    (default: just after the pointer) and ``length_counts=``; ``None`` without
+    ``length=``. A field that is no type, counts nothing known, or does not
+    fit its record raises."""
+    if not fields.get("length"):
+        return None
+    kind = fields["length"]
+    if kind not in LENGTH_TYPES:
+        raise ValueError(f"length={kind} is not {', '.join(LENGTH_TYPES)}")
+    counts = fields.get("length_counts", "terminator")
+    if counts not in LENGTH_COUNTS:
+        raise ValueError(f"length_counts={counts} is not {' or '.join(LENGTH_COUNTS)}")
+    field = LengthField(
+        LENGTH_TYPES[kind],
+        int(fields.get("length_offset", str(size))),
+        counts == "terminator",
+    )
+    why = length_refusal(size, stride, field)
+    if why is not None:
+        raise ValueError(why)
+    return field

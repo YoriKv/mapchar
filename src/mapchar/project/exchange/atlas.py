@@ -125,6 +125,11 @@ def write_atlas(
             )
         else:
             out.append(f'#SMA("{ADDRESS_TYPES[mapping]}")')
+        if getattr(src, "length", None) is not None:
+            notices.append(
+                "a record's length field has no Atlas form; the lengths are "
+                "left as they are"
+            )
         if getattr(src, "endian", "little") == "big":
             out.append('#ENDIANSWAP("TRUE")')
         # A pointer reaches the record, so the header counts as the offset does.

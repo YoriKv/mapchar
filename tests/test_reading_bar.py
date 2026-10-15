@@ -10,6 +10,7 @@ from helpers import pointer_rom, texts
 from mapchar.core.block import (
     BlockConfig,
     FixedLength,
+    LengthField,
     Lines,
     NestedPointerSource,
     NextPointer,
@@ -514,6 +515,35 @@ def test_the_mapping_is_listed_by_name_and_the_bank_only_where_it_reads(
     bar.ptr_mapping.lineEdit().editingFinished.emit()
     assert block.config.source.mapping_id == "banked:8000:4000"
     assert bar.ptr_bank.isEnabled()
+
+
+def test_a_pointer_table_s_length_field_is_set_in_the_pointers_section(
+    window, tmp_path
+):
+    # {u8 pointer, u8 length} records reaching AB[end] and B[end].
+    data = bytes.fromhex("10 03 13 02") + b"\xff" * 12 + bytes.fromhex("41 42 00 42 00")
+    entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, entry, "b", PointerTableSource(0, 4, 1, 2))
+    window.show()
+    bar = window.reading_bar
+    group = bar._groups["ptr_length"]
+    # Every pointer table may have one, so it stands greyed until picked.
+    assert group.isVisibleTo(window) and group.isEnabled()
+    assert not bar.length_offset.isEnabled() and not bar.length_counts.isEnabled()
+    select_data(bar.ptr_length, 1)
+    assert block.config.source.length == LengthField(1, 1, True)
+    assert bar.length_offset.isEnabled()
+    assert not block.doc.notices
+    select_data(bar.length_counts, False)
+    assert block.config.source.length == LengthField(1, 1, False)
+    # An offset over the pointer keeps the field where it was.
+    bar.length_offset.setValue(0)
+    assert block.config.source.length == LengthField(1, 1, False)
+    bar.load(block.config, block=True)
+    assert bar.config(block.config, "main") == block.config
+    # A list has no records to hold a length.
+    select_data(bar.source_kind, LIST)
+    assert not group.isEnabled()
 
 
 def test_a_length_prefix_wider_than_a_byte_has_a_byte_order(window, tmp_path):
