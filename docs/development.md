@@ -12,8 +12,8 @@ the editor, and the checks a change has to pass.
   between Windows and WSL:
   - `.venv` — Windows (the default name, so PyCharm on Windows finds it);
   - `.venv-linux` — WSL/Linux, selected by `UV_PROJECT_ENVIRONMENT=.venv-linux`.
-- **`.envrc`** (direnv) exports that variable, puts `.venv-linux/bin` and
-  `~/.bun/bin` (for `qmd`) on `PATH`. Run `direnv allow` once. A shell that
+- **`.envrc`** (direnv) exports that variable and puts `.venv-linux/bin` on
+  `PATH`. Run `direnv allow` once. A shell that
   has not loaded direnv, any non-interactive one, needs
   `eval "$(direnv export bash 2>/dev/null)"` or the explicit
   `export UV_PROJECT_ENVIRONMENT=.venv-linux` first, or a bare `uv sync`
