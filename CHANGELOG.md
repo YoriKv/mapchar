@@ -3,6 +3,8 @@
 ## v0.1.10 - unreleased
 
 - Pointer tables can carry a length field per record, kept right on write
+- Import several translator files at once
+- Import a translator file over one block from its Files panel row
 
 ## v0.1.9 - 2026-09-30
 

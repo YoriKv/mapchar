@@ -210,8 +210,8 @@ the preview system in [preview.md](preview.md).
   one folder's, one file's top level, or one group's. By name and by type
   folders come first; by offset a folder sits where its earliest row does.
 - **Context menu**, by kind: New Block… / from Selection…, New Bookmark, New
-  Folder, Edit File Container…, Container Info…, Jump to
-  Source, Jump to Bookmark, Edit…, Save As File…, New Table…, Write, Export ▸,
+  Folder, Edit File Container…, Container Info…, Jump to Source, Jump to
+  Bookmark, Edit…, Save As File…, New Table…, Write, Import ▸, Export ▸,
   Rename…, Cut / Copy / Paste / Duplicate, Move Up / Down, Sort By ▸, Show in
   File Manager, Remove. Empty space offers Open ROM…, Open Table…, New Table…
   and Paste. A row the clicked kind cannot do is greyed, never dropped: Write
@@ -1294,6 +1294,16 @@ The editing surface, opened on a block.
   row or entry per string of the current block; **Import** reads them back by
   id over the current file's blocks. Rows whose original no longer matches are
   skipped, and **Force** on the import dialog is what takes them anyway.
+- **Several translator files** — **Import ▸ TSV / CSV** and **PO**, and their
+  **All Blocks ▸** rows, take any number of files, imported as one: one
+  confirmation over the merged plan, one undo step, one report. They land as
+  though imported one after another in name order, so a later file wins a
+  string an earlier one reaches; a skipped line names its file. A file that
+  cannot be read or parsed stops the lot before anything lands. A script is
+  one file: it creates its blocks and is planned again over them.
+- **One block** — a block row's **Import ▸** in the Files panel reads one
+  translator file over that block alone and opens it; a record naming any
+  other block is skipped and listed.
 - **All Blocks** — **Export ▸ All Blocks ▸** writes one translator file
   holding every readable block of the project, across files, in project
   order; a block that cannot be read is left out and named afterwards.

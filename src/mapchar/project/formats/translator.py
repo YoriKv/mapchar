@@ -273,3 +273,36 @@ def apply_records(
             report.notes.setdefault(name, {})[rec.index] = r.notes
         report.applied += 1
     return report
+
+
+def merge_reports(reports: list[tuple[str, ImportReport]]) -> ImportReport:
+    """Several files' reports, each planned over the same blocks, as one.
+
+    The files land as though imported one after another in the order given:
+    where two reach the same string, the later one's text, mark and notes win,
+    and a later review mark clears an earlier done one and the other way
+    round. Each ``(name, report)`` names its file, which prefixes its skipped
+    lines once there is more than one; a single report comes back as it is.
+    """
+    if len(reports) == 1:
+        return reports[0][1]
+    merged = ImportReport()
+    for name, report in reports:
+        merged.applied += report.applied
+        merged.skipped += [f"{name}: {line}" for line in report.skipped]
+        for marks, other in (
+            (report.review, merged.done),
+            (report.done, merged.review),
+        ):
+            for block, by_index in marks.items():
+                for index in by_index:
+                    other.get(block, {}).pop(index, None)
+        for into, by_block in (
+            (merged.texts, report.texts),
+            (merged.review, report.review),
+            (merged.done, report.done),
+            (merged.notes, report.notes),
+        ):
+            for block, by_index in by_block.items():
+                into.setdefault(block, {}).update(by_index)
+    return merged

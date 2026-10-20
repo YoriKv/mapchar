@@ -445,6 +445,14 @@ class MainWindow(
         path, _ = QFileDialog.getOpenFileName(self, title, self._last_dir(), filters)
         return path or None
 
+    def _pick_open_many(self, title: str, filters: str = "") -> list[str]:
+        """Ask for any number of files to read, starting in the last folder
+        used; none when the dialog is cancelled. They come back in name order:
+        the dialog's own is the platform's, and Windows puts the file clicked
+        last first."""
+        paths, _ = QFileDialog.getOpenFileNames(self, title, self._last_dir(), filters)
+        return sorted(paths, key=str.casefold)
+
     def _pick_save(self, title: str, suggested: str, filters: str = "") -> str | None:
         """Ask where to write; ``suggested`` is a name in the last folder used,
         or a path of its own."""

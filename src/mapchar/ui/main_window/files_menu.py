@@ -105,6 +105,17 @@ class FilesMenuMixin:
             write = menu.addAction("&Write", lambda: self._write_entry(entry))
             write.setEnabled(supports(entry.kind, Capability.WRITE))
         if entry.kind is EntryKind.BLOCK:
+            # One file over this block alone: a record naming another block is
+            # skipped and listed. File ▸ Import reads over the whole file.
+            import_menu = menu.addMenu("&Import")
+            for label, kind in (("&TSV / CSV…", "delimited"), ("&PO…", "po")):
+                import_menu.addAction(
+                    label,
+                    lambda kind=kind: (
+                        self._activate_entry(entry),
+                        self._import_block(kind),
+                    ),
+                )
             export = menu.addMenu("E&xport")
             for label, kind in (("&TSV…", "tsv"), ("C&SV…", "csv"), ("&PO…", "po")):
                 export.addAction(
@@ -127,7 +138,7 @@ class FilesMenuMixin:
         paste = menu.addAction("&Paste", lambda: self._paste_entries(entry))
         paste.setEnabled(self._clipboard_entries_available())
         duplicate = menu.addAction(
-            "Dupl&icate", lambda: self._duplicate_entries(acting)
+            "&Duplicate", lambda: self._duplicate_entries(acting)
         )
         # A ROM is its path, so it can only be open once and there is nothing a
         # second row of it would mean; its blocks duplicate. A table duplicates

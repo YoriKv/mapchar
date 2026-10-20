@@ -13,6 +13,7 @@ from window_helpers import (
     ABCDE_TABLE,
     ab_ba_rom,
     add_block,
+    item_for,
     menu_state,
     open_rom_and_table,
 )
@@ -395,3 +396,130 @@ def test_all_blocks_is_live_whatever_is_on_screen(window, tmp_path):
     assert not any(a.isEnabled() for a in window.import_actions)
     assert not any(a.isEnabled() for a in window.export_actions)
     assert not window.block_export.isEnabled()
+
+
+# --- several files at once, and one block alone --------------------------------
+
+
+def _dialogs(monkeypatch) -> list[tuple[str, object]]:
+    """Every import dialog shown from here on, as ``(title, plan)``, each
+    accepted."""
+    shown: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        "mapchar.ui.dialogs.ImportDialog.exec",
+        lambda self: shown.append((self.windowTitle(), self._summary_for(False))) or 1,
+    )
+    return shown
+
+
+def test_several_translator_files_import_as_one_step(window, tmp_path, monkeypatch):
+    """One confirmation over the merged plan, one undo step and one report,
+    whichever block each file reaches."""
+    a, b = _two_files(window, tmp_path)
+    _revert(window, a, b)
+    first = _tsv(tmp_path / "a.tsv", "A/0\t$0\tAB[end]\tB[end]\tedited\t\n")
+    second = _tsv(tmp_path / "b.tsv", "B/1\t$3\tBA[end]\tA[end]\tedited\t\n")
+    shown = _dialogs(monkeypatch)
+    reports = _reports(window, monkeypatch)
+    monkeypatch.setattr(window, "_pick_open_many", lambda *_: [str(first), str(second)])
+    window._import("delimited", whole_project=True)
+    [(title, plan)] = shown
+    assert title == "Import 2 files"
+    assert [(p.name, p.strings) for p in plan.blocks] == [("A", 1), ("B", 1)]
+    assert a.doc.strings[0].current_text() == "B[end]"
+    assert b.doc.strings[1].current_text() == "A[end]"
+    assert reports[-1][0] == "Imported 2 string(s) from 2 files"
+    assert window.undo_stack.undoText() == "Import 2 files"
+    window.undo_stack.undo()
+    assert not a.doc.strings[0].edited and not b.doc.strings[1].edited
+
+
+def test_one_file_picked_imports_as_before(window, tmp_path, monkeypatch):
+    data = ab_ba_rom(0)
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
+    tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n")
+    shown = _dialogs(monkeypatch)
+    monkeypatch.setattr(window, "_pick_open_many", lambda *_: [str(tsv)])
+    window._import("delimited")
+    assert [title for title, _ in shown] == ["Import d.tsv"]
+    assert block.doc.strings[0].current_text() == "BB[end]"
+    assert window.undo_stack.undoText() == "Import d.tsv"
+
+
+def test_several_files_picked_come_in_name_order(window, monkeypatch):
+    """The later file wins a string both reach, so the order is the files'
+    names rather than the dialog's: Windows puts the file clicked last first."""
+    monkeypatch.setattr(
+        "mapchar.ui.main_window.window.QFileDialog.getOpenFileNames",
+        lambda *_: (["/x/c.tsv", "/x/A.tsv", "/x/b.tsv"], ""),
+    )
+    assert window._pick_open_many("Import") == ["/x/A.tsv", "/x/b.tsv", "/x/c.tsv"]
+
+
+def test_a_file_that_cannot_be_read_stops_the_batch(window, tmp_path, monkeypatch):
+    data = ab_ba_rom(0)
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
+    tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n")
+    bad = tmp_path / "bad.tsv"
+    bad.write_text("no id column here\n", encoding="utf-8")
+    shown = _dialogs(monkeypatch)
+    window.import_files([str(tsv), str(bad)], "delimited")
+    assert not shown and not block.doc.strings[0].edited
+    assert window.errors == [f"Cannot import {bad}: no 'id' column"]
+    gone = tmp_path / "gone.tsv"
+    window.import_files([str(tsv), str(gone)], "delimited")
+    assert not shown and not block.doc.strings[0].edited
+    assert window.errors[-1].startswith(f"Cannot read {gone}")
+
+
+def _two_blocks(window, tmp_path):
+    """``D`` and ``E`` over one ROM, ``E`` current, and a table that edits
+    the first string of each."""
+    file_entry = open_rom_and_table(window, tmp_path, ab_ba_rom(0))
+    d = add_block(window, file_entry, "D", RangeSource(0, 3))
+    e = add_block(window, file_entry, "E", RangeSource(3, 6))
+    tsv = _tsv(
+        tmp_path / "both.tsv",
+        "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n",
+        "E/0\t$3\tBA[end]\tAA[end]\tedited\t\n",
+    )
+    return d, e, tsv
+
+
+def test_a_block_row_imports_over_that_block_alone(window, tmp_path, monkeypatch):
+    """The Files panel's Import ▸ reads one file over the row's block: what the
+    file holds for any other block is skipped and said, not landed."""
+    from mapchar.ui.help_dialogs import submenus
+
+    d, e, tsv = _two_blocks(window, tmp_path)
+    shown = _dialogs(monkeypatch)
+    monkeypatch.setattr(window, "_pick_open", lambda *_: str(tsv))
+    menu = window._build_files_menu(d)
+    below = {a.text(): m for a, m in submenus(menu).items()}
+    next(a for a in below["&Import"].actions() if a.text() == "&TSV / CSV…").trigger()
+    [(_, plan)] = shown
+    assert [(p.name, p.strings) for p in plan.blocks] == [("D", 1)]
+    assert plan.skipped == ["E/0: no such block"]
+    assert d.doc.strings[0].current_text() == "BB[end]"
+    assert not e.doc.strings[0].edited
+    assert window._entry is d
+
+
+def test_a_block_row_s_import_sits_before_export_and_follows_the_selection(
+    window, tmp_path
+):
+    from mapchar.ui.help_dialogs import submenus
+
+    d, e, _ = _two_blocks(window, tmp_path)
+    menu = window._build_files_menu(d)
+    rows = [a.text().replace("&", "") for a in menu.actions() if a.text()]
+    assert rows[rows.index("Import") + 1] == "Export"
+    below = {a.text(): m for a, m in submenus(menu).items()}
+    assert menu_state(below["&Import"]) == {"TSV / CSV…": True, "PO…": True}
+    # Live on a string row, which is its block's menu, as Export is.
+    assert menu_state(window._build_files_menu(d, 0))["Import"]
+    for entry in (d, e):
+        item_for(window, entry).setSelected(True)
+    assert not menu_state(window._build_files_menu(d))["Import"]

@@ -17,7 +17,7 @@ from mapchar.project.formats.summary import (
     summarise_records,
     summarise_script,
 )
-from mapchar.project.formats.translator import Record, apply_records
+from mapchar.project.formats.translator import Record, apply_records, merge_reports
 
 TS = table_set(ABC_TABLE, "main")
 
@@ -125,3 +125,34 @@ def test_force_is_what_takes_a_drifted_record_back():
     forced = summarise_records("TSV", apply_records(records, {"D": fresh}, force=True))
     assert not forced.skipped
     assert [(b.name, b.strings) for b in forced.blocks] == [("D", 1)]
+
+
+def test_several_files_merge_as_though_imported_one_after_another():
+    """A later file wins a string an earlier one reaches — its text, its mark
+    and its notes — and each skipped line names its file."""
+    data = bytes.fromhex("41 00 42 00")
+    cfg = BlockConfig(RangeSource(0, 4), EndToken(), "main")
+    fresh = extract(data, cfg, TS).strings
+    first = [
+        Record("D/0", 0, "A[end]", "B[end]", "review", "first"),
+        Record("D/1", 2, "B[end]", "A[end]", "edited", ""),
+        Record("E/0", 0, "A[end]", "B[end]", "edited", ""),
+    ]
+    second = [Record("D/0", 0, "A[end]", "C[end]", "done", "second")]
+    merged = merge_reports(
+        [
+            ("a.po", apply_records(first, {"D": fresh})),
+            ("b.po", apply_records(second, {"D": fresh})),
+        ]
+    )
+    assert merged.texts == {"D": {0: "C[end]", 1: "A[end]"}}
+    assert merged.done == {"D": {0: True}} and not merged.review["D"]
+    assert merged.notes == {"D": {0: "second"}}
+    assert merged.applied == 3
+    assert merged.skipped == ["a.po: E/0: no such block"]
+    summary = summarise_records("PO file", merged)
+    # The string both files reach is counted once.
+    assert [(b.name, b.strings) for b in summary.blocks] == [("D", 2)]
+    # One file is its own report, its skipped lines as they were.
+    alone = apply_records(first, {"D": fresh})
+    assert merge_reports([("a.po", alone)]) is alone

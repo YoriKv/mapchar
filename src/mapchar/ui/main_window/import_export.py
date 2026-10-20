@@ -12,6 +12,7 @@ from mapchar.core.errors import MapcharError
 from mapchar.core.text import same_text
 from mapchar.project.entry import Entry, EntryKind
 from mapchar.project.formats.script import (
+    Script,
     ScriptImportReport,
     apply_script,
     parse_script,
@@ -25,6 +26,7 @@ from mapchar.project.formats.translator import (
     ImportReport,
     Record,
     apply_records,
+    merge_reports,
     read_delimited,
     read_po,
     records_for,
@@ -33,6 +35,14 @@ from mapchar.project.formats.translator import (
 )
 from mapchar.ui.dialogs import ImportDialog
 from mapchar.ui.undo_commands import StringFieldCommand
+
+_FILTERS = {
+    "script": "Scripts (*.txt);;All files (*)",
+    "delimited": "Tables (*.tsv *.csv);;All files (*)",
+    "po": "PO files (*.po);;All files (*)",
+}
+_KIND_NAMES = {"delimited": "Translator table", "po": "PO file"}
+"""What the import dialog calls each translator format."""
 
 
 class ImportExportMixin:
@@ -50,40 +60,65 @@ class ImportExportMixin:
         }
 
     def _import(self, kind: str, *, whole_project: bool = False) -> None:
-        filters = {
-            "script": "Scripts (*.txt);;All files (*)",
-            "delimited": "Tables (*.tsv *.csv);;All files (*)",
-            "po": "PO files (*.po);;All files (*)",
-        }[kind]
-        path = self._pick_open("Import", filters)
-        if not path:
-            return
-        self.import_file(path, kind, whole_project=whole_project)
+        # A script is one file: it creates the blocks it names and is planned
+        # again over them, and a project has one. The translator formats take
+        # any number, imported together.
+        if kind == "script":
+            path = self._pick_open("Import", _FILTERS[kind])
+            paths = [path] if path else []
+        else:
+            paths = self._pick_open_many("Import", _FILTERS[kind])
+        if paths:
+            self.import_files(paths, kind, whole_project=whole_project)
 
+    def _import_block(self, kind: str) -> None:
+        """One translator file over the current block alone — the Files
+        panel's **Import ▸** on a block's row."""
+        entry = self._current_block(
+            need_doc=True, complain="Select a block to import into."
+        )
+        if entry is None:
+            return
+        path = self._pick_open(f"Import into {entry.name}", _FILTERS[kind])
+        if path:
+            self.import_file(path, kind, only=entry)
+
+    @staticmethod
+    def _parse(text: str, path: str, kind: str) -> Script | list[Record]:
+        """The script or the records ``text`` holds; raises what stops it."""
+        if kind == "script":
+            return parse_script(text, path)
+        return read_po(text) if kind == "po" else read_delimited(text)
+
+    @staticmethod
     def _plan_import(
-        self,
-        text: str,
-        path: str,
+        parsed: list[tuple[str, Script | list[Record]]],
         kind: str,
         blocks: dict[str, list],
         force: bool = False,
     ) -> tuple[ScriptImportReport | ImportReport, ImportSummary]:
-        """What importing ``text`` would do, and the summary of it.
+        """What importing the ``(file name, parsed)`` files would do, and the
+        summary of it.
 
         Nothing is changed: both importers return what each string is to say
         and leave the saying of it to the caller. That is what lets the same
         call draw the confirmation, re-draw it under **Force**, and then be the
-        thing that is applied.
+        thing that is applied. Several translator files are each planned over
+        the same blocks and merged, a later file winning a string an earlier
+        one also reaches (:func:`~mapchar.project.formats.translator.
+        merge_reports`).
         """
         if kind == "script":
-            script = parse_script(text, path)
+            ((_, script),) = parsed
             report = apply_script(script, blocks)
             return report, summarise_script(script, report)
-        records = read_po(text) if kind == "po" else read_delimited(text)
-        report = apply_records(records, blocks, force=force)
-        return report, summarise_records(
-            "PO file" if kind == "po" else "Translator table", report
+        report = merge_reports(
+            [
+                (name, apply_records(records, blocks, force=force))
+                for name, records in parsed
+            ]
         )
+        return report, summarise_records(_KIND_NAMES[kind], report)
 
     def _land_texts(
         self, texts: dict[str, dict[int, str]], label: str, notices: list[str]
@@ -128,42 +163,76 @@ class ImportExportMixin:
         confirm: bool = True,
         *,
         whole_project: bool = False,
+        only: Entry | None = None,
     ) -> None:
-        """Import ``path``, having shown what that will do and been told to.
+        """Import ``path``: :meth:`import_files` with the one file."""
+        self.import_files(
+            [path], kind, force, confirm, whole_project=whole_project, only=only
+        )
+
+    def import_files(
+        self,
+        paths: list[str],
+        kind: str,
+        force: bool = False,
+        confirm: bool = True,
+        *,
+        whole_project: bool = False,
+        only: Entry | None = None,
+    ) -> None:
+        """Import ``paths``, having shown what that will do and been told to.
 
         Both importers plan without changing anything, so the plan is what the
         dialog draws and **Force** re-plans rather than being decided in
         advance. Only past the confirmation does any of it land.
 
-        The records are read against the current file's blocks, or against
+        The records are read against the current file's blocks; against
         every block of the project with ``whole_project`` — a translator file
-        only, since a script creates its blocks in the current file.
+        only, since a script creates its blocks in the current file; or
+        against the one block ``only``, read already, so that a record naming
+        any other block is skipped and listed.
+
+        Several files are one import: each is read and parsed before anything
+        is planned, so one that cannot be stops them all, and one
+        confirmation, one undo step and one report cover the lot. A script is
+        only ever one file.
         """
-        text, read_notices = self._read_text(path)
-        if text is None:
+        if not paths:
             return
+        parsed: list[tuple[str, Script | list[Record]]] = []
+        read_notices: list[str] = []
+        for path in paths:
+            text, notices = self._read_text(path)
+            if text is None:
+                return
+            try:
+                parsed.append((os.path.basename(path), self._parse(text, path, kind)))
+            except (MapcharError, ValueError) as exc:
+                self._error(f"Cannot import {path}: {exc}")
+                return
+            read_notices += notices
         file_entry = self._current_file()
-        blocks = self._block_strings_by_name(None if whole_project else file_entry)
-        try:
-            report = self._plan_import(text, path, kind, blocks, force)[0]
-        except (MapcharError, ValueError) as exc:
-            self._error(f"Cannot import {path}: {exc}")
-            return
+        if only is not None:
+            blocks = {only.name: only.doc.strings}
+        else:
+            blocks = self._block_strings_by_name(None if whole_project else file_entry)
+        report = self._plan_import(parsed, kind, blocks, force)[0]
+        what = parsed[0][0] if len(parsed) == 1 else f"{len(parsed)} files"
         if confirm:
             dialog = ImportDialog(
-                os.path.basename(path),
-                lambda forced: self._plan_import(text, path, kind, blocks, forced)[1],
+                what,
+                lambda forced: self._plan_import(parsed, kind, blocks, forced)[1],
                 self,
             )
             if dialog.exec() != ImportDialog.DialogCode.Accepted:
                 return
             if dialog.forced() != force:
                 force = dialog.forced()
-                report = self._plan_import(text, path, kind, blocks, force)[0]
+                report = self._plan_import(parsed, kind, blocks, force)[0]
         review: dict[str, dict[int, bool]] = {}
         done: dict[str, dict[int, bool]] = {}
         notes: dict[str, dict[int, str]] = {}
-        label = f"Import {os.path.basename(path)}"
+        label = f"Import {what}"
         current = self._entry
         with self._macro(label):
             if kind == "script":
@@ -186,7 +255,7 @@ class ImportExportMixin:
                     # again over them: the summary counted their strings on the
                     # promise that this pass lands them.
                     blocks = self._block_strings_by_name(file_entry)
-                    report = self._plan_import(text, path, kind, blocks)[0]
+                    report = self._plan_import(parsed, kind, blocks)[0]
                 notices = [f"created block {e.name}" for e in created]
                 notices += report.notices
             else:
@@ -226,11 +295,11 @@ class ImportExportMixin:
                         )
             if current is not None and self._entry is not current:
                 self._activate_entry(current)
-        self._remember_dir(path)
+        self._remember_dir(paths[0])
         self._refresh_view()
         self._report(
             "Import Notices",
-            f"Imported {applied} string(s) from {os.path.basename(path)}",
+            f"Imported {applied} string(s) from {what}",
             notices,
         )
 
