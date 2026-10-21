@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.10 - unreleased
+## v0.1.10 - 2026-10-20
 
 - Pointer tables can carry a length field per record, kept right on write
 - Import several translator files at once
