@@ -106,6 +106,16 @@ def test_raw_bytes_and_shared_counts():
     )
 
 
+def test_tags_that_only_start_like_raw_codes_are_the_table_s():
+    """``[%d]`` and ``[$x]`` are tags a table names (a printf code, a word),
+    not raw bits or bytes: they encode through the table's entries."""
+    body = "@table main\n/00=[end]\n2564=[%d]\n2463=[$x]\n41=A\n20= \n"
+    assert roundtrip(body, "[%d] A[end]") == bytes.fromhex("25 64 20 41 00")
+    assert roundtrip(body, "[$x]A[end]") == bytes.fromhex("24 63 41 00")
+    # Raw bytes still are: ones no entry claims.
+    assert roundtrip(body, "[$FF][$99]", end_terminated=False) == b"\xff\x99"
+
+
 def test_bit_entries_pack():
     body = "@table main\n%11=a\n%0=b\n"
     r = encode("aab", table_set(body, "main"), end_terminated=False)

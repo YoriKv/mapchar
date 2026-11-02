@@ -239,6 +239,9 @@ def slot_ends(
     for i, rec in enumerate(ordered):
         nxt = ordered[i + 1].start if i + 1 < len(ordered) else None
         stop = _before(nxt, header, skips) if nxt is not None else limit
+        # A skip range is no string's bytes: the slot ends where one begins,
+        # whatever the bytes inside it hold.
+        stop = min((s for s, e in skips if rec.end <= s < stop and e > s), default=stop)
         if data is None or not fill:
             ends[rec.index] = max(rec.end, stop)
             continue

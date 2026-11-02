@@ -607,7 +607,10 @@ def _extract_range(
     while pos < stop_bit and (limit is None or len(strings) < limit):
         start = pos
         if pad is not None and strings and start % 8 == 0:
-            start += pad_run(bits, start, pad, stop_bit)
+            # Padding stops at a skip range, which the reading then follows:
+            # its bytes are no string's, whatever they hold.
+            reach = min((s for s, e in skips if s >= start and e > s), default=stop_bit)
+            start += pad_run(bits, start, pad, min(stop_bit, reach))
             if start >= stop_bit:
                 break
             if breaks is not None and start > pos and len(strings) not in breaks:

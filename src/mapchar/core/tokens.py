@@ -135,11 +135,15 @@ class CodeRef:
 
     @property
     def is_raw_byte(self) -> bool:
-        return self.label.startswith("$")
+        """``[$hh]``: bytes given in hex. A label that only starts with ``$``
+        is a table's own."""
+        return re.fullmatch(r"\$[0-9A-Fa-f]+", self.label) is not None
 
     @property
     def is_raw_bits(self) -> bool:
-        return self.label.startswith("%")
+        """``[%0101]``: bits given one by one. A label that only starts with
+        ``%`` -- a ``[%d]`` tag for a printf code -- is a table's own."""
+        return re.fullmatch(r"%[01]+", self.label) is not None
 
     def raw_bits(self) -> str:
         if self.is_raw_byte:

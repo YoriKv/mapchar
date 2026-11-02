@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.11 - unreleased
+
+- Slotted strings no longer read or write their padding into skip ranges
+- Table tags starting with `%` or `$` (like `[%d]`) encode instead of failing
+
 ## v0.1.10 - 2026-10-20
 
 - Pointer tables can carry a length field per record, kept right on write

@@ -177,6 +177,28 @@ def test_a_string_ending_where_a_skip_begins_is_rewritten_in_place():
     assert res.ok and out == bytes.fromhex("42 00 CD EE EE 43 00")
 
 
+def test_a_slot_and_its_padding_stop_where_a_skip_begins():
+    """A slot padded with the end token, then a skip range whose first bytes
+    are that fill too (a zero guard, a header starting with zero): neither
+    the reading's padding nor the slot runs into the skip."""
+    data = bytes.fromhex("41 00 00 00 00 00 EE 42 00")
+    cfg = BlockConfig(
+        RangeSource(0, 9),
+        EndToken(),
+        "main",
+        skips=((4, 7),),
+        fill=b"\x00",
+        end_is_fill=True,
+    )
+    ex = extract(data, cfg, TS)
+    assert texts(ex) == ["A[end]", "B[end]"]
+    assert [(s.start, s.end) for s in ex.strings] == [(0, 2), (7, 9)]
+    res, out = relayout(data, cfg, TS, {0: "AAA[end]"})
+    assert res.ok and out == bytes.fromhex("41 41 41 00 00 00 EE 42 00")
+    res, _ = relayout(data, cfg, TS, {0: "AAAA[end]"})
+    assert not res.ok and res.problems[0].over == 1
+
+
 def test_realigned_pascal_records_grow_into_their_records():
     """Names in 4-byte records, each a length and its letters: realigning
     after every string reads one a record, and a name may take its whole

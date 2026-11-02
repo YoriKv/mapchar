@@ -157,6 +157,9 @@ is:
 - A label is `[^\[\]\s$%][^\[\]\s]*`: no whitespace, no brackets, and not
   starting with `$` or `%`. A code may sit inside a text entry's text
   (`40=[FB]\n＊「`) and is then matched as a code by the encoder too.
+- `[$1F]` and `[%101]` are raw only in exactly those forms, hex digits or
+  binary ones; any other bracket starting with `$` or `%` is text a table
+  entry spells (`2564=[%d]`, a printf code), matched like any other text.
 - In table text and in scripts, a literal bracket is written `\[` or `\]`.
   The other escapes are `\n` (a line break: emitted after the token on dump,
   ignored on insert, so dumps stay re-insertable) and `\\`. A block's line
