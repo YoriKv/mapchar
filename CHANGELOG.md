@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.12 - unreleased
+## v0.1.12 - 2026-11-05
 
 - Several translator files dropped onto the window import as one
 
