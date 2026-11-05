@@ -128,7 +128,8 @@ the preview system in [preview.md](preview.md).
   `.csv` and `.po` import as translator files; a `.txt` carrying a native
   script or table header imports or registers as that; anything else opens as
   a ROM. Hold **Ctrl** while dropping to be asked instead. A drop that imports
-  is confirmed like any other import.
+  is confirmed like any other import, and several translator files of one
+  kind dropped together import as one, as the menu's rows take them.
 
 ## The Files panel
 

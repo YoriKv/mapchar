@@ -134,11 +134,21 @@ class OpeningMixin:
                 )
             return
         ask = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        # Translator files of one kind are one import, as the menu's multi-select
+        # makes them: one plan, one confirmation, one undo step. Everything
+        # else opens first, in drop order, so an import sees the blocks of a
+        # ROM dropped beside it.
+        grouped: dict[str, list[str]] = {}
         for path in paths:
             kind = self._ask_drop_kind(path) if ask else self._drop_kind(path)
             if kind is None:
                 continue
-            self._open_dropped(path, kind)
+            if kind in ("delimited", "po"):
+                grouped.setdefault(kind, []).append(path)
+            else:
+                self._open_dropped(path, kind)
+        for kind, group in grouped.items():
+            self.import_files(group, kind)
 
     @staticmethod
     def _drop_kind(path: str) -> str:
@@ -187,6 +197,7 @@ class OpeningMixin:
         return buttons.get(box.clickedButton())
 
     def _open_dropped(self, path: str, kind: str) -> None:
+        """One dropped file as ``kind``; a translator file is imported alone."""
         if kind == "rom":
             self.open_rom(path)
         elif kind == "table":

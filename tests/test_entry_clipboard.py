@@ -199,3 +199,25 @@ def test_entries_paste_into_a_second_window(qtbot, monkeypatch, tmp_path):
     assert [b.name for b in blocks] == ["b"]
     assert blocks[0].parent is pasted[0]
     assert blocks[0].pending_strings[0].original == "AB[end]"
+
+
+def test_several_dropped_translator_files_import_as_one(window, tmp_path, monkeypatch):
+    """A drop of two TSVs is the menu's multi-select: one confirmation over
+    the merged plan and one undo step, not one of each per file."""
+    file_entry = open_rom_and_table(window, tmp_path, ab_ba_rom(0))
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
+    header = "id\taddress\toriginal\ttranslation\tstatus\tnotes\n"
+    first = tmp_path / "a.tsv"
+    first.write_text(header + "D/0\t$0\tAB[end]\tB[end]\tedited\t\n")
+    second = tmp_path / "b.tsv"
+    second.write_text(header + "D/1\t$3\tBA[end]\tA[end]\tedited\t\n")
+    shown: list[str] = []
+    monkeypatch.setattr(
+        "mapchar.ui.dialogs.ImportDialog.exec",
+        lambda self: shown.append(self.windowTitle()) or 1,
+    )
+    drop(window, str(first), str(second))
+    assert shown == ["Import 2 files"]
+    assert block.doc.strings[0].current_text() == "B[end]"
+    assert block.doc.strings[1].current_text() == "A[end]"
+    assert window.undo_stack.undoText() == "Import 2 files"

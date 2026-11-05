@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.12 - unreleased
+
+- Several translator files dropped onto the window import as one
+
 ## v0.1.11 - 2026-11-05
 
 - Slotted strings no longer read or write their padding into skip ranges
