@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.11 - unreleased
+## v0.1.11 - 2026-11-05
 
 - Slotted strings no longer read or write their padding into skip ranges
 - Table tags starting with `%` or `$` (like `[%d]`) encode instead of failing
