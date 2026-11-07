@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.13 - unreleased
+
+- Revert a string or a whole block to its original from the Files panel
+
 ## v0.1.12 - 2026-11-05
 
 - Several translator files dropped onto the window import as one

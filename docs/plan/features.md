@@ -211,15 +211,22 @@ the preview system in [preview.md](preview.md).
   one folder's, one file's top level, or one group's. By name and by type
   folders come first; by offset a folder sits where its earliest row does.
 - **Context menu**, by kind: New Block… / from Selection…, New Bookmark, New
-  Folder, Edit File Container…, Container Info…, Jump to Source, Jump to
-  Bookmark, Edit…, Save As File…, New Table…, Write, Import ▸, Export ▸,
+  Folder, Edit File Container…, Container Info…, Jump to Source, Revert
+  String to Original, Revert Block to Original…, Jump to Bookmark, Edit…,
+  Save As File…, New Table…, Write, Import ▸, Export ▸,
   Rename…, Cut / Copy / Paste / Duplicate, Move Up / Down, Sort By ▸, Show in
   File Manager, Remove. Empty space offers Open ROM…, Open Table…, New Table…
   and Paste. A row the clicked kind cannot do is greyed, never dropped: Write
   on a bookmark or a table (a bookmark has no bytes of its own; a table is
   written with Save As File…), Duplicate on a file (it is its path, so it can
   only be open once), Sort By ▸ Offset outside a file's rows, and Paste with
-  nothing on the clipboard.
+  nothing on the clipboard. Revert String to Original is live on a string
+  row alone.
+- **Revert Block to Original…** puts the original text back into every
+  string of the block once a confirmation is answered; **Revert String to
+  Original** into the string row clicked alone. Either lets go of the translations kept
+  unwritten, and is one undo step, all or nothing: one original the bytes no
+  longer take keeps every string as it was, and the refusals are listed.
 - **Cut / Copy / Paste / Duplicate** act on entries (references plus
   settings), never on bytes. The clipboard carries absolute paths, so entries
   paste into another mapchar window — a table pasted there is read from its

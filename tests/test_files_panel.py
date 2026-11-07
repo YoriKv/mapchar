@@ -383,3 +383,61 @@ def test_selecting_a_folder_leaves_the_view_where_it_was(window, tmp_path):
     rows = {a.text().replace("&", "") for a in menu.actions() if a.text()}
     assert {"New Folder", "Rename…", "Remove"} <= rows
     assert "Write" not in rows
+
+
+# -- revert to original --------------------------------------------------------
+
+
+def test_revert_string_is_live_on_a_string_row_alone(window, tmp_path):
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    on_block = menu_state(window._build_files_menu(block))
+    assert not on_block["Revert String to Original"]
+    assert on_block["Revert Block to Original…"]
+    on_string = menu_state(window._build_files_menu(block, 0))
+    assert on_string["Revert String to Original"]
+    assert on_string["Revert Block to Original…"]
+
+
+def test_revert_string_puts_back_that_string_alone(window, tmp_path):
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._on_translation_edited(0, "BA[end]")
+    window._on_translation_edited(1, "AB[end]")
+    window._revert_string(block, 0)
+    first, second = block.doc.strings[:2]
+    assert not first.edited and first.current_text() == first.original
+    assert second.edited
+
+
+def test_revert_block_asks_then_reverts_every_string_as_one_step(
+    window, tmp_path, monkeypatch
+):
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    window._on_translation_edited(0, "BA[end]")
+    window._on_translation_edited(1, "AC[end]")  # refused, so kept unwritten
+    assert block.doc.strings[1].unwritten == "AC[end]"
+    other = add_block(window, file_entry, "o", RangeSource(6, 12))
+    assert window._entry is other
+
+    asked = []
+    monkeypatch.setattr(window, "_ask", lambda *a: asked.append(a) or False)
+    window._revert_block(block)
+    assert asked and any(r.edited for r in block.doc.strings)
+
+    monkeypatch.setattr(window, "_ask", lambda *a: True)
+    window._revert_block(block)
+    strings = block.doc.strings
+    assert not any(r.edited or r.unwritten is not None for r in strings)
+    assert window._entry is other  # the current block comes back
+    window.undo_stack.undo()
+    strings = block.doc.strings
+    assert strings[0].edited and strings[1].unwritten == "AC[end]"
+
+
+def test_revert_block_with_nothing_changed_does_not_ask(window, tmp_path, monkeypatch):
+    file_entry = open_rom_and_table(window, tmp_path, DATA)
+    block = add_block(window, file_entry, "b", RangeSource(0, 6))
+    monkeypatch.setattr(window, "_ask", lambda *a: pytest.fail("asked"))
+    window._revert_block(block)

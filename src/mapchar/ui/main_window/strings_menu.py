@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 
 from PySide6.QtCore import QPoint
@@ -36,24 +37,74 @@ class StringsMenuMixin:
     """
 
     def _revert_selected(self) -> None:
-        """Put the original text back into the bytes of the selected strings,
-        and let go of any translation they keep unwritten."""
-        entry = self._entry
-        selected = self.strings.selected_indices()
-        edits = {}
-        for index in selected:
-            rec = self._string(entry, index)
-            if rec is not None and rec.edited:
-                edits[index] = rec.original
-        with self._macro("Revert to original"):
-            problems = (
-                self._edit_strings(entry, edits, "Revert to original") if edits else []
-            )
-            if not problems:
-                for index in selected:
-                    self._keep_unwritten(entry, index, None)
+        """Put the original text back into the selected strings."""
+        if self._entry is None:
+            return
+        problems = self._revert_strings(self._entry, self.strings.selected_indices())
         if problems:
             self._refuse_edit(problems)
+
+    def _revert_strings(
+        self, entry: Entry, indices: Iterable[int] | None = None
+    ) -> list[str]:
+        """Put the original text back into the bytes of the block's strings at
+        ``indices`` — every one, with none — and let go of any translation they
+        keep unwritten, as one undo step.
+
+        All or nothing: one original the layout refuses keeps every string as it
+        was, and the refusals come back. The block is made current for the
+        edit, since an edit is reverted where it was made, and the block that
+        was current comes back after it.
+        """
+        label = "Revert to original"
+        current = self._entry
+        problems: list[str] = []
+        with self._macro(label):
+            if entry is not self._entry:
+                self._activate_entry(entry)
+            if entry.doc is not None:
+                wanted = None if indices is None else set(indices)
+                recs = [
+                    r for r in entry.doc.strings if wanted is None or r.index in wanted
+                ]
+                edits = {r.index: r.original for r in recs if r.edited}
+                if edits:
+                    problems = self._edit_strings(entry, edits, label)
+                if not problems:
+                    for rec in recs:
+                        self._keep_unwritten(entry, rec.index, None)
+            if current is not None and self._entry is not current:
+                self._activate_entry(current)
+        return problems
+
+    def _revert_string(self, entry: Entry, index: int) -> None:
+        """A Files panel string row's Revert String to Original."""
+        problems = self._revert_strings(entry, [index])
+        if problems:
+            self._refuse_edit(problems)
+
+    def _revert_block(self, entry: Entry) -> None:
+        """Every string of the block back to its original, once asked."""
+        doc = entry.doc or self._read_block(entry)
+        if doc is None:
+            self._error(f"{entry.name} cannot be read.")
+            return
+        changed = sum(1 for r in doc.strings if r.edited or r.unwritten is not None)
+        if not changed:
+            self.statusBar().showMessage(f"{entry.name} has no changed string", 4000)
+            return
+        if not self._ask(
+            "Revert Block to Original",
+            f"Put the original text back into the {changed} changed string(s) "
+            f"of {entry.name}? Their translations are lost; Undo brings them "
+            "back.",
+        ):
+            return
+        problems = self._revert_strings(entry)
+        if problems:
+            self._report("Not Reverted", f"{len(problems)} string(s) refused", problems)
+        else:
+            self.statusBar().showMessage(f"Reverted {changed} string(s)", 4000)
 
     def _toggle_review_selected(self) -> None:
         self._toggle_status_selected(Status.REVIEW)

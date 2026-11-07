@@ -92,6 +92,16 @@ class FilesMenuMixin:
                     "&Jump to Source",
                     lambda: self._jump_to_string_source(entry, string),
                 )
+            # The string's own revert is live on its row alone; the block's is
+            # asked first, since it takes every translation the block has.
+            revert = menu.addAction(
+                "Revert &String to Original",
+                lambda: self._revert_string(entry, string),
+            )
+            revert.setEnabled(on_string)
+            menu.addAction(
+                "Revert Bloc&k to Original…", lambda: self._revert_block(entry)
+            )
         if entry.kind is EntryKind.BOOKMARK:
             menu.addAction("&Jump to Bookmark", lambda: self._jump_to_bookmark(entry))
         if entry.kind is EntryKind.TABLE:
