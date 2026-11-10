@@ -42,6 +42,20 @@ from mapchar.core.block import BlockConfig
 # row reviewable. Empty while no shipped id has been renamed.
 RENAMED: dict[str, str] = {}
 
+# Plugin files a built-in has taken over, by the SHA-256 of their text with
+# line endings made LF (``trust.digest_of``), to the id of the built-in that
+# does what the file did under the same id. Discovery passes such a file over
+# before its trust prompt — it is neither run nor reported, nor counted as a
+# plugin not run (``discovery._load_code``) — so a project still carrying it
+# opens on the built-in. Only that exact file: any other plugin registering
+# the id is a duplicate like any other. Append-only, like ``RENAMED``.
+SUPERSEDED: dict[str, str] = {
+    # The arcade Mortal Kombat samples' plugins/mappings/tms34010_bits.py.
+    "5112d700e177053525817c07e453a2b3b805437f29a6f0da02a64bc8d71df4bd": (
+        "tms34010-bits"
+    ),
+}
+
 
 def current_id(plugin_id: str) -> str:
     """The id ``plugin_id`` is known by now, following a chain of renames.

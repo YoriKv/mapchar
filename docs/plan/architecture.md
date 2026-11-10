@@ -156,8 +156,11 @@ in bytes, which is the unit their results are reported and selected in.
   `PACK`, or `None`), `chain_breaks` (the indices that begin a chain), `pad`
   (`None` for the table's space) and `align` (`Align`). `chained` holds only
   where `chain_refusal` has nothing against it — a range of end-token or
-  Pascal strings, no skips, no realign — and `chain_starts` lists a chain's
-  first strings. A `StringRecord`'s own `align` overrides the block's, and
+  Pascal strings, no realign — and `chain_mode` is how it is written: `chain`,
+  or `PAD` whatever it holds once skip ranges leave nothing to pack across.
+  `chain_starts` lists the first strings the breaks make, and `skip_between`
+  says whether reading from one string's end to the next one's record stepped
+  over a skip range, which begins a chain too. A `StringRecord`'s own `align` overrides the block's, and
   the project keeps it as the string record's `al`.
 - **The fill pattern** is `core/fill.py`'s: `DEFAULT_FILL`, `fill_run` (which
   lays a pattern down from the start of the room it fills, the last repeat
@@ -219,19 +222,32 @@ plugins ([5](#5-the-plugin-system)), so the protocol is declared with the
 other stage protocols in `plugins/base.py` and the built-ins — `linear`,
 `lorom`, `hirom`, `exhirom`, `sa1` (its Super MMC as it powers on), `gb`,
 `gba`, `banked(bank_size, bank_base)` and the two NES
-bank layouts it is also registered under (`nes_c000`, `nes_8000_2000`), and
-`relative` (value = target − pointer address) — live in
-`plugins/builtins/mappings.py`. Each implements both directions and declares
-which pointer sizes it supports, and may say it applies only to some payloads
-(`applies`): `exhirom` to an image past 4 MiB, `sa1` to one whose header names
-the chip. Pointer discovery skips a mapping that does not apply, where it would
-only tie with HiROM or LoROM; choosing it by hand is still offered.
+bank layouts it is also registered under (`nes_c000`, `nes_8000_2000`),
+`relative` (value = target − pointer address, unsigned), `relative-signed`
+(the same distance in two's complement at the pointer's size, the 68000's
+`lea d16(pc)`), and `tms34010-bits` (value = `$FF800000` + 8 × offset, the
+Midway T-Unit's TMS34010, which addresses bits; a `BitAddress(base)` the way
+the NES layouts are a `Banked`) — live in `plugins/builtins/mappings.py`. Each
+implements both directions and declares which pointer sizes it supports, and
+may say it applies only to some payloads (`applies`): `exhirom` to an image
+past 4 MiB, `sa1` to one whose header names the chip. Pointer discovery skips
+a mapping that does not apply, where it would only tie with HiROM or LoROM;
+choosing it by hand is still offered.
+
+A mapping never learns the pointer's size, so a `signed` one is
+sign-extended by whoever reads the pointer and range-checked by whoever
+writes it: `core/mapping.py`'s `pointer_offset(mapping, value, size, bank,
+ptr_address)` is the read every caller makes, and `holds(value, size,
+signed)` the check a write makes before storing a negative value as its two's
+complement. A `relative` mapping's value is a distance from the pointer, so
+discovery reads it out of the file rather than searching for one value
+([3.5](#35-pointer-discovery)).
 
 Looking one up by id is the registry's: `resolve_mapping(registry, id)` and
 `mapping_for(source)` in `plugins/registry.py`, which also build the
 parameterised `banked:<base>:<size>` ids on demand. `core/mapping.py` keeps
-only the bytes on either side of the conversion, `read_pointer` and
-`pointer_bytes`.
+the bytes on either side of the conversion, `read_pointer` and
+`pointer_bytes`, and the signed reading and range above.
 
 ### 2.5 Fonts and boxes
 
@@ -428,10 +444,50 @@ bank each string's value is computed in, so a banked table is found without the
 bank being known first and the strings of one block may sit in different banks.
 Without `bank_of` the fallback is a guess, so a value is taken as found rather
 than checked back against it; a mapping that raises loses its combination and
-no more. Candidates are ranked by `run_explained()` — the strings the table
+no more. A `relative` mapping has no one value per string, so the addresses
+whose value — unsigned or two's complement — lands on a string under any
+offset tried are read out of the file once per size and byte order, shared by
+every relative mapping and offset (`_relative_candidates`): a word array per
+alignment over the addresses in reach of a string, or, for a three- or
+four-byte pointer with few enough strings, a search for the value's top two
+bytes, which a page of addresses asks one of two of per string, a page full of
+one of them read as words instead. Each combination checks those back through
+its mapping and records each address's own value for **Attach**. A pointer
+found inside the string it reaches is no pointer, whichever the mapping —
+`spans`, by string start, gives each record's bytes (`insert.record_spans`:
+its header and text, not a skip range read across), and its first byte counts
+without it — while one inside another of the strings is kept, since a block
+read over its own table holds the table in its strings. A relative pointer
+is fill (`_is_fill`) when, for some period `p` up to `FILL_PERIODS` (8), its
+bytes lie wholly inside a stretch where `data[i] == data[i + p]` throughout,
+at least `max(FILL_BYTES, FILL_REPEATS × p)` bytes long (eight bytes, four
+repeats), and the same word one period away inside that stretch reaches none
+of the strings; the stretch is read only as far either side as it takes to
+know (`_stretches`). Fill read as distances reaches whatever lies that far
+past every address of it, so a run of strings after a stretch of it looks
+like a table at the strings' own spacing. A run of neighbouring pointers of
+one value is such a stretch too — from three of them, where a byte either
+side carries the pattern on to eight — and keeps its pointers while each
+word one period on reaches a searched string. What the rule misses: fill
+shorter than eight bytes or four repeats, or of a pattern longer than eight
+bytes, is not recognised, so a stray hit can remain and a long pattern in
+front of strings spaced at its period still reads as a table; nor is fill
+whose every word has a searched string one period either side of the one it
+reaches, as strings a period apart, or identical strings, give it. What it
+costs a real table, in a run of three or more neighbouring pointers of one
+value: the pointer beside one whose string is not searched; the pointer
+beside a word outside the table that holds the same value; and the whole run
+when the value's bytes also repeat at a shorter period (`$4040`). A call
+into the mapping — `to_value`, `to_offset`, `bank_of` — that raises, or
+answers no number where one is due, loses its combination and nothing else
+(`_MappingFault`); a fault in the search's own code is not caught. `progress` is also
+called inside a long step, every `TICK` seconds, so a Stop is heard while one
+runs. Candidates are ranked by `run_explained()` — the strings the table
 itself reaches, a far better signal than the raw count because a short value
 turns up all over a file — then by how many strings they explain at all and how
-regular the stride between their addresses is. The stride is voted on by the
+regular the stride between their addresses is, and on a full tie a relative
+reading after a value search, which finds no coincidences of position. The
+stride is voted on by the
 strings whose value is not found all over the file (`STRAY_HITS`), and each
 address counts once however many strings share it, so a stretch of fill decides
 neither the stride nor the run. Each candidate carries both answers a result
@@ -616,13 +672,17 @@ save:  file(s) ◄─ CONTAINER.write ◄─ COMPRESSION.compress   ◄─ LAYOU
   maps is text and is read.
 - **Chains** — `_extract_range` reads a chained block as any range, and
   where it passes over fill in front of a string that does not begin a chain
-  it records the gap in `Extraction.chain_gaps` (by index, at the fill's
-  offset), with a notice for the first of each chain. `layout_block` hands a
-  chained block to `_layout_chain_pad` — every string in place, its room
-  (`chain_ends`) up to the next record of its chain (`chain_links`) or, for a
-  chain's last, its slot; `_encode_padded` encodes the text without the pad at
-  its edges (`_padded_parts`), then lays the pad (`pad_unit`) around it by the
-  alignment — or to `_layout_chain_pack`, which packs records with their
+  — a break, or a string it reached over a skip range — it records the gap
+  in `Extraction.chain_gaps` (by index, at the fill's offset), with a notice
+  for the first of each chain. `chain_heads` is every string that begins a
+  chain, from the breaks and the skips. `layout_block` hands a block whose
+  `chain_mode` is `PAD` to `_layout_chain_pad` — every string in place, its
+  room (`chain_ends`) up to the next record of its chain (`chain_links`) or,
+  for a chain's last, its slot, which stops at a skip range as any slot does;
+  a string a skip cuts in two is refused an edit; `_encode_padded` encodes
+  the text without the pad at its edges (`_padded_parts`), then lays the pad
+  (`pad_unit`) around it by the alignment — or, `PACK`, to
+  `_layout_chain_pack`, which packs records with their
   headers and refuses a moved chain start with no pointer. A range's pointer
   reaches its record (`record_start`), so `_pointer_splices` writes the new
   record start. `reads_back` refuses a gap the strings did not have
@@ -667,7 +727,7 @@ celPix's system, with these stages:
 | Container    | `read(ReadSource, ctx)`         | `write(data, WriteTarget, ctx)` | `describe`, `default_mapping`, `header_size` |
 | Compression  | `decompress(data, ctx)`         | `compress`                | `bind_tree(rom)`, `signature`         |
 | Charset      | `entries() -> Iterable[(bits, text)]` | —                   | `aliases()`, `codec`                  |
-| Mapping      | `to_offset(value, bank, ptr_address)`, `to_value(offset, bank, ptr_address)` | — | `sizes`, `needs_bank`, `bank_of(offset)` |
+| Mapping      | `to_offset(value, bank, ptr_address)`, `to_value(offset, bank, ptr_address)` | — | `sizes`, `needs_bank`, `bank_of(offset)`, `applies(data)`, `signed`, `relative` |
 
 - **Optional is optional.** Every hook in the last column is reached by
   `getattr` and probed: one that is absent and one that raises mean the same
@@ -709,7 +769,11 @@ celPix's system, with these stages:
   `_`-prefixed files and unknown folders are ignored, a loose plugin file in a
   root is reported, and every failure becomes a `PluginLoadIssue` rather than
   an exception: a bad preset or a module that raises on import cannot stop
-  startup. `ScopedRegistry` is what a module's `register(registry)` receives,
+  startup. A code plugin file a built-in has taken over —
+  `aliases.SUPERSEDED`, by the SHA-256 of its text with line endings made LF,
+  such as the arcade samples' `tms34010_bits.py` — is passed over before its
+  trust prompt while that built-in is registered: not run, not reported, not
+  counted as declined. Any other file registering the id is a duplicate. `ScopedRegistry` is what a module's `register(registry)` receives,
   checking the folder's stage and the required methods and recording an issue
   instead of raising. A `.tbl` charset is read by the `table_reader` its caller
   passes in (`app.py` wraps `read_table_file`): reading a table file is
@@ -885,7 +949,7 @@ and aliases for renamed plugin ids.
 
 ```jsonc
 {
-  "version": 3,
+  "version": 4,
   "current": 1,                                      // opt, an index into entries
   "entries": [
     { "kind": "file", "name": "rom.nes", "path": "rom.nes",
@@ -967,6 +1031,24 @@ a pointer with `"runs_joined": true` (`Entry.runs_joined`), and the first
 extraction cuts each saved run at its end codes over the strings the block
 reads as now (`unjoined_states`, `split_run_text`): the mark goes to every
 string of the run, the notes to its first.
+
+Version 4 chains a block with skip ranges, where version 3 read one that
+asked for a chain as not chained and wrote it slotted. Its migration drops
+`chain=` from such a block's line (`_unchain_skipped`), so the block opens
+unchained as it was; `breaks=`, `pad=` and `align=` stay, saying nothing
+without it. A block's `config` is the one line the step covers: the
+`session` reading a file or a bookmark keeps is a view, which reads no chain,
+and a block made from a view is cut to its region without the skip ranges
+(`with_region`), so such a line made a chained block in version 3 as it does
+now, and it loads as written. Two things carry a version and walk forward through the same
+steps: a project file, and a clipboard payload of copied entries
+(`entries_from_payload`; one from a newer build, or saying none, is read as
+it stands). A configuration line that arrives without one — a script's
+`@block` line, a line typed or pasted into a block — is read as the current
+version reads it, so `chain=` with `skips=` there is a chain. Cartographer and
+Atlas have no chain form, so their imports bring none. The linter restates the
+step: `chain=` with `skips=` in a file older than version 4 is `W634`, and the
+rest of that line is judged as the load leaves it.
 
 ### 6.4 Exchange
 

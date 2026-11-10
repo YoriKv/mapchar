@@ -37,6 +37,15 @@ _PACKED_TIP = "Strings laid end to end, every pointer rewritten"
 _PACKED_FORCED = "Unavailable: a write cannot lay end to end what it has to step around"
 """What the Write picker says of itself, with and without something forcing
 slotted."""
+_PACK_TIP = (
+    "Records laid back to back, headers and all; each chain's first "
+    "string needs its pointer attached"
+)
+_PACK_FORCED = (
+    "Unavailable: nothing can be packed across a skip range, so each string is "
+    "padded inside itself"
+)
+"""What the Chain picker says of Pack, with and without skip ranges."""
 
 
 class FillEdit(QLineEdit):
@@ -126,12 +135,7 @@ class WritingPicker(PopupPicker):
                 ChainMode.PAD,
                 "Nothing moves: a shorter text is padded inside its string",
             ),
-            (
-                "Pack",
-                ChainMode.PACK,
-                "Records laid back to back, headers and all; each chain's first "
-                "string needs its pointer attached",
-            ),
+            ("Pack", ChainMode.PACK, _PACK_TIP),
         ):
             self.chain_mode.addItem(label, mode)
             self.chain_mode.setItemData(
@@ -243,16 +247,29 @@ class WritingPicker(PopupPicker):
         self.write_mode.setToolTip(_MODE_FORCED if forced else _MODE_TIP)
         self._say()
 
-    def show_chained(self, chained: bool) -> None:
+    def show_chained(self, chained: bool, packable: bool = True) -> None:
         """Offer the chain's settings, and grey the write mode they stand in
         for, where the block is read as chains; the other way round where it
-        is not."""
+        is not.
+
+        Without ``packable`` — skip ranges, which nothing is packed across —
+        Pack is greyed and says what a block holding it is written as: padded
+        inside its strings, until the skips are gone.
+        """
         self._chained = chained
         self.write_mode.setEnabled(not chained)
         if chained:
             self.write_mode.setToolTip(_MODE_CHAINED)
         for field in (self.chain_mode, self.pad, self.align):
             field.setEnabled(chained)
+        at = self.chain_mode.findData(ChainMode.PACK)
+        self.chain_mode.setItemText(
+            at, "Pack" if packable else "Pack (pad inside string)"
+        )
+        self.chain_mode.model().item(at).setEnabled(packable)
+        self.chain_mode.setItemData(
+            at, _PACK_TIP if packable else _PACK_FORCED, Qt.ItemDataRole.ToolTipRole
+        )
         self._say()
 
     def _say(self) -> None:

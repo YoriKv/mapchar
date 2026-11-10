@@ -9,7 +9,7 @@ from mapchar.core.block import NestedPointerSource, block_bound
 from mapchar.core.document import Document
 from mapchar.core.table import TableSet
 from mapchar.engines.decode import RunResult
-from mapchar.pipeline.insert import record_start
+from mapchar.pipeline.insert import chain_heads, record_start
 from mapchar.pipeline.pointers import PointerCell, pointer_cells
 from mapchar.pipeline.view_read import decode_strings, target_string
 from mapchar.project.progress import progress_text
@@ -222,7 +222,7 @@ class RefreshMixin:
         if cfg is None or block.doc is None or not cfg.chained:
             return set(), set()
         strings = block.doc.strings
-        starts = set(cfg.chain_starts(len(strings)))
+        starts = chain_heads(cfg, strings)
         heads = {
             record_start(r, cfg) - self._offset for r in strings if r.index in starts
         }

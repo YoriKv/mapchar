@@ -275,10 +275,12 @@ class BlockConfig:
     """The game reads the strings back to back — it finishes one and starts
     the next at the very next byte, with no pointer of its own — and a write
     keeps them so this way; ``None`` for strings found one by one. Applies
-    only where :func:`chain_refusal` has nothing against it."""
+    only where :func:`chain_refusal` has nothing against it, and is written
+    as :attr:`chain_mode` says."""
     chain_breaks: tuple[int, ...] = ()
     """The indices of the strings that begin a new chain: the one before is
-    not tied to them. Without any the whole block is one chain."""
+    not tied to them. Without any — and without a skip range between two
+    strings (:func:`skip_between`) — the whole block is one chain."""
     pad: bytes | None = None
     """What pads a shorter text inside a chained string; ``None`` for the
     table's space."""
@@ -330,6 +332,17 @@ class BlockConfig:
         nothing against it (:func:`chain_refusal`)."""
         return self.chain is not None and chain_refusal(self) is None
 
+    @property
+    def chain_mode(self) -> ChainMode | None:
+        """How a write lays out the block's chains: :attr:`chain`, except that
+        skip ranges leave nothing to pack across, so a block with any pads
+        inside its strings whatever it holds; ``None`` where it is not
+        :attr:`chained`. The block keeps the mode it holds, so taking the
+        skips away packs it again."""
+        if not self.chained:
+            return None
+        return ChainMode.PAD if self.skips else self.chain
+
     def chain_starts(self, count: int) -> list[int]:
         """The indices of ``count`` strings that begin a chain, in order: the
         first string and every break."""
@@ -340,19 +353,35 @@ def chain_refusal(config: BlockConfig) -> str | None:
     """Why ``config``'s strings cannot be chained, or ``None`` when they can.
 
     Chains are read over a range, of strings whose length varies: fixed-length
-    strings are back to back already. A chain across a skip range, or over a
-    realigned slot, says nothing of which bytes the game reads as the string,
-    so it is refused rather than guessed.
+    strings are back to back already. A chain over a realigned slot says
+    nothing of which bytes the game reads as the string, so it is refused
+    rather than guessed. Skip ranges are no refusal: the bytes one steps over
+    are not text, so a skip ends the chain in front of it
+    (:func:`skip_between`).
     """
     if not isinstance(config.source, RangeSource):
         return "chains are read over a range"
     if not isinstance(config.string_type, EndToken | Pascal):
         return "only strings that end at an end token or a length prefix chain"
-    if config.skips:
-        return "a chain across a skip range is not defined"
     if config.realign[0]:
         return "a chain over realigned slots is not defined"
     return None
+
+
+def skip_between(skips, end: int, record: int) -> bool:
+    """Whether reading from ``end``, where one string stops, to ``record``,
+    where the next one's record begins, stepped over a skip range: one begins
+    in between — right at ``end`` too — or the record lies behind ``end``,
+    where only a skip that lands back can have taken the reading. Positions
+    and ``skips`` in one unit, bytes or bits.
+
+    The bytes a skip steps over are not text, so the game does not read on
+    from one string into the next across them: the string after a skip
+    begins a chain of its own (:attr:`BlockConfig.chain_breaks`).
+    """
+    if not skips:
+        return False
+    return record < end or any(end <= a < record for a, b in skips if a != b)
 
 
 def default_write_mode(pointers: bool, skips: bool) -> WriteMode:

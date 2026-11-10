@@ -29,7 +29,9 @@ def lint(path: str, ids: KnownIds, *, check_files: bool = True) -> Report:
         # project*, so it is resolved per file rather than once per run.
         ids=for_project(ids, path),
         report=report,
-        entries=[read_entry(at, raw) for at, raw in enumerate(doc.entries)],
+        entries=[
+            read_entry(at, raw, doc.version) for at, raw in enumerate(doc.entries)
+        ],
         check_files=check_files,
     )
     crossref.resolve(ctx)

@@ -11,7 +11,7 @@ from __future__ import annotations
 import difflib
 from dataclasses import dataclass, field
 
-from mapchar_lint.config import ConfigReading, read_config
+from mapchar_lint.config import ConfigReading, as_loaded, read_config
 from mapchar_lint.diagnostics import Diagnostic, Report, Severity
 from mapchar_lint.document import ProjectDocument
 from mapchar_lint.known import KnownIds
@@ -56,8 +56,9 @@ class EntryView:
         return self.kind in CHILD_KINDS
 
 
-def read_entry(index: int, raw: object) -> EntryView:
-    """``raw`` read the way the loader reads it, mistakes preserved."""
+def read_entry(index: int, raw: object, version: int) -> EntryView:
+    """``raw``, of a file written at ``version``, read the way the loader reads
+    it once the file is walked forward, mistakes preserved."""
     causes: list[Cause] = drop_causes(raw)
     if not isinstance(raw, dict):
         return EntryView(index=index, raw={}, causes=causes)
@@ -70,7 +71,7 @@ def read_entry(index: int, raw: object) -> EntryView:
         label = path.replace("\\", "/").rsplit("/", 1)[-1]
     config = None
     if kind == "block" and raw.get("config"):
-        config = read_config(raw["config"])
+        config = read_config(as_loaded(raw["config"], version))
     return EntryView(
         index=index,
         raw=raw,

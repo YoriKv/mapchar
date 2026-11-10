@@ -313,10 +313,10 @@ def test_missing_paths_and_relocate_follow_every_reference(tmp_path):
 
 def test_load_tolerates_a_missing_entry_list_and_a_boolean_current(tmp_path):
     proj = tmp_path / "p.mapchar"
-    proj.write_text('{"version": 3, "current": true}')
+    proj.write_text(f'{{"version": {PROJECT_VERSION}, "current": true}}')
     loaded = load_project(str(proj))
     assert loaded.entries == [] and loaded.current is None
-    assert loaded.migrated_from is None and loaded.version == 3
+    assert loaded.migrated_from is None and loaded.version == PROJECT_VERSION
 
 
 def test_load_walks_migrations_forward(tmp_path, monkeypatch):
@@ -794,7 +794,7 @@ def test_a_version_1_block_whose_fixed_strings_stop_at_an_end_is_marked(tmp_path
         )
     )
     loaded = load_project(str(proj))
-    assert loaded.migrated_from == 1 and loaded.version == 3
+    assert loaded.migrated_from == 1 and loaded.version == PROJECT_VERSION
     names, text = loaded.entries[1:]
     assert names.fixed_ends_shown and not text.fixed_ends_shown
     saved = project_dict(loaded.entries, None, str(tmp_path))["entries"]
@@ -953,7 +953,7 @@ def test_a_version_2_block_that_reads_several_strings_a_pointer_is_marked(
         )
     )
     loaded = load_project(str(proj))
-    assert loaded.migrated_from == 2 and loaded.version == 3
+    assert loaded.migrated_from == 2 and loaded.version == PROJECT_VERSION
     menu, text = loaded.entries[1:]
     assert menu.runs_joined and not text.runs_joined
     saved = project_dict(loaded.entries, None, str(tmp_path))["entries"]

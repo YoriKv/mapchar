@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from mapchar.capture import bitlayout
 from mapchar.capture.consoles import Console
 from mapchar.capture.trace import Result, layout_from_json
+from mapchar.core.mapping import pointer_offset
 from mapchar.plugins.builtins.mappings import parse_banked
 
 LINE_FILL = " "
@@ -664,19 +665,24 @@ def _bank(m, target: int) -> int:
     return bank_of(target) if bank_of else 0
 
 
-def _to_offset(m, value: int, bank: int) -> int | None:
+def _to_offset(m, value: int, size: int, bank: int, at: int) -> int | None:
+    """Where ``m`` reads a ``size``-byte pointer at ``at`` holding ``value``
+    as reaching, or None, a raise included."""
     try:
-        return m.to_offset(value, bank)
+        return pointer_offset(m, value, size, bank, at)
     except Exception:  # noqa: BLE001 - a mapping is a plugin
         return None
 
 
-def _mapping_for(value: int, target: int, size: int, console: Console, mappings: dict):
-    """``(mapping id, offset, bank)`` that turns ``value`` into ``target``,
-    the console's own mappings first, a constant added to the value last."""
+def _mapping_for(
+    value: int, target: int, size: int, console: Console, mappings: dict, at: int = 0
+):
+    """``(mapping id, offset, bank)`` that turns ``value``, held at ``at``,
+    into ``target``, the console's own mappings first, a constant added to the
+    value last."""
     for mid, m in _mappings(console, mappings, size):
         bank = _bank(m, target)
-        off = _to_offset(m, value, bank)
+        off = _to_offset(m, value, size, bank, at)
         if off is None:
             continue
         if off == target:
@@ -707,7 +713,11 @@ def _widen(
             continue
         value = int.from_bytes(rom[at : at + wide], slot.endian)
         for _mid, m in _mappings(console, mappings, wide):
-            if _to_offset(m, value, 0) == _to_offset(m, value, 0x5A) == target:
+            if (
+                _to_offset(m, value, wide, 0, at)
+                == _to_offset(m, value, wide, 0x5A, at)
+                == target
+            ):
                 return _Slot(at, wide, slot.endian, True, slot.why)
     return None
 
@@ -722,7 +732,7 @@ class _Hit:
 
 def _key(sl: _Slot, rom: bytes, target: int, console: Console, mappings: dict):
     value = int.from_bytes(rom[sl.at : sl.at + sl.size], sl.endian)
-    mid, off, bank = _mapping_for(value, target, sl.size, console, mappings)
+    mid, off, bank = _mapping_for(value, target, sl.size, console, mappings, sl.at)
     return sl.size, sl.endian, mid, off, bank
 
 
@@ -848,7 +858,7 @@ def _table(e: Engine, rom: bytes, key: tuple, hits: list[_Hit], mappings: dict):
         return int.from_bytes(rom[slot : slot + size], endian)
 
     def target(slot: int) -> int | None:
-        t = _to_offset(m, raw(slot), bank) if m else raw(slot)
+        t = _to_offset(m, raw(slot), size, bank, slot) if m else raw(slot)
         return None if t is None else t + off
 
     def fresh(slot: int) -> int | None:

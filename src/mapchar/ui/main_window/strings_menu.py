@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QMenu
 from mapchar.core.block import Align, ChainMode, Status
 from mapchar.core.errors import EncodeError
 from mapchar.pipeline.extract import extract
-from mapchar.pipeline.insert import apply_splices, repair_chains
+from mapchar.pipeline.insert import apply_splices, repair_chains, skip_heads
 from mapchar.project.entry import Entry
 from mapchar.ui.find_replace import BLOCK, PROJECT
 from mapchar.ui.main_window.string_rows import same_key
@@ -184,7 +184,9 @@ class StringsMenuMixin:
             return
         cfg = entry.config
         breaks = set(cfg.chain_breaks)
-        chosen = {i for i in indices if i > 0}
+        # A string a skip range stands in front of begins a chain already.
+        skipped = skip_heads(cfg, entry.doc.strings)
+        chosen = {i for i in indices if i > 0 and i not in skipped}
         if not chosen:
             return
         first = min(chosen)
@@ -271,13 +273,22 @@ class StringsMenuMixin:
             return
         menu.addSeparator()
         rec = self._string(self._entry, indices[0])
+        skipped = skip_heads(cfg, self._entry.doc.strings)
         brk = menu.addAction("Chain &Break", lambda: self._toggle_chain_break(indices))
         brk.setCheckable(True)
-        brk.setChecked(indices[0] in cfg.chain_breaks)
-        brk.setEnabled(any(i > 0 for i in indices))
-        brk.setToolTip("The string begins a chain of its own")
+        brk.setChecked(indices[0] in cfg.chain_breaks or indices[0] in skipped)
+        brk.setEnabled(any(i > 0 and i not in skipped for i in indices))
+        if indices[0] in skipped and not brk.isEnabled():
+            brk.setToolTip(
+                "Unavailable: a skip range in front of it begins its chain already"
+            )
+            # The reason is the item's tooltip, which a menu shows only when
+            # asked to.
+            menu.setToolTipsVisible(True)
+        else:
+            brk.setToolTip("The string begins a chain of its own")
         align = menu.addMenu("A&lign")
-        align.setEnabled(cfg.chain is ChainMode.PAD)
+        align.setEnabled(cfg.chain_mode is ChainMode.PAD)
         group = QActionGroup(align)
         for value, name in ALIGN_NAMES.items():
             label = f"{name} ({cfg.align.value})" if value is None else name

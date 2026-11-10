@@ -9,6 +9,11 @@ bank an offset sits in, so that a search for the pointers reaching it need not
 be told the bank it would have to guess
 (:func:`mapchar.engines.pointers.discover`). It is optional, since a mapping
 whose banks are not the file's own order may not be able to say.
+
+The relative mappings say ``relative``, so that discovery reads each address's
+own value rather than searching for one value per string, and the signed one
+says ``signed``, so that whoever reads a pointer sign-extends it at the
+pointer's own size (:func:`mapchar.core.mapping.pointer_offset`).
 """
 
 from __future__ import annotations
@@ -32,12 +37,25 @@ class Relative:
     info = PluginInfo("relative", "Relative to the pointer", Stage.MAPPING, "Generic")
     sizes = (1, 2, 3, 4)
     needs_bank = False
+    relative = True
 
     def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
         return ptr_address + value
 
     def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
         return offset - ptr_address
+
+
+class RelativeSigned(Relative):
+    """A signed displacement from the pointer, as the 68000's ``lea d16(pc)``
+    holds: two's complement at the pointer's own size, so one table reaches
+    strings before it and after it alike. A displacement past that size's
+    signed range is refused on write."""
+
+    info = PluginInfo(
+        "relative-signed", "Relative to the pointer, signed", Stage.MAPPING, "Generic"
+    )
+    signed = True
 
 
 class Banked:
@@ -247,6 +265,29 @@ class GbaMapping:
         return 0x08000000 + offset
 
 
+class BitAddress:
+    """A CPU that addresses bits rather than bytes: payload byte ``o`` is
+    ``base + 8 * o``. A value below ``base``, or off a byte boundary, reaches
+    no byte. Registered as ``tms34010-bits``, the TMS34010 of Midway's T-Unit
+    and Wolf-Unit, whose program ROM sits at ``$FF800000``."""
+
+    sizes = (4,)
+    needs_bank = False
+
+    def __init__(self, base: int, id: str, name: str, category: str = "Generic"):
+        self.base = base
+        self.info = PluginInfo(id, name, Stage.MAPPING, category)
+
+    def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
+        bits = value - self.base
+        if bits < 0 or bits & 7:
+            return None
+        return bits >> 3
+
+    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
+        return self.base + 8 * offset
+
+
 def parse_banked(id: str) -> Banked | None:
     """``banked:<base hex>:<size hex>`` built on demand."""
     parts = id.split(":")
@@ -262,6 +303,7 @@ def register(registry) -> None:
     for plugin in (
         Linear(),
         Relative(),
+        RelativeSigned(),
         LoRom(),
         HiRom(),
         ExHiRom(),
@@ -271,5 +313,11 @@ def register(registry) -> None:
         Banked(0x4000, 0x8000, "banked"),
         Banked(0x4000, 0xC000, "nes_c000"),
         Banked(0x2000, 0x8000, "nes_8000_2000"),
+        BitAddress(
+            0xFF800000,
+            "tms34010-bits",
+            "TMS34010 bit address (program ROM at $FF800000)",
+            "Midway",
+        ),
     ):
         registry.register(plugin)

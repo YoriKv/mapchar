@@ -18,7 +18,7 @@ pointers on the strings.
 from __future__ import annotations
 
 from mapchar.engines.pointers import discover
-from mapchar.pipeline.insert import record_start
+from mapchar.pipeline.insert import record_spans, record_start
 from mapchar.plugins.base import Stage
 from mapchar.plugins.registry import resolve_mapping
 from mapchar.project.entry import Entry
@@ -53,7 +53,14 @@ class PointerDiscoveryMixin:
             return
         # A record is pointed at where its header begins.
         picked = [rec] if setup.selected_only() and rec is not None else None
-        starts = [record_start(r, entry.config) for r in picked or entry.doc.strings]
+        records = picked or entry.doc.strings
+        starts = [record_start(r, entry.config) for r in records]
+        # The bytes each record is made of — its header, and its text without
+        # a skip range inside it: no pointer sits inside its own string.
+        spans: dict[int, list[tuple[int, int]]] = {}
+        for r in records:
+            at = record_start(r, entry.config)
+            spans.setdefault(at, []).extend(record_spans(r, entry.config))
         mappings = {
             mid: resolve_mapping(self.registry, mid)
             for mid in self.registry.ids(Stage.MAPPING)
@@ -78,6 +85,7 @@ class PointerDiscoveryMixin:
                     # already read in it, so it is the better guess than zero.
                     bank=getattr(entry.config.source, "bank", 0),
                     progress=run.progress,
+                    spans=spans,
                 )
             finally:
                 self._pointer_progress = None

@@ -257,8 +257,8 @@ class Mapping(Protocol):
 
     def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int: ...
 
-    # Optional, both read by ``getattr`` with a default, so a mapping that
-    # declares neither still resolves:
+    # Optional, each read by ``getattr`` with a default, so a mapping that
+    # declares none of them still resolves:
     # sizes: tuple[int, ...]
     #     The pointer widths in bytes this mapping accepts; absent offers every
     #     width the block does.
@@ -275,6 +275,17 @@ class Mapping(Protocol):
     #     4 MiB, the SA-1 only when the header names it). Pointer discovery
     #     skips one that does not; choosing it by hand is still offered.
     #     Absent, it always applies.
+    # signed: bool
+    #     Whether the value is two's complement at the pointer's own size. The
+    #     mapping never sees that size, so whoever reads a pointer sign-extends
+    #     its value before ``to_offset`` (``core.mapping.pointer_offset``), and
+    #     a write takes a negative ``to_value`` as its two's complement and
+    #     refuses one past the size's signed range. Absent is False: unsigned.
+    # relative: bool
+    #     Whether ``to_offset`` is ``ptr_address`` plus the value, so that each
+    #     pointer to a string holds a value of its own. Pointer discovery reads
+    #     the value at every address for one, rather than searching for the
+    #     one value a string would have. Absent is False.
 
 
 REQUIRED_METHODS: dict[Stage, tuple[str, ...]] = {

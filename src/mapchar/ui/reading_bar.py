@@ -725,11 +725,14 @@ class ReadingBar(WrapBar):
         why = self._chain_refusal()
         self.chain.setToolTip(
             "The game reads the strings back to back: one ends where the next "
-            "begins, with no pointer of its own"
+            "begins, with no pointer of its own; a skip range ends a chain"
             if why is None
             else f"Unavailable: {why}"
         )
-        self.writing.show_chained(block and why is None and self.chain.isChecked())
+        self.writing.show_chained(
+            block and why is None and self.chain.isChecked(),
+            packable=not self.skips.value(),
+        )
 
     def _chain_refusal(self) -> str | None:
         """Why the reading the controls show cannot be chained, or ``None``

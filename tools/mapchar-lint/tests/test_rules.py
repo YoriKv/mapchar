@@ -292,10 +292,40 @@ def test_chain_words(project, doc, files):
         ("E629", CHAINED + " chain=pad align=middle"),
         ("E630", CHAINED + " chain=pad pad=$ZZ"),
         ("E606", CHAINED + " chain=pad breaks=1,x"),
-        ("W631", RECORDS + " chain=pad"),
         ("W631", CHAINED.replace("pascal:1", "fixed:4") + " chain=pack"),
+        ("W631", CHAINED + " realign=2:0 chain=pad"),
+        ("W633", CHAINED + " skips=$8540>$8548 chain=pack"),
     ):
         assert code in project(doc(block={"config": line}), rom), line
+    # Skip ranges end a chain rather than refuse one: padding inside the
+    # strings is defined across them.
+    for line in (RECORDS + " chain=pad", CHAINED + " skips=$8540>$8548 chain=pad"):
+        assert project(doc(block={"config": line}), rom) == [], line
+    assert project(doc(version=3, block={"config": clean}), rom) == ["I104"]
+
+
+def test_an_older_file_s_chain_over_skips_is_judged_as_it_loads(project, doc, files):
+    """A version 3 file read a block asking for a chain over skip ranges as
+    not chained, and opens so: the dropped word is said once, and the rest of
+    the line is judged without it — no "cannot chain", no "written as pad"."""
+    rom = {**files, "rom.nes": 0x40000}
+    skipped = CHAINED + " skips=$8540>$8548"
+    for line in (
+        RECORDS + " chain=pad",
+        skipped + " chain=pad",
+        skipped + " chain=pack",
+        skipped + " realign=2:0 chain=pad",
+        skipped.replace("pascal:1", "fixed:4") + " chain=pad",
+    ):
+        assert sorted(project(doc(version=3, block={"config": line}), rom)) == [
+            "I104",
+            "W634",
+        ], line
+    # Written at the current version, the same lines say what they are now.
+    assert project(doc(block={"config": skipped + " chain=pad"}), rom) == []
+    assert project(doc(block={"config": skipped + " chain=pack"}), rom) == ["W633"]
+    fixed = skipped.replace("pascal:1", "fixed:4") + " chain=pad"
+    assert project(doc(block={"config": fixed}), rom) == ["W631"]
 
 
 def test_config_lines_the_samples_use_are_clean(project, doc, files):

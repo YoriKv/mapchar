@@ -27,7 +27,7 @@ from mapchar.core.block import (
     PointerSource,
     PointerTableSource,
 )
-from mapchar.core.mapping import read_pointer
+from mapchar.core.mapping import pointer_offset, read_pointer
 from mapchar.core.notices import Notice
 from mapchar.plugins.registry import mapping_for
 
@@ -68,9 +68,9 @@ def _within(addresses: range, lo: int | None, hi: int | None) -> range:
 
 def pointer_target(mapping, source: PointerSource, value, address, size) -> int | None:
     """Where a pointer at ``address`` holding ``value`` points in data of
-    ``size`` bytes: mapped, moved by the source's offset, and ``None`` when it
-    lands outside."""
-    target = mapping.to_offset(value, source.bank, address)
+    ``size`` bytes: mapped at the source's pointer size, moved by the source's
+    offset, and ``None`` when it lands outside."""
+    target = pointer_offset(mapping, value, source.size, source.bank, address)
     if target is None:
         return None
     target += source.offset

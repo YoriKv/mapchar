@@ -3,7 +3,18 @@ settings, breaks and alignment per string, the grid's marks and the repair."""
 
 from __future__ import annotations
 
-from mapchar.core.block import Align, ChainMode, Pascal, RangeSource
+from dataclasses import replace
+
+from PySide6.QtWidgets import QMenu
+
+from mapchar.core.block import (
+    Align,
+    BlockConfig,
+    ChainMode,
+    EndToken,
+    Pascal,
+    RangeSource,
+)
 from mapchar.project.projectfile import load_project, save_project
 from mapchar.ui.strings_view import COL_INDEX, COL_TRANSLATION, PADDED_ROLE
 from window_helpers import ASCII_TABLE, add_block, open_rom_and_table
@@ -112,3 +123,76 @@ def test_repair_chains_closes_the_gap_a_slotted_write_left(window, tmp_path):
     assert not block.doc.chain_gaps
     window.undo_stack.undo()
     assert block.doc.chain_gaps == {1: 5}
+
+
+def test_skip_ranges_end_a_chain_and_leave_nothing_to_pack(window, tmp_path):
+    """Records with data between their texts: Chained stays offered, each
+    text after a skip begins a chain, Pack is greyed and says the block pads
+    inside its strings, and an edit keeps the text's length — and undoes."""
+    head = bytes([0x80] * 4)
+    data = head + b"HELLO THERE\0" + b"\x01\x00" + head + b"BYE\0" + b"\xff" * 4
+    file_entry = open_rom_and_table(window, tmp_path, data, ASCII_TABLE)
+    block = add_block(
+        window,
+        file_entry,
+        "messages",
+        RangeSource(4, 26),
+        EndToken(),
+        skips=((16, 22),),
+        chain=ChainMode.PACK,
+    )
+    window._show_view("strings")
+    bar = window.reading_bar
+    writing = bar.writing
+    assert bar.chain.isEnabled() and bar.chain.isChecked()
+    assert block.config.chained and block.config.chain_mode is ChainMode.PAD
+    at = writing.chain_mode.findData(ChainMode.PACK)
+    assert not writing.chain_mode.model().item(at).isEnabled()
+    assert writing.chain_mode.itemText(at) == "Pack (pad inside string)"
+    assert writing.itemText(0).startswith("Chained, pack (pad inside string)")
+    table = window.strings.table
+    assert table.item(0, COL_INDEX).text() == "» 0"
+    assert table.item(1, COL_INDEX).text() == "» 1"
+    # The skip already begins the second string's chain: no break to toggle.
+    menu = QMenu()
+    window._chain_menu(menu, [1])
+    brk = next(a for a in menu.actions() if a.text() == "Chain &Break")
+    assert brk.isChecked() and not brk.isEnabled()
+    assert brk.toolTip().startswith("Unavailable: a skip range")
+    assert menu.toolTipsVisible()
+    window._toggle_chain_break([1])
+    assert block.config.chain_breaks == ()
+    # The Hex view marks where each chain begins, past the skip too.
+    window._show_view("raw")
+    marks = {window._offset + r for r in window.raw._model.chain_starts}
+    assert marks == {4, 22}
+    window._show_view("strings")
+    window._on_translation_edited(0, "HI[end]")
+    assert file_entry.doc.data[4:16] == b"HI" + b" " * 9 + b"\0"
+    assert file_entry.doc.data[16:] == data[16:]
+    window.undo_stack.undo()
+    assert file_entry.doc.data == data
+    # Without the skips the block packs again.
+    window._push_block_edit(block, config=replace(block.config, skips=()))
+    assert block.config.chain_mode is ChainMode.PACK
+    assert writing.chain_mode.model().item(at).isEnabled()
+    assert writing.chain_mode.itemText(at) == "Pack"
+
+
+def test_a_block_made_from_a_view_with_skips_takes_its_chain(window, tmp_path):
+    """A file's reading that asks for a chain over skip ranges — as a version
+    3 project keeps it — makes a block cut to the selection without the skips,
+    so the block is a chain, as version 3 made it."""
+    head = bytes([0x80] * 4)
+    data = head + b"HELLO\0BYE\0\x01\x00" + head + b"FIGHT!\0"
+    file_entry = open_rom_and_table(window, tmp_path, data, ASCII_TABLE)
+    file_entry.session.config = BlockConfig(
+        RangeSource(4, len(data)),
+        EndToken(),
+        "main",
+        skips=((14, 20),),
+        chain=ChainMode.PACK,
+    )
+    window._activate_entry(file_entry)
+    _file, cfg = window._proposed_block(4, 14)
+    assert cfg.skips == () and cfg.chained and cfg.chain_mode is ChainMode.PACK

@@ -49,7 +49,7 @@ something at or above `--fail-on` (default `error`) is found, **0** otherwise,
 | `E3xx` `W3xx` | the disk: missing, empty or folder paths, one file opened twice, a block's addresses, a bookmark or a slot past the end of its file (measured over `path` and `extra_paths` joined) |
 | `E4xx` `W4xx` `I4xx` | plugin ids — container, compression, mapping — and table dialects, renamed ids, a pointer size the mapping does not offer |
 | `E5xx` `W5xx` | references between entries: parents, folders, names two blocks share, the table a block, a session or an include names, table ids two tables share |
-| `E60x`–`E632` | the block's configuration line, read as `parse_config` reads it: what raises (the block is dropped — `E632` a length field of no type or outside its record) and what it passes over (`tabel=main`, `stride` on a list source, `header` where pointers reach runs, `length_offset` without `length`) or misreads (`endian=Big` reads as little) |
+| `E60x`–`W634` | the block's configuration line, read as `parse_config` reads it once the file is walked forward: what raises (the block is dropped — `E632` a length field of no type or outside its record) and what it passes over (`tabel=main`, `stride` on a list source, `header` where pointers reach runs, `length_offset` without `length`, `W631` a chain the block cannot have, `W634` `chain=` with `skips=` in a file older than version 4, which the load drops) or misreads (`endian=Big` reads as little, `W633` `chain=pack` with skip ranges written as `chain=pad`) |
 | `E64x` `W65x` | a block's saved strings, text box, remembered `room` and compression slot |
 | `E7xx` `W7xx` | a table entry's overlay and includes |
 

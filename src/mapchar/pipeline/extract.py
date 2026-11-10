@@ -26,6 +26,7 @@ from mapchar.core.block import (
     chain_refusal,
     fill_reads_as_padding,
     grouped_strings,
+    skip_between,
 )
 from mapchar.core.fill import fill_bits, is_fill
 from mapchar.core.notices import Level, Notice
@@ -582,7 +583,9 @@ def _extract_range(
     they were meant to stand, and each such string is kept in
     :attr:`~mapchar.core.block.Extraction.chain_gaps`, with a notice for the
     first of each chain — the game's reading of the rest of that chain is off
-    from there.
+    from there. A string the reading reached over a skip range begins a chain
+    (:func:`~mapchar.core.block.skip_between`), so fill in front of it is
+    never a gap.
     """
     strings: list[StringRecord] = []
     notices: list[Notice] = []
@@ -613,7 +616,11 @@ def _extract_range(
             start += pad_run(bits, start, pad, min(stop_bit, reach))
             if start >= stop_bit:
                 break
-            if breaks is not None and start > pos and len(strings) not in breaks:
+        if breaks is not None and strings and len(strings) not in breaks:
+            if skip_between(skips, pos, follow_skips(start, skips)):
+                # Reached over a skip range: the first of a chain of its own.
+                breaks.add(len(strings))
+            elif start > pos:
                 gaps[len(strings)] = pos // 8
         # A string that begins on a skip range begins where it lands, and one
         # behind a record header begins past it — the header's own bytes step

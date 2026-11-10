@@ -6,6 +6,7 @@ case the tests hold the feature to."""
 
 from __future__ import annotations
 
+import json
 import struct
 from dataclasses import replace
 
@@ -20,12 +21,14 @@ from mapchar.core.block import (
     PointerRef,
     chain_refusal,
     recuts_strings,
+    with_region,
 )
 from mapchar.core.errors import EncodeError
 from mapchar.core.table import TableSet
 from mapchar.pipeline.extract import extract
 from mapchar.pipeline.insert import (
     apply_splices,
+    chain_heads,
     layout_block,
     pad_unit,
     padded_view,
@@ -35,6 +38,14 @@ from mapchar.pipeline.insert import (
 )
 from mapchar.project.formats.blockspec import format_config, parse_config
 from mapchar.project.formats.table_native import parse_native
+from mapchar.project.projectfile import (
+    CLIPBOARD_KEY,
+    PROJECT_VERSION,
+    entries_from_payload,
+    entries_payload,
+    load_project,
+    project_dict,
+)
 
 ROM = "Mortal Kombat II (USA, Europe).gb"
 MOD = "gb_mk2_us_mod.gb"
@@ -102,10 +113,16 @@ def test_what_cannot_chain_says_why():
     assert chain_refusal(base) is None and base.chained
     fixed = replace(base, string_type=FixedLength(4))
     assert chain_refusal(fixed) and not fixed.chained
-    skipped = replace(base, skips=((0x86B0, 0x86B2),))
-    assert "skip" in chain_refusal(skipped)
     realigned = replace(base, realign=(2, 0))
     assert "realign" in chain_refusal(realigned)
+    # A skip range ends a chain rather than refusing one, and nothing is
+    # packed across it: a block that holds Pack pads inside its strings.
+    skipped = replace(base, skips=((0x86B0, 0x86B2),))
+    assert chain_refusal(skipped) is None and skipped.chain_mode is ChainMode.PAD
+    packed = replace(skipped, chain=ChainMode.PACK)
+    assert packed.chained and packed.chain_mode is ChainMode.PAD
+    assert replace(packed, skips=()).chain_mode is ChainMode.PACK
+    assert fixed.chain_mode is None
 
 
 def test_chaining_leaves_the_strings_where_they_are_cut():
@@ -370,3 +387,358 @@ def test_off_by_default_the_sample_blocks_write_as_before(mk2):
     data, ts = mk2
     res, out = relayout(data, parse_config(OUTWORLD), ts, {0: "NOW YOU RETURN"})
     assert res.ok and out[0x86B7:0x86BC] == b"\xff" * 5
+
+
+# -- skip ranges between the strings ------------------------------------------
+#
+# The arcade Mortal Kombat games (Midway T-Unit) keep each message as a record:
+# a 24-byte header, the text and its end token, then either a chain marker and
+# alignment before the next record's header, or the argument longs a ``%d``
+# code prints, at the next even offset after the end token. Each text must
+# keep its exact length, so one block with skip ranges over what lies between
+# the texts must write what one ``chain=pad`` block a record writes.
+
+MESSAGES = (
+    ("FLAWLESS VICTORY   ", b"\x01\x00"),
+    ("ROUND %d ", b"\x00" + struct.pack(">II", 0x1234, 0x20)),
+    ("FIGHT!", b"\x01"),
+    ("%d WINS  ", b"\x00" + struct.pack(">I", 0x2000)),
+)
+"""Each message's text and what the game reads after it."""
+HEADER = 24
+
+
+def _messages(prefix: bool = False) -> tuple[bytes, list[tuple[int, int]]]:
+    """The records of :data:`MESSAGES` between two stretches of other data,
+    with each string's ``(start, end)``: from its text — or its one-byte
+    length prefix — to just past its end token, or its last text byte."""
+    data = b"\xee\x00\x20\xee"
+    places = []
+    for n, (text, tail) in enumerate(MESSAGES):
+        # A header of its own bytes, a space and an end-token byte among them.
+        data += bytes([0x80 + n, 0x00, 0x20, 0x41]) * (HEADER // 4)
+        body = bytes([len(text)]) + text.encode() if prefix else text.encode() + b"\0"
+        places.append((len(data), len(data) + len(body)))
+        data += body + tail
+    return data + b"\xee\x20\x00\xee", places
+
+
+def _strings_type(prefix: bool) -> str:
+    return "type=pascal:1" if prefix else "type=end"
+
+
+def _one_block(places, prefix=False, align="", header=False) -> str:
+    """One range block over every message, skip ranges over what lies
+    between their texts — or, with ``header``, between a text and the next
+    record, whose header the block's record header steps over."""
+    first = places[0][0] - (HEADER if header else 0)
+    skips = ",".join(
+        f"${a[1]:X}>${b[0] - (HEADER if header else 0):X}"
+        for a, b in zip(places, places[1:], strict=False)
+    )
+    words = f" header={HEADER}" if header else ""
+    return (
+        f"source=range start=${first:X} stop=${places[-1][1]:X} "
+        f"{_strings_type(prefix)} table=main{words} skips={skips} fill=$20 "
+        f"chain=pad{align}"
+    )
+
+
+def _string_blocks(places, prefix=False, align="") -> list[str]:
+    """The blocks the sample projects map the same messages with: one range
+    block a string."""
+    return [
+        f"source=range start=${a:X} stop=${b:X} {_strings_type(prefix)} "
+        f"table=main fill=$20 chain=pad{align}"
+        for a, b in places
+    ]
+
+
+def _write(data, spec, ts, edits, offset=0):
+    """``edits`` — ``{index: (text, align)}`` counted from ``offset`` — laid
+    out over the block ``spec``: the bytes, or ``None`` where it is refused,
+    and the problems."""
+    cfg = parse_config(spec)
+    ex = extract(data, cfg, ts)
+    for rec in ex.strings:
+        if rec.index + offset in edits:
+            rec.replacement, rec.align = edits[rec.index + offset]
+    result = layout_block(data, cfg, ts, ex.strings)
+    return (apply_splices(data, result.splices) if result.ok else None), [
+        (p.index + offset, p.message) for p in result.problems
+    ]
+
+
+def _through_both(edits, prefix=False, align="", header=False):
+    """``edits`` written through the one block with skip ranges, and through
+    the blocks of one string each, one after the other."""
+    data, places = _messages(prefix)
+    ts = table_set(ASCII_TABLE)
+    one = _write(data, _one_block(places, prefix, align, header), ts, edits)
+    out, problems = data, []
+    for i, spec in enumerate(_string_blocks(places, prefix, align)):
+        written, refused = _write(out, spec, ts, edits, offset=i)
+        out = written if written is not None else out
+        problems += refused
+    return data, one, (out if not problems else None, problems)
+
+
+END_EDITS = {
+    "shorter": {0: ("PERFECT[end]", None), 3: ("%d WON[end]", None)},
+    "equal": {1: ("RUNDE %d [end]", None), 2: ("KAMPF![end]", None)},
+    "aligned": {0: ("WIN[end]", None), 1: ("R %d[end]", None), 2: ("GO[end]", None)},
+    "own align": {
+        0: ("WIN[end]", Align.CENTRE),
+        1: ("R %d[end]", Align.LEFT),
+        2: ("GO[end]", Align.RIGHT),
+    },
+}
+
+
+@pytest.mark.parametrize("align", ["", " align=left", " align=centre", " align=right"])
+@pytest.mark.parametrize("case", sorted(END_EDITS))
+@pytest.mark.parametrize("header", [False, True], ids=["skipped", "header"])
+def test_a_block_with_skips_pads_as_a_block_a_string_does(case, align, header):
+    """Acceptance: byte for byte what the blocks of one string each write, for
+    a shorter text, one of the same length, every alignment and a string's
+    own — with each record's header skipped, or stepped over as the block's
+    record header with the skips over what follows the text alone."""
+    data, (one, refused), (each, refused_each) = _through_both(
+        END_EDITS[case], align=align, header=header
+    )
+    assert not refused and not refused_each
+    assert one == each and one != data
+    assert len(one) == len(data)
+
+
+@pytest.mark.parametrize("header", [False, True], ids=["skipped", "header"])
+def test_a_longer_text_is_refused_in_both(header):
+    edits = {1: ("ROUND %d!!![end]", None), 2: ("FIGHT[end]", None)}
+    _data, (one, refused), (each, refused_each) = _through_both(edits, header=header)
+    assert one is None and each is None
+    assert [i for i, _ in refused] == [i for i, _ in refused_each] == [1]
+    assert "holds 10, so 2 do not fit" in refused[0][1]
+    assert refused[0][1] == refused_each[0][1]
+
+
+def test_what_room_a_string_between_skips_has_and_what_it_reads_back_as():
+    """Each string's room is its own place: the skip in front of the next
+    string ends the chain there, and the last before the stop has up to the
+    bound. A write reads back as the strings it wrote, pad and all, with no
+    gap, and an untouched block writes its own bytes."""
+    data, places = _messages()
+    ts = table_set(ASCII_TABLE)
+    spec = _one_block(places, align=" align=centre")
+    cfg = parse_config(spec)
+    assert cfg.chained and cfg.chain_mode is ChainMode.PAD
+    assert parse_config(format_config(cfg)) == cfg and format_config(cfg) == spec
+    ex = extract(data, cfg, ts)
+    assert [r.start for r in ex.strings] == [a for a, _ in places]
+    assert string_ends(data, cfg, ex.strings) == {
+        i: b for i, (_, b) in enumerate(places)
+    }
+    assert chain_heads(cfg, ex.strings) == {0, 1, 2, 3}
+    assert not ex.notices and not ex.chain_gaps
+    untouched = layout_block(data, cfg, ts, ex.strings)
+    assert untouched.ok and apply_splices(data, untouched.splices) == data
+    edits = {0: "WIN[end]", 3: "%d[end]"}
+    for i, text in edits.items():
+        ex.strings[i].replacement = text
+    result = layout_block(data, cfg, ts, ex.strings)
+    out = apply_splices(data, result.splices)
+    back = reads_back(cfg, ts, ex.strings, out, edits)
+    assert back.block is None and back.string is None
+    assert [r.current_text() for r in back.extraction.strings] == [
+        "        WIN        [end]",
+        "ROUND %d [end]",
+        "FIGHT![end]",
+        "   %d    [end]",
+    ]
+    assert not back.extraction.chain_gaps and not back.extraction.notices
+    # Everything between the texts is as it was.
+    for (_, end), (start, _) in zip(places, places[1:], strict=False):
+        assert out[end:start] == data[end:start]
+
+
+def test_a_length_prefix_with_skips_pads_as_a_block_a_string_does():
+    """The length prefix counts the pad, as in a block of one string."""
+    edits = {0: ("PERFECT", Align.RIGHT), 1: ("RUNDE %d ", None), 3: ("%d", None)}
+    data, (one, refused), (each, _) = _through_both(edits, prefix=True)
+    assert not refused and one == each
+    _, places = _messages(prefix=True)
+    a, b = places[0]
+    assert one[a:b] == bytes([19]) + b" " * 12 + b"PERFECT"
+    _, (one, refused), (each, _) = _through_both({2: ("FIGHT!!", None)}, prefix=True)
+    assert one is None and each is None and "holds 6, so 1 do not fit" in refused[0][1]
+
+
+def test_strings_with_no_skip_between_them_stay_one_chain():
+    """A skip ends a chain where it stands, and only there: two texts back to
+    back still tie the first to the second, and fill in front of the second
+    is a gap where fill in front of a skip is not."""
+    ts = table_set(ASCII_TABLE)
+    head = bytes([0x80] * 4)
+    data = head + b"HELLO\0BYE\0" + b"\x01\x00" + head + b"FIGHT!\0"
+    spec = "source=range start=$4 stop=$1B type=end table=main skips=$E>$14 chain=pad"
+    cfg = parse_config(spec)
+    ex = extract(data, cfg, ts)
+    assert chain_heads(cfg, ex.strings) == {0, 2}
+    assert string_ends(data, cfg, ex.strings) == {0: 0xA, 1: 0xE, 2: 0x1B}
+    _cfg, _ex, result, out = _laid(data, spec, ts, {0: "HI[end]"})
+    assert result.ok and out[4:0xE] == b"HI   \0BYE\0"
+    # Shortened outside the chain: the second string stands in fill, the
+    # third, past the skip, does not.
+    broken = head + b"HI\0\xff\xff\xffBYE\0\xff\xff" + head + b"FIGHT!\0"
+    spec = spec.replace("skips=$E>$14", "skips=$10>$14") + " fill=$FF"
+    cfg = parse_config(spec)
+    ex = extract(broken, cfg, ts)
+    assert ex.chain_gaps == {1: 7} and len(ex.notices) == 1
+    splices, problems = repair_chains(broken, cfg, ts, ex.strings, ex.chain_gaps)
+    assert not problems
+    assert apply_splices(broken, splices)[4:0x10] == b"HI   \0BYE\0\xff\xff"
+
+
+def test_a_string_a_skip_cuts_in_two_is_not_rewritten():
+    ts = table_set(ASCII_TABLE)
+    data = b"HEL\x01\x02LO\0BYE\0"
+    spec = "source=range start=$0 stop=$C type=end table=main skips=$3>$5 chain=pad"
+    _cfg, ex, result, _out = _laid(data, spec, ts, {0: "HI[end]"})
+    assert ex.strings[0].current_text() == "HELLO[end]"
+    assert not result.ok and "spans a skip range" in result.problems[0].message
+
+
+@pytest.mark.parametrize(
+    "fill, tail",
+    [("", b"\xff\xff"), (" fill=$00", b"\x00"), (" fill=$00 end_is_fill=1", b"\x00")],
+    ids=["default fill", "fill 00", "fill 00, end is fill"],
+)
+def test_a_skip_that_holds_the_fill_is_no_string_s_room(fill, tail):
+    """The bytes a skip range steps over are not the string's, even when they
+    are the fill — a chain marker's alignment byte of ``00`` under a fill of
+    ``00`` — so a longer text is refused rather than written into them, and
+    an equal or shorter one leaves them as they are."""
+    ts = table_set(ASCII_TABLE)
+    head = bytes([0x80] * 4)
+    data = head + b"HELLO\0" + tail + head + b"BYE\0"
+    end, nxt = 10, 10 + len(tail) + 4
+    spec = (
+        f"source=range start=$4 stop=${len(data):X} type=end table=main "
+        f"skips=${end:X}>${nxt:X}{fill} chain=pad"
+    )
+    cfg = parse_config(spec)
+    ex = extract(data, cfg, ts)
+    assert [r.current_text() for r in ex.strings] == ["HELLO[end]", "BYE[end]"]
+    assert string_ends(data, cfg, ex.strings)[0] == end
+    _cfg, _ex, result, _out = _laid(data, spec, ts, {0: "HELLOO[end]"})
+    assert not result.ok and "holds 6, so 1 do not fit" in result.problems[0].message
+    for text, written in (("WORLD[end]", b"WORLD\0"), ("HI[end]", b"HI   \0")):
+        _cfg, _ex, result, out = _laid(data, spec, ts, {0: text})
+        assert result.ok and out[4:end] == written
+        assert out[end:] == data[end:]
+
+
+def test_a_version_3_project_keeps_its_chain_over_skips_unchained(tmp_path):
+    """Version 3 read a block asking for a chain over skip ranges as not
+    chained and wrote it slotted: such a project opens meaning just that, and
+    keeps meaning it once saved. Written at the current version, the same
+    line is a chain."""
+    data = b"HELLO\0BYE\0\x01\x00" + bytes([0x80] * 4) + b"FIGHT!\0"
+    line = (
+        "source=range start=$0 stop=$17 type=end table=main skips=$A>$10 "
+        "chain=pad pad=$2E"
+    )
+
+    def project(version: int) -> str:
+        path = tmp_path / f"v{version}.mapchar"
+        block = {"kind": "block", "name": "messages", "parent": 0, "config": line}
+        entries = [{"kind": "file", "name": "r"}, block]
+        path.write_text(json.dumps({"version": version, "entries": entries}))
+        return str(path)
+
+    loaded = load_project(project(3))
+    cfg = loaded.entries[1].config
+    assert loaded.migrated_from == 3
+    assert cfg.chain is None and not cfg.chained
+    assert cfg.skips == ((0xA, 0x10),) and cfg.pad == b"."
+    ts = table_set(ASCII_TABLE)
+    res, out = relayout(data, cfg, ts, {0: "HI[end]"})
+    assert res.ok and out[:10] == bytes.fromhex("48 49 00 ff ff ff 42 59 45 00")
+    back = extract(out, cfg, ts)
+    assert [r.current_text() for r in back.strings] == [
+        "HI[end]",
+        "BYE[end]",
+        "FIGHT![end]",
+    ]
+    assert not back.notices and not back.chain_gaps
+    saved = tmp_path / "saved.mapchar"
+    saved.write_text(json.dumps(project_dict(loaded.entries, None, str(tmp_path))))
+    again = load_project(str(saved))
+    assert again.migrated_from is None and not again.entries[1].config.chained
+    current = load_project(project(PROJECT_VERSION)).entries[1].config
+    assert current.chained and current.chain_mode is ChainMode.PAD
+
+
+def test_a_block_copied_in_a_version_3_build_pastes_as_it_was_there(tmp_path):
+    """A clipboard payload says the version it was copied at, and walks
+    forward as a project file does: a chain over skip ranges copied where it
+    was not one pastes unchained; copied at the current version, or without
+    skip ranges, it pastes as it is."""
+    over = "source=range start=$0 stop=$17 type=end table=main skips=$A>$10"
+    plain = "source=range start=$0 stop=$17 type=end table=main"
+    path = tmp_path / "p.mapchar"
+    blocks = [
+        {"kind": "block", "name": name, "parent": 0, "config": line}
+        for name, line in (("skips", over + " chain=pack"), ("none", plain))
+    ]
+    entries = [{"kind": "file", "name": "r"}, *blocks]
+    path.write_text(json.dumps({"version": PROJECT_VERSION, "entries": entries}))
+    loaded = load_project(str(path))
+    loaded.entries[2].config = replace(loaded.entries[2].config, chain=ChainMode.PAD)
+    payload = json.loads(entries_payload(loaded.entries))
+    assert payload["version"] == PROJECT_VERSION
+
+    def pasted(version: int) -> list:
+        payload["version"] = version
+        return [e.config for e in entries_from_payload(json.dumps(payload))[1:]]
+
+    skipped, unskipped = pasted(3)
+    assert skipped.chain is None and skipped.skips == ((0xA, 0x10),)
+    assert unskipped.chained and unskipped.chain is ChainMode.PAD
+    skipped, unskipped = pasted(PROJECT_VERSION)
+    assert skipped.chained and skipped.chain is ChainMode.PACK
+    assert skipped.chain_mode is ChainMode.PAD and unskipped.chained
+    # A payload from a newer build is read as it stands.
+    skipped, _ = pasted(PROJECT_VERSION + 1)
+    assert skipped.chain is ChainMode.PACK
+
+
+def test_a_view_s_reading_keeps_its_chain_through_the_step(tmp_path):
+    """The 3 → 4 step unchains a block's line and only that: a file's or a
+    bookmark's reading is a view, which reads no chain, and a block made from
+    it is cut to its region without the skips — chained in version 3 as now —
+    so it loads as written, at either version and from a pasted payload."""
+    line = "source=range start=$0 stop=$17 type=end table=main skips=$10>$14 chain=pack"
+    entries = [
+        {"kind": "file", "name": "r", "session": {"config": line}},
+        {
+            "kind": "bookmark",
+            "name": "b",
+            "parent": 0,
+            "offset": 4,
+            "session": {"config": line},
+        },
+        {"kind": "block", "name": "messages", "parent": 0, "config": line},
+    ]
+    path = tmp_path / "p.mapchar"
+    for version in (3, PROJECT_VERSION):
+        path.write_text(json.dumps({"version": version, "entries": entries}))
+        file, bookmark, block = load_project(str(path)).entries
+        for view in (file.session.config, bookmark.session.config):
+            assert view.chain is ChainMode.PACK and view.skips == ((0x10, 0x14),)
+            made = with_region(view, 0, 8)
+            assert made.chained and made.chain_mode is ChainMode.PACK
+        assert block.config.chained is (version == PROJECT_VERSION)
+    payload = json.dumps({"version": 3, CLIPBOARD_KEY: entries[:2]})
+    file, bookmark = entries_from_payload(payload)
+    assert file.session.config.chain is ChainMode.PACK
+    assert bookmark.session.config.chain is ChainMode.PACK

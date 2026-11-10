@@ -8,7 +8,7 @@ a block is a warning there.
 
 from __future__ import annotations
 
-from mapchar_lint.config import read_config
+from mapchar_lint.config import UNCHAINED_SKIPS_BEFORE, dropped_chain, read_config
 from mapchar_lint.context import Context, EntryView
 from mapchar_lint.diagnostics import Severity
 from mapchar_lint.reading import int_reading
@@ -67,6 +67,25 @@ def _config(ctx: Context, view: EntryView) -> None:
             pointer=view.at("config"),
             entry=view,
             detail=finding.detail,
+        )
+    _chain_before_skips(ctx, view)
+
+
+def _chain_before_skips(ctx: Context, view: EntryView) -> None:
+    """``chain=`` the load drops from a block with skip ranges in an older
+    file; the rest of the line is judged without it (``read_entry``)."""
+    version = ctx.doc.version
+    chain = dropped_chain(view.raw.get("config"), version)
+    if chain is not None:
+        ctx.warn(
+            "W634",
+            f"chain={chain} on a block with skip ranges in a version {version} "
+            "file: the load drops it",
+            pointer=view.at("config"),
+            entry=view,
+            detail=f"Before version {UNCHAINED_SKIPS_BEFORE} such a block was "
+            "read as not chained and written slotted, and it opens so. A file "
+            "written at the current version keeps the chain.",
         )
 
 

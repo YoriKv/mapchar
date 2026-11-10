@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from mapchar.core.block import ChainMode, block_bound
+from mapchar.core.block import ChainMode, block_bound, skip_between
 from mapchar.core.document import Document
 from mapchar.core.errors import MapcharError
 from mapchar.core.font import Effect
@@ -13,6 +13,7 @@ from mapchar.core.table import TableSet
 from mapchar.pipeline.insert import (
     pad_unit,
     padded_view,
+    record_start,
     room_for,
     room_note,
     string_ends,
@@ -222,9 +223,14 @@ class StringRowsMixin:
         entry = self._entry
         if cfg is None or not cfg.chained or entry is None or entry.doc is None:
             return "", ""
+        before = entry.doc.string_by_index(rec.index - 1) if rec.index else None
         if rec.index in entry.doc.chain_gaps:
             where = CHAIN_GAP
-        elif rec.index == 0 or rec.index in cfg.chain_breaks:
+        elif (
+            before is None
+            or rec.index in cfg.chain_breaks
+            or skip_between(cfg.skips, before.end, record_start(rec, cfg))
+        ):
             where = CHAIN_START
         else:
             where = CHAIN_LINK
@@ -241,7 +247,7 @@ class StringRowsMixin:
         """The text the pad of the chained block ``entry`` reads as, when it
         pads inside its strings; worked out once per reading."""
         cfg = entry.config
-        if cfg.chain is not ChainMode.PAD:
+        if cfg.chain_mode is not ChainMode.PAD:
             return None
         cached = self._pad_cache
         if cached is not None and cached[0] == cfg:

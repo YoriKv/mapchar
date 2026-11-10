@@ -61,7 +61,7 @@ done well.[end]
   in the record (absent: the pointer's `size`; negative before the pointer),
   and `length_counts=text` a length that leaves the end token out (absent:
   `terminator`, counting it). A field outside the stride or over the pointer
-  is refused. `chain=pad` or `chain=pack` reads the strings as chains, `breaks=1,5` the
+  is refused. `chain=pad` or `chain=pack` reads the strings as chains (with `skips=`, each skip begins a chain and `pack` is written as `pad`; an `@block` line says no version, so it is read as the current version reads it), `breaks=1,5` the
   indices that begin a chain of their own, `pad=$20` what pads them (absent:
   the table's space) and `align=centre` where a padded text sits. `spp=3` is
   three strings a pointer, and `spp=next` or `spp=next:3` each run to the

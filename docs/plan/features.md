@@ -888,35 +888,59 @@ of end-token strings.
   reads the strings **back to back**: it finishes one and starts the next at
   the very next byte, with no pointer of its own (a story screen drawn by one
   pointer load and a call per line). Greyed, with the reason in its tooltip,
-  for fixed-length strings (back to back already), skip ranges and realign,
-  over which a chain is not defined. A **Chain Break** on a string (the
-  Strings view's context menu) makes it the first of a chain of its own, so
-  one block holds several chains; without breaks the whole block is one.
-  Chaining changes how the block is written and checked, not how its strings
-  are cut, so it never asks first:
+  for fixed-length strings (back to back already) and realign, over which a
+  chain is not defined. A **Chain Break** on a string (the Strings view's
+  context menu) makes it the first of a chain of its own, so one block holds
+  several chains; so does a **skip range** in front of a string — between
+  the end of the one before and its record — since the bytes a skip steps
+  over are not text, and the game reaches the string after them some other
+  way. Without breaks or skips the whole block is one chain. Records whose
+  texts lie apart — a header in front of each, a chain marker and alignment
+  or argument bytes after its end token, as the arcade Mortal Kombat
+  messages hold — are one block with skip ranges over what lies between the
+  texts, every record a chain of its own, so each string keeps its place and
+  its exact length. A string a skip cuts in two has no one place to pad
+  inside, and an edit to it is refused, as in a slotted block. A project
+  saved, or a block copied, at a version that could not chain over skip
+  ranges opens or pastes with such a block unchained and slotted, as it read
+  then; a file's or a bookmark's reading keeps its chain, which a block
+  made from it — cut to the selection without its skip ranges — takes up as
+  it did then; a configuration line that says no version — a script's `@block`
+  line, one typed or pasted into a block — is a chain. Chaining
+  changes how the block is written and checked, not how its strings are cut,
+  so it never asks first:
   - **Reading** — fill in front of a string that does not begin a chain is
     where the game reads that string instead: the one before was shortened
     outside the chain. The strings are read past it as they were meant to
     stand, the block gets a notice at the first such gap of each chain, and
     **Edit ▸ Repair Chains** pads every string in front of a gap over it —
     its length raised or its end token moved past the pad — as one undo step.
+    A string past a skip begins a chain, so fill between a string and the
+    skip after it is never a gap: it is the room of the chain's last string.
+    The pad inside a string is its text, read and shown as any chained
+    string's.
   - **Writing** — the Writing popup's **Chain** row: **Pad inside string**
     (the default) moves nothing: a string's room is its place up to the next
     record of its chain, a shorter text is padded inside it with the block's
     **Pad** (blank: the table's space), which the length prefix counts or the
     end token follows, and a longer one is refused; the last of a chain has
-    its place and the fill after it, and a shorter text keeps its place. The
-    **Align** row puts the text left, centred or right in its room, and a
-    string's own **Align** (context menu) overrides it — centring by pad keeps
-    a line centred whose screen position its header fixes. **Pack** lays the
-    records back to back from the block's first, headers and all, the fill
-    after the last up to the bound, and rewrites every pointer the strings
-    carry: a chain's first string that moves needs the pointer that reaches it
-    attached (**Attach**), or the write is refused naming it, since the game
-    would go on reaching it where it was. Either way the fill is never written
-    inside a chain, and the write is checked the way the game reads: bytes
-    that leave fill in front of a chained string are refused, even when every
-    string encodes.
+    its place and the fill after it — up to the skip range that ends the
+    chain, or for the last string before the stop up to the bound — and a
+    shorter text keeps its place. The bytes a skip steps over are never
+    written. The **Align** row puts the text left, centred or right in its
+    room, and a string's own **Align** (context menu) overrides it —
+    centring by pad keeps a line centred whose screen position its header
+    fixes. **Pack** lays the records back to back from the block's first,
+    headers and all, the fill after the last up to the bound, and rewrites
+    every pointer the strings carry: a chain's first string that moves needs
+    the pointer that reaches it attached (**Attach**), or the write is
+    refused naming it, since the game would go on reaching it where it was.
+    Skip ranges leave nothing to pack across: Pack is greyed there and reads
+    *Pack (pad inside string)*, so a block that holds it says what it is
+    written as, and takes it up again once they are gone. Either way the fill
+    is never written inside a chain, and the write is checked the way the
+    game reads: bytes that leave fill in front of a chained string are
+    refused, even when every string encodes.
 - **Table** — the start table: a loaded table or an encoding, picked in the
   Table list; the table set follows from it.
 - **Fixed-line layout** — for fixed-length strings, an optional `line length`
@@ -971,7 +995,12 @@ of end-token strings.
 - **Mappings** — LINEAR, LoROM, HiROM, ExHiROM (the second 4 MiB at banks
   `$40-$7D`), SA-1 (the Super MMC as it powers on: banks `$80-$BF` the third
   and fourth MiB, not a mirror), GB, GBA, **Relative** (the value is
-  the distance from the pointer to its target) and **Banked** (bank size, bank
+  the distance from the pointer to its target), **Relative, signed** (the same
+  distance in two's complement at the pointer's size, as a 68000
+  `lea d16(pc)` holds, so one block reaches strings before and after its
+  pointers; a distance the size cannot hold refuses the write), **TMS34010 bit
+  address** (`tms34010-bits`: the Midway T-Unit's CPU addresses bits, program
+  ROM byte `o` at `$FF800000 + 8 × o`) and **Banked** (bank size, bank
   base address, bank number taken from the block or a field), which the two
   NES layouts `nes_c000` and `nes_8000_2000` are ready-made settings of. Each
   applies after the container's header offset, then the block's `offset`.
@@ -989,10 +1018,26 @@ of end-token strings.
     sits, so a banked table is found without being told the bank and strings
     of one block may sit in different banks, and one that cannot say which
     bank an offset sits in falling back to the block's own;
-  - search the file for those byte patterns;
+  - search the file for those byte patterns — or, for a relative mapping,
+    whose value changes with where the pointer sits, read the file once for
+    the addresses whose value lands on one of the strings under any offset
+    tried; a pointer found inside the bytes of the string it reaches — its
+    header and text, not a skip range inside it — does not count, nor does a
+    relative one inside a stretch of fill: a pattern of one to eight bytes
+    repeated at least four times and over at least eight bytes, the same word
+    one period away reaching none of the strings. Fill shorter than that, or
+    of a longer pattern, is not recognised, nor is fill whose every word has a
+    string one period either side of the one it reaches — strings that sit a
+    period apart. A real table can lose a pointer to it: where three or more
+    neighbouring pointers hold one value, the one beside a pointer whose
+    string is not searched, the one beside a word outside the table that
+    holds that value too, and all of them when the value's bytes repeat at a
+    shorter period (`$4040`). A mapping that fails loses only its own
+    combination;
   - results are grouped by the (mapping, size, endian, offset) combination,
     ranked by the strings the table they make explains, then by how many they
-    explain at all and how regular their addresses are, and shown with the
+    explain at all and how regular their addresses are — a relative reading
+    after the others on a full tie — and shown with the
     stride between those addresses and the range of the table: the run of them
     a whole number of strides apart that reaches the most strings, which leaves
     out a pointer value that turns up elsewhere in the file by chance and a
@@ -1522,7 +1567,10 @@ lays out in the game. It is described in [preview.md](preview.md).
 - **Load failures** are reported in a dialog — at startup, after a refresh, as
   a project's folder is scanned, and again from **Open Plugins Folder…** — and
   never crash the app. A plugin whose trust prompt was declined is not a
-  failure: it is said once in the status bar, not in a dialog every launch. An
+  failure: it is said once in the status bar, not in a dialog every launch.
+  A plugin file a built-in has taken over — the arcade samples'
+  `tms34010_bits.py`, known by its text — is passed over without a prompt or
+  a report; any other plugin using that id is a duplicate. An
   entry whose plugin is missing opens view-only through a pass-through.
 
 ## Undo

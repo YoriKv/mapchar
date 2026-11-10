@@ -28,11 +28,12 @@ from mapchar.core.block import (
     StringRecord,
     WriteMode,
     block_bound,
+    skip_between,
     string_groups,
 )
 from mapchar.core.errors import EncodeError, MapcharError
 from mapchar.core.fill import fill_end, fill_run, format_fill
-from mapchar.core.mapping import pointer_bytes
+from mapchar.core.mapping import holds, is_signed, pointer_bytes, pointer_offset
 from mapchar.core.table import TableSet, TokenKind
 from mapchar.core.text import same_text
 from mapchar.core.tokens import render
@@ -282,6 +283,18 @@ def record_start(rec: StringRecord, config: BlockConfig) -> int:
     return _before(rec.start, config.record_header, config.skips)
 
 
+def record_spans(rec: StringRecord, config: BlockConfig) -> list[tuple[int, int]]:
+    """The byte ranges the record of ``rec`` is made of: its header and its
+    text, without a skip range either is read across."""
+    first = record_start(rec, config)
+    head = [(first, rec.start)] if first < rec.start else []
+    for a, b in config.skips:
+        if head and a < b and head[0][0] < a and b <= rec.start:
+            head = [(head[0][0], a), (b, rec.start)]
+            break
+    return head + rec.pieces(config.skips)
+
+
 def packed_ends(
     strings: list[StringRecord], bound: int, skips=(), header: int = 0
 ) -> dict[int, int]:
@@ -358,7 +371,7 @@ def string_ends(
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     if config.chained:
         bound = block_bound(config, strings, room)
-        if config.chain is ChainMode.PACK:
+        if config.chain_mode is ChainMode.PACK:
             return packed_ends(strings, bound, header=config.record_header)
         return chain_ends(data, config, strings, bound)
     if not isinstance(config.source, NestedPointerSource):
@@ -432,7 +445,7 @@ def layout_block(
     slotted = config.effective_write_mode is WriteMode.SLOTTED
     foreign = list(foreign)
     for group, bound in zip(groups, bounds, strict=True):
-        if config.chained and config.chain is ChainMode.PAD:
+        if config.chain_mode is ChainMode.PAD:
             _layout_chain_pad(data, config, tables, group, bound, result)
             continue
         for rec in group:
@@ -797,10 +810,12 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
                 return []
             target = new_start - ref.offset
             bank = _pointer_bank(config.source, mapping, target)
+            signed = is_signed(mapping)
             value = mapping.to_value(target, bank, ref.address)
             short = value & ((1 << (ref.size * 8)) - 1)
             if (
                 short != value
+                and not signed
                 and getattr(mapping, "needs_bank", True)
                 and mapping.to_offset(short, bank, ref.address) == target
             ):
@@ -809,14 +824,19 @@ def _pointer_splices(config, strings, result: LayoutResult, registry) -> list[Sp
                 # Absent, ``needs_bank`` is read as set, as everywhere else;
                 # the value still has to read back as the string.
                 value = short
-            if value < 0 or value >= 1 << (ref.size * 8):
+            if not holds(value, ref.size, signed):
+                # The sign before the ``$``, as the offset fields write it.
+                held = f"${value:X}" if value >= 0 else f"-${-value:X}"
                 result.problems.append(
                     Problem(
-                        rec.index, f"pointer at ${ref.address:X} cannot hold ${value:X}"
+                        rec.index, f"pointer at ${ref.address:X} cannot hold {held}"
                     )
                 )
                 continue
-            if mapping.to_offset(value, bank, ref.address) != target:
+            # A signed value is written as its two's complement, and read back
+            # the way extraction reads it.
+            value &= (1 << (ref.size * 8)) - 1
+            if pointer_offset(mapping, value, ref.size, bank, ref.address) != target:
                 result.problems.append(
                     Problem(
                         rec.index,
@@ -886,17 +906,37 @@ def _table_space(tables: TableSet) -> bytes | None:
     return bits_to_bytes(min(keys, key=len)) if keys else None
 
 
+def skip_heads(config: BlockConfig, strings: list[StringRecord]) -> set[int]:
+    """The indices of the strings a skip range stands in front of
+    (:func:`~mapchar.core.block.skip_between`): the game does not reach them
+    by reading on from the one before, so each begins a chain."""
+    ordered = sorted(strings, key=lambda r: r.index)
+    return {
+        b.index
+        for a, b in zip(ordered, ordered[1:], strict=False)
+        if skip_between(config.skips, a.end, record_start(b, config))
+    }
+
+
+def chain_heads(config: BlockConfig, strings: list[StringRecord]) -> set[int]:
+    """The indices of the strings of a chained block that begin a chain: the
+    first, every **Chain Break**, and every string a skip range stands in
+    front of (:func:`skip_heads`)."""
+    return set(config.chain_starts(len(strings))) | skip_heads(config, strings)
+
+
 def chain_links(
     config: BlockConfig, strings: list[StringRecord]
 ) -> list[tuple[StringRecord, StringRecord]]:
     """Every string of a chained block with the one the game reads straight
-    after it: the next in address order, unless that one begins a chain."""
-    ordered = sorted(strings, key=lambda r: r.start)
-    starts = set(config.chain_starts(len(strings)))
+    after it: the next one read, unless that one begins a chain
+    (:func:`chain_heads`)."""
+    ordered = sorted(strings, key=lambda r: r.index)
+    heads = chain_heads(config, strings)
     return [
         (a, b)
         for a, b in zip(ordered, ordered[1:], strict=False)
-        if b.index not in starts
+        if b.index not in heads
     ]
 
 
@@ -908,7 +948,7 @@ def chain_gaps(config: BlockConfig, strings: list[StringRecord]) -> dict[int, in
     return {
         b.index: a.end
         for a, b in chain_links(config, strings)
-        if b.start - config.record_header > a.end
+        if record_start(b, config) > a.end
     }
 
 
@@ -918,10 +958,13 @@ def chain_ends(
     """Where each chained string's room ends, by index, when the block pads
     inside its strings: a string the next one follows in its chain has up to
     that one's record, so nothing moves; the last of a chain has its slot —
-    its own bytes and the fill after them (:func:`slot_ends`)."""
-    ends = slot_ends(strings, bound, data, config.fill, config.record_header)
+    its own bytes and the fill after them (:func:`slot_ends`), up to the skip
+    range that ends the chain or, before the block's stop, the bound."""
+    ends = slot_ends(
+        strings, bound, data, config.fill, config.record_header, config.skips
+    )
     for rec, nxt in chain_links(config, strings):
-        ends[rec.index] = nxt.start - config.record_header
+        ends[rec.index] = record_start(nxt, config)
     return ends
 
 
@@ -1038,10 +1081,18 @@ def _layout_chain_pad(
     last = min(max(max(r.end for r in strings), max(ends.values())), len(data))
     out = bytearray(data[first:last])
     for rec in strings:
-        room = ends[rec.index] - rec.start
+        crosses = _crosses_skip(rec, config)
+        # A string a skip range cuts in two has no one place to pad inside.
+        room = rec.byte_length(config.skips) if crosses else ends[rec.index] - rec.start
         result.available += room
         if rec.replacement is None:
             enc = encode_string(rec, config, tables, data)
+        elif crosses:
+            enc = Encoded(
+                rec.index,
+                b"",
+                Problem(rec.index, "spans a skip range and cannot be rewritten"),
+            )
         else:
             enc = _encode_padded(rec, config, tables, room, rec.index in tied)
         result.encoded[rec.index] = enc
@@ -1100,7 +1151,7 @@ def _layout_chain_pack(
         enc.new_start = pos + header
         out += chunk
         pos += len(chunk)
-    starts = set(config.chain_starts(len(strings)))
+    starts = chain_heads(config, strings)
     for rec in ordered:
         moved = result.encoded[rec.index].new_start
         if rec.index in starts and not rec.pointers and moved not in (None, rec.start):
@@ -1144,7 +1195,7 @@ def repair_chains(
         prev, nxt = by_index.get(index - 1), by_index.get(index)
         if prev is None or nxt is None:
             continue
-        n = nxt.start - config.record_header - prev.end
+        n = record_start(nxt, config) - prev.end
         if n <= 0:
             continue
         if n % len(pad):
@@ -1207,7 +1258,7 @@ def _unpadder(config: BlockConfig, tables: TableSet) -> Callable[[str], str]:
     """How a chained block that pads compares texts: without the pad at
     either edge, which a write lays afresh as the room and the alignment say
     (:func:`_padded_parts`)."""
-    if not (config.chained and config.chain is ChainMode.PAD):
+    if config.chain_mode is not ChainMode.PAD:
         return lambda text: text
     try:
         _, pad = pad_unit(config, tables)
@@ -1271,7 +1322,7 @@ def room_note(used: int, room: int, config: BlockConfig | None) -> str:
         return ""
     if config.fixed_length is not None:
         return f"{used} of {room} byte(s): the block's fixed length"
-    if config.chained and config.chain is ChainMode.PAD:
+    if config.chain_mode is ChainMode.PAD:
         return (
             f"{used} of {room} byte(s): its place in the chain, padded inside "
             "when the text is shorter"
@@ -1369,11 +1420,14 @@ __all__ = [
     "LayoutResult",
     "chain_ends",
     "chain_gaps",
+    "chain_heads",
     "chain_links",
     "pad_unit",
     "padded_view",
+    "record_spans",
     "record_start",
     "repair_chains",
+    "skip_heads",
     "Problem",
     "ReadBack",
     "Splice",

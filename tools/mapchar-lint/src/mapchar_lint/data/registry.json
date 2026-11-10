@@ -53,9 +53,18 @@
       3,
       4
     ],
+    "relative-signed": [
+      1,
+      2,
+      3,
+      4
+    ],
     "sa1": [
       2,
       3
+    ],
+    "tms34010-bits": [
+      4
     ]
   },
   "plugins": {
@@ -115,9 +124,11 @@
       "nes_8000_2000",
       "nes_c000",
       "relative",
-      "sa1"
+      "relative-signed",
+      "sa1",
+      "tms34010-bits"
     ]
   },
-  "project_version": 3,
+  "project_version": 4,
   "renamed": {}
 }

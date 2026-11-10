@@ -36,6 +36,15 @@ class ProjectDocument:
         raw = self.data.get("entries")
         return raw if isinstance(raw, list) else []
 
+    @property
+    def version(self) -> int:
+        """The version the loader takes the file to be written at: 1 where it
+        says none or not a whole number."""
+        stated = self.data.get("version", 1)
+        if isinstance(stated, bool) or not isinstance(stated, int):
+            return 1
+        return stated
+
     def resolve(self, stored: str) -> str:
         """A stored path as mapchar resolves it, case differences tolerated.
 

@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from mapchar.core.table import Table
+from mapchar.plugins.aliases import SUPERSEDED
 from mapchar.plugins.base import Stage
 from mapchar.plugins.builtins.mappings import Banked
 from mapchar.plugins.registry import Registry, RegistryError
@@ -269,12 +270,23 @@ def _load_charset_table(registry, category, path, result, table_reader) -> None:
         result.issues.append(PluginLoadIssue(path, str(exc)))
 
 
+def _superseded(registry: Registry, stage: Stage, source: bytes) -> bool:
+    """Whether ``source`` is a plugin file a built-in has taken over
+    (:data:`~mapchar.plugins.aliases.SUPERSEDED`), known by its text whatever
+    its line endings, with that built-in present: passed over before its
+    trust prompt, unrun and unreported."""
+    taken = SUPERSEDED.get(digest_of(source.replace(b"\r\n", b"\n")))
+    return taken is not None and registry.plugin(stage, taken) is not None
+
+
 def _load_code(registry, stage, category, path, result, trust, confirm) -> None:
     try:
         with open(path, "rb") as f:
             source = f.read()
     except OSError as exc:
         result.issues.append(PluginLoadIssue(path, str(exc)))
+        return
+    if _superseded(registry, stage, source):
         return
     digest = digest_of(source)
     if not is_approved(path, digest, trust, confirm):

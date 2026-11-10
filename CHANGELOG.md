@@ -3,6 +3,10 @@
 ## v0.1.13 - unreleased
 
 - Revert a string or a whole block to its original from the Files panel
+- Chained blocks can have skip ranges; each skip begins a new chain and strings stay in place
+- Signed relative pointers (68000 `lea d16(pc)`) reach strings before and after them in one block
+- TMS34010 bit-address pointers (Midway arcade) built in, no plugin needed
+- Find Pointers finds tables of relative pointers
 
 ## v0.1.12 - 2026-11-05
 

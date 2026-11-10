@@ -27,7 +27,7 @@ from mapchar.project.formats.table_native import sanitize_id
 from mapchar.project.glossary import GlossaryTerm, glossary_dicts, glossary_from
 from mapchar.project.tables import adopt_table
 
-PROJECT_VERSION = 3
+PROJECT_VERSION = 4
 
 
 class ProjectError(MapcharError):
@@ -107,9 +107,42 @@ def _reads_several(spec: Any) -> bool:
     return config is not None and config.strings_per_pointer > 1
 
 
+def _unchain_skipped(data: dict[str, Any]) -> dict[str, Any]:
+    """3 → 4: a block with skip ranges can be chained, where version 3 read
+    one asking for a chain as not chained and wrote it slotted, so a block's
+    ``config`` loses the word (:func:`_unchained`).
+
+    The ``session`` reading a file or a bookmark keeps is left as it is: a
+    view reads no chain at all, and a block made from it is cut to its region
+    without the skip ranges (:func:`~mapchar.core.block.with_region`), so
+    version 3 made it a chain — as this one does from the same line."""
+    for raw in data.get("entries") or []:
+        if isinstance(raw, dict) and raw.get("kind") == "block":
+            _unchained(raw, "config")
+    return data
+
+
+def _unchained(holder: dict[str, Any], key: str) -> None:
+    """``holder[key]``, a configuration line, without the ``chain=`` word
+    where it asks for a chain over skip ranges, so it goes on meaning what it
+    meant; ``breaks=``, ``pad=`` and ``align=`` say nothing without it and
+    stay as they were."""
+    spec = holder.get(key)
+    if isinstance(spec, str) and _chained_over_skips(spec):
+        holder[key] = " ".join(w for w in spec.split() if not w.startswith("chain="))
+
+
+def _chained_over_skips(spec: str) -> bool:
+    """Whether the configuration line ``spec`` asks for a chain and names a
+    skip range: the words alone, as version 3's reader took them."""
+    fields = {k: v for k, _, v in (w.partition("=") for w in spec.split())}
+    return fields.get("chain") in ("pad", "pack") and bool(fields.get("skips"))
+
+
 _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     1: _mark_fixed_ends,
     2: _mark_joined_runs,
+    3: _unchain_skipped,
 }
 
 
@@ -488,7 +521,8 @@ def entries_payload(entries: list[Entry]) -> str:
 
 
 def entries_from_payload(text: str) -> list[Entry]:
-    """The entries a clipboard payload carries, parents wired up among them.
+    """The entries a clipboard payload carries, parents wired up among them,
+    walked forward from the version it says it was copied at (:func:`_migrated`).
 
     Anything that is not a mapChar entry payload — any other text on the
     clipboard — comes back as an empty list rather than as an error.
@@ -500,6 +534,12 @@ def entries_from_payload(text: str) -> list[Entry]:
     raw = data.get(CLIPBOARD_KEY) if isinstance(data, dict) else None
     if not isinstance(raw, list):
         return []
+    stated = data.get("version")
+    if isinstance(stated, int) and not isinstance(stated, bool):
+        # Copied in an older build: its records walk forward as a project
+        # file's do. One from a newer build, or saying no version, is read as
+        # it stands.
+        raw = _migrated({"version": stated, "entries": raw})[0]["entries"]
     kept = [e for e in _entries_from(raw, "") if e is not None]
     _unfold_orphans(kept)
     return kept

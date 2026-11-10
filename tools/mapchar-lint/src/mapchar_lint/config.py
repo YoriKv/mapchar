@@ -78,6 +78,33 @@ def parse_num(text: str) -> int:
     return int(text, 10)
 
 
+UNCHAINED_SKIPS_BEFORE = 4
+"""The project version from which a block with skip ranges can be chained:
+the loader drops ``chain=`` from such a block in an older file
+(``projectfile._unchain_skipped``)."""
+
+
+def dropped_chain(spec: object, version: int) -> str | None:
+    """The ``chain=`` value the loader drops from the block line ``spec`` of a
+    file written at ``version``: one asking for a chain over skip ranges in a
+    file older than :data:`UNCHAINED_SKIPS_BEFORE`, which read it as not
+    chained. ``None`` when it keeps the line as it is."""
+    if version >= UNCHAINED_SKIPS_BEFORE or not isinstance(spec, str):
+        return None
+    fields = {k: v for k, _, v in (w.partition("=") for w in spec.split())}
+    chain = fields.get("chain")
+    return chain if chain in ("pad", "pack") and fields.get("skips") else None
+
+
+def as_loaded(spec: object, version: int) -> object:
+    """The block line ``spec`` of a file written at ``version`` as the loader
+    leaves it once the file is walked forward (:func:`dropped_chain`)."""
+    if dropped_chain(spec, version) is None:
+        return spec
+    assert isinstance(spec, str)
+    return " ".join(w for w in spec.split() if not w.startswith("chain="))
+
+
 def read_config(spec: object) -> ConfigReading:
     """Read ``spec`` as ``parse_config`` would, collecting findings."""
     out = ConfigReading()
@@ -312,8 +339,9 @@ def _writing(out: ConfigReading, fields: dict) -> None:
 
 
 def _chain(out: ConfigReading, fields: dict) -> None:
-    """``chain=``, ``breaks=``, ``pad=`` and ``align=``, and whether the block
-    can be read as chains at all (``chain_refusal``)."""
+    """``chain=``, ``breaks=``, ``pad=`` and ``align=``, whether the block
+    can be read as chains at all (``chain_refusal``), and whether it is
+    written as it says (``chain_mode``)."""
     chain = fields.get("chain")
     if chain is not None and chain not in CHAIN_MODES:
         out.drop("E628", f"chain={chain} is not {' or '.join(CHAIN_MODES)}")
@@ -343,8 +371,6 @@ def _chain(out: ConfigReading, fields: dict) -> None:
         why = "chains are read over a range"
     elif out.string_type not in ("end", "pascal"):
         why = "only strings that end at an end token or a length prefix chain"
-    elif fields.get("skips"):
-        why = "a chain across a skip range is not defined"
     elif fields.get("realign", "0:0").partition(":")[0] not in ("", "0"):
         why = "a chain over realigned slots is not defined"
     if why is not None:
@@ -353,6 +379,13 @@ def _chain(out: ConfigReading, fields: dict) -> None:
             "warning",
             f"chain={chain} on a block that cannot chain: {why}",
             "The block is read and written as if it were not chained.",
+        )
+    elif chain == "pack" and fields.get("skips"):
+        out.add(
+            "W633",
+            "warning",
+            "chain=pack on a block with skip ranges: nothing is packed across one",
+            "The block is written as chain=pad, each string padded inside itself.",
         )
 
 
