@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.13 - unreleased
+## v0.1.13 - 2026-11-13
 
 - Revert a string or a whole block to its original from the Files panel
 - Chained blocks can have skip ranges; each skip begins a new chain and strings stay in place
