@@ -2,7 +2,7 @@
 
 ## v0.1.14 - unreleased
 
-- Project Statistics: translated words, lines and strings, by status and per block
+- File -> Project Statistics
 
 ## v0.1.13 - 2026-11-13
 
