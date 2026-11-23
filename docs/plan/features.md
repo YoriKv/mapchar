@@ -1526,6 +1526,14 @@ lays out in the game. It is described in [preview.md](preview.md).
   to locate them as it opens, and **File ▸ Locate Missing Files…** walks them
   at any time. One answer corrects every entry that named that file, and a row
   still named after the file takes the new name.
+- **File ▸ Project Statistics…** — the project's strings, words and lines,
+  counted on each string's original so a block not yet opened counts too
+  (`project/statistics.py`). A table of totals by status — edited, review,
+  done, their sum as *translated*, untouched, total — each with its share,
+  then a row per block with translated / total strings, words and lines and
+  its share translated by words; every column sorts. A word is a run between
+  spaces holding a letter or digit; a code separates words and counts as
+  none; a line counts when it holds text.
 - **Saving the project resolves unsaved edits first** — a project holds
   references, not bytes, so it asks to **Write All**, continue without writing,
   or cancel. Edits left unwritten are lost with the session.

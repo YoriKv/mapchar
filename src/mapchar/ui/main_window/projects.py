@@ -18,9 +18,11 @@ from mapchar.project.projectfile import (
     project_dict,
     save_project,
 )
+from mapchar.project.statistics import project_statistics
 from mapchar.project.tables import adopt_table, read_table_file
 from mapchar.ui.dialogs import TextDialog
 from mapchar.ui.main_window.autosave import AUTOSAVE_SUFFIX
+from mapchar.ui.statistics_dialog import StatisticsDialog
 
 MAX_RECENT = 10
 """Projects kept in Open Recent."""
@@ -295,6 +297,11 @@ class ProjectMixin:
         if not path:
             return False
         return self._write_project(path)
+
+    def _show_statistics(self) -> None:
+        """File ▸ Project Statistics…: what the project holds and how much of it
+        is translated, in totals and per block."""
+        StatisticsDialog(project_statistics(self.workspace), self).exec()
 
     def _write_project(self, path: str) -> bool:
         if not self._resolve_dirty_entries(

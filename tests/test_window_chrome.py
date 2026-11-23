@@ -30,6 +30,7 @@ ALWAYS_ON = frozenset(
         "New Project",
         "Open Project…",
         "Locate Missing Files…",
+        "Project Statistics…",
         "TSV / CSV…",
         "PO…",
         "TSV…",

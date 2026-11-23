@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.14 - unreleased
+
+- Project Statistics: translated words, lines and strings, by status and per block
+
 ## v0.1.13 - 2026-11-13
 
 - Revert a string or a whole block to its original from the Files panel

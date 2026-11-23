@@ -44,6 +44,7 @@ class MenuBarMixin:
             file_menu, "Locate Missin&g Files…", lambda: self._relocate_missing()
         )
         self.locate_action.setEnabled(False)
+        act(file_menu, "Pro&ject Statistics…", self._show_statistics)
         file_menu.addSeparator()
         act(file_menu, "Open RO&M…", self._open_rom_dialog, "Ctrl+Shift+O")
         act(file_menu, "Open &Table…", self._open_table_dialog, "Ctrl+T")
