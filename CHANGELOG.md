@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.14 - unreleased
+## v0.1.14 - 2026-11-22
 
 - File -> Project Statistics
 
