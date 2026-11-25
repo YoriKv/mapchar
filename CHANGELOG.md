@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.15 - unreleased
+
+- TMS320C3x word-address pointers (Midway Zeus, Mortal Kombat 4) built in
+
 ## v0.1.14 - 2026-11-22
 
 - File -> Project Statistics

@@ -227,7 +227,10 @@ bank layouts it is also registered under (`nes_c000`, `nes_8000_2000`),
 (the same distance in two's complement at the pointer's size, the 68000's
 `lea d16(pc)`), and `tms34010-bits` (value = `$FF800000` + 8 × offset, the
 Midway T-Unit's TMS34010, which addresses bits; a `BitAddress(base)` the way
-the NES layouts are a `Banked`) — live in `plugins/builtins/mappings.py`. Each
+the NES layouts are a `Banked`), and `tms320c3x-ram` and `tms320c3x-rom`
+(value = base + offset / 4, base 0 and `$A00000`: the TMS320C3x of Midway's
+Zeus, which addresses 32-bit words; a `WordAddress(base, unit)` whose offset
+off a word has no value, so the write that would need one is refused) — live in `plugins/builtins/mappings.py`. Each
 implements both directions and declares which pointer sizes it supports, and
 may say it applies only to some payloads (`applies`): `exhirom` to an image
 past 4 MiB, `sa1` to one whose header names the chip. Pointer discovery skips

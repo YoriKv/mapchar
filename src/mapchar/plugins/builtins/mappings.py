@@ -288,6 +288,33 @@ class BitAddress:
         return self.base + 8 * offset
 
 
+class WordAddress:
+    """A CPU that addresses words rather than bytes: payload byte ``o``, on a
+    word boundary, is word ``base + o / unit``. A value below ``base`` reaches
+    no byte; an offset off a word boundary has no value, and the write that
+    asks for one is refused, since its value does not read back. Registered as
+    ``tms320c3x-ram`` and ``tms320c3x-rom``, the TMS320C3x of Midway's Zeus
+    (Mortal Kombat 4), whose 32-bit words hold four bytes: its program and
+    data copied to RAM from word 0, and the data ROM at word ``$A00000``."""
+
+    sizes = (4,)
+    needs_bank = False
+
+    def __init__(
+        self, base: int, unit: int, id: str, name: str, category: str = "Generic"
+    ):
+        self.base = base
+        self.unit = unit
+        self.info = PluginInfo(id, name, Stage.MAPPING, category)
+
+    def to_offset(self, value: int, bank: int = 0, ptr_address: int = 0) -> int | None:
+        words = value - self.base
+        return words * self.unit if words >= 0 else None
+
+    def to_value(self, offset: int, bank: int = 0, ptr_address: int = 0) -> int:
+        return self.base + offset // self.unit
+
+
 def parse_banked(id: str) -> Banked | None:
     """``banked:<base hex>:<size hex>`` built on demand."""
     parts = id.split(":")
@@ -317,6 +344,20 @@ def register(registry) -> None:
             0xFF800000,
             "tms34010-bits",
             "TMS34010 bit address (program ROM at $FF800000)",
+            "Midway",
+        ),
+        WordAddress(
+            0,
+            4,
+            "tms320c3x-ram",
+            "TMS320C3x word address (RAM copy at word 0)",
+            "Midway",
+        ),
+        WordAddress(
+            0xA00000,
+            4,
+            "tms320c3x-rom",
+            "TMS320C3x word address (data ROM at word $A00000)",
             "Midway",
         ),
     ):

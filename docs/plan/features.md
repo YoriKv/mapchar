@@ -1000,7 +1000,10 @@ of end-token strings.
   `lea d16(pc)` holds, so one block reaches strings before and after its
   pointers; a distance the size cannot hold refuses the write), **TMS34010 bit
   address** (`tms34010-bits`: the Midway T-Unit's CPU addresses bits, program
-  ROM byte `o` at `$FF800000 + 8 × o`) and **Banked** (bank size, bank
+  ROM byte `o` at `$FF800000 + 8 × o`), **TMS320C3x word address**
+  (`tms320c3x-ram` and `tms320c3x-rom`: Midway's Zeus CPU addresses 32-bit
+  words, byte `o` at word `o / 4` of the RAM copy or `$A00000 + o / 4` of the
+  data ROM; a string off a word boundary refuses the write) and **Banked** (bank size, bank
   base address, bank number taken from the block or a field), which the two
   NES layouts `nes_c000` and `nes_8000_2000` are ready-made settings of. Each
   applies after the container's header offset, then the block's `offset`.

@@ -63,6 +63,12 @@
       2,
       3
     ],
+    "tms320c3x-ram": [
+      4
+    ],
+    "tms320c3x-rom": [
+      4
+    ],
     "tms34010-bits": [
       4
     ]
@@ -126,6 +132,8 @@
       "relative",
       "relative-signed",
       "sa1",
+      "tms320c3x-ram",
+      "tms320c3x-rom",
       "tms34010-bits"
     ]
   },
