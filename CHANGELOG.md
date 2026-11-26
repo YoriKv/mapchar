@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.15 - unreleased
+## v0.1.15 - 2026-11-25
 
 - The import dialog no longer blocks the window
 - View -> Code Buttons shows or hides the code button row
