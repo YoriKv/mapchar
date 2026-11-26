@@ -53,6 +53,7 @@ ALWAYS_ON = frozenset(
         "Captures",
         "Stop Playing",  # enabled while a game is played, not by the entry
         "Emulator Path…",
+        "Code Buttons",
         "Light Theme",
         "Dark Theme",
         "Back",

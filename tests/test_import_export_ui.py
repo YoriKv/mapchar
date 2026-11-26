@@ -149,8 +149,8 @@ def test_an_import_is_confirmed_before_anything_lands(window, tmp_path, monkeypa
 
     seen: list = []
     monkeypatch.setattr(
-        "mapchar.ui.dialogs.ImportDialog.exec",
-        lambda self: seen.append(self._summary_for(False)) or 0,  # Rejected
+        "mapchar.ui.dialogs.ImportDialog.show",
+        lambda self: seen.append(self._summary_for(False)) or self.reject(),
     )
     window.import_file(str(tsv), "delimited")
     assert not block.doc.strings[0].edited
@@ -158,7 +158,9 @@ def test_an_import_is_confirmed_before_anything_lands(window, tmp_path, monkeypa
     assert summary.kind == "Translator table"
     assert [(b.name, b.strings) for b in summary.blocks] == [("D", 1)]
 
-    monkeypatch.setattr("mapchar.ui.dialogs.ImportDialog.exec", lambda self: 1)
+    monkeypatch.setattr(
+        "mapchar.ui.dialogs.ImportDialog.show", lambda self: self.accept()
+    )
     window.import_file(str(tsv), "delimited")
     assert block.doc.strings[0].current_text() == "BB[end]"
 
@@ -174,8 +176,8 @@ def test_a_dropped_translator_file_is_confirmed_like_any_other_import(
     tsv = _tsv(tmp_path / "d.tsv", "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n")
     shown: list[str] = []
     monkeypatch.setattr(
-        "mapchar.ui.dialogs.ImportDialog.exec",
-        lambda self: shown.append(self.windowTitle()) or 1,
+        "mapchar.ui.dialogs.ImportDialog.show",
+        lambda self: shown.append(self.windowTitle()) or self.accept(),
     )
     window._open_dropped(str(tsv), "delimited")
     assert shown == ["Import d.tsv"]
@@ -196,9 +198,9 @@ def test_force_on_the_dialog_takes_back_what_drifted(window, tmp_path, monkeypat
         plans.append(self._summary_for(False))
         self.force.setChecked(True)
         plans.append(self._summary_for(True))
-        return 1
+        self.accept()
 
-    monkeypatch.setattr("mapchar.ui.dialogs.ImportDialog.exec", accept_forced)
+    monkeypatch.setattr("mapchar.ui.dialogs.ImportDialog.show", accept_forced)
     window.import_file(str(tsv), "delimited")
     assert plans[0].skipped == ["D/0: original changed"] and not plans[0].blocks
     assert not plans[1].skipped and plans[1].blocks
@@ -221,7 +223,9 @@ def test_a_script_import_creates_its_block_and_lands_its_strings(
     script = tmp_path / "s.txt"
     script.write_text(write_script([("Fresh", cfg, strings)], DumpMode.TRANSLATIONS))
 
-    monkeypatch.setattr("mapchar.ui.dialogs.ImportDialog.exec", lambda self: 1)
+    monkeypatch.setattr(
+        "mapchar.ui.dialogs.ImportDialog.show", lambda self: self.accept()
+    )
     window.import_file(str(script), "script")
     made = next(e for e in window.workspace.entries if e.name == "Fresh")
     assert made.doc.strings[0].current_text() == "BB[end]"
@@ -406,8 +410,11 @@ def _dialogs(monkeypatch) -> list[tuple[str, object]]:
     accepted."""
     shown: list[tuple[str, object]] = []
     monkeypatch.setattr(
-        "mapchar.ui.dialogs.ImportDialog.exec",
-        lambda self: shown.append((self.windowTitle(), self._summary_for(False))) or 1,
+        "mapchar.ui.dialogs.ImportDialog.show",
+        lambda self: (
+            shown.append((self.windowTitle(), self._summary_for(False)))
+            or self.accept()
+        ),
     )
     return shown
 
@@ -523,3 +530,26 @@ def test_a_block_row_s_import_sits_before_export_and_follows_the_selection(
     for entry in (d, e):
         item_for(window, entry).setSelected(True)
     assert not menu_state(window._build_files_menu(d))["Import"]
+
+
+def test_the_import_dialog_leaves_the_window_usable_until_it_is_accepted(
+    window, tmp_path, monkeypatch
+):
+    """Not modal, so the blocks can be looked over first; what lands is planned
+    when it is accepted, against the blocks as they then stand."""
+    from mapchar.ui.dialogs import ImportDialog
+
+    data = ab_ba_rom(0)
+    file_entry = open_rom_and_table(window, tmp_path, data)
+    block = add_block(window, file_entry, "D", RangeSource(0, 6))
+    tsv = tmp_path / "d.tsv"
+    tsv.write_text(
+        "id\taddress\toriginal\ttranslation\tstatus\tnotes\n"
+        "D/0\t$0\tAB[end]\tBB[end]\tedited\t\n"
+    )
+    window.import_file(str(tsv), "delimited")
+    dialog = window.findChild(ImportDialog)
+    assert dialog is not None and dialog.isVisible() and not dialog.isModal()
+    assert not block.doc.strings[0].edited
+    dialog.accept()
+    assert block.doc.strings[0].current_text() == "BB[end]"

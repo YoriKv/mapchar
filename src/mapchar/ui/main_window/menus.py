@@ -213,6 +213,7 @@ class MenuBarMixin:
         self.strings_tab_action = act(
             view_menu, "&Strings", lambda: self._show_view("strings"), "Ctrl+3"
         )
+        view_menu.addAction(self.strings.codes_action)
         view_menu.addSeparator()
         act(view_menu, "&Table Editor…", self._show_table_editor, "Ctrl+Shift+T")
         self.preview_action = act(view_menu, "&Preview…", self._show_preview, "Ctrl+P")

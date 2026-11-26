@@ -3,6 +3,8 @@
 ## v0.1.15 - unreleased
 
 - TMS320C3x word-address pointers (Midway Zeus, Mortal Kombat 4) built in
+- The import dialog no longer blocks the window
+- View -> Code Buttons shows or hides the code button row
 
 ## v0.1.14 - 2026-11-22
 

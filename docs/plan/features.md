@@ -1134,7 +1134,8 @@ The editing surface, opened on a block.
     grammar drops;
   - **Insert code** buttons for the codes this block's strings use most,
     wrapping onto more rows when the view is narrow, each with the table's
-    comment as its tooltip;
+    comment as its tooltip; **View ▸ Code Buttons** shows or hides the whole
+    row, and the choice is remembered;
   - the byte readout updates as you type, from a live encode, against the
     room the string has; the Preview follows the draft and lists what the
     font cannot draw;
@@ -1374,6 +1375,8 @@ The editing surface, opened on a block.
   anything, so the dialog shows what the file is, which blocks it reaches,
   how many strings of each and what it cannot place, and nothing lands until
   it is accepted. **Force** re-plans rather than filtering what is on screen.
+  The dialog is not modal, so the blocks it names can be looked over first;
+  accepting plans again against the blocks as they then stand.
   Menu and drop take the same path: a drop's kind is a guess from a suffix,
   which is the case that most needs saying.
 - An import is one undo step, the blocks it creates included. A block's texts

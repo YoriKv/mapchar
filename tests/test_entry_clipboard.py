@@ -213,8 +213,8 @@ def test_several_dropped_translator_files_import_as_one(window, tmp_path, monkey
     second.write_text(header + "D/1\t$3\tBA[end]\tA[end]\tedited\t\n")
     shown: list[str] = []
     monkeypatch.setattr(
-        "mapchar.ui.dialogs.ImportDialog.exec",
-        lambda self: shown.append(self.windowTitle()) or 1,
+        "mapchar.ui.dialogs.ImportDialog.show",
+        lambda self: shown.append(self.windowTitle()) or self.accept(),
     )
     drop(window, str(first), str(second))
     assert shown == ["Import 2 files"]

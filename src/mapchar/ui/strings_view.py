@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QFocusEvent, QTextCursor
+from PySide6.QtGui import QAction, QColor, QFocusEvent, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from mapchar.core.block import Status
 from mapchar.core.textmatch import matches_words, words_of
-from mapchar.ui import settings, theme
+from mapchar.ui import set_setting_bool, setting_bool, settings, theme
 from mapchar.ui.bars import FlowLayout
 from mapchar.ui.code_editor import CodeEditor, CodeInfo
 from mapchar.ui.string_pane import StringPane
@@ -83,6 +83,8 @@ PADDED_ROLE = Qt.ItemDataRole.UserRole + 1
 """Where a Translation cell keeps its text with the pad marked
 (:attr:`RowData.padded`), which the cell draws in place of the text."""
 SPLITTER_KEY = "view/strings_splitter"
+CODES_KEY = "view/strings_code_buttons"
+"""Whether the Insert code buttons under the strings are shown."""
 """Where the grid and the pane under it are split, remembered per machine."""
 
 
@@ -323,6 +325,12 @@ class StringsView(QWidget):
         self.codes = QWidget()
         self.codes_layout = FlowLayout(self.codes)
         self.codes_layout.setContentsMargins(0, 0, 0, 0)
+        # The window's View menu carries it; the choice outlives the session.
+        self.codes_action = QAction("Code &Buttons", self)
+        self.codes_action.setCheckable(True)
+        self.codes_action.setChecked(setting_bool(CODES_KEY, True))
+        self.codes.setVisible(self.codes_action.isChecked())
+        self.codes_action.toggled.connect(self._show_codes)
         self.pane = StringPane()
         self.pane.committer = self._commit_from_pane
         self.splitter = QSplitter(Qt.Orientation.Vertical)
@@ -374,6 +382,10 @@ class StringsView(QWidget):
                 lambda _=False, text=code.insertion: self.insert_text(text)
             )
             self.codes_layout.addWidget(button)
+
+    def _show_codes(self, on: bool) -> None:
+        self.codes.setVisible(on)
+        set_setting_bool(CODES_KEY, on)
 
     def set_newline_code(self, code: str) -> None:
         """What Shift+Return writes in the Translation cell."""

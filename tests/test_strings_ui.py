@@ -612,3 +612,14 @@ def test_glossary_terms_are_kept_undone_and_typed_in(window, tmp_path):
     glossary.table.selectRow(0)
     glossary._remove()
     assert window.workspace.glossary == []
+
+
+def test_the_code_buttons_hide_and_the_choice_is_remembered(qtbot):
+    view = StringsView()
+    qtbot.addWidget(view)
+    assert view.codes_action.isChecked() and not view.codes.isHidden()
+    view.codes_action.setChecked(False)
+    assert view.codes.isHidden()
+    again = StringsView()
+    qtbot.addWidget(again)
+    assert not again.codes_action.isChecked() and again.codes.isHidden()

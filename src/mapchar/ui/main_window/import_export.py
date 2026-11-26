@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 
+from PySide6.QtCore import Qt
+
 from mapchar.core.errors import MapcharError
 from mapchar.core.text import same_text
 from mapchar.project.entry import Entry, EntryKind
@@ -196,6 +198,10 @@ class ImportExportMixin:
         is planned, so one that cannot be stops them all, and one
         confirmation, one undo step and one report cover the lot. A script is
         only ever one file.
+
+        The confirmation is not modal, so the blocks it names can be looked
+        over before deciding; what lands is planned again at that point,
+        against the blocks as they then stand.
         """
         if not paths:
             return
@@ -212,23 +218,75 @@ class ImportExportMixin:
                 return
             read_notices += notices
         file_entry = self._current_file()
-        if only is not None:
-            blocks = {only.name: only.doc.strings}
-        else:
-            blocks = self._block_strings_by_name(None if whole_project else file_entry)
-        report = self._plan_import(parsed, kind, blocks, force)[0]
-        what = parsed[0][0] if len(parsed) == 1 else f"{len(parsed)} files"
-        if confirm:
-            dialog = ImportDialog(
-                what,
-                lambda forced: self._plan_import(parsed, kind, blocks, forced)[1],
-                self,
+        if not confirm:
+            self._land_import(
+                parsed,
+                paths[0],
+                kind,
+                force,
+                file_entry,
+                read_notices,
+                whole_project,
+                only,
             )
-            if dialog.exec() != ImportDialog.DialogCode.Accepted:
-                return
-            if dialog.forced() != force:
-                force = dialog.forced()
-                report = self._plan_import(parsed, kind, blocks, force)[0]
+            return
+        blocks = self._import_blocks(file_entry, whole_project, only)
+        if blocks is None:
+            return
+        dialog = ImportDialog(
+            self._import_title(parsed),
+            lambda forced: self._plan_import(parsed, kind, blocks, forced)[1],
+            self,
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.accepted.connect(
+            lambda: self._land_import(
+                parsed,
+                paths[0],
+                kind,
+                dialog.forced(),
+                file_entry,
+                read_notices,
+                whole_project,
+                only,
+            )
+        )
+        dialog.show()
+
+    @staticmethod
+    def _import_title(parsed: list[tuple[str, Script | list[Record]]]) -> str:
+        return parsed[0][0] if len(parsed) == 1 else f"{len(parsed)} files"
+
+    def _import_blocks(
+        self, file_entry: Entry | None, whole_project: bool, only: Entry | None
+    ) -> dict[str, list] | None:
+        """The strings an import is read against, by block name; ``None``
+        once the block ``only`` names is gone."""
+        if only is None:
+            return self._block_strings_by_name(None if whole_project else file_entry)
+        if only not in self.workspace.entries or only.doc is None:
+            self._error(f"Cannot import: block {only.name} is no longer open.")
+            return None
+        return {only.name: only.doc.strings}
+
+    def _land_import(
+        self,
+        parsed: list[tuple[str, Script | list[Record]]],
+        path: str,
+        kind: str,
+        force: bool,
+        file_entry: Entry | None,
+        read_notices: list[str],
+        whole_project: bool,
+        only: Entry | None,
+    ) -> None:
+        """Plan ``parsed`` against the blocks as they stand and land it, as one
+        undo step."""
+        blocks = self._import_blocks(file_entry, whole_project, only)
+        if blocks is None:
+            return
+        report = self._plan_import(parsed, kind, blocks, force)[0]
+        what = self._import_title(parsed)
         review: dict[str, dict[int, bool]] = {}
         done: dict[str, dict[int, bool]] = {}
         notes: dict[str, dict[int, str]] = {}
@@ -295,7 +353,7 @@ class ImportExportMixin:
                         )
             if current is not None and self._entry is not current:
                 self._activate_entry(current)
-        self._remember_dir(paths[0])
+        self._remember_dir(path)
         self._refresh_view()
         self._report(
             "Import Notices",
